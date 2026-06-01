@@ -6,6 +6,7 @@ export interface Listing {
   location: string;
   url: string;
   thumbnailUrl?: string;
+  allowsPickups?: number; // 1 = shipping only, 2 = pickup only, 3 = both
 }
 
 export interface ListingDetail {
@@ -78,6 +79,7 @@ function parseSearchApiResponse(data: Record<string, unknown>): { listings: List
       location: [(item.Suburb as string), (item.Region as string)].filter(Boolean).join(', ') || 'Unknown',
       url: (item.CanonicalPath as string) ? `${TRADEME_BASE}${item.CanonicalPath}` : '',
       thumbnailUrl: (item.PictureHref as string) || undefined,
+      allowsPickups: (item.AllowsPickups as number) || undefined,
     }))
     .filter((l) => l.title && l.url);
   return { listings, totalCount, pageSize };

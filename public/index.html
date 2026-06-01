@@ -85,6 +85,21 @@
     .filter-grid .span-2 { grid-column: 1 / -1; }
     @media (max-width: 520px) { .filter-grid { grid-template-columns: 1fr; } .filter-grid .span-2 { grid-column: 1; } }
 
+    /* ── Toggle group ── */
+    .toggle-group { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.1rem; }
+    .toggle-option {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.35rem 0.75rem;
+      border: 1.5px solid var(--border); border-radius: 999px;
+      font-size: 0.8rem; font-weight: 500; color: var(--text-muted);
+      cursor: pointer; user-select: none;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    .toggle-option input[type="checkbox"] { display: none; }
+    .toggle-option:has(input:checked) {
+      border-color: var(--primary); background: var(--primary-light); color: var(--primary);
+    }
+
     /* ── Buttons ── */
     .btn {
       display: inline-flex; align-items: center; gap: 0.4rem;
@@ -168,11 +183,14 @@
 
     .listing-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
     .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 5px; font-size: 0.7rem; font-weight: 600; }
-    .badge-none   { background: var(--green-bg); color: var(--green); }
-    .badge-met    { background: #d1fae5; color: #065f46; }
-    .badge-notmet { background: var(--yellow-bg); color: var(--yellow); }
-    .badge-unknown { background: var(--bg); color: var(--text-muted); }
-    .badge-pickup { background: #fef3c7; color: #92400e; }
+    .badge-none        { background: var(--green-bg); color: var(--green); }
+    .badge-met         { background: #d1fae5; color: #065f46; }
+    .badge-notmet      { background: var(--yellow-bg); color: var(--yellow); }
+    .badge-unknown     { background: var(--bg); color: var(--text-muted); }
+    .badge-pickup      { background: #fef3c7; color: #92400e; }
+    .badge-shipping    { background: #eff6ff; color: #1d4ed8; }
+    .badge-pickuponly  { background: #fef3c7; color: #92400e; }
+    .badge-both        { background: var(--green-bg); color: var(--green); }
     .meta-text { font-size: 0.78rem; color: var(--text-muted); }
 
     .listing-description {
@@ -255,6 +273,19 @@
         <label for="excludeKeywords">Exclude Keywords — title must contain NONE (comma separated)</label>
         <input type="text" id="excludeKeywords" />
       </div>
+      <div class="span-2">
+        <label>Fulfilment</label>
+        <div class="toggle-group">
+          <label class="toggle-option">
+            <input type="checkbox" id="filterShipping" checked />
+            <span>Shipping available</span>
+          </label>
+          <label class="toggle-option">
+            <input type="checkbox" id="filterPickup" checked />
+            <span>Pickup available</span>
+          </label>
+        </div>
+      </div>
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" id="deepBtn" onclick="runDeepSearch()" disabled>
@@ -278,6 +309,8 @@
 </div>
 
 <script>
+  document.getElementById('searchUrl').focus();
+
   // ── State ────────────────────────────────────────────────────────────────
   // allListings: Array<{ data: Listing, deepSearched: boolean }>
   let allListings = [];
@@ -390,6 +423,8 @@
     if (maxP) f.maxPrice = parseFloat(maxP);
     if (kw)  f.keywords = kw.split(',').map(s => s.trim()).filter(Boolean);
     if (ex)  f.excludeKeywords = ex.split(',').map(s => s.trim()).filter(Boolean);
+    f.shippingAvailable = document.getElementById('filterShipping').checked;
+    f.pickupAvailable   = document.getElementById('filterPickup').checked;
     return f;
   }
 
@@ -405,6 +440,13 @@
     if (price !== null) {
       if (filters.minPrice !== undefined && price < filters.minPrice) return false;
       if (filters.maxPrice !== undefined && price > filters.maxPrice) return false;
+    }
+    if (listing.allowsPickups !== undefined) {
+      const hasShipping = listing.allowsPickups === 1 || listing.allowsPickups === 3;
+      const hasPickup   = listing.allowsPickups === 2 || listing.allowsPickups === 3;
+      const matches = (filters.shippingAvailable && hasShipping) ||
+                      (filters.pickupAvailable   && hasPickup);
+      if (!matches) return false;
     }
     return true;
   }
@@ -443,6 +485,9 @@
   // Attach live filter handlers
   ['minPrice', 'maxPrice', 'keywords', 'excludeKeywords'].forEach(id => {
     document.getElementById(id).addEventListener('input', applyClientFilters);
+  });
+  ['filterShipping', 'filterPickup'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyClientFilters);
   });
 
   // ── Deep Search button state ──────────────────────────────────────────────
@@ -487,6 +532,13 @@
     return 'card-' + (url.match(/\/listing\/(\d+)/)?.[1] ?? Math.random().toString(36).slice(2));
   }
 
+  function shippingBadge(allowsPickups) {
+    if (allowsPickups === 1) return '<span class="badge badge-shipping">Shipping only</span>';
+    if (allowsPickups === 2) return '<span class="badge badge-pickuponly">Pickup only</span>';
+    if (allowsPickups === 3) return '<span class="badge badge-both">Allows pickups</span>';
+    return '';
+  }
+
   function reserveBadge(status) {
     if (!status || status === 'UNKNOWN') return '<span class="badge badge-unknown">No auction</span>';
     if (status === 'NONE')    return '<span class="badge badge-none">No reserve</span>';
@@ -519,6 +571,7 @@
         </div>
         <div class="listing-meta">
           <span class="meta-text">📍 ${esc(listing.location)}</span>
+          ${shippingBadge(listing.allowsPickups)}
         </div>
         <div class="listing-extras"></div>
       </div>
@@ -539,9 +592,11 @@
     }
     pricesEl.innerHTML = pricesHtml;
 
-    // Meta
+    // Meta — preserve existing badges (e.g. shipping), add new ones from deep search
     const metaEl = card.querySelector('.listing-meta');
     let metaHtml = `<span class="meta-text">📍 ${metaEl.querySelector('.meta-text').textContent.slice(2)}</span>`;
+    // Keep any badges already rendered (shipping/pickup from quick search)
+    metaEl.querySelectorAll('.badge').forEach(b => { metaHtml += b.outerHTML; });
     metaHtml += reserveBadge(detail.reserveStatus);
     if (detail.pickupOnly) metaHtml += '<span class="badge badge-pickup">Pickup only</span>';
     metaEl.innerHTML = metaHtml;
