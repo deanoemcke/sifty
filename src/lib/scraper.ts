@@ -67,9 +67,10 @@ export function applyFilters(listing: Listing, filters: FilterCriteria): boolean
   return true;
 }
 
-function parseSearchApiResponse(data: Record<string, unknown>): { listings: Listing[]; totalCount: number } {
+function parseSearchApiResponse(data: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } {
   const items = (data?.List ?? []) as ApiItem[];
   const totalCount = (data?.TotalCount as number) ?? 0;
+  const pageSize = (data?.PageSize as number) || (items.length || 1);
   const listings = items
     .map((item) => ({
       title: (item.Title as string) ?? '',
@@ -79,10 +80,10 @@ function parseSearchApiResponse(data: Record<string, unknown>): { listings: List
       thumbnailUrl: (item.PictureHref as string) || undefined,
     }))
     .filter((l) => l.title && l.url);
-  return { listings, totalCount };
+  return { listings, totalCount, pageSize };
 }
 
-function waitForSearchApiResponse(page: Page): Promise<{ listings: Listing[]; totalCount: number }> {
+function waitForSearchApiResponse(page: Page): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
   return new Promise((resolve) => {
     const handler = async (response: Response) => {
       if (response.url().includes('api.trademe.co.nz/v1/search') && response.status() === 200) {
@@ -90,12 +91,12 @@ function waitForSearchApiResponse(page: Page): Promise<{ listings: Listing[]; to
         try {
           resolve(parseSearchApiResponse(await response.json() as Record<string, unknown>));
         } catch {
-          resolve({ listings: [], totalCount: 0 });
+          resolve({ listings: [], totalCount: 0, pageSize: 1 });
         }
       }
     };
     page.on('response', handler);
-    setTimeout(() => { page.off('response', handler); resolve({ listings: [], totalCount: 0 }); }, 12000);
+    setTimeout(() => { page.off('response', handler); resolve({ listings: [], totalCount: 0, pageSize: 1 }); }, 12000);
   });
 }
 
@@ -205,8 +206,8 @@ export async function quickSearch(
     onEvent({ type: 'progress', message: 'Fetching page 1…' });
     const p1Promise = waitForSearchApiResponse(page);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    const { listings: p1Listings, totalCount } = await p1Promise;
-    const totalPages = Math.ceil(totalCount / 56);
+    const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
+    const totalPages = Math.ceil(totalCount / pageSize);
 
     onEvent({ type: 'progress', message: `${totalCount} results across ${totalPages} page${totalPages !== 1 ? 's' : ''}` });
 
