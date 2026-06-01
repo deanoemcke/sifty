@@ -26,12 +26,13 @@ npm start
 
 Opens at **http://localhost:3000**.
 
-Paste any TradeMe search URL into the input — the app parses and displays the implicit search criteria (category, search term, condition, RAM, screen size) read-only. Set additional explicit filters below, then:
+**Flow:**
 
-- **Quick Search** — streams listing cards in as they arrive, showing title, price, and location
-- **Deep Search** — runs a quick search first if needed, then fetches full details for each listing (description, buy now price, reserve status, pickup info), enriching the cards one by one as results come in
-
-Results stream in progressively — you don't wait for everything before seeing cards appear.
+1. Paste a TradeMe search URL and press Enter (or click Search)
+2. All matching listings are fetched and displayed. The criteria implicit in the URL (category, search term, condition, RAM, screen size) are shown read-only beneath the URL field
+3. The filter inputs appear — min/max price, keywords, and exclude keywords. These filter the displayed listings **instantly in the browser** with no re-scrape
+4. Click **Deep Search** to fetch the full description, buy now price, reserve status, and pickup info for every currently visible listing. Results populate in real time as each listing is scraped
+5. If you change a filter after a deep search and it reveals listings that haven't been scraped yet, the Deep Search button reactivates and will only fetch the newly visible ones
 
 ## CLI
 
@@ -41,12 +42,8 @@ npm run scrape
 
 Runs a hardcoded search and prints full listing details to the terminal. The search URL and filters are configured at the top of [src/scraper.ts](src/scraper.ts).
 
-## Filters
+## CLI filters
 
-### Web app
-Set via the UI inputs: min/max price, keywords (all must match), and exclude keywords (none must match). The exclude keywords field is pre-filled with sensible defaults.
-
-### CLI
 Edit the `FILTERS` block near the top of [src/scraper.ts](src/scraper.ts):
 
 ```typescript
@@ -63,7 +60,7 @@ To change the base search, update `SEARCH_URL` in the same file.
 
 ## Output fields
 
-For each listing that passes the filters:
+For each listing (web app deep search or CLI):
 
 - Title
 - Asking / starting price
