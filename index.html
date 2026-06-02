@@ -72,6 +72,7 @@
       font-family: inherit;
     }
     input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
+    input[readonly] { background: var(--bg); color: var(--text-muted); cursor: default; }
     label { display: block; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.3rem; }
 
     /* ── Criteria ── */
@@ -79,6 +80,8 @@
     .criteria-row { display: grid; grid-template-columns: 90px 1fr; gap: 0.5rem; align-items: baseline; margin-bottom: 0.3rem; }
     .criteria-key { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
     .criteria-val { font-size: 0.875rem; }
+    .url-card-count { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--primary); margin-left: 0.4rem; }
+    .url-criteria { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
 
     /* ── Filter grid ── */
     .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; }
@@ -272,21 +275,12 @@
     <p>Paste a TradeMe search URL to fetch listings, then filter results locally.</p>
   </header>
 
-  <!-- URL input -->
-  <div class="card">
-    <div class="card-label">Search URL</div>
-    <div class="url-row">
-      <input type="url" id="searchUrl" />
-      <button class="btn btn-primary" id="searchBtn" disabled>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        Search
-      </button>
-    </div>
-
-    <div id="criteriaBox" class="hidden">
-      <div class="criteria-grid" id="criteriaGrid"></div>
-    </div>
-  </div>
+  <!-- URL cards (populated by JS) -->
+  <div id="urlCardsContainer"></div>
+  <button id="addUrlBtn" class="btn btn-secondary hidden" style="width:100%;justify-content:center;margin-bottom:0.875rem;border-style:dashed">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Add URL
+  </button>
 
   <!-- Filters + deep search (hidden until first scrape) -->
   <div id="filtersCard" class="card hidden">

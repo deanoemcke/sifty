@@ -8,8 +8,20 @@ interface ListingItem {
   deepSearched: boolean;
 }
 
+interface UrlCardState {
+  el: HTMLElement;
+  input: HTMLInputElement;
+  searchBtn: HTMLButtonElement;
+  criteriaEl: HTMLElement;
+  countEl: HTMLElement;
+  searched: boolean;
+  searchedUrl: string;
+}
+
 let allListings: ListingItem[] = [];
 let isRunning = false;
+const seenUrls = new Set<string>();
+const urlCardStates: UrlCardState[] = [];
 
 // ── Known query parameter labels ──────────────────────────────────────────────
 
@@ -128,9 +140,120 @@ function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'inf
 
 function setBusy(busy: boolean): void {
   isRunning = busy;
-  const url = el<HTMLInputElement>('searchUrl').value.trim();
-  el<HTMLButtonElement>('searchBtn').disabled = busy || !parseUrl(url);
+  for (const state of urlCardStates) {
+    const current = state.input.value.trim();
+    const alreadySearched = state.searched && current === state.searchedUrl;
+    state.searchBtn.disabled = busy || !parseUrl(current) || alreadySearched;
+  }
   updateDeepBtn();
+}
+
+const SEARCH_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+
+function createUrlCard(): UrlCardState {
+  const idx = urlCardStates.length;
+  const card = document.createElement('div');
+  card.className = 'card url-card';
+  card.innerHTML = `
+    <div class="card-label">URL ${idx + 1}<span class="url-card-count"></span></div>
+    <div class="url-row">
+      <input type="url" class="url-input" placeholder="Paste TradeMe search URL…" />
+      <button class="btn btn-primary url-search-btn" disabled>${SEARCH_ICON} Search</button>
+    </div>
+    <div class="url-criteria hidden"><div class="criteria-grid"></div></div>
+  `;
+  el('urlCardsContainer').appendChild(card);
+
+  const input = card.querySelector<HTMLInputElement>('.url-input')!;
+  const searchBtn = card.querySelector<HTMLButtonElement>('.url-search-btn')!;
+  const criteriaEl = card.querySelector<HTMLElement>('.url-criteria')!;
+  const countEl = card.querySelector<HTMLElement>('.url-card-count')!;
+
+  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, searched: false, searchedUrl: '' };
+  urlCardStates.push(state);
+
+  input.addEventListener('input', () => {
+    const current = input.value.trim();
+    searchBtn.disabled = isRunning || !parseUrl(current) || (state.searched && current === state.searchedUrl);
+  });
+  input.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !searchBtn.disabled) searchUrlCard(state);
+  });
+  searchBtn.addEventListener('click', () => searchUrlCard(state));
+
+  return state;
+}
+
+function resetAllResults(): void {
+  allListings = [];
+  seenUrls.clear();
+  el('listingsContainer').innerHTML = '';
+  el('resultCount').textContent = '0';
+  el('resultsSection').classList.add('hidden');
+  el('filtersCard').classList.add('hidden');
+  for (const s of urlCardStates) {
+    s.searched = false;
+    s.searchedUrl = '';
+    s.countEl.textContent = '';
+    s.criteriaEl.querySelector('.criteria-grid')!.innerHTML = '';
+    s.criteriaEl.classList.add('hidden');
+    s.input.readOnly = false;
+    s.searchBtn.disabled = !parseUrl(s.input.value.trim());
+  }
+}
+
+async function searchUrlCard(state: UrlCardState): Promise<void> {
+  const url = state.input.value.trim();
+  const criteria = parseUrl(url);
+  if (!criteria) return;
+
+  if (state.searched) resetAllResults();
+
+  state.criteriaEl.querySelector('.criteria-grid')!.innerHTML = criteria
+    .map(([k, v]) => `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`)
+    .join('');
+  state.criteriaEl.classList.remove('hidden');
+  el('resultsSection').classList.remove('hidden');
+
+  setBusy(true);
+  setStatus('Fetching listings…');
+
+  const countBefore = allListings.length;
+  try {
+    await streamPost('/api/quick-search', { url, filters: {} }, (ev) => {
+      if (ev.type === 'progress') {
+        setStatus(ev.message as string);
+      } else if (ev.type === 'listing') {
+        const listing = ev.data as Listing;
+        if (seenUrls.has(listing.url)) return;
+        seenUrls.add(listing.url);
+        allListings.push({ data: listing, deepSearched: false });
+        renderCard(listing);
+        el('resultCount').textContent = String(allListings.length);
+      } else if (ev.type === 'error') {
+        setStatus(ev.message as string, 'error');
+      }
+    });
+  } catch (err) {
+    setStatus((err as Error).message, 'error');
+  }
+
+  state.searched = true;
+  state.searchedUrl = url;
+  state.searchBtn.disabled = true;
+  state.input.readOnly = true;
+  const added = allListings.length - countBefore;
+  state.countEl.textContent = `— ${added} listing${added !== 1 ? 's' : ''}`;
+
+  setStatus(`${allListings.length} listing${allListings.length !== 1 ? 's' : ''} found`, 'success');
+  setTimeout(() => setStatus(null), 3000);
+  setBusy(false);
+
+  if (allListings.length > 0) {
+    el('filtersCard').classList.remove('hidden');
+    el('addUrlBtn').classList.remove('hidden');
+    applyClientFilters();
+  }
 }
 
 // ── Client-side filtering ─────────────────────────────────────────────────────
@@ -336,53 +459,6 @@ function toggleDesc(btn: HTMLButtonElement): void {
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
-async function startSearch(): Promise<void> {
-  const url = el<HTMLInputElement>('searchUrl').value.trim();
-  const criteria = parseUrl(url);
-  if (!criteria) return;
-
-  setBusy(true);
-  allListings = [];
-
-  el('listingsContainer').innerHTML = '';
-  el('resultCount').textContent = '0';
-  el('resultsSection').classList.remove('hidden');
-  el('filtersCard').classList.add('hidden');
-
-  el('criteriaGrid').innerHTML = criteria
-    .map(([k, v]) => `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`)
-    .join('');
-  el('criteriaBox').classList.remove('hidden');
-
-  setStatus('Fetching listings…');
-
-  try {
-    await streamPost('/api/quick-search', { url, filters: {} }, (ev) => {
-      if (ev.type === 'progress') {
-        setStatus(ev.message as string);
-      } else if (ev.type === 'listing') {
-        const listing = ev.data as Listing;
-        allListings.push({ data: listing, deepSearched: false });
-        renderCard(listing);
-        el('resultCount').textContent = String(allListings.length);
-      } else if (ev.type === 'complete') {
-        setStatus(`${allListings.length} listing${allListings.length !== 1 ? 's' : ''} found`, 'success');
-        setTimeout(() => setStatus(null), 3000);
-      } else if (ev.type === 'error') {
-        setStatus(ev.message as string, 'error');
-      }
-    });
-  } catch (err) {
-    setStatus((err as Error).message, 'error');
-  }
-
-  setBusy(false);
-
-  if (allListings.length > 0) {
-    el('filtersCard').classList.remove('hidden');
-    applyClientFilters();
-  }
-}
 
 // ── Deep Search ───────────────────────────────────────────────────────────────
 
@@ -453,18 +529,16 @@ async function runDeepSearch(): Promise<void> {
 
 // ── Event listeners ───────────────────────────────────────────────────────────
 
-const searchUrlInput = el<HTMLInputElement>('searchUrl');
-searchUrlInput.focus();
+// Initialise with the first URL card and focus its input
+const firstCard = createUrlCard();
+firstCard.input.focus();
 
-searchUrlInput.addEventListener('input', () => {
-  el<HTMLButtonElement>('searchBtn').disabled = isRunning || !parseUrl(searchUrlInput.value.trim());
+el('addUrlBtn').addEventListener('click', () => {
+  const newCard = createUrlCard();
+  newCard.input.focus();
+  newCard.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 
-searchUrlInput.addEventListener('keydown', (e: KeyboardEvent) => {
-  if (e.key === 'Enter' && !el<HTMLButtonElement>('searchBtn').disabled) startSearch();
-});
-
-el<HTMLButtonElement>('searchBtn').addEventListener('click', startSearch);
 el<HTMLButtonElement>('deepBtn').addEventListener('click', runDeepSearch);
 
 (['minPrice', 'maxPrice', 'keywords', 'excludeKeywords'] as const).forEach(id => {
