@@ -10,11 +10,13 @@ export interface Listing {
 }
 
 export interface ListingDetail {
+  details: Array<{ key: string; value: string }>;
   description: string;
   buyNowPrice: number | null;
   reserveStatus: string;
   pickupOnly: boolean;
   pickupLocation: string;
+  questionsAndAnswers: string;
 }
 
 export interface FilterCriteria {
@@ -120,12 +122,47 @@ function extractFromGraphQL(json: any): Partial<ListingDetail> {
   return { buyNowPrice, reserveStatus, pickupOnly: !hasShipping, pickupLocation };
 }
 
+export function extractQuestionsAndAnswers(bodyText: string): string {
+  const marker = 'Questions & answers\n';
+  const start = bodyText.indexOf(marker);
+  if (start === -1) return '';
+  let after = bodyText.slice(start + marker.length).trimStart();
+  if (after.startsWith('Ask a question\n')) after = after.slice('Ask a question\n'.length).trimStart();
+  const ends = ["Seller's other listings", 'Similar listings', 'You might also like', 'Back to top'];
+  let end = after.length;
+  for (const e of ends) {
+    const idx = after.indexOf(e);
+    if (idx !== -1 && idx < end) end = idx;
+  }
+  return after.slice(0, end).trim();
+}
+
+export function extractDetails(bodyText: string): Array<{ key: string; value: string }> {
+  const descStart = bodyText.indexOf('Description\n');
+  if (descStart === -1) return [];
+  const detailsStart = bodyText.indexOf('Details\n', descStart + 'Description\n'.length);
+  if (detailsStart === -1) return [];
+  const after = bodyText.slice(detailsStart + 'Details\n'.length);
+  const ends = ['Shipping & pick-up options', 'Questions & answers', "Seller's other listings", 'Similar listings', 'You might also like'];
+  let end = after.length;
+  for (const e of ends) {
+    const idx = after.indexOf(e);
+    if (idx !== -1 && idx < end) end = idx;
+  }
+  const lines = after.slice(0, end).split('\n').map(l => l.trim()).filter(Boolean);
+  const pairs: Array<{ key: string; value: string }> = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    pairs.push({ key: lines[i], value: lines[i + 1] });
+  }
+  return pairs;
+}
+
 export function extractDescriptionFromText(bodyText: string): string {
   const marker = 'Description\n';
   const start = bodyText.indexOf(marker);
   if (start === -1) return '';
   const after = bodyText.slice(start + marker.length).trimStart();
-  const ends = ['Shipping & pick-up options', 'Questions & answers', "Seller's other listings", 'Similar listings', 'You might also like'];
+  const ends = ['Details\n', 'Shipping & pick-up options', 'Questions & answers', "Seller's other listings", 'Similar listings', 'You might also like'];
   let end = after.length;
   for (const e of ends) {
     const idx = after.indexOf(e);
@@ -176,10 +213,13 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
   page.off('response', handler);
 
   const bodyText: string = await page.evaluate(() => document.body.innerText);
+  const details = extractDetails(bodyText);
   const description = extractDescriptionFromText(bodyText);
   const dom = extractStructuredFromText(bodyText);
+  const questionsAndAnswers = extractQuestionsAndAnswers(bodyText);
 
   return {
+    details,
     description,
     buyNowPrice: graphqlResult.buyNowPrice ?? dom.buyNowPrice ?? null,
     reserveStatus:
@@ -188,6 +228,7 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
         : (dom.reserveStatus ?? 'UNKNOWN'),
     pickupOnly: graphqlResult.pickupOnly ?? dom.pickupOnly ?? false,
     pickupLocation: graphqlResult.pickupLocation || dom.pickupLocation || '',
+    questionsAndAnswers,
   };
 }
 

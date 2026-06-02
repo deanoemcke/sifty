@@ -201,12 +201,20 @@ function shippingBadge(allowsPickups: number | undefined): string {
   return '';
 }
 
-function reserveBadge(status: string): string {
-  if (!status || status === 'UNKNOWN') return '<span class="badge badge-unknown">No auction</span>';
-  if (status === 'NONE')    return '<span class="badge badge-none">No reserve</span>';
-  if (status === 'MET')     return '<span class="badge badge-met">Reserve met</span>';
-  if (status === 'NOT_MET') return '<span class="badge badge-notmet">Reserve not met</span>';
+function reserveText(status: string): string {
+  if (status === 'NONE') return 'No reserve';
+  if (status === 'MET') return 'Reserve met';
+  if (status === 'NOT_MET') return 'Reserve not met';
   return '';
+}
+
+function tidyDescription(text: string): string {
+  return text
+    .split('\n')
+    .map(line => line.trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function renderCard(listing: Listing): void {
@@ -256,28 +264,46 @@ function enrichCard(url: string, detail: ListingDetail): void {
   const metaEl = card.querySelector('.listing-meta')!;
   let metaHtml = `<span class="meta-text">📍 ${metaEl.querySelector('.meta-text')!.textContent!.slice(2)}</span>`;
   metaEl.querySelectorAll('.badge').forEach(b => { metaHtml += b.outerHTML; });
-  metaHtml += reserveBadge(detail.reserveStatus);
-  if (detail.pickupOnly) metaHtml += '<span class="badge badge-pickup">Pickup only</span>';
+  const reserve = reserveText(detail.reserveStatus);
+  if (reserve) metaHtml += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
+  if (detail.pickupOnly) metaHtml += '<span class="badge badge-pickuponly">Pickup only</span>';
   metaEl.innerHTML = metaHtml;
 
   const extras = card.querySelector('.listing-extras')!;
-  let extrasHtml = '';
-  if (detail.pickupLocation) {
-    extrasHtml += `<div class="meta-text mt-sm">🚗 ${esc(detail.pickupLocation)}</div>`;
-  }
-  if (detail.description) {
-    const LIMIT = 320;
-    const isLong = detail.description.length > LIMIT;
-    const shortText = isLong ? detail.description.slice(0, LIMIT) + '…' : detail.description;
-    extrasHtml += `<div class="listing-description">
-      <span class="desc-short">${esc(shortText)}</span>
-      ${isLong ? `<span class="desc-full">${esc(detail.description)}</span>` : ''}
-      ${isLong ? `<br><button class="desc-toggle">Show more</button>` : ''}
+  let html = '';
+
+  // ── Details ───────────────────────────────────────────────────────────────
+  if (detail.details.length > 0) {
+    html += `<div class="deep-section">
+      <div class="deep-section-label">Details</div>
+      <div class="details-table">${detail.details.map(({ key, value }) =>
+        `<div class="details-row"><span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span></div>`
+      ).join('')}</div>
     </div>`;
-  } else {
-    extrasHtml += `<div class="listing-description" style="color:var(--text-muted);font-style:italic">No description provided.</div>`;
   }
-  extras.innerHTML = extrasHtml;
+
+  // ── Description ───────────────────────────────────────────────────────────
+  html += `<div class="deep-section"><div class="deep-section-label">Description</div>`;
+  if (detail.description) {
+    const text = tidyDescription(detail.description);
+    const LIMIT = 320;
+    const isLong = text.length > LIMIT;
+    html += `<div class="listing-description"><span class="desc-short">${esc(isLong ? text.slice(0, LIMIT) + '…' : text)}</span>${isLong ? `<span class="desc-full">${esc(text)}</span><br><button class="desc-toggle">Show more</button>` : ''}</div>`;
+  } else {
+    html += `<p class="deep-empty">No description provided.</p>`;
+  }
+  html += `</div>`;
+
+  // ── Questions & Answers ───────────────────────────────────────────────────
+  html += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
+  if (detail.questionsAndAnswers) {
+    html += `<div class="qa-content">${esc(detail.questionsAndAnswers)}</div>`;
+  } else {
+    html += `<p class="deep-empty">No questions yet.</p>`;
+  }
+  html += `</div>`;
+
+  extras.innerHTML = html;
 }
 
 function toggleDesc(btn: HTMLButtonElement): void {
