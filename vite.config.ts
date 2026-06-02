@@ -2,7 +2,8 @@ import { defineConfig } from 'vite';
 import fs from 'fs';
 import path from 'path';
 import type { IncomingMessage, ServerResponse } from 'http';
-import { quickSearch, deepSearch, type Listing, type ListingDetail } from './src/lib/scraper';
+import { getRecipeForUrl } from './src/lib/recipes/server';
+import type { Listing, ListingDetail } from './src/lib/recipes/base';
 
 // ── Cache ─────────────────────────────────────────────────────────────────────
 
@@ -97,13 +98,17 @@ export default defineConfig({
           const url = (body as { url?: string })?.url;
           if (!url) { sendJSON(res, 400, { error: 'url is required' }); return; }
 
+          const recipe = getRecipeForUrl(url);
+          if (!recipe) { sendJSON(res, 400, { error: 'No recipe found for this URL' }); return; }
+
           const cached = searchCache.get(url);
           if (cached && isFresh(cached)) {
             console.log(`[cache:memory] search hit (${cacheAge(cached)})`);
             startSSE(res);
+            sse(res, { type: 'criteria', filters: recipe.extractImplicitFilters(url) });
             sse(res, { type: 'progress', message: `Loaded from cache (${cacheAge(cached)})` });
             for (const listing of cached.data) sse(res, { type: 'listing', data: listing });
-            sse(res, { type: 'complete', found: cached.data.length, filtered: cached.data.length });
+            sse(res, { type: 'complete' });
             res.end(); return;
           }
 
@@ -113,7 +118,7 @@ export default defineConfig({
           startSSE(res);
           const listings: Listing[] = [];
           try {
-            await quickSearch(url, {}, (event) => {
+            await recipe.quickSearch(url, (event) => {
               if (event.type === 'listing') listings.push(event.data);
               sse(res, event);
             });
@@ -138,6 +143,9 @@ export default defineConfig({
           if (!Array.isArray(listings) || listings.length === 0) {
             sendJSON(res, 400, { error: 'listings array is required' }); return;
           }
+
+          const recipe = listings[0]?.url ? getRecipeForUrl(listings[0].url) : null;
+          if (!recipe) { sendJSON(res, 400, { error: 'No recipe found for these listings' }); return; }
 
           const fromCache: { url: string; detail: ListingDetail }[] = [];
           const toScrape: Listing[] = [];
@@ -164,7 +172,7 @@ export default defineConfig({
           for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
 
           try {
-            await deepSearch(toScrape, (event) => {
+            await recipe.deepSearch(toScrape, (event) => {
               if (event.type === 'detail') {
                 detailCache.set(event.url, { data: event.detail, cachedAt: Date.now() });
                 saveToDisk();

@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  applyFilters,
   parseSearchApiResponse,
   extractDescriptionFromText,
   extractDetails,
   extractQuestionsAndAnswers,
   extractStructuredFromText,
-  type Listing,
-} from './scraper';
+  extractImplicitFilters,
+} from './trademe';
+import type { Listing } from './base';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -21,76 +21,8 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
   };
 }
 
-// ── applyFilters ──────────────────────────────────────────────────────────────
-
-describe('applyFilters', () => {
-  it('passes everything when filters are empty', () => {
-    expect(applyFilters(makeListing(), {})).toBe(true);
-  });
-
-  describe('minPrice', () => {
-    it('passes when price is above minimum', () => {
-      expect(applyFilters(makeListing({ price: '$1,500' }), { minPrice: 1000 })).toBe(true);
-    });
-    it('passes when price equals minimum', () => {
-      expect(applyFilters(makeListing({ price: '$1,000' }), { minPrice: 1000 })).toBe(true);
-    });
-    it('blocks when price is below minimum', () => {
-      expect(applyFilters(makeListing({ price: '$999' }), { minPrice: 1000 })).toBe(false);
-    });
-  });
-
-  describe('maxPrice', () => {
-    it('passes when price is below maximum', () => {
-      expect(applyFilters(makeListing({ price: '$1,500' }), { maxPrice: 2000 })).toBe(true);
-    });
-    it('passes when price equals maximum', () => {
-      expect(applyFilters(makeListing({ price: '$2,000' }), { maxPrice: 2000 })).toBe(true);
-    });
-    it('blocks when price is above maximum', () => {
-      expect(applyFilters(makeListing({ price: '$2,001' }), { maxPrice: 2000 })).toBe(false);
-    });
-  });
-
-  describe('keywords', () => {
-    it('passes when all keywords are present (case-insensitive)', () => {
-      expect(applyFilters(makeListing({ title: 'MacBook Pro M1 14 inch' }), { keywords: ['m1', '14'] })).toBe(true);
-    });
-    it('blocks when any keyword is missing', () => {
-      expect(applyFilters(makeListing({ title: 'MacBook Pro M1 14 inch' }), { keywords: ['m1', 'm2'] })).toBe(false);
-    });
-    it('passes with empty keywords array', () => {
-      expect(applyFilters(makeListing(), { keywords: [] })).toBe(true);
-    });
-  });
-
-  describe('excludeKeywords', () => {
-    it('passes when no excluded keyword is present', () => {
-      expect(applyFilters(makeListing({ title: 'MacBook Pro M1' }), { excludeKeywords: ['faulty', 'parts'] })).toBe(true);
-    });
-    it('blocks when any excluded keyword is present (case-insensitive)', () => {
-      expect(applyFilters(makeListing({ title: 'MacBook Pro - FAULTY screen' }), { excludeKeywords: ['faulty'] })).toBe(false);
-    });
-    it('passes with empty excludeKeywords array', () => {
-      expect(applyFilters(makeListing(), { excludeKeywords: [] })).toBe(true);
-    });
-  });
-
-  describe('combined filters', () => {
-    it('passes when all filters are satisfied', () => {
-      expect(applyFilters(
-        makeListing({ title: 'MacBook Pro M1 2021', price: '$1,500' }),
-        { minPrice: 1000, maxPrice: 2000, keywords: ['M1'], excludeKeywords: ['faulty'] }
-      )).toBe(true);
-    });
-    it('blocks when one filter fails', () => {
-      expect(applyFilters(
-        makeListing({ title: 'MacBook Pro M1 2021 faulty', price: '$1,500' }),
-        { minPrice: 1000, maxPrice: 2000, keywords: ['M1'], excludeKeywords: ['faulty'] }
-      )).toBe(false);
-    });
-  });
-});
+// Keep the listing helper available for future use
+makeListing;
 
 // ── parseSearchApiResponse ────────────────────────────────────────────────────
 
@@ -309,7 +241,7 @@ describe('extractDetails', () => {
   });
 });
 
-// ── extractDescriptionFromText (extra cases) ──────────────────────────────────
+// ── extractDescriptionFromText (real-page patterns) ──────────────────────────
 
 describe('extractDescriptionFromText (real-page patterns)', () => {
   it('strips trailing "Show more" UI text injected by TradeMe', () => {
@@ -336,5 +268,25 @@ describe('extractDescriptionFromText (real-page patterns)', () => {
     expect(qa.length).toBe(5);
     expect(qa[0].question).toBe('Hey, is the iCloud locked on this device');
     expect(qa[0].answer).toContain('iCloud is available');
+  });
+});
+
+// ── extractImplicitFilters ────────────────────────────────────────────────────
+
+describe('extractImplicitFilters', () => {
+  it('extracts category from path', () => {
+    const url = 'https://www.trademe.co.nz/a/marketplace/computers/laptops/search';
+    const filters = extractImplicitFilters(url);
+    expect(filters).toContainEqual(['Category', 'Marketplace › Computers › Laptops']);
+  });
+
+  it('extracts search string', () => {
+    const url = 'https://www.trademe.co.nz/a/marketplace/computers/laptops/search?search_string=macbook';
+    const filters = extractImplicitFilters(url);
+    expect(filters).toContainEqual(['Search', '"macbook"']);
+  });
+
+  it('returns empty array for invalid URL', () => {
+    expect(extractImplicitFilters('not a url')).toEqual([]);
   });
 });

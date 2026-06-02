@@ -1,5 +1,6 @@
 import { matchesFilters, type FrontendFilters } from '../lib/filters';
-import type { Listing, ListingDetail } from '../lib/scraper';
+import { canHandleUrl } from '../lib/recipes/matcher';
+import type { Listing, ListingDetail } from '../lib/recipes/base';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -22,81 +23,6 @@ let allListings: ListingItem[] = [];
 let isRunning = false;
 const seenUrls = new Set<string>();
 const urlCardStates: UrlCardState[] = [];
-
-// ── Known query parameter labels ──────────────────────────────────────────────
-
-const KNOWN_PARAMS: Record<string, string> = {
-  search_string: 'Search',
-  condition: 'Condition',
-  sort_order: 'Sort',
-};
-
-const PANEL_LABELS: Record<string, string> = {
-  '5c34c1efa0ac468f91e15161d549c479': 'RAM',
-  '7a2bb94c0cb44806ac995a4fc854bcbc': 'Screen Size',
-};
-
-const IGNORED_PARAMS = new Set([
-  'rows', 'page', 'return_canonical', 'return_metadata', 'return_ads',
-  'return_empty_categories', 'return_super_features', 'return_did_you_mean',
-  'return_variants', 'snap_parameters', 'preferred_shipping_location',
-  'return_parameter_counts',
-]);
-
-// ── URL parsing ───────────────────────────────────────────────────────────────
-
-function parseUrl(urlStr: string): [string, string][] | null {
-  try {
-    const url = new URL(urlStr);
-    if (!url.hostname.includes('trademe')) return null;
-    const rows: [string, string][] = [];
-
-    const pathMatch = url.pathname.match(/\/a\/(.+?)\/search/);
-    if (pathMatch) {
-      const cat = pathMatch[1]
-        .split('/')
-        .map(s => s.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' '))
-        .join(' › ');
-      rows.push(['Category', cat]);
-    }
-
-    const grouped: Record<string, string[]> = {};
-    for (const [k, v] of url.searchParams.entries()) {
-      (grouped[k] = grouped[k] ?? []).push(v);
-    }
-
-    for (const [key, vals] of Object.entries(grouped)) {
-      if (IGNORED_PARAMS.has(key)) continue;
-
-      if (key in KNOWN_PARAMS) {
-        let val = vals.join(', ');
-        if (key === 'condition') val = val[0].toUpperCase() + val.slice(1);
-        if (key === 'search_string') val = `"${val}"`;
-        rows.push([KNOWN_PARAMS[key], val]);
-        continue;
-      }
-
-      if (key.startsWith('RefinePanel')) {
-        const hash = key.replace('RefinePanel', '');
-        let label = PANEL_LABELS[hash];
-        if (!label) {
-          if (vals.some(v => v.toLowerCase().includes('gb'))) label = 'RAM';
-          else if (vals.some(v => v.includes('"'))) label = 'Screen Size';
-          else label = 'Filter';
-        }
-        rows.push([label, vals.join(', ')]);
-        continue;
-      }
-
-      const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      rows.push([label, vals.join(', ')]);
-    }
-
-    return rows.length ? rows : null;
-  } catch {
-    return null;
-  }
-}
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -143,7 +69,7 @@ function setBusy(busy: boolean): void {
   for (const state of urlCardStates) {
     const current = state.input.value.trim();
     const alreadySearched = state.searched && current === state.searchedUrl;
-    state.searchBtn.disabled = busy || !parseUrl(current) || alreadySearched;
+    state.searchBtn.disabled = busy || !canHandleUrl(current) || alreadySearched;
   }
   updateDeepBtn();
 }
@@ -174,7 +100,7 @@ function createUrlCard(): UrlCardState {
 
   input.addEventListener('input', () => {
     const current = input.value.trim();
-    searchBtn.disabled = isRunning || !parseUrl(current) || (state.searched && current === state.searchedUrl);
+    searchBtn.disabled = isRunning || !canHandleUrl(current) || (state.searched && current === state.searchedUrl);
   });
   input.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !searchBtn.disabled) searchUrlCard(state);
@@ -198,30 +124,30 @@ function resetAllResults(): void {
     s.criteriaEl.querySelector('.criteria-grid')!.innerHTML = '';
     s.criteriaEl.classList.add('hidden');
     s.input.readOnly = false;
-    s.searchBtn.disabled = !parseUrl(s.input.value.trim());
+    s.searchBtn.disabled = !canHandleUrl(s.input.value.trim());
   }
 }
 
 async function searchUrlCard(state: UrlCardState): Promise<void> {
   const url = state.input.value.trim();
-  const criteria = parseUrl(url);
-  if (!criteria) return;
+  if (!canHandleUrl(url)) return;
 
   if (state.searched) resetAllResults();
 
-  state.criteriaEl.querySelector('.criteria-grid')!.innerHTML = criteria
-    .map(([k, v]) => `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`)
-    .join('');
-  state.criteriaEl.classList.remove('hidden');
   el('resultsSection').classList.remove('hidden');
-
   setBusy(true);
   setStatus('Fetching listings…');
 
   const countBefore = allListings.length;
   try {
-    await streamPost('/api/quick-search', { url, filters: {} }, (ev) => {
-      if (ev.type === 'progress') {
+    await streamPost('/api/quick-search', { url }, (ev) => {
+      if (ev.type === 'criteria') {
+        const filters = ev.filters as Array<[string, string]>;
+        state.criteriaEl.querySelector('.criteria-grid')!.innerHTML = filters
+          .map(([k, v]) => `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`)
+          .join('');
+        state.criteriaEl.classList.remove('hidden');
+      } else if (ev.type === 'progress') {
         setStatus(ev.message as string);
       } else if (ev.type === 'listing') {
         const listing = ev.data as Listing;
