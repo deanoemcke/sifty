@@ -115,17 +115,6 @@ function getFilters(): FrontendFilters {
   };
 }
 
-function showToast(message: string): void {
-  const container = el('toastContainer');
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.textContent = message;
-  container.appendChild(toast);
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
-  }, 6000);
-}
 
 function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
   const bar = el('statusBar');
@@ -390,6 +379,7 @@ async function runDeepSearch(): Promise<void> {
   if (toScrape.length === 0) return;
 
   setBusy(true);
+  let hiddenByDescription = 0;
 
   for (const listing of toScrape) {
     const card = document.getElementById(cardId(listing.url));
@@ -422,15 +412,17 @@ async function runDeepSearch(): Promise<void> {
             card!.style.display = 'none';
             const current = parseInt(el('resultCount').textContent ?? '0', 10);
             el('resultCount').textContent = String(Math.max(0, current - 1));
-            const title = item.data.title.length > 55 ? item.data.title.slice(0, 55) + '…' : item.data.title;
-            showToast(`Hidden: "${title}" — exclude keyword matched in description`);
+            hiddenByDescription++;
           }
         }
 
         updateDeepBtn();
       } else if (ev.type === 'complete') {
-        setStatus('Deep search complete', 'success');
-        setTimeout(() => setStatus(null), 3000);
+        const msg = hiddenByDescription > 0
+          ? `Deep search complete — ${hiddenByDescription} listing${hiddenByDescription !== 1 ? 's' : ''} hidden by description filter`
+          : 'Deep search complete';
+        setStatus(msg, hiddenByDescription > 0 ? 'info' : 'success');
+        setTimeout(() => setStatus(null), 4000);
       } else if (ev.type === 'error') {
         setStatus(ev.message as string, 'error');
       }
