@@ -235,6 +235,24 @@
     }
     @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
+    /* ── Toast ── */
+    .toast-container {
+      position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 100;
+      display: flex; flex-direction: column; gap: 0.5rem; pointer-events: none;
+    }
+    .toast {
+      background: #1e293b; color: #f8fafc;
+      padding: 0.6rem 1rem; border-radius: var(--radius);
+      font-size: 0.8rem; line-height: 1.4; max-width: 340px;
+      box-shadow: var(--shadow-md); pointer-events: auto;
+      animation: toast-in 0.18s ease;
+      transition: opacity 0.3s;
+    }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
     /* ── Misc ── */
     .hidden { display: none !important; }
     .mt-sm { margin-top: 0.5rem; }
@@ -319,6 +337,7 @@
   </div>
 </div>
 
+<div id="toastContainer" class="toast-container"></div>
 <script type="module" src="/src/frontend/app.ts"></script>
 </body>
 </html>

@@ -115,6 +115,18 @@ function getFilters(): FrontendFilters {
   };
 }
 
+function showToast(message: string): void {
+  const container = el('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 6000);
+}
+
 function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
   const bar = el('statusBar');
   if (!msg) { bar.classList.add('hidden'); return; }
@@ -397,8 +409,24 @@ async function runDeepSearch(): Promise<void> {
         setStatus(`Fetching details ${ev.index}/${ev.total} — ${String(ev.title).slice(0, 55)}…`);
       } else if (ev.type === 'detail') {
         const item = allListings.find(i => i.data.url === ev.url);
-        if (item) item.deepSearched = true;
+        if (item) {
+          item.deepSearched = true;
+          item.data.description = (ev.detail as ListingDetail).description;
+        }
         enrichCard(ev.url as string, ev.detail as ListingDetail);
+
+        if (item) {
+          const card = document.getElementById(cardId(item.data.url));
+          const wasVisible = card !== null && card.style.display !== 'none';
+          if (wasVisible && !matchesFilters(item.data, getFilters())) {
+            card!.style.display = 'none';
+            const current = parseInt(el('resultCount').textContent ?? '0', 10);
+            el('resultCount').textContent = String(Math.max(0, current - 1));
+            const title = item.data.title.length > 55 ? item.data.title.slice(0, 55) + '…' : item.data.title;
+            showToast(`Hidden: "${title}" — exclude keyword matched in description`);
+          }
+        }
+
         updateDeepBtn();
       } else if (ev.type === 'complete') {
         setStatus('Deep search complete', 'success');

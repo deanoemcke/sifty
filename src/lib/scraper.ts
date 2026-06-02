@@ -7,6 +7,7 @@ export interface Listing {
   url: string;
   thumbnailUrl?: string;
   allowsPickups?: number; // 1 = shipping only, 2 = pickup only, 3 = both
+  description?: string;  // populated after deep search
 }
 
 export interface ListingDetail {

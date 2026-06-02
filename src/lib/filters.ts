@@ -21,7 +21,8 @@ export function matchesFilters(listing: Listing, filters: FrontendFilters): bool
     if (!filters.keywords.every(kw => t.includes(kw.toLowerCase()))) return false;
   }
   if (filters.excludeKeywords?.length) {
-    if (filters.excludeKeywords.some(kw => t.includes(kw.toLowerCase()))) return false;
+    const d = listing.description?.toLowerCase() ?? '';
+    if (filters.excludeKeywords.some(kw => t.includes(kw.toLowerCase()) || d.includes(kw.toLowerCase()))) return false;
   }
 
   const price = priceToNumber(listing.price);
