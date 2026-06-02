@@ -76,74 +76,43 @@ async function maskHeadless(page: Page): Promise<void> {
   });
 }
 
-// ── Listing card extraction ───────────────────────────────────────────────────
+// ── Listing extraction via MutationObserver ───────────────────────────────────
 
-interface RawListing {
-  id: string;
-  url: string;
-  thumbnailUrl?: string;
-  title: string;
-  price: string;
-  location: string;
-}
+// Called from browser-side MutationObserver via page.exposeFunction.
+// Runs in Node.js; returns void (browser side fire-and-forgets).
+type RawListingMsg = { id: string; url: string; ariaLabel: string; innerText: string; thumbnailUrl: string };
 
-async function extractListingsFromPage(page: Page, seen: Set<string>): Promise<RawListing[]> {
-  const newListings = await page.evaluate((base) => {
-    // Matches NZ$800, $800, US$800, A$800, Free — any currency prefix
-    const priceRe = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
+function processRawListing(
+  raw: RawListingMsg,
+  seen: Set<string>,
+  onEvent: (event: QuickSearchEvent) => void,
+  counter: { total: number },
+): void {
+  if (seen.has(raw.id)) return;
+  seen.add(raw.id);
 
-    const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/marketplace/item/"]'));
-    const results: Array<{
-      id: string; url: string; thumbnailUrl?: string;
-      title: string; price: string; location: string;
-    }> = [];
+  const priceRe = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
+  const innerLines = raw.innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const priceLines = innerLines.filter(l => priceRe.test(l));
+  const price = priceLines.length === 0 ? 'Price on request'
+              : priceLines.length >= 2  ? `${priceLines[0]} <s>${priceLines[1]}</s>`
+              : priceLines[0];
 
-    for (const link of links) {
-      const href = link.getAttribute('href') ?? '';
-      const match = href.match(/\/marketplace\/item\/(\d+)\//);
-      if (!match) continue;
+  let title = '', location = 'Unknown';
+  const ariaLabel = raw.ariaLabel.replace(/,\s*listing\s+\d+\s*$/i, '').trim();
+  const labelMatch = ariaLabel.match(/^(.+?),\s*(?:[A-Z]{0,3}\$[\d,]+(?:\.\d{2})?|Free),\s*(.+)$/);
+  if (labelMatch) {
+    title    = labelMatch[1].trim();
+    location = labelMatch[2].trim();
+  }
+  if (!title) {
+    location = innerLines[innerLines.length - 1] ?? 'Unknown';
+    title    = innerLines.find(l => !priceRe.test(l) && l !== location) ?? '';
+  }
+  if (!title) return;
 
-      const img = link.querySelector('img');
-      const thumbnailUrl = img?.src || undefined;
-
-      // Price from innerText: handles NZ$ prefix and the strikethrough original price.
-      // innerText order is always [currentPrice, originalPrice?, title, location].
-      const innerLines = (link.innerText ?? '')
-        .split('\n')
-        .map((l: string) => l.trim())
-        .filter((l: string) => l.length > 0);
-      const priceLines = innerLines.filter((l: string) => priceRe.test(l));
-      const price = priceLines.length === 0 ? 'Price on request'
-                  : priceLines.length >= 2  ? `${priceLines[0]} <s>${priceLines[1]}</s>`
-                  : priceLines[0];
-
-      let title = '', location = 'Unknown';
-
-      // Primary: aria-label → "{title}, {currentPrice}, {location}, listing {id}"
-      // Always contains only the current price, so use innerText prices above instead.
-      const ariaLabel = (link.getAttribute('aria-label') ?? '')
-        .replace(/,\s*listing\s+\d+\s*$/i, '').trim();
-      const labelMatch = ariaLabel.match(/^(.+?),\s*(?:[A-Z]{0,3}\$[\d,]+(?:\.\d{2})?|Free),\s*(.+)$/);
-      if (labelMatch) {
-        title    = labelMatch[1].trim();
-        location = labelMatch[2].trim();
-      }
-
-      // Fallback: innerText for title and location
-      if (!title) {
-        location = innerLines[innerLines.length - 1] ?? 'Unknown';
-        title    = innerLines.find((l: string) => !priceRe.test(l) && l !== location) ?? '';
-      }
-
-      if (!title) continue;
-
-      results.push({ id: match[1], url: `${base}/marketplace/item/${match[1]}/`, thumbnailUrl, title, price, location, isAuction: false });
-    }
-
-    return results;
-  }, FACEBOOK_BASE);
-
-  return newListings.filter(l => !seen.has(l.id));
+  counter.total++;
+  onEvent({ type: 'listing', data: { title, price, location, url: raw.url, thumbnailUrl: raw.thumbnailUrl || undefined, isAuction: false } });
 }
 
 // ── Quick search ──────────────────────────────────────────────────────────────
@@ -157,6 +126,14 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
     browser = ctx.browser;
     const page = await ctx.context.newPage();
     await maskHeadless(page);
+
+    const seen = new Set<string>();
+    const counter = { total: 0 };
+
+    // Bridge: browser → Node.js. Called by the MutationObserver for every new listing link.
+    await page.exposeFunction('fbListingFound', (raw: RawListingMsg) => {
+      processRawListing(raw, seen, onEvent, counter);
+    });
 
     onEvent({ type: 'progress', message: 'Loading Facebook Marketplace…' });
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -176,67 +153,73 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
     console.log(`[facebook] listingsAppeared: ${listingsAppeared} — url: ${page.url()}`);
 
     if (!listingsAppeared) {
-      const bodySnippet = await page.evaluate(() => document.body.innerText).catch(() => '(evaluate failed)');
-      const snippet = bodySnippet.slice(0, 300);
+      const snippet = await page.evaluate(() => document.body.innerText).catch(() => '').then(t => t.slice(0, 300));
       console.log(`[facebook] page text snippet:\n${snippet}`);
       const isLoginWall = page.url().includes('/login')
         || snippet.toLowerCase().includes('log in') || snippet.toLowerCase().includes('sign up');
       onEvent({
         type: 'error',
         message: isLoginWall
-          ? 'Facebook requires login. Set FB_EMAIL and FB_PASSWORD environment variables.'
+          ? 'Facebook requires login. Set FB_COOKIES environment variable.'
           : 'No listings found. Facebook may be blocking access or the search returned no results.',
       });
       return;
     }
 
-    const seen = new Set<string>();
-    let totalEmitted = 0;
-
-    const emit = (listings: RawListing[]) => {
-      for (const l of listings) {
-        seen.add(l.id);
-        totalEmitted++;
-        onEvent({ type: 'listing', data: { title: l.title, price: l.price, location: l.location, url: l.url, thumbnailUrl: l.thumbnailUrl } });
+    // Inject MutationObserver — captures every listing link the moment it enters the DOM,
+    // before virtualisation can remove it. Also processes all already-rendered links.
+    await page.evaluate((base: string) => {
+      function processLink(link: Element) {
+        const href = link.getAttribute('href') ?? '';
+        const match = href.match(/\/marketplace\/item\/(\d+)\//);
+        if (!match) return;
+        const img = link.querySelector('img');
+        (window as any).fbListingFound({
+          id: match[1],
+          url: `${base}/marketplace/item/${match[1]}/`,
+          ariaLabel: link.getAttribute('aria-label') ?? '',
+          innerText: (link as HTMLElement).innerText ?? '',
+          thumbnailUrl: img ? (img as HTMLImageElement).src : '',
+        });
       }
-    };
 
-    // Emit first batch immediately
-    const first = await extractListingsFromPage(page, seen);
-    console.log(`[facebook] first batch: ${first.length} listings`);
-    if (first.length === 0) {
-      const linkCount = await page.$$eval('a[href*="/marketplace/item/"]', ls => ls.length).catch(() => 0);
-      const sample = await page.$eval('a[href*="/marketplace/item/"]', (a: Element) => ({
-        href: a.getAttribute('href'),
-        ariaLabel: a.getAttribute('aria-label'),
-        text: (a as HTMLElement).innerText?.slice(0, 200),
-      })).catch(() => null);
-      console.log(`[facebook] ${linkCount} item links but 0 extracted. Sample:`, sample);
-    }
-    emit(first);
-    if (first.length > 0) onEvent({ type: 'progress', message: `Found ${totalEmitted} listings…` });
+      document.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
 
-    // Scroll to load more
+      new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType !== 1) continue;
+            const el = node as Element;
+            if (el.matches('a[href*="/marketplace/item/"]')) processLink(el);
+            el.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+    }, FACEBOOK_BASE);
+
+    console.log(`[facebook] observer injected — initial: ${counter.total} listings`);
+    if (counter.total > 0) onEvent({ type: 'progress', message: `Found ${counter.total} listings…` });
+
+    // Scroll loop — just drives scrolling; extraction is handled by the observer above
     let noNewCount = 0;
+    let lastTotal = 0;
     for (;;) {
       const bodyText: string = await page.evaluate(() => document.body.innerText);
       if (bodyText.includes('Results from outside your search')) break;
 
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(2000);
 
-      const batch = await extractListingsFromPage(page, seen);
-      emit(batch);
-
-      if (batch.length === 0) {
-        if (++noNewCount >= 2) break;
-      } else {
+      if (counter.total > lastTotal) {
+        onEvent({ type: 'progress', message: `Found ${counter.total} listings, loading more…` });
         noNewCount = 0;
-        onEvent({ type: 'progress', message: `Found ${totalEmitted} listings, loading more…` });
+        lastTotal = counter.total;
+      } else {
+        if (++noNewCount >= 3) break;
       }
     }
 
-    console.log(`[facebook] complete — ${totalEmitted} listings emitted`);
+    console.log(`[facebook] complete — ${counter.total} listings emitted`);
     onEvent({ type: 'complete' });
   } catch (err) {
     console.log(`[facebook] error:`, err);
