@@ -110,7 +110,7 @@ describe('parseSearchApiResponse', () => {
     expect(listings[0].price).toBe('$1,500');
     expect(listings[0].location).toBe('Auckland City, Auckland');
     expect(listings[0].url).toBe('https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999');
-    expect(listings[0].thumbnailUrl).toBe('https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg');
+    expect(listings[0].thumbnailUrl).toBe('https://trademe.tmcdn.co.nz/photoserver/full/123.jpg');
     expect(listings[0].allowsPickups).toBe(3);
   });
 

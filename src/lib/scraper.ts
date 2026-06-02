@@ -77,7 +77,8 @@ export function parseSearchApiResponse(data: Record<string, unknown>): { listing
       price: (item.PriceDisplay as string) ?? 'Price on request',
       location: [(item.Suburb as string), (item.Region as string)].filter(Boolean).join(', ') || 'Unknown',
       url: (item.CanonicalPath as string) ? `${TRADEME_BASE}${item.CanonicalPath}` : '',
-      thumbnailUrl: (item.PictureHref as string) || undefined,
+      thumbnailUrl: ((item.PictureHref as string) || undefined)
+        ?.replace('/photoserver/thumb/', '/photoserver/full/'),
       allowsPickups: (item.AllowsPickups as number) || undefined,
     }))
     .filter((l) => l.title && l.url);
