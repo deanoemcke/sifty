@@ -211,8 +211,11 @@ export async function quickSearch(
 
     let found = 0;
     let filtered = 0;
+    const seenUrls = new Set<string>();
     const emit = (listings: Listing[]) => {
       for (const l of listings) {
+        if (seenUrls.has(l.url)) continue;
+        seenUrls.add(l.url);
         found++;
         if (applyFilters(l, filters)) { filtered++; onEvent({ type: 'listing', data: l }); }
       }
