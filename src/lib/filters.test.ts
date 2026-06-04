@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { matchesFilters, applyFiltersToDOM, type FrontendFilters } from './filters';
-import type { Listing } from './scraper';
+import type { Listing } from './recipes/base';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import type { Listing } from './scraper';
+import type { Listing } from './recipes/base';
 
 export interface FrontendFilters {
   minPrice?: number;
