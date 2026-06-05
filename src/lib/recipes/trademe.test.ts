@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { vi, describe, it, expect } from 'vitest';
 import {
   parseSearchApiResponse,
   extractDescriptionFromText,
@@ -6,8 +6,50 @@ import {
   extractQuestionsAndAnswers,
   extractStructuredFromText,
   extractImplicitFilters,
+  trademeRecipe,
 } from './trademe';
 import type { Listing } from './base';
+
+// ── Playwright mock for quickSearch integration tests ─────────────────────────
+
+const { getNextPage, resetPageQueue } = vi.hoisted(() => {
+  const queue: unknown[] = [];
+
+  function makePage(data: unknown) {
+    const handlers: Array<(r: unknown) => void> = [];
+    return {
+      on: (_: string, h: (r: unknown) => void) => { handlers.push(h); },
+      off: () => {},
+      goto: async () => {
+        const response = {
+          url: () => 'https://api.trademe.co.nz/v1/search/general.json',
+          status: () => 200,
+          json: async () => data,
+        };
+        for (const h of [...handlers]) h(response);
+      },
+      close: async () => {},
+    };
+  }
+
+  return {
+    getNextPage: () => makePage(queue.shift() ?? {}),
+    resetPageQueue: (...items: unknown[]) => { queue.splice(0, queue.length, ...items); },
+  };
+});
+
+vi.mock('playwright', () => ({
+  chromium: {
+    launch: async () => ({
+      newContext: async () => ({ newPage: async () => getNextPage() }),
+      close: async () => {},
+    }),
+  },
+}));
+
+vi.mock('../queue', () => ({
+  enqueue: (_: string, fn: () => Promise<unknown>) => fn(),
+}));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -298,5 +340,31 @@ describe('extractImplicitFilters', () => {
 
   it('returns empty array for invalid URL', () => {
     expect(extractImplicitFilters('not a url')).toEqual([]);
+  });
+});
+
+// ── quickSearch multi-page accumulation ───────────────────────────────────────
+
+describe('quickSearch', () => {
+  it('emits listings from all pages when results span multiple pages', async () => {
+    const makeItem = (i: number) => ({
+      Title: `Item ${i}`,
+      PriceDisplay: '$1',
+      Region: 'Auckland',
+      CanonicalPath: `/listing/${i}`,
+    });
+
+    resetPageQueue(
+      { List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)), TotalCount: 27, PageSize: 22 },
+      { List: Array.from({ length: 5 },  (_, i) => makeItem(i + 23)), TotalCount: 27, PageSize: 22 },
+    );
+
+    const collected: unknown[] = [];
+    await trademeRecipe.quickSearch(
+      'https://www.trademe.co.nz/a/marketplace/computers/search',
+      (ev) => { if (ev.type === 'listing') collected.push(ev.data); },
+    );
+
+    expect(collected).toHaveLength(27);
   });
 });

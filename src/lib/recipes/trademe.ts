@@ -82,6 +82,30 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
 // ── API response parsing ──────────────────────────────────────────────────────
 
+export function parseFrendState(state: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } | null {
+  for (const value of Object.values(state)) {
+    const b = (value as Record<string, unknown>)?.b as Record<string, unknown> | undefined;
+    if (!b || !Array.isArray(b.list)) continue;
+    const items = b.list as ApiItem[];
+    const totalCount = (b.totalCount as number) ?? 0;
+    const pageSize = (b.pageSize as number) || (items.length || 1);
+    const listings = items
+      .map((item) => ({
+        title: (item.title as string) ?? '',
+        price: (item.priceDisplay as string) ?? 'Price on request',
+        location: [(item.suburb as string), (item.region as string)].filter(Boolean).join(', ') || 'Unknown',
+        url: (item.canonicalPath as string) ? `${TRADEME_BASE}${item.canonicalPath}` : '',
+        thumbnailUrl: ((item.pictureHref as string) || undefined)
+          ?.replace('/photoserver/thumb/', '/photoserver/full/'),
+        allowsPickups: (item.allowsPickups as number) || undefined,
+        isAuction: true,
+      }))
+      .filter((l) => l.title && l.url);
+    if (listings.length > 0) return { listings, totalCount, pageSize };
+  }
+  return null;
+}
+
 export function parseSearchApiResponse(data: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } {
   const items = (data?.List ?? []) as ApiItem[];
   const totalCount = (data?.TotalCount as number) ?? 0;
@@ -233,18 +257,24 @@ function extractFromGraphQL(json: any): Partial<ListingDetail> {
 
 function waitForSearchApiResponse(page: Page): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
   return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout>;
     const handler = async (response: Response) => {
       if (response.url().includes('api.trademe.co.nz/v1/search') && response.status() === 200) {
         page.off('response', handler);
+        clearTimeout(timer);
         try {
-          resolve(parseSearchApiResponse(await response.json() as Record<string, unknown>));
+          const data = await response.json() as Record<string, unknown>;
+          resolve(parseSearchApiResponse(data));
         } catch {
           resolve({ listings: [], totalCount: 0, pageSize: 1 });
         }
       }
     };
     page.on('response', handler);
-    setTimeout(() => { page.off('response', handler); resolve({ listings: [], totalCount: 0, pageSize: 1 }); }, 12000);
+    timer = setTimeout(() => {
+      page.off('response', handler);
+      resolve({ listings: [], totalCount: 0, pageSize: 1 });
+    }, 12000);
   });
 }
 
@@ -264,7 +294,6 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
   };
   page.on('response', handler);
 
-  console.log(`[trademe] fetching: ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(5000);
   page.off('response', handler);
@@ -305,20 +334,36 @@ async function quickSearch(
   try {
     onEvent({ type: 'progress', message: 'Fetching page 1…' });
     const p1Promise = waitForSearchApiResponse(page);
-    console.log(`[trademe] fetching: ${searchUrl}`);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
+
+    let p1Listings: Listing[] = [];
+    let totalCount = 0;
+    let pageSize = 1;
+
+    const p1FrendState = await page.evaluate(() => document.getElementById('frend-state')?.textContent ?? null);
+    if (p1FrendState) {
+      try {
+        const parsed = parseFrendState(JSON.parse(p1FrendState));
+        if (parsed && parsed.listings.length > 0) {
+          p1Listings = parsed.listings;
+          totalCount = parsed.totalCount;
+          pageSize = parsed.pageSize;
+        }
+      } catch { /* ignore */ }
+    }
+    if (p1Listings.length === 0) {
+      ({ listings: p1Listings, totalCount, pageSize } = await p1Promise);
+    }
+
     const totalPages = Math.ceil(totalCount / pageSize);
 
     onEvent({ type: 'progress', message: `${totalCount} results across ${totalPages} page${totalPages !== 1 ? 's' : ''}` });
 
-    let found = 0;
     const seenUrls = new Set<string>();
     const emit = (listings: Listing[]) => {
       for (const l of listings) {
         if (seenUrls.has(l.url)) continue;
         seenUrls.add(l.url);
-        found++;
         onEvent({ type: 'listing', data: l });
       }
     };
@@ -338,9 +383,19 @@ async function quickSearch(
           try {
             onEvent({ type: 'progress', message: `Fetching page ${p}/${totalPages}…` });
             const promise = waitForSearchApiResponse(pg);
-            console.log(`[trademe] fetching: ${pageUrl}`);
             await pg.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            const { listings } = await promise;
+
+            let listings: Listing[] = [];
+            const frendStateText = await pg.evaluate(() => document.getElementById('frend-state')?.textContent ?? null);
+            if (frendStateText) {
+              try {
+                const parsed = parseFrendState(JSON.parse(frendStateText));
+                if (parsed && parsed.listings.length > 0) listings = parsed.listings;
+              } catch { /* ignore */ }
+            }
+            if (listings.length === 0) {
+              ({ listings } = await promise);
+            }
             emit(listings);
           } finally {
             await pg.close();
