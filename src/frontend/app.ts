@@ -37,6 +37,8 @@ interface UrlCardState {
 
 let allListings: ListingItem[] = [];
 let isDeepSearchRunning = false;
+let deepSearchId: string | null = null;
+let deepSearchCancellationRequested = false;
 const listingsByUrl = new Map<string, ListingItem>();
 const urlCardStates: UrlCardState[] = [];
 
@@ -103,6 +105,32 @@ function cancelSearch(state: UrlCardState): void {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ searchId: state.searchId }),
+  }).catch(() => null);
+}
+
+function setDeepSearchingStatus(msg: string): void {
+  const bar = el('statusBar');
+  bar.className = 'status-bar info';
+  bar.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`;
+  if (!deepSearchCancellationRequested) {
+    const btn = document.createElement('button');
+    btn.className = 'cache-clear-btn';
+    btn.style.marginLeft = '0.5rem';
+    btn.textContent = 'cancel';
+    btn.addEventListener('click', cancelDeepSearch);
+    bar.appendChild(btn);
+  }
+  bar.classList.remove('hidden');
+}
+
+function cancelDeepSearch(): void {
+  if (!isDeepSearchRunning || deepSearchCancellationRequested) return;
+  deepSearchCancellationRequested = true;
+  setDeepSearchingStatus('Cancelling…');
+  fetch('/api/cancel-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ searchId: deepSearchId }),
   }).catch(() => null);
 }
 
@@ -635,8 +663,11 @@ async function runDeepSearch(): Promise<void> {
 
   if (toScrape.length === 0) return;
 
+  deepSearchId = crypto.randomUUID();
+  deepSearchCancellationRequested = false;
   setDeepSearchBusy(true);
   let hiddenByDescription = 0;
+  let detailsReceived = 0;
 
   for (const listing of toScrape) {
     const card = document.getElementById(cardId(listing.url));
@@ -648,13 +679,14 @@ async function runDeepSearch(): Promise<void> {
     }
   }
 
-  setStatus(`Fetching details for ${toScrape.length} listing${toScrape.length !== 1 ? 's' : ''}…`);
+  setDeepSearchingStatus(`Fetching details for ${toScrape.length} listing${toScrape.length !== 1 ? 's' : ''}…`);
 
   try {
-    await streamPost('/api/deep-search', { listings: toScrape }, (ev) => {
+    await streamPost('/api/deep-search', { listings: toScrape, deepSearchId }, (ev) => {
       if (ev.type === 'progress') {
-        setStatus(`Fetching details ${ev.index}/${ev.total} — ${String(ev.title).slice(0, 55)}…`);
+        if (!deepSearchCancellationRequested) setDeepSearchingStatus(`Fetching details ${ev.index}/${ev.total} — ${String(ev.title).slice(0, 55)}…`);
       } else if (ev.type === 'detail') {
+        detailsReceived++;
         const detail = ev.detail as ListingDetail;
         const item = allListings.find(i => i.data.url === ev.url);
         if (item) {
@@ -691,6 +723,21 @@ async function runDeepSearch(): Promise<void> {
     setStatus((err as Error).message, 'error');
   }
 
+  // Clear skeleton loaders from listings that never received details
+  for (const listing of toScrape) {
+    const item = allListings.find(i => i.data.url === listing.url);
+    if (item && !item.deepSearched) {
+      const card = document.getElementById(cardId(listing.url));
+      if (card) card.querySelector('.listing-extras')!.innerHTML = '';
+    }
+  }
+
+  if (deepSearchCancellationRequested) {
+    setStatus(`Cancelled — ${detailsReceived}/${toScrape.length} detail${toScrape.length !== 1 ? 's' : ''} loaded`, 'error');
+  }
+
+  deepSearchId = null;
+  deepSearchCancellationRequested = false;
   setDeepSearchBusy(false);
   updateAiFilterBtn();
 }

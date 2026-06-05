@@ -132,7 +132,6 @@ export default defineConfig({
           const listings: Listing[] = [];
           try {
             await recipe.quickSearch(url, (event) => {
-              if (isCancelled()) return;
               if (event.type === 'listing') listings.push(event.data);
               try { sse(res, event); } catch { /* client disconnected */ }
             }, isCancelled);
@@ -152,7 +151,7 @@ export default defineConfig({
         // ── Deep search ───────────────────────────────────────────────────────
         if (req.url === '/api/deep-search') {
           const body = await readBody(req).catch(() => null);
-          const listings = (body as { listings?: Listing[] })?.listings;
+          const { listings, deepSearchId } = (body ?? {}) as { listings?: Listing[]; deepSearchId?: string };
           if (!Array.isArray(listings) || listings.length === 0) {
             sendJSON(res, 400, { error: 'listings array is required' }); return;
           }
@@ -179,20 +178,24 @@ export default defineConfig({
           if (fromCache.length > 0) console.log(`[cache] detail hit for ${fromCache.length}/${listings.length} listings`);
 
           startSSE(res);
+          if (deepSearchId) req.on('close', () => cancelledSearches.add(deepSearchId));
+          const isDeepCancelled = () => deepSearchId ? cancelledSearches.has(deepSearchId) : false;
           for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
 
           try {
             await recipe.deepSearch(toScrape, (event) => {
+              if (event.type === 'complete' && isDeepCancelled()) return;
               if (event.type === 'detail') {
                 stmts.setDetail.run(event.url, JSON.stringify(event.detail), Date.now());
                 console.log(`[cache] stored detail for ${event.url}`);
               }
-              sse(res, event);
-            });
+              try { sse(res, event); } catch { /* client disconnected */ }
+            }, isDeepCancelled);
           } catch (err) {
-            sse(res, { type: 'error', message: (err as Error).message });
+            if (!isDeepCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
-            res.end();
+            if (deepSearchId) cancelledSearches.delete(deepSearchId);
+            try { res.end(); } catch { /* client already disconnected */ }
           }
           return;
         }

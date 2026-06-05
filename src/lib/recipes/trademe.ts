@@ -416,7 +416,8 @@ async function quickSearch(
 
 async function deepSearch(
   listings: Listing[],
-  onEvent: (event: DeepSearchEvent) => void
+  onEvent: (event: DeepSearchEvent) => void,
+  isCancelled?: () => boolean
 ): Promise<void> {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
@@ -426,6 +427,7 @@ async function deepSearch(
       listings.map((listing, i) =>
         enqueue(listing.url, async () => {
           const pg = await context.newPage();
+          if (isCancelled?.()) { await pg.close(); return; }
           try {
             onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
             const detail = await fetchSingleListingDetail(pg, listing.url);
