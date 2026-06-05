@@ -312,11 +312,9 @@ function applyClientFilters(): void {
 
 function updateDeepBtn(): void {
   const btn = el<HTMLButtonElement>('deepBtn');
-  const hasUnscraped = allListings.some(item => !item.deepSearched && item.filterReason === null);
+  const hasUnscraped = allListings.some(item => !item.deepSearched && item.filterReason === null && item.aiFilterReason === null);
   btn.disabled = isDeepSearchRunning || urlCardStates.some(s => s.searching) || !hasUnscraped;
 
-  const hasDeepSearched = allListings.some(item => item.deepSearched);
-  el('clearDeepCacheBtn').classList.toggle('hidden', !hasDeepSearched);
 }
 
 function updateAiFilterBtn(): void {
@@ -384,16 +382,6 @@ async function clearQuickSearchCache(): Promise<void> {
     body: JSON.stringify({ type: 'quick-search' }),
   }).catch(() => null);
   resetAllResults();
-}
-
-async function clearDeepSearchCache(): Promise<void> {
-  await fetch('/api/cache/clear', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'deep-search' }),
-  }).catch(() => null);
-  for (const item of allListings) item.deepSearched = false;
-  updateDeepBtn();
 }
 
 // ── SSE streaming ─────────────────────────────────────────────────────────────
@@ -598,7 +586,7 @@ function toggleDesc(btn: HTMLButtonElement): void {
 
 async function runDeepSearch(): Promise<void> {
   const toScrape = allListings
-    .filter(item => !item.deepSearched && item.filterReason === null)
+    .filter(item => !item.deepSearched && item.filterReason === null && item.aiFilterReason === null)
     .map(item => item.data);
 
   if (toScrape.length === 0) return;
@@ -677,7 +665,6 @@ el('addUrlBtn').addEventListener('click', () => {
 
 el<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearch());
 
-el<HTMLButtonElement>('clearDeepCacheBtn').addEventListener('click', clearDeepSearchCache);
 
 el<HTMLTextAreaElement>('aiFilter').addEventListener('input', updateAiFilterBtn);
 el<HTMLButtonElement>('applyAiFilterBtn').addEventListener('click', () => runAiFilter());
