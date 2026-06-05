@@ -1,4 +1,4 @@
-import { matchesFilters, type FrontendFilters } from '../lib/filters';
+import { matchesFilters, computeFilterReason, type FrontendFilters, type FilterReason } from '../lib/filters';
 import { canHandleUrl } from '../lib/recipes/matcher';
 import type { Listing, ListingDetail } from '../lib/recipes/base';
 
@@ -7,6 +7,7 @@ import type { Listing, ListingDetail } from '../lib/recipes/base';
 interface ListingItem {
   data: Listing;
   deepSearched: boolean;
+  filterReason: FilterReason | null;
 }
 
 interface UrlCardState {
@@ -243,7 +244,7 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
         totalFound++;
         state.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
-          const item: ListingItem = { data: listing, deepSearched: false };
+          const item: ListingItem = { data: listing, deepSearched: false, filterReason: null };
           listingsByUrl.set(listing.url, item);
           allListings.push(item);
           renderCard(listing);
@@ -289,7 +290,8 @@ function applyClientFilters(): void {
   const filters = getFilters();
   let visible = 0;
   for (const item of allListings) {
-    const show = matchesFilters(item.data, filters);
+    item.filterReason = computeFilterReason(item.data, filters);
+    const show = item.filterReason === null;
     const card = document.getElementById(cardId(item.data.url));
     if (card) card.style.display = show ? '' : 'none';
     if (show) visible++;
@@ -300,10 +302,7 @@ function applyClientFilters(): void {
 
 function updateDeepBtn(): void {
   const btn = el<HTMLButtonElement>('deepBtn');
-  const filters = getFilters();
-  const hasUnscraped = allListings.some(
-    item => !item.deepSearched && matchesFilters(item.data, filters)
-  );
+  const hasUnscraped = allListings.some(item => !item.deepSearched && item.filterReason === null);
   btn.disabled = isDeepSearchRunning || urlCardStates.some(s => s.searching) || !hasUnscraped;
 
   const hasDeepSearched = allListings.some(item => item.deepSearched);
@@ -530,9 +529,8 @@ function toggleDesc(btn: HTMLButtonElement): void {
 // ── Deep Search ───────────────────────────────────────────────────────────────
 
 async function runDeepSearch(): Promise<void> {
-  const filters = getFilters();
   const toScrape = allListings
-    .filter(item => !item.deepSearched && matchesFilters(item.data, filters))
+    .filter(item => !item.deepSearched && item.filterReason === null)
     .map(item => item.data);
 
   if (toScrape.length === 0) return;
@@ -568,7 +566,8 @@ async function runDeepSearch(): Promise<void> {
         if (item) {
           const card = document.getElementById(cardId(item.data.url));
           const wasVisible = card !== null && card.style.display !== 'none';
-          if (wasVisible && !matchesFilters(item.data, getFilters())) {
+          item.filterReason = computeFilterReason(item.data, getFilters());
+          if (wasVisible && item.filterReason !== null) {
             card!.style.display = 'none';
             const current = parseInt(el('resultCount').textContent ?? '0', 10);
             el('resultCount').textContent = String(Math.max(0, current - 1));

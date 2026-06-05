@@ -9,26 +9,28 @@ export interface FrontendFilters {
   pickupAvailable: boolean;
 }
 
+export type FilterReason = 'keyword' | 'price' | 'shipping';
+
 export function priceToNumber(raw: string): number | null {
   const match = String(raw).replace(/,/g, '').match(/[\d.]+/);
   return match ? parseFloat(match[0]) : null;
 }
 
-export function matchesFilters(listing: Listing, filters: FrontendFilters): boolean {
+export function computeFilterReason(listing: Listing, filters: FrontendFilters): FilterReason | null {
   const t = listing.title.toLowerCase();
 
   if (filters.keywords?.length) {
-    if (!filters.keywords.every(kw => t.includes(kw.toLowerCase()))) return false;
+    if (!filters.keywords.every(kw => t.includes(kw.toLowerCase()))) return 'keyword';
   }
   if (filters.excludeKeywords?.length) {
     const d = listing.description?.toLowerCase() ?? '';
-    if (filters.excludeKeywords.some(kw => t.includes(kw.toLowerCase()) || d.includes(kw.toLowerCase()))) return false;
+    if (filters.excludeKeywords.some(kw => t.includes(kw.toLowerCase()) || d.includes(kw.toLowerCase()))) return 'keyword';
   }
 
   const price = priceToNumber(listing.price);
   if (price !== null) {
-    if (filters.minPrice !== undefined && price < filters.minPrice) return false;
-    if (filters.maxPrice !== undefined && price > filters.maxPrice) return false;
+    if (filters.minPrice !== undefined && price < filters.minPrice) return 'price';
+    if (filters.maxPrice !== undefined && price > filters.maxPrice) return 'price';
   }
 
   if (listing.allowsPickups !== undefined) {
@@ -36,10 +38,14 @@ export function matchesFilters(listing: Listing, filters: FrontendFilters): bool
     const hasPickup   = listing.allowsPickups === 2 || listing.allowsPickups === 3;
     const matches = (filters.shippingAvailable && hasShipping) ||
                     (filters.pickupAvailable   && hasPickup);
-    if (!matches) return false;
+    if (!matches) return 'shipping';
   }
 
-  return true;
+  return null;
+}
+
+export function matchesFilters(listing: Listing, filters: FrontendFilters): boolean {
+  return computeFilterReason(listing, filters) === null;
 }
 
 // Applies filters to a set of rendered listing cards in the DOM.
