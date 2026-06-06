@@ -408,7 +408,7 @@ export default defineConfig({
                 const specificList = candidates.map(c => `${c.display} (slug: ${c.slug})`).join('\n');
                 return aiJSON(
                   aiCfg, `step2:${t2}`,
-                  'You are a TradeMe NZ shopping assistant. From the categories below pick all subcategories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { "categories": [{ "slug": string, "searchString": string | null }] }. Each slug must be a value shown in parentheses. For searchString: if the category name specifically names the item type, use null. Otherwise include the core item type keyword(s) needed to identify it — omit specs, model numbers, and constraints. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString=\'bookshelf\'; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb\' → searchString=\'macbook pro\'.',
+                  'You are a TradeMe NZ shopping assistant. From the categories below pick all subcategories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { "categories": [{ "slug": string, "searchString": string | null }] }. Each slug must be a value shown in parentheses. For searchString: rule: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString=\'bookshelf\'; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchString=\'macbook pro\'.',
                   `I'm looking for: ${discPrompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
                   4096
                 ).then(result => ({ t2, candidates, result }));
@@ -425,13 +425,36 @@ export default defineConfig({
                 allEntries.push({ slug: c.slug, searchString: c.searchString ?? null });
               }
             }
+            // Dedup 1: if a parent slug is already in the set, drop its children (parent is a superset).
+            // Dedup 2: if 2+ siblings share the same parent (not in set) and the same searchString,
+            // collapse them into the parent — avoids redundant era/subcategory splits like
+            // furniture/pre-1900 + furniture/19001949 + furniture/1950today all becoming furniture.
+            // If siblings have different searchStrings they're genuinely distinct; leave them alone.
             const allSlugs = new Set(allEntries.map(e => e.slug));
-            const urls = allEntries
-              .filter(e => !allSlugs.has(e.slug.split('/').slice(0, -1).join('/')))
-              .map(e => {
-                const base = `https://www.trademe.co.nz/a/${e.slug}/search`;
-                return e.searchString ? `${base}?search_string=${encodeURIComponent(e.searchString)}` : base;
-              });
+            const collapsed: typeof allEntries = [];
+            const consumed = new Set<string>();
+            for (const entry of allEntries) {
+              if (consumed.has(entry.slug)) continue;
+              const parentSlug = entry.slug.split('/').slice(0, -1).join('/');
+              if (allSlugs.has(parentSlug)) continue; // parent present — drop this child (Dedup 1)
+              const siblings = allEntries.filter(e =>
+                e !== entry &&
+                e.slug.split('/').slice(0, -1).join('/') === parentSlug &&
+                e.searchString === entry.searchString
+              );
+              if (siblings.length >= 1 && parentSlug) {
+                // 2+ siblings with same searchString — collapse to parent
+                for (const s of siblings) consumed.add(s.slug);
+                consumed.add(entry.slug);
+                collapsed.push({ slug: parentSlug, searchString: entry.searchString });
+              } else {
+                collapsed.push(entry);
+              }
+            }
+            const urls = collapsed.map(e => {
+              const base = `https://www.trademe.co.nz/a/${e.slug}/search`;
+              return e.searchString ? `${base}?search_string=${encodeURIComponent(e.searchString)}` : base;
+            });
             if (urls.length === 0) { sendJSON(res, 500, { error: 'AI returned no valid specific categories' }); return; }
 
             const filters = {
