@@ -1,12 +1,10 @@
 /**
- * Imports TradeMe categories from the CSV into the SQLite cache DB.
+ * Imports TradeMe categories from the JSON into the SQLite cache DB.
  * Run with: npx ts-node scripts/import-categories.ts
  *
- * Clears the trademe_categories table first, then inserts:
- *   - every row from the CSV (leaf and terminal nodes)
- *   - synthesised intermediate rows for every prefix depth >= 2
- *     (e.g. "Computers > Laptops > Laptops > Apple" also produces
- *      "Computers > Laptops" and "Computers > Laptops > Laptops")
+ * Slugs are derived from the Name field (not Path) because the TradeMe API/JSON
+ * Path field has inconsistent slugification (e.g. "MercedesBenz" vs "mercedes-benz").
+ * Top-level "Trade Me X" categories strip the "Trade Me " prefix (e.g. → "motors").
  */
 
 import fs from 'fs';
@@ -14,10 +12,10 @@ import path from 'path';
 import Database from 'better-sqlite3';
 
 const DB_PATH   = path.resolve(__dirname, '../.cache/cache.db');
-const CSV_PATH  = path.resolve(__dirname, '../assets/trademe-categories - Tradevine Categories.csv');
+const JSON_PATH = path.resolve(__dirname, '../assets/trademe-categories.json');
 
-if (!fs.existsSync(CSV_PATH)) {
-  console.error(`CSV not found: ${CSV_PATH}`);
+if (!fs.existsSync(JSON_PATH)) {
+  console.error(`JSON not found: ${JSON_PATH}`);
   process.exit(1);
 }
 
@@ -37,34 +35,50 @@ db.exec(`
 db.prepare('DELETE FROM trademe_categories').run();
 console.log('Cleared trademe_categories.');
 
-const lines = fs.readFileSync(CSV_PATH, 'utf8').split('\n');
+interface Category {
+  Name: string;
+  Number: string;
+  Path: string;
+  Subcategories?: Category[];
+}
 
-// Build a deduplicated map of slug → row, including synthesised intermediates.
-const seen = new Map<string, [string, string, number, string | null, string]>();
-let csvRows = 0;
+function nameToSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
 
-for (const line of lines.slice(1)) {
-  const m = line.match(/^\d+,([^,]+),/);
-  if (!m) continue;
-  const parts = m[1].trim().split(' > ');
-  if (parts.length < 2) continue;
-  csvRows++;
+function topLevelSlug(name: string): string {
+  // "Trade Me Motors" → "motors", "Trade Me Property" → "property"
+  if (name.startsWith('Trade Me ')) return name.slice(9).toLowerCase();
+  return nameToSlug(name);
+}
 
-  const slugParts = parts.map(p => p.toLowerCase());
-  const top2 = slugParts.slice(0, 2).join('/');
+const rows: [string, string, number, string | null, string][] = [];
+const seen = new Set<string>();
 
-  for (let d = 2; d <= parts.length; d++) {
-    const slug = slugParts.slice(0, d).join('/');
-    if (!seen.has(slug)) {
-      const display     = parts.slice(0, d).join(' > ');
-      const parent_slug = slugParts.slice(0, d - 1).join('/') || null;
-      seen.set(slug, [slug, display, d, parent_slug, top2]);
-    }
+function walk(node: Category, parentSlugParts: string[], parentDisplayParts: string[], depth: number): void {
+  const slugPart = depth === 1 ? topLevelSlug(node.Name) : nameToSlug(node.Name);
+  const slugParts   = [...parentSlugParts, slugPart];
+  const displayParts = [...parentDisplayParts, node.Name];
+
+  const slug        = slugParts.join('/');
+  const display     = displayParts.join(' > ');
+  const parent_slug = parentSlugParts.length > 0 ? parentSlugParts.join('/') : null;
+  const top2        = slugParts.slice(0, 2).join('/');
+
+  if (depth >= 2 && !seen.has(slug)) {
+    seen.add(slug);
+    rows.push([slug, display, depth, parent_slug, top2]);
+  }
+
+  for (const sub of node.Subcategories ?? []) {
+    walk(sub, slugParts, displayParts, depth + 1);
   }
 }
 
-const rows = [...seen.values()];
-const synthesised = rows.length - csvRows;
+const data = JSON.parse(fs.readFileSync(JSON_PATH, 'utf8'));
+for (const top of data.Subcategories ?? []) {
+  walk(top, [], [], 1);
+}
 
 const insert = db.prepare(
   'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2) VALUES (?, ?, ?, ?, ?)'
@@ -75,5 +89,16 @@ const insertAll = db.transaction(() => {
 insertAll();
 
 const depth2Count = rows.filter(r => r[2] === 2).length;
-console.log(`Inserted ${rows.length} rows (${csvRows} from CSV, ${synthesised} synthesised intermediates)`);
+console.log(`Inserted ${rows.length} rows total`);
 console.log(`  depth=2 categories available for step-1 discovery: ${depth2Count}`);
+
+// Spot-check
+const check = db.prepare('SELECT slug, display FROM trademe_categories WHERE slug LIKE ?');
+console.log('\nSpot-check (mercedes):');
+for (const row of check.all('%mercedes%') as any[]) {
+  console.log(' ', row.slug, '|', row.display);
+}
+console.log('Spot-check (motors/cars):');
+for (const row of check.all('motors/cars%') as any[]) {
+  if ((row.slug as string).split('/').length <= 3) console.log(' ', row.slug, '|', row.display);
+}
