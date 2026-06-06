@@ -115,6 +115,56 @@ function sendJSON(res: ServerResponse, status: number, body: unknown): void {
 
 const cancelledSearches = new Set<string>();
 
+// ── AI provider ──────────────────────────────────────────────────────────────
+
+const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string }> = {
+  groq:       { url: 'https://api.groq.com/openai/v1/chat/completions',                          model: 'llama-3.3-70b-versatile',           keyVar: 'GROQ_API_KEY' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions',                            model: 'meta-llama/llama-3.3-70b-instruct', keyVar: 'OPENROUTER_API_KEY' },
+  gemini:     { url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-3.1-flash-lite',              keyVar: 'GEMINI_API_KEY' },
+};
+
+function getAIConfig(): { url: string; model: string; apiKey: string } | string {
+  const provider = (process.env.AI_PROVIDER ?? 'groq').toLowerCase();
+  const cfg = AI_PROVIDERS[provider];
+  if (!cfg) return `Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`;
+  const apiKey = process.env[cfg.keyVar];
+  if (!apiKey) return `${cfg.keyVar} is not set`;
+  return { url: cfg.url, model: cfg.model, apiKey };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function aiJSON(cfg: { url: string; model: string; apiKey: string }, label: string, systemMsg: string, userMsg: string, maxTokens: number): Promise<any> {
+  const r = await fetch(cfg.url, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: cfg.model,
+      max_tokens: maxTokens,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemMsg },
+        { role: 'user', content: userMsg },
+      ],
+    }),
+  });
+  if (!r.ok) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const e = await r.json().catch(() => ({})) as any;
+    const body = Array.isArray(e) ? e[0] : e;
+    const msg = body?.error?.message ?? body?.message ?? JSON.stringify(e);
+    throw new Error(`AI error (${label}) [${r.status}]: ${msg || r.statusText}`);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = await r.json() as any;
+  const raw: string = d.choices?.[0]?.message?.content ?? '{}';
+  const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    throw new Error(`AI parse error (${label}): ${stripped.slice(0, 200)}`);
+  }
+}
+
 // ── Vite config ───────────────────────────────────────────────────────────────
 
 export default defineConfig({
@@ -288,54 +338,24 @@ export default defineConfig({
             sendJSON(res, 400, { error: 'listings and prompt are required' }); return;
           }
 
-          const apiKey = process.env.GROQ_API_KEY;
-          if (!apiKey) {
-            sendJSON(res, 500, { error: 'GROQ_API_KEY is not set' }); return;
-          }
+          const aiCfg = getAIConfig();
+          if (typeof aiCfg === 'string') { sendJSON(res, 500, { error: aiCfg }); return; }
 
           const numberedListings = listings.map((l, i) =>
             `${i + 1}. Title: "${l.title}" | Price: ${l.price} | Location: ${l.location}${l.description ? ` | Description: ${l.description}` : ''}`
           ).join('\n');
 
-          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'llama-3.3-70b-versatile',
-              max_tokens: 2048,
-              response_format: { type: 'json_object' },
-              messages: [
-                {
-                  role: 'system',
-                  content: 'You are filtering marketplace listings. For each listing decide if it matches the user\'s criteria. Only reject a listing if it explicitly contradicts the criteria — do not reject because information is missing or unstated. If the listing doesn\'t mention something the criteria requires, pass it. Respond ONLY with a JSON object containing a single "results" array, one object per listing in order: {"results":[{"index":1,"pass":true,"reason":null},…]}. "reason" is a short phrase when pass is false, otherwise null.',
-                },
-                {
-                  role: 'user',
-                  content: `Criteria: ${prompt}\n\nListings:\n${numberedListings}`,
-                },
-              ],
-            }),
-          });
-
-          if (!groqRes.ok) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const errBody = await groqRes.json().catch(() => ({})) as any;
-            sendJSON(res, 500, { error: `Groq API error: ${errBody?.error?.message ?? groqRes.status}` }); return;
-          }
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const groqData = await groqRes.json() as any;
-          const text: string = groqData.choices?.[0]?.message?.content ?? '';
-
           let parsed: Array<{ index: number; pass: boolean; reason: string | null }>;
           try {
-            const wrapper = JSON.parse(text);
-            parsed = Array.isArray(wrapper) ? wrapper : (wrapper.results ?? []);
-          } catch {
-            sendJSON(res, 500, { error: 'Failed to parse AI response' }); return;
+            const result = await aiJSON(
+              aiCfg, 'ai-filter',
+              'You are filtering marketplace listings. For each listing decide if it matches the user\'s criteria. Only reject a listing if it explicitly contradicts the criteria — do not reject because information is missing or unstated. If the listing doesn\'t mention something the criteria requires, pass it. Respond ONLY with a JSON object containing a single "results" array, one object per listing in order: {"results":[{"index":1,"pass":true,"reason":null},…]}. "reason" is a short phrase when pass is false, otherwise null.',
+              `Criteria: ${prompt}\n\nListings:\n${numberedListings}`,
+              4096
+            );
+            parsed = Array.isArray(result) ? result : (result.results ?? []);
+          } catch (err) {
+            sendJSON(res, 500, { error: (err as Error).message }); return;
           }
 
           const results = parsed.map(r => ({
@@ -357,43 +377,19 @@ export default defineConfig({
           const discPrompt = (body as any)?.prompt as string | undefined;
           if (!discPrompt?.trim()) { sendJSON(res, 400, { error: 'prompt is required' }); return; }
 
-          const apiKey = process.env.GROQ_API_KEY;
-          if (!apiKey) { sendJSON(res, 500, { error: 'GROQ_API_KEY is not set' }); return; }
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          async function groqJSON(label: string, systemMsg: string, userMsg: string): Promise<any> {
-            const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${apiKey!}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
-                max_tokens: 512,
-                response_format: { type: 'json_object' },
-                messages: [
-                  { role: 'system', content: systemMsg },
-                  { role: 'user', content: userMsg },
-                ],
-              }),
-            });
-            if (!r.ok) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const e = await r.json().catch(() => ({})) as any;
-              throw new Error(`Groq error: ${e?.error?.message ?? r.status}`);
-            }
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const d = await r.json() as any;
-            return JSON.parse(d.choices?.[0]?.message?.content ?? '{}');
-          }
+          const aiCfg = getAIConfig();
+          if (typeof aiCfg === 'string') { sendJSON(res, 500, { error: aiCfg }); return; }
 
           try {
             // Step 1: pick broad 2-level categories + extract metadata.
             // Show only display names (not slugs) to avoid confusing the model, then map back.
             const broad = stmts.getCategoriesAtDepth2.all();
             const broadDisplayList = broad.map(c => c.display).join('\n');
-            const step1 = await groqJSON(
-              'step1',
+            const step1 = await aiJSON(
+              aiCfg, 'step1',
               'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also extract any price limits and suggest a short label for the search. Return JSON: { "categories": string[], "maxPrice": number | null, "minPrice": number | null, "name": string } using the exact category names from the list.',
-              `I'm looking for: ${discPrompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`
+              `I'm looking for: ${discPrompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
+              4096
             );
             const rawCategories = (step1.categories ?? []) as string[];
             const chosenTop2: string[] = rawCategories
@@ -410,10 +406,11 @@ export default defineConfig({
                 const broadEntry = broad.find(c => c.slug === t2)!;
                 const candidates = stmts.getCategoriesByTop2.all(t2);
                 const specificList = candidates.map(c => `${c.display} (slug: ${c.slug})`).join('\n');
-                return groqJSON(
-                  `step2:${t2}`,
+                return aiJSON(
+                  aiCfg, `step2:${t2}`,
                   'You are a TradeMe NZ shopping assistant. From the categories below pick all subcategories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { "categories": [{ "slug": string, "searchString": string | null }] }. Each slug must be a value shown in parentheses. For searchString: if the category name specifically names the item type, use null. Otherwise include the core item type keyword(s) needed to identify it — omit specs, model numbers, and constraints. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString=\'bookshelf\'; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb\' → searchString=\'macbook pro\'.',
-                  `I'm looking for: ${discPrompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`
+                  `I'm looking for: ${discPrompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
+                  4096
                 ).then(result => ({ t2, candidates, result }));
               })
             );
