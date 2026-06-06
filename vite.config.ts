@@ -34,7 +34,20 @@ db.exec(`
     ai_filter  TEXT,
     created_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS trademe_categories (
+    slug        TEXT PRIMARY KEY,
+    display     TEXT NOT NULL,
+    depth       INTEGER NOT NULL,
+    parent_slug TEXT,
+    top2        TEXT NOT NULL
+  );
 `);
+
+{
+  const catCount = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories').get()!).n;
+  if (catCount === 0) console.warn('[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts');
+  else console.log(`[categories] ${catCount} TradeMe categories loaded`);
+}
 
 const stmts = {
   getSearch:    db.prepare<[string], { data: string; cached_at: number }>('SELECT data, cached_at FROM quick_searches WHERE url = ?'),
@@ -49,6 +62,8 @@ const stmts = {
   getSavedSearch:     db.prepare<[string], { id: string; name: string; urls: string; filters: string; ai_filter: string | null; created_at: number }>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches WHERE id = ?'),
   insertSavedSearch:  db.prepare('INSERT INTO saved_searches (id, name, urls, filters, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
   deleteSavedSearch:  db.prepare('DELETE FROM saved_searches WHERE id = ?'),
+  getCategoriesAtDepth2: db.prepare<[], { slug: string; display: string }>('SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug'),
+  getCategoriesByTop2:   db.prepare<[string], { slug: string; display: string }>('SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug'),
 };
 
 {
@@ -331,6 +346,108 @@ export default defineConfig({
 
           console.log(`[ai-filter] checked ${listings.length} listings, ${results.filter(r => !r.pass).length} rejected`);
           sendJSON(res, 200, { results });
+          return;
+        }
+
+        // ── Discover ─────────────────────────────────────────────────────────
+        if (req.url === '/api/discover') {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const body = await readBody(req).catch(() => null);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const discPrompt = (body as any)?.prompt as string | undefined;
+          if (!discPrompt?.trim()) { sendJSON(res, 400, { error: 'prompt is required' }); return; }
+
+          const apiKey = process.env.GROQ_API_KEY;
+          if (!apiKey) { sendJSON(res, 500, { error: 'GROQ_API_KEY is not set' }); return; }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          async function groqJSON(label: string, systemMsg: string, userMsg: string): Promise<any> {
+            const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${apiKey!}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                max_tokens: 512,
+                response_format: { type: 'json_object' },
+                messages: [
+                  { role: 'system', content: systemMsg },
+                  { role: 'user', content: userMsg },
+                ],
+              }),
+            });
+            if (!r.ok) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const e = await r.json().catch(() => ({})) as any;
+              throw new Error(`Groq error: ${e?.error?.message ?? r.status}`);
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const d = await r.json() as any;
+            return JSON.parse(d.choices?.[0]?.message?.content ?? '{}');
+          }
+
+          try {
+            // Step 1: pick broad 2-level categories + extract metadata.
+            // Show only display names (not slugs) to avoid confusing the model, then map back.
+            const broad = stmts.getCategoriesAtDepth2.all();
+            const broadDisplayList = broad.map(c => c.display).join('\n');
+            const step1 = await groqJSON(
+              'step1',
+              'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also extract any price limits and suggest a short label for the search. Return JSON: { "categories": string[], "maxPrice": number | null, "minPrice": number | null, "name": string } using the exact category names from the list.',
+              `I'm looking for: ${discPrompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`
+            );
+            const rawCategories = (step1.categories ?? []) as string[];
+            const chosenTop2: string[] = rawCategories
+              .map((display: string) => broad.find(c => c.display === display)?.slug)
+              .filter((s): s is string => !!s);
+            console.log(`[discover] step1 raw=${JSON.stringify(rawCategories)} → mapped slugs: ${chosenTop2.join(', ')}`);
+            if (chosenTop2.length === 0) { sendJSON(res, 500, { error: 'AI returned no valid broad categories' }); return; }
+            if (chosenTop2.length < rawCategories.length) { sendJSON(res, 500, { error: 'AI hallucination detected — please try again' }); return; }
+
+            // Step 2: one parallel call per broad category — pick all plausible subcategories within it.
+            type Step2Category = { slug: string; searchString?: string | null };
+            const step2Results = await Promise.all(
+              chosenTop2.map(t2 => {
+                const broadEntry = broad.find(c => c.slug === t2)!;
+                const candidates = stmts.getCategoriesByTop2.all(t2);
+                const specificList = candidates.map(c => `${c.display} (slug: ${c.slug})`).join('\n');
+                return groqJSON(
+                  `step2:${t2}`,
+                  'You are a TradeMe NZ shopping assistant. From the categories below pick all subcategories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { "categories": [{ "slug": string, "searchString": string | null }] }. Each slug must be a value shown in parentheses. For searchString: if the category name specifically names the item type, use null. Otherwise include the core item type keyword(s) needed to identify it — omit specs, model numbers, and constraints. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString=\'bookshelf\'; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb\' → searchString=\'macbook pro\'.',
+                  `I'm looking for: ${discPrompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`
+                ).then(result => ({ t2, candidates, result }));
+              })
+            );
+
+            // Collect all valid entries across step2 results, then drop any slug whose parent is also
+            // present (parent is a superset — child would be redundant scraping)
+            const allEntries: { slug: string; searchString: string | null }[] = [];
+            for (const { t2, candidates, result } of step2Results) {
+              const validSlugs = new Set(candidates.map(c => c.slug));
+              console.log(`[discover] step2:${t2} raw=${JSON.stringify(result.categories)}`);
+              for (const c of ((result.categories ?? []) as Step2Category[]).filter(c => validSlugs.has(c.slug))) {
+                allEntries.push({ slug: c.slug, searchString: c.searchString ?? null });
+              }
+            }
+            const allSlugs = new Set(allEntries.map(e => e.slug));
+            const urls = allEntries
+              .filter(e => !allSlugs.has(e.slug.split('/').slice(0, -1).join('/')))
+              .map(e => {
+                const base = `https://www.trademe.co.nz/a/${e.slug}/search`;
+                return e.searchString ? `${base}?search_string=${encodeURIComponent(e.searchString)}` : base;
+              });
+            if (urls.length === 0) { sendJSON(res, 500, { error: 'AI returned no valid specific categories' }); return; }
+
+            const filters = {
+              maxPrice: step1.maxPrice ?? undefined,
+              minPrice: step1.minPrice ?? undefined,
+              shippingAvailable: true,
+              pickupAvailable: true,
+            };
+            console.log(`[discover] "${discPrompt}" → step1: ${chosenTop2.join(', ')} → ${urls.length} URL(s), name="${step1.name}"`);
+            sendJSON(res, 200, { urls, filters, name: step1.name ?? discPrompt.trim() });
+          } catch (err) {
+            sendJSON(res, 500, { error: (err as Error).message });
+          }
           return;
         }
 

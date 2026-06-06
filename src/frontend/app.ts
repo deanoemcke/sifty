@@ -862,6 +862,21 @@ async function deleteSavedSearch(id: string): Promise<void> {
   await fetchSavedSearches();
 }
 
+function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; name: string }): void {
+  resetAllResults();
+  while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
+  urlCardStates[0].input.value = data.urls[0];
+  updateCardSearchBtn(urlCardStates[0]);
+  for (let i = 1; i < data.urls.length; i++) {
+    const state = createUrlCard();
+    state.input.value = data.urls[i];
+    updateCardSearchBtn(state);
+  }
+  setFilters(data.filters);
+  setSearchName(data.name);
+  applyClientFilters();
+}
+
 async function loadSavedSearch(search: SavedSearch): Promise<void> {
   resetAllResults();
   while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
@@ -912,10 +927,26 @@ el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
   const prompt = el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
   if (!prompt) return;
   const btn = el<HTMLButtonElement>('discoveryBtn');
+  const errorEl = el<HTMLDivElement>('discoveryError');
+  errorEl.style.display = 'none';
   btn.disabled = true;
   btn.textContent = 'Working…';
   try {
-    // TODO: implement discovery action
+    const res = await fetch('/api/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+    const data = await res.json() as { urls?: string[]; filters?: FrontendFilters; name?: string; error?: string };
+    if (!res.ok || !data.urls?.length) {
+      errorEl.textContent = data.error ?? 'Discovery failed';
+      errorEl.style.display = 'block';
+      return;
+    }
+    loadDiscoveryResults(data as { urls: string[]; filters: FrontendFilters; name: string });
+  } catch {
+    errorEl.textContent = 'Discovery failed';
+    errorEl.style.display = 'block';
   } finally {
     btn.textContent = 'Give it to me!';
     updateDiscoveryBtn();
