@@ -344,7 +344,7 @@ async function fetchFBListingDetail(page: Page, url: string): Promise<ListingDet
 
 // ── Deep search ───────────────────────────────────────────────────────────────
 
-async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent) => void): Promise<void> {
+async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent) => void, isCancelled?: () => boolean): Promise<void> {
   let browser: Browser | undefined;
   try {
     const ctx = await createContext();
@@ -354,6 +354,7 @@ async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent)
       listings.map((listing, i) =>
         enqueue(listing.url, async () => {
           const pg = await ctx.context.newPage();
+          if (isCancelled?.()) { await pg.close(); return; }
           await maskHeadless(pg);
           try {
             onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
