@@ -898,9 +898,9 @@ async function loadSavedSearch(search: SavedSearch): Promise<void> {
 
 // ── Event listeners ───────────────────────────────────────────────────────────
 
-// Initialise with the first URL card and focus its input
+// Initialise with the first URL card; focus discovery prompt on load
 const firstCard = createUrlCard();
-firstCard.input.focus();
+el<HTMLTextAreaElement>('discoveryPrompt').focus();
 
 el('addUrlBtn').addEventListener('click', () => {
   const newCard = createUrlCard();
