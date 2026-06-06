@@ -36,6 +36,7 @@ interface UrlCardState {
 }
 
 let allListings: ListingItem[] = [];
+let showFilteredListings = false;
 let isDeepSearchRunning = false;
 let deepSearchId: string | null = null;
 let deepSearchCancellationRequested = false;
@@ -201,6 +202,9 @@ function resetAllResults(): void {
   listingsByUrl.clear();
   el('listingsContainer').innerHTML = '';
   el('resultCount').textContent = '0';
+  showFilteredListings = false;
+  el<HTMLButtonElement>('toggleFilteredBtn').textContent = 'show';
+  el('filteredCount').classList.add('hidden');
   el('resultsSection').classList.add('hidden');
   for (const s of urlCardStates) {
     s.listingUrls = [];
@@ -367,17 +371,47 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
 
 // ── Client-side filtering ─────────────────────────────────────────────────────
 
+function filterBannerText(item: ListingItem): string {
+  if (item.aiFilterReason) return `Filtered by AI: ${item.aiFilterReason}`;
+  if (item.filterReason === 'keyword') return 'Filtered: does not match keyword criteria';
+  if (item.filterReason === 'price') return 'Filtered: price out of range';
+  if (item.filterReason === 'shipping') return 'Filtered: does not match shipping/pickup criteria';
+  return 'Filtered';
+}
+
 function applyClientFilters(): void {
   const filters = getFilters();
   let visible = 0;
+  let filtered = 0;
   for (const item of allListings) {
     item.filterReason = computeFilterReason(item.data, filters);
-    const show = item.filterReason === null && item.aiFilterReason === null;
+    const passes = item.filterReason === null && item.aiFilterReason === null;
     const card = document.getElementById(cardId(item.data.url));
-    if (card) card.style.display = show ? '' : 'none';
-    if (show) visible++;
+    if (card) {
+      const banner = card.querySelector<HTMLElement>('.filter-banner')!;
+      if (passes) {
+        card.style.display = '';
+        card.classList.remove('filtered-out');
+        banner.textContent = '';
+        banner.classList.add('hidden');
+        visible++;
+      } else {
+        filtered++;
+        card.classList.add('filtered-out');
+        banner.textContent = filterBannerText(item);
+        banner.classList.remove('hidden');
+        card.style.display = showFilteredListings ? '' : 'none';
+      }
+    }
   }
   el('resultCount').textContent = String(visible);
+  const filteredCountEl = el('filteredCount');
+  if (filtered > 0) {
+    el('filteredCountNum').textContent = String(filtered);
+    filteredCountEl.classList.remove('hidden');
+  } else {
+    filteredCountEl.classList.add('hidden');
+  }
   updateDeepBtn();
   updateAiFilterBtn();
 }
@@ -534,19 +568,22 @@ function renderCard(listing: Listing): void {
        </div>`;
 
   card.innerHTML = `
-    ${thumb}
-    <div class="listing-body">
-      <div class="listing-title">
-        <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+    <div class="filter-banner hidden"></div>
+    <div class="listing-card-content">
+      ${thumb}
+      <div class="listing-body">
+        <div class="listing-title">
+          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+        </div>
+        <div class="listing-prices">
+          <span class="price">${listing.price}</span>
+        </div>
+        <div class="listing-meta">
+          <span class="meta-text">📍 ${esc(listing.location)}</span>
+          ${shippingBadge(listing.allowsPickups)}
+        </div>
+        <div class="listing-extras"></div>
       </div>
-      <div class="listing-prices">
-        <span class="price">${listing.price}</span>
-      </div>
-      <div class="listing-meta">
-        <span class="meta-text">📍 ${esc(listing.location)}</span>
-        ${shippingBadge(listing.allowsPickups)}
-      </div>
-      <div class="listing-extras"></div>
     </div>
   `;
   el('listingsContainer').appendChild(card);
@@ -701,7 +738,11 @@ async function runDeepSearch(): Promise<void> {
           const wasVisible = card !== null && card.style.display !== 'none';
           item.filterReason = computeFilterReason(item.data, getFilters());
           if (wasVisible && item.filterReason !== null) {
-            card!.style.display = 'none';
+            const banner = card!.querySelector<HTMLElement>('.filter-banner')!;
+            card!.classList.add('filtered-out');
+            banner.textContent = filterBannerText(item);
+            banner.classList.remove('hidden');
+            if (!showFilteredListings) card!.style.display = 'none';
             const current = parseInt(el('resultCount').textContent ?? '0', 10);
             el('resultCount').textContent = String(Math.max(0, current - 1));
             hiddenByDescription++;
@@ -739,7 +780,7 @@ async function runDeepSearch(): Promise<void> {
   deepSearchId = null;
   deepSearchCancellationRequested = false;
   setDeepSearchBusy(false);
-  updateAiFilterBtn();
+  applyClientFilters();
 }
 
 // ── Event listeners ───────────────────────────────────────────────────────────
@@ -755,6 +796,17 @@ el('addUrlBtn').addEventListener('click', () => {
 });
 
 el<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearch());
+
+el('toggleFilteredBtn').addEventListener('click', () => {
+  showFilteredListings = !showFilteredListings;
+  el<HTMLButtonElement>('toggleFilteredBtn').textContent = showFilteredListings ? 'hide' : 'show';
+  for (const item of allListings) {
+    if (item.filterReason !== null || item.aiFilterReason !== null) {
+      const card = document.getElementById(cardId(item.data.url));
+      if (card) card.style.display = showFilteredListings ? '' : 'none';
+    }
+  }
+});
 
 
 el<HTMLTextAreaElement>('aiFilter').addEventListener('input', updateAiFilterBtn);

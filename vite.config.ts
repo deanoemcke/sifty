@@ -247,13 +247,13 @@ export default defineConfig({
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'llama-3.1-8b-instant',
+              model: 'llama-3.3-70b-versatile',
               max_tokens: 2048,
               response_format: { type: 'json_object' },
               messages: [
                 {
                   role: 'system',
-                  content: 'You are filtering marketplace listings. For each listing decide if it matches the user\'s criteria. Respond ONLY with a JSON object containing a single "results" array, one object per listing in order: {"results":[{"index":1,"pass":true,"reason":null},…]}. "reason" is a short phrase when pass is false, otherwise null.',
+                  content: 'You are filtering marketplace listings. For each listing decide if it matches the user\'s criteria. Only reject a listing if it explicitly contradicts the criteria — do not reject because information is missing or unstated. If the listing doesn\'t mention something the criteria requires, pass it. Respond ONLY with a JSON object containing a single "results" array, one object per listing in order: {"results":[{"index":1,"pass":true,"reason":null},…]}. "reason" is a short phrase when pass is false, otherwise null.',
                 },
                 {
                   role: 'user',

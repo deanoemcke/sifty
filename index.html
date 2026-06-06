@@ -140,21 +140,34 @@
       padding: 0.1rem 0.55rem; border-radius: 999px;
       font-size: 0.72rem; font-weight: 700;
     }
+    .filtered-count { font-size: 0.78rem; color: var(--text-muted); }
 
     /* ── Listing cards ── */
     .listing-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 1.1rem 1.25rem;
+      padding: 0;
       margin-bottom: 0.625rem;
       box-shadow: var(--shadow);
       transition: border-color 0.15s, box-shadow 0.15s;
       display: flex;
-      gap: 1rem;
+      flex-direction: column;
+      overflow: hidden;
     }
     .listing-card:hover { border-color: #cbd5e1; box-shadow: var(--shadow-md); }
     .listing-card.enriched { border-left: 3px solid var(--primary); }
+    .listing-card-content { display: flex; gap: 1rem; padding: 1.1rem 1.25rem; }
+    .filter-banner {
+      padding: 0.45rem 1.25rem;
+      background: var(--yellow-bg);
+      color: var(--yellow);
+      border-bottom: 1px solid #fde68a;
+      font-size: 0.78rem;
+      font-weight: 500;
+    }
+    .filter-banner.hidden { display: none; }
+    .listing-card.filtered-out .listing-card-content { opacity: 0.6; }
 
     .listing-thumb {
       flex-shrink: 0;
@@ -363,6 +376,7 @@
     <div class="results-header">
       <h2>Results</h2>
       <span class="results-count" id="resultCount">0</span>
+      <span id="filteredCount" class="filtered-count hidden">Filtered <strong id="filteredCountNum">0</strong> <button id="toggleFilteredBtn" class="cache-clear-btn">show</button></span>
       <button class="btn btn-secondary" id="deepBtn" disabled>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         Deep Search
