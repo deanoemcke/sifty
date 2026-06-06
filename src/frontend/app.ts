@@ -879,6 +879,7 @@ function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; 
   }
   setFilters(data.filters);
   setSearchName(data.name);
+  markDirty();
   el<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
   updateAiFilterBtn();
   applyClientFilters();
@@ -1019,9 +1020,11 @@ el('savedSearchesToggle').addEventListener('click', () => {
 });
 
 function openSaveModal(): void {
-  el<HTMLInputElement>('saveSearchName').value = '';
+  const input = el<HTMLInputElement>('saveSearchName');
+  input.value = currentSearchName ?? '';
+  input.select();
   el('saveSearchModal').classList.remove('hidden');
-  el<HTMLInputElement>('saveSearchName').focus();
+  input.focus();
 }
 
 function closeSaveModal(): void {

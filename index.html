@@ -62,7 +62,7 @@
     .url-row input { flex: 1; }
 
     /* ── Inputs ── */
-    input[type="text"], input[type="url"], input[type="number"], textarea {
+    input[type="text"], input[type="url"], input[type="number"], textarea, select {
       width: 100%;
       padding: 0.5rem 0.75rem;
       border: 1.5px solid var(--border);
@@ -72,7 +72,7 @@
       transition: border-color 0.15s, box-shadow 0.15s;
       font-family: inherit;
     }
-    input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
+    input:focus, textarea:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
     input[readonly] { background: var(--bg); color: var(--text-muted); cursor: default; }
     label { display: block; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.3rem; }
 
@@ -338,11 +338,11 @@
     <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">What's the most you want to pay?</label>
     <input id="discoveryMaxPrice" type="number" min="0" placeholder="e.g. 2000" style="width:100%;margin-bottom:0.75rem" />
     <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">Fulfillment</label>
-    <select id="discoveryFulfillment" style="width:100%;margin-bottom:0.5rem">
+    <select id="discoveryFulfillment" style="margin-bottom:0.5rem">
       <option value="any">Pickup or Shipping</option>
       <option value="pickup">Pickup only</option>
     </select>
-    <select id="discoveryRegion" style="width:100%;margin-bottom:0.75rem;display:none">
+    <select id="discoveryRegion" style="margin-bottom:0.75rem;display:none">
       <option value="">Select a region…</option>
     </select>
     <div style="display:flex;justify-content:center">

@@ -8,6 +8,11 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { getRecipeForUrl } from './src/lib/recipes/server';
 import type { Listing, ListingDetail } from './src/lib/recipes/base';
 
+// ── Regions ───────────────────────────────────────────────────────────────────
+
+const regions: Array<{ name: string; tradeMeRegionId: number }> =
+  JSON.parse(fs.readFileSync(path.resolve(__dirname, 'assets/regions.json'), 'utf8'));
+
 // ── Cache ─────────────────────────────────────────────────────────────────────
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -41,20 +46,12 @@ db.exec(`
     parent_slug TEXT,
     top2        TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS trademe_regions (
-    value   TEXT PRIMARY KEY,
-    display TEXT NOT NULL
-  );
 `);
 
 {
   const catCount = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories').get()!).n;
   if (catCount === 0) console.warn('[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts');
   else console.log(`[categories] ${catCount} TradeMe categories loaded`);
-
-  const regionCount = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_regions').get()!).n;
-  if (regionCount === 0) console.warn('[regions] trademe_regions table is empty — run: npx ts-node scripts/import-regions.ts');
-  else console.log(`[regions] ${regionCount} TradeMe regions loaded`);
 }
 
 const stmts = {
@@ -72,8 +69,6 @@ const stmts = {
   deleteSavedSearch:  db.prepare('DELETE FROM saved_searches WHERE id = ?'),
   getCategoriesAtDepth2: db.prepare<[], { slug: string; display: string }>('SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug'),
   getCategoriesByTop2:   db.prepare<[string], { slug: string; display: string }>('SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug'),
-  getRegions:            db.prepare<[], { value: string; display: string }>('SELECT value, display FROM trademe_regions ORDER BY display'),
-  getRegionById:         db.prepare<[string], { display: string }>('SELECT display FROM trademe_regions WHERE value = ?'),
 };
 
 {
@@ -144,6 +139,7 @@ function getAIConfig(): { url: string; model: string; apiKey: string } | string 
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function aiJSON(cfg: { url: string; model: string; apiKey: string }, label: string, systemMsg: string, userMsg: string, maxTokens: number): Promise<any> {
+  console.log(`[AI] ${label} → model: ${cfg.model}\n[system] ${systemMsg}\n[user] ${userMsg}`);
   const r = await fetch(cfg.url, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
@@ -222,7 +218,7 @@ export default defineConfig({
         }
 
         if (req.url === '/api/regions' && req.method === 'GET') {
-          sendJSON(res, 200, stmts.getRegions.all()); return;
+          sendJSON(res, 200, regions.map(r => ({ value: String(r.tradeMeRegionId), display: r.name }))); return;
         }
 
         if (req.method !== 'POST') { next(); return; }
