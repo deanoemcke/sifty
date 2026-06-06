@@ -559,7 +559,7 @@ function cardId(url: string): string {
 }
 
 function shippingBadge(allowsPickups: number | undefined): string {
-  if (allowsPickups === 1) return '<span class="badge badge-shipping">Shipping only</span>';
+  if (allowsPickups === 1) return '<span class="badge badge-both">Allows pickups</span>';
   if (allowsPickups === 2) return '<span class="badge badge-pickuponly">Pickup only</span>';
   if (allowsPickups === 3) return '<span class="badge badge-both">Allows pickups</span>';
   return '';

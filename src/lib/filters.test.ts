@@ -70,10 +70,10 @@ describe('matchesFilters', () => {
     expect(matchesFilters(makeListing({ title: 'MacBook Pro - excellent' }), { ...defaultFilters, excludeKeywords: ['faulty'] })).toBe(true);
   });
 
-  it('filters by shipping — shipping only (allowsPickups=1)', () => {
+  it('passes for both shipping and pickup when allowsPickups=1 (allows pickups)', () => {
     const listing = makeListing({ allowsPickups: 1 });
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: true,  pickupAvailable: false })).toBe(true);
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: true  })).toBe(false);
+    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: true  })).toBe(true);
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: false })).toBe(false);
   });
 

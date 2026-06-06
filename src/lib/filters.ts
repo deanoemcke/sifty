@@ -34,8 +34,8 @@ export function computeFilterReason(listing: Listing, filters: FrontendFilters):
   }
 
   if (listing.allowsPickups !== undefined) {
+    const hasPickup   = listing.allowsPickups === 1 || listing.allowsPickups === 2 || listing.allowsPickups === 3;
     const hasShipping = listing.allowsPickups === 1 || listing.allowsPickups === 3;
-    const hasPickup   = listing.allowsPickups === 2 || listing.allowsPickups === 3;
     const matches = (filters.shippingAvailable && hasShipping) ||
                     (filters.pickupAvailable   && hasPickup);
     if (!matches) return 'shipping';
