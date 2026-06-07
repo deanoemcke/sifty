@@ -736,6 +736,12 @@ async function runDeepSearch(): Promise<void> {
         if (item) {
           item.deepSearched = true;
           item.data.description = detail.description;
+          if (detail.shippingAvailable !== null && detail.pickupAvailable !== null) {
+            item.data.fulfillment = {
+              shippingAvailable: detail.shippingAvailable,
+              pickupAvailable: detail.pickupAvailable,
+            };
+          }
           item.aiCheckedHash = null;
         }
         enrichCard(ev.url as string, detail);
