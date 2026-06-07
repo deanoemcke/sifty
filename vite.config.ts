@@ -160,19 +160,27 @@ function getAIConfig(): { url: string; model: string; apiKey: string } | string 
 async function aiJSON(cfg: { url: string; model: string; apiKey: string }, label: string, systemMsg: string, userMsg: string, maxTokens: number): Promise<any> {
   const trim = (s: string) => s.replace(/\s+/g, ' ').slice(0, 100);
   console.log(`[AI] ${label} → model: ${cfg.model}\n[system] ${trim(systemMsg)}…\n[user] ${trim(userMsg)}…`);
-  const r = await fetch(cfg.url, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: cfg.model,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemMsg },
-        { role: 'user', content: userMsg },
-      ],
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  let r: Response;
+  try {
+    r = await fetch(cfg.url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemMsg },
+          { role: 'user', content: userMsg },
+        ],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!r.ok) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const e = await r.json().catch(() => ({})) as any;
