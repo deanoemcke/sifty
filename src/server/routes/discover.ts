@@ -9,10 +9,10 @@ import { getRegions } from './regions';
 
 const TRADEME_SECTIONS = new Set(['motors', 'property', 'jobs', 'flatmates-wanted', 'services']);
 
-type DiscoverEntry = { slug: string; searchString: string | null };
+export type DiscoverEntry = { slug: string; searchString: string | null };
 type Step2Category = { slug: string; searchString?: string | null };
 
-function buildTrademeUrl(entry: DiscoverEntry, maxPrice: number, fulfillment: string, regionValue: string | undefined): string {
+export function buildTrademeUrl(entry: DiscoverEntry, maxPrice: number, fulfillment: string, regionValue: string | undefined): string {
   const topLevel = entry.slug.split('/')[0];
   const urlSlug = TRADEME_SECTIONS.has(topLevel) ? entry.slug : `marketplace/${entry.slug}`;
   const params = new URLSearchParams();
@@ -24,8 +24,7 @@ function buildTrademeUrl(entry: DiscoverEntry, maxPrice: number, fulfillment: st
   return `https://www.trademe.co.nz/a/${urlSlug}/search${qs ? `?${qs}` : ''}`;
 }
 
-function buildFacebookUrl(searchTerm: string, maxPrice: number, fulfillment: string, regionValue: string | undefined): string {
-  const regions = getRegions();
+export function buildFacebookUrl(searchTerm: string, maxPrice: number, fulfillment: string, regionValue: string | undefined, regions = getRegions()): string {
   const pickupOnly = fulfillment === 'pickup' && !!regionValue;
   const fbParams = new URLSearchParams();
   fbParams.set('query', searchTerm);
@@ -42,7 +41,7 @@ function buildFacebookUrl(searchTerm: string, maxPrice: number, fulfillment: str
   return `https://www.facebook.com/marketplace/${fbLocationSegment}search?${fbParams.toString()}`;
 }
 
-function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
+export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
   const allSlugs = new Set(allEntries.map(e => e.slug));
   const collapsed: DiscoverEntry[] = [];
   const consumed = new Set<string>();
