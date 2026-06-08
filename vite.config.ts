@@ -244,14 +244,14 @@ export default defineConfig({
           sendJSON(res, 200, { ok: true }); return;
         }
 
-        if (req.url === '/api/regions' && req.method === 'GET') {
+        if (urlPath === '/api/regions' && req.method === 'GET') {
           sendJSON(res, 200, regions.map(r => ({ value: String(r.tradeMeRegionId), display: r.name }))); return;
         }
 
         if (req.method !== 'POST') { next(); return; }
 
         // ── Cancel search ─────────────────────────────────────────────────────
-        if (req.url === '/api/cancel-search') {
+        if (urlPath === '/api/cancel-search') {
           const body = await readBody(req).catch(() => null);
           const searchId = (body as Record<string, unknown>)?.['searchId'];
           if (typeof searchId === 'string' && searchId.trim()) cancelSearch(searchId);
@@ -259,7 +259,7 @@ export default defineConfig({
         }
 
         // ── Quick search ──────────────────────────────────────────────────────
-        if (req.url === '/api/quick-search') {
+        if (urlPath === '/api/quick-search') {
           const body = await readBody(req).catch(() => null);
           let url: string;
           try {
@@ -313,7 +313,7 @@ export default defineConfig({
         }
 
         // ── Deep search ───────────────────────────────────────────────────────
-        if (req.url === '/api/deep-search') {
+        if (urlPath === '/api/deep-search') {
           const body = await readBody(req).catch(() => null);
           const rawBody = (body ?? {}) as Record<string, unknown>;
 
@@ -402,7 +402,7 @@ export default defineConfig({
         }
 
         // ── Cache clear ───────────────────────────────────────────────────────
-        if (req.url === '/api/cache/clear') {
+        if (urlPath === '/api/cache/clear') {
           const body = await readBody(req).catch(() => null);
           const type = (body as Record<string, unknown>)?.['type'];
           if (type === 'quick-search') {
@@ -421,7 +421,7 @@ export default defineConfig({
         }
 
         // ── AI filter ─────────────────────────────────────────────────────────
-        if (req.url === '/api/ai-filter') {
+        if (urlPath === '/api/ai-filter') {
           const body = await readBody(req).catch(() => null);
           const rawBody = (body ?? {}) as Record<string, unknown>;
 
@@ -475,7 +475,7 @@ export default defineConfig({
         }
 
         // ── Discover ─────────────────────────────────────────────────────────
-        if (req.url === '/api/discover') {
+        if (urlPath === '/api/discover') {
           const body = await readBody(req).catch(() => null);
           const rawBody = (body ?? {}) as Record<string, unknown>;
 
@@ -613,7 +613,7 @@ export default defineConfig({
         }
 
         // ── Save search ───────────────────────────────────────────────────────
-        if (req.url === '/api/saved-searches') {
+        if (urlPath === '/api/saved-searches') {
           const body = await readBody(req).catch(() => null);
           const rawBody = (body ?? {}) as Record<string, unknown>;
           let name: string;
