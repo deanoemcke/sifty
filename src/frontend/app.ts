@@ -15,6 +15,7 @@ interface SavedSearch {
 
 interface ListingItem {
   data: Listing;
+  detail: ListingDetail | null;
   deepSearched: boolean;
   filterReason: FilterReason | null;
   aiCheckedHash: number | null;
@@ -346,9 +347,9 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
         totalFound++;
         state.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
-          const item: ListingItem = { data: listing, deepSearched: false, filterReason: null, aiCheckedHash: null, aiFilterReason: null };
+          const item: ListingItem = { data: listing, detail: null, deepSearched: false, filterReason: null, aiCheckedHash: null, aiFilterReason: null };
           listingsByUrl.set(listing.url, item);
-          renderCard(listing);
+          renderCard(item);
           renderDerived();
         }
       } else if (ev.type === 'error') {
@@ -560,82 +561,42 @@ function tidyDescription(text: string): string {
     .trim();
 }
 
-function renderCard(listing: Listing): void {
-  const id = cardId(listing.url);
-  const card = document.createElement('div');
-  card.className = 'listing-card';
-  card.id = id;
-  card.dataset.url = listing.url;
-  card.dataset.isAuction = String(listing.isAuction ?? false);
-
-  const thumb = listing.thumbnailUrl
-    ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
-    : `<div class="listing-thumb-placeholder">
-         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-       </div>`;
-
-  card.innerHTML = `
-    <div class="filter-banner hidden"></div>
-    <div class="listing-card-content">
-      ${thumb}
-      <div class="listing-body">
-        <div class="listing-title">
-          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
-        </div>
-        <div class="listing-prices">
-          <span class="price">${esc(listing.priceDisplay)}</span>
-        </div>
-        <div class="listing-meta">
-          <span class="meta-text">📍 ${esc(listing.location)}</span>
-          ${shippingBadge(listing.fulfillment)}
-        </div>
-        <div class="listing-extras"></div>
-      </div>
-    </div>
-  `;
-  el('listingsContainer').appendChild(card);
+function buildPricesHtml(item: ListingItem): string {
+  let html = `<span class="price">${esc(item.data.priceDisplay)}</span>`;
+  if (item.detail && item.data.isAuction && item.detail.buyNowPrice != null) {
+    html += `<span class="price-buynow">Buy Now: <strong>$${Number(item.detail.buyNowPrice).toLocaleString()}</strong></span>`;
+  }
+  return html;
 }
 
-function enrichCard(url: string, detail: ListingDetail): void {
-  const card = document.getElementById(cardId(url));
-  if (!card) return;
-  card.classList.add('enriched');
-
-  const isAuction = card.dataset.isAuction === 'true';
-
-  const pricesEl = card.querySelector('.listing-prices')!;
-  let pricesHtml = `<span class="price">${pricesEl.querySelector('.price')!.innerHTML}</span>`;
-  if (isAuction && detail.buyNowPrice != null) {
-    pricesHtml += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
-  }
-  pricesEl.innerHTML = pricesHtml;
-
-  const metaEl = card.querySelector('.listing-meta')!;
-  let metaHtml = `<span class="meta-text">📍 ${metaEl.querySelector('.meta-text')!.textContent!.slice(2)}</span>`;
-  const { shippingAvailable, pickupAvailable } = detail;
-  const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
-  metaEl.querySelectorAll('.badge').forEach(b => {
-    const isDeliveryBadge = b.classList.contains('badge-pickuponly') ||
-                            b.classList.contains('badge-shipping') ||
-                            b.classList.contains('badge-both');
-    if (!isDeliveryBadge || !hasDefiniteData) metaHtml += b.outerHTML;
-  });
-  if (isAuction) {
-    const reserve = reserveText(detail.reserveStatus);
-    if (reserve) metaHtml += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
-  }
-  if (hasDefiniteData) {
-    if (shippingAvailable && pickupAvailable) {
-      metaHtml += '<span class="badge badge-both">Shipping &amp; pickup</span>';
-    } else if (shippingAvailable) {
-      metaHtml += '<span class="badge badge-shipping">Shipping only</span>';
-    } else if (pickupAvailable) {
-      metaHtml += '<span class="badge badge-pickuponly">Pickup only</span>';
+function buildMetaHtml(item: ListingItem): string {
+  let html = `<span class="meta-text">📍 ${esc(item.data.location)}</span>`;
+  const detail = item.detail;
+  if (detail) {
+    const { shippingAvailable, pickupAvailable } = detail;
+    const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
+    if (item.data.isAuction) {
+      const reserve = reserveText(detail.reserveStatus);
+      if (reserve) html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
     }
+    if (hasDefiniteData) {
+      if (shippingAvailable && pickupAvailable) {
+        html += '<span class="badge badge-both">Shipping &amp; pickup</span>';
+      } else if (shippingAvailable) {
+        html += '<span class="badge badge-shipping">Shipping only</span>';
+      } else if (pickupAvailable) {
+        html += '<span class="badge badge-pickuponly">Pickup only</span>';
+      }
+    } else {
+      html += shippingBadge(item.data.fulfillment);
+    }
+  } else {
+    html += shippingBadge(item.data.fulfillment);
   }
-  metaEl.innerHTML = metaHtml;
+  return html;
+}
 
-  const extras = card.querySelector('.listing-extras')!;
+function buildExtrasHtml(detail: ListingDetail): string {
   let body = '';
 
   // ── Details ───────────────────────────────────────────────────────────────
@@ -669,7 +630,45 @@ function enrichCard(url: string, detail: ListingDetail): void {
     body += `</div>`;
   }
 
-  extras.innerHTML = `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
+  return `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
+}
+
+function renderCard(item: ListingItem): void {
+  const listing = item.data;
+  const id = cardId(listing.url);
+
+  const existing = document.getElementById(id);
+  const card = existing ?? document.createElement('div');
+  card.className = `listing-card${item.detail ? ' enriched' : ''}`;
+  card.id = id;
+  card.dataset.url = listing.url;
+
+  const thumb = listing.thumbnailUrl
+    ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
+    : `<div class="listing-thumb-placeholder">
+         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+       </div>`;
+
+  card.innerHTML = `
+    <div class="filter-banner hidden"></div>
+    <div class="listing-card-content">
+      ${thumb}
+      <div class="listing-body">
+        <div class="listing-title">
+          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+        </div>
+        <div class="listing-prices">
+          ${buildPricesHtml(item)}
+        </div>
+        <div class="listing-meta">
+          ${buildMetaHtml(item)}
+        </div>
+        <div class="listing-extras">${item.detail ? buildExtrasHtml(item.detail) : ''}</div>
+      </div>
+    </div>
+  `;
+
+  if (!existing) el('listingsContainer').appendChild(card);
 }
 
 function expandExtras(body: HTMLElement): void {
@@ -735,6 +734,7 @@ async function runDeepSearch(): Promise<void> {
         const item = listingsByUrl.get(ev.url as string);
         if (item) {
           item.deepSearched = true;
+          item.detail = detail;
           item.data.description = detail.description;
           if (detail.shippingAvailable !== null && detail.pickupAvailable !== null) {
             item.data.fulfillment = {
@@ -743,10 +743,8 @@ async function runDeepSearch(): Promise<void> {
             };
           }
           item.aiCheckedHash = null;
-        }
-        enrichCard(ev.url as string, detail);
+          renderCard(item);
 
-        if (item) {
           const card = document.getElementById(cardId(item.data.url));
           const wasVisible = card !== null && card.style.display !== 'none';
           item.filterReason = computeFilterReason(item.data, getFilters());
