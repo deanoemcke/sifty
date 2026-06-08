@@ -1,6 +1,7 @@
 import { chromium, Page, Response } from 'playwright';
 import type { Recipe, Listing, ListingDetail, QuickSearchEvent, DeepSearchEvent } from './base';
 import { enqueue } from '../queue';
+import { MAX_PAGES_PER_SEARCH } from '../../server/constants';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -378,7 +379,7 @@ async function quickSearch(
       ({ listings: p1Listings, totalCount, pageSize } = await p1Promise);
     }
 
-    const totalPages = Math.ceil(totalCount / pageSize);
+    const totalPages = Math.min(Math.ceil(totalCount / pageSize), MAX_PAGES_PER_SEARCH);
 
     onEvent({ type: 'progress', message: `${totalCount} results across ${totalPages} page${totalPages !== 1 ? 's' : ''}` });
 

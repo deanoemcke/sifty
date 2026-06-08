@@ -10,6 +10,7 @@ import { ConcurrencyQueue } from './src/lib/queue';
 import type { Listing, ListingDetail } from './src/lib/recipes/base';
 import { requireString, requireArray, requirePositiveNumber, requireListingUrl } from './src/lib/validate';
 import { registerSearch, cancelSearch, isSearchCancelled, cleanupSearch } from './src/server/cancellation';
+import { MAX_DEEP_SEARCH_ITEMS } from './src/server/constants';
 
 // ── Regions ───────────────────────────────────────────────────────────────────
 
@@ -329,7 +330,8 @@ export default defineConfig({
           const deepSearchId = typeof deepSearchIdRaw === 'string' && deepSearchIdRaw.trim() ? deepSearchIdRaw : undefined;
 
           // Cast to Listing[] — url has been validated; remaining fields are trusted from our own frontend
-          const listings = validatedListings as unknown as Listing[];
+          // Cap before page allocation to prevent unbounded resource use
+          const listings = (validatedListings as unknown as Listing[]).slice(0, MAX_DEEP_SEARCH_ITEMS);
 
           // Group by recipe so mixed TradeMe+Facebook sets both get scraped
           const byRecipe = new Map<string, Listing[]>();
