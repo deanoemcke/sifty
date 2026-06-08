@@ -51,6 +51,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 3,
     sql: `ALTER TABLE quick_searches ADD COLUMN is_complete INTEGER NOT NULL DEFAULT 1;`,
   },
+  {
+    version: 4,
+    sql: `ALTER TABLE quick_searches DROP COLUMN is_complete;`,
+  },
 ];
 
 function readSchemaVersion(db: Database.Database): number {
@@ -127,7 +131,7 @@ export function stmtGetSearch(db: Database.Database) {
   return db.prepare<[string], SearchRow>('SELECT data, cached_at FROM quick_searches WHERE url = ?');
 }
 export function stmtSetSearch(db: Database.Database) {
-  return db.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at, listing_count, is_complete) VALUES (?, ?, ?, ?, ?)');
+  return db.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at, listing_count) VALUES (?, ?, ?, ?)');
 }
 export function stmtClearSearch(db: Database.Database) {
   return db.prepare('DELETE FROM quick_searches');

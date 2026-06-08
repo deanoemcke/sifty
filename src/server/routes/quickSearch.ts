@@ -52,7 +52,7 @@ export async function handleQuickSearch(req: IncomingMessage, res: ServerRespons
       try { sse(res, event); } catch { /* client disconnected */ }
     }, isCancelled);
     if (!isCancelled() && listings.length > 0) {
-      stmtSetSearch(db).run(url, JSON.stringify(listings), Date.now(), listings.length, 1);
+      stmtSetSearch(db).run(url, JSON.stringify(listings), Date.now(), listings.length);
       console.log(`[cache] stored ${listings.length} listings`);
     }
   } catch (err) {
