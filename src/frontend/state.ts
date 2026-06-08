@@ -51,6 +51,9 @@ export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
 export const listingsByUrl = new Map<string, ListingItem>();
 export const urlCardStates: UrlCardState[] = [];
+// Stable, collision-free DOM ids assigned at card insertion time via crypto.randomUUID().
+// Keyed by listing URL so callers can look up a card without re-deriving its id from the URL.
+export const cardIdByUrl = new Map<string, string>();
 
 // ── Setters ────────────────────────────────────────────────────────────────────
 // Plain assignment to exported `let` bindings is not visible to importers that
@@ -86,4 +89,5 @@ export function resetState(): void {
   deepSearchCancellationRequested = false;
   listingsByUrl.clear();
   urlCardStates.length = 0;
+  cardIdByUrl.clear();
 }

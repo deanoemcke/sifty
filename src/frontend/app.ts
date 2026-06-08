@@ -7,6 +7,7 @@ import {
   type SavedSearch,
   listingsByUrl,
   urlCardStates,
+  cardIdByUrl,
   currentSearchName,
   showFilteredListings,
   isDeepSearchRunning,
@@ -251,8 +252,9 @@ function resetCardForResearch(state: UrlCardState): void {
   const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
   for (const url of state.listingUrls) {
     if (!otherUrls.has(url)) {
-      document.getElementById(cardId(url))?.remove();
+      getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);
+      cardIdByUrl.delete(url);
     }
   }
   state.listingUrls = [];
@@ -273,8 +275,9 @@ function removeUrlCard(state: UrlCardState): void {
   const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
   for (const url of state.listingUrls) {
     if (!otherUrls.has(url)) {
-      document.getElementById(cardId(url))?.remove();
+      getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);
+      cardIdByUrl.delete(url);
     }
   }
   state.el.remove();
@@ -384,7 +387,7 @@ function applyClientFilters(): void {
   for (const item of getOrderedListings()) {
     item.filterReason = computeFilterReason(item.data, filters);
     const passes = item.filterReason === null && item.aiFilterReason === null;
-    const card = document.getElementById(cardId(item.data.url));
+    const card = getCardByUrl(item.data.url);
     if (card) {
       const banner = card.querySelector<HTMLElement>('.filter-banner')!;
       if (passes) {
@@ -505,9 +508,10 @@ async function streamPost(
 
 // ── Card helpers ──────────────────────────────────────────────────────────────
 
-function cardId(url: string): string {
-  const numId = url.match(/\/(?:listing|item)\/(\d+)/)?.[1];
-  return 'card-' + (numId ?? url.replace(/[^a-zA-Z0-9]/g, '').slice(-20));
+// Looks up a listing card by URL. Returns null if not yet rendered.
+function getCardByUrl(url: string): HTMLElement | null {
+  const id = cardIdByUrl.get(url);
+  return id ? document.getElementById(id) : null;
 }
 
 function shippingBadge(fulfillment: Listing['fulfillment']): string {
@@ -607,7 +611,13 @@ function buildExtrasHtml(detail: ListingDetail): string {
 
 function renderCard(item: ListingItem): void {
   const listing = item.data;
-  const id = cardId(listing.url);
+
+  // Assign a UUID-based id on first render; reuse it on re-renders (e.g. after deep search enrichment).
+  let id = cardIdByUrl.get(listing.url);
+  if (!id) {
+    id = 'card-' + crypto.randomUUID();
+    cardIdByUrl.set(listing.url, id);
+  }
 
   const existing = document.getElementById(id);
   const card = existing ?? document.createElement('div');
@@ -685,7 +695,7 @@ async function runDeepSearch(): Promise<void> {
   let detailsReceived = 0;
 
   for (const listing of toScrape) {
-    const card = document.getElementById(cardId(listing.url));
+    const card = getCardByUrl(listing.url);
     if (card) {
       card.querySelector('.listing-extras')!.innerHTML =
         '<div style="padding-top:0.6rem">' +
@@ -717,7 +727,7 @@ async function runDeepSearch(): Promise<void> {
           item.aiCheckedHash = null;
           renderCard(item);
 
-          const card = document.getElementById(cardId(item.data.url));
+          const card = getCardByUrl(item.data.url);
           const wasVisible = card !== null && card.style.display !== 'none';
           item.filterReason = computeFilterReason(item.data, getFilters());
           if (wasVisible && item.filterReason !== null) {
@@ -749,7 +759,7 @@ async function runDeepSearch(): Promise<void> {
   for (const listing of toScrape) {
     const item = listingsByUrl.get(listing.url);
     if (item && !item.deepSearched) {
-      const card = document.getElementById(cardId(listing.url));
+      const card = getCardByUrl(listing.url);
       if (card) card.querySelector('.listing-extras')!.innerHTML = '';
     }
   }
@@ -875,7 +885,7 @@ el('toggleFilteredBtn').addEventListener('click', () => {
   el<HTMLButtonElement>('toggleFilteredBtn').textContent = showFilteredListings ? 'hide' : 'show';
   for (const item of getOrderedListings()) {
     if (item.filterReason !== null || item.aiFilterReason !== null) {
-      const card = document.getElementById(cardId(item.data.url));
+      const card = getCardByUrl(item.data.url);
       if (card) card.style.display = showFilteredListings ? '' : 'none';
     }
   }
