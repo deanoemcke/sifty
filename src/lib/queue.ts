@@ -7,10 +7,13 @@ export class ConcurrencyQueue {
   add<T>(asyncTask: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       this.queue.push(() => {
-        Promise.resolve().then(asyncTask).then(resolve, reject).finally(() => {
-          this.active--;
-          this.drain();
-        });
+        Promise.resolve()
+          .then(asyncTask)
+          .then(resolve, reject)
+          .finally(() => {
+            this.active--;
+            this.drain();
+          });
       });
       this.drain();
     });
@@ -19,7 +22,9 @@ export class ConcurrencyQueue {
   private drain() {
     while (this.active < this.concurrency && this.queue.length > 0) {
       this.active++;
-      this.queue.shift()!();
+      const task = this.queue.shift();
+      if (!task) throw new Error("invariant: shift on non-empty queue returned undefined");
+      task();
     }
   }
 }
@@ -27,25 +32,32 @@ export class ConcurrencyQueue {
 // ── Domain registry ───────────────────────────────────────────────────────────
 
 const CONCURRENCY_LIMIT_BY_DOMAIN: Record<string, number> = {
-  'trademe.co.nz': 3,
-  'facebook.com': 2,
+  "trademe.co.nz": 3,
+  "facebook.com": 2,
 };
 
 function resolveHostname(url: string): string {
-  try { return new URL(url).hostname; }
-  catch { return url; }
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 export function createRegistry(): <T>(url: string, asyncTask: () => Promise<T>) => Promise<T> {
   const queueByHostname = new Map<string, ConcurrencyQueue>();
   return function enqueueInRegistry<T>(url: string, asyncTask: () => Promise<T>): Promise<T> {
     const hostname = resolveHostname(url);
-    if (!queueByHostname.has(hostname)) {
+    let queue = queueByHostname.get(hostname);
+    if (!queue) {
       const concurrency =
-        Object.entries(CONCURRENCY_LIMIT_BY_DOMAIN).find(([domain]) => hostname.endsWith(domain))?.[1] ?? 2;
-      queueByHostname.set(hostname, new ConcurrencyQueue(concurrency));
+        Object.entries(CONCURRENCY_LIMIT_BY_DOMAIN).find(([domain]) =>
+          hostname.endsWith(domain),
+        )?.[1] ?? 2;
+      queue = new ConcurrencyQueue(concurrency);
+      queueByHostname.set(hostname, queue);
     }
-    return queueByHostname.get(hostname)!.add(asyncTask);
+    return queue.add(asyncTask);
   };
 }
 

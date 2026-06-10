@@ -1,9 +1,9 @@
-import Database from 'better-sqlite3';
-import { describe, it, expect } from 'vitest';
-import { applySchema, LATEST_VERSION } from './db';
+import Database from "better-sqlite3";
+import { describe, expect, it } from "vitest";
+import { applySchema, LATEST_VERSION } from "./db";
 
 function dbAtVersion(version: number): Database.Database {
-  const db = new Database(':memory:');
+  const db = new Database(":memory:");
   db.exec(`
     CREATE TABLE schema_version (version INTEGER NOT NULL);
     INSERT INTO schema_version (version) VALUES (${version});
@@ -38,36 +38,42 @@ function dbAtVersion(version: number): Database.Database {
 }
 
 function columnNames(db: Database.Database, table: string): string[] {
-  return db.prepare<[], { name: string }>(`PRAGMA table_info(${table})`).all().map(r => r.name);
+  return db
+    .prepare<[], { name: string }>(`PRAGMA table_info(${table})`)
+    .all()
+    .map((r) => r.name);
 }
 
-describe('applySchema', () => {
-  it('migrates a fresh empty DB to the latest version', () => {
-    const db = new Database(':memory:');
+describe("applySchema", () => {
+  it("migrates a fresh empty DB to the latest version", () => {
+    const db = new Database(":memory:");
     expect(() => applySchema(db)).not.toThrow();
-    const row = db.prepare<[], { version: number }>('SELECT version FROM schema_version').get()!;
+    const row = db.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
+    if (!row) throw new Error("schema_version row not found after applySchema");
     expect(row.version).toBe(LATEST_VERSION);
   });
 
-  it('does not leave is_complete on quick_searches after a full migration', () => {
-    const db = new Database(':memory:');
+  it("does not leave is_complete on quick_searches after a full migration", () => {
+    const db = new Database(":memory:");
     applySchema(db);
-    expect(columnNames(db, 'quick_searches')).not.toContain('is_complete');
+    expect(columnNames(db, "quick_searches")).not.toContain("is_complete");
   });
 
-  it('migrates a DB at version 2 to the latest version', () => {
+  it("migrates a DB at version 2 to the latest version", () => {
     const db = dbAtVersion(2);
     expect(() => applySchema(db)).not.toThrow();
-    const row = db.prepare<[], { version: number }>('SELECT version FROM schema_version').get()!;
+    const row = db.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
+    if (!row) throw new Error("schema_version row not found after applySchema");
     expect(row.version).toBe(LATEST_VERSION);
-    expect(columnNames(db, 'quick_searches')).not.toContain('is_complete');
+    expect(columnNames(db, "quick_searches")).not.toContain("is_complete");
   });
 
-  it('is idempotent when called on an already-migrated DB', () => {
-    const db = new Database(':memory:');
+  it("is idempotent when called on an already-migrated DB", () => {
+    const db = new Database(":memory:");
     applySchema(db);
     expect(() => applySchema(db)).not.toThrow();
-    const row = db.prepare<[], { version: number }>('SELECT version FROM schema_version').get()!;
+    const row = db.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
+    if (!row) throw new Error("schema_version row not found after applySchema");
     expect(row.version).toBe(LATEST_VERSION);
   });
 });
