@@ -14,7 +14,7 @@ type ApiItem = Record<string, unknown>;
 
 // ── Implicit filter extraction ────────────────────────────────────────────────
 
-const DISPLAY_NAME_BY_PARAM_KEY: Record<string, string> = {
+const DISPLAY_NAME_BY_PARAM_NAME: Record<string, string> = {
   search_string: 'Search',
   condition: 'Condition',
   sort_order: 'Sort',
@@ -25,7 +25,7 @@ const LABEL_BY_PANEL_HASH: Record<string, string> = {
   '7a2bb94c0cb44806ac995a4fc854bcbc': 'Screen Size',
 };
 
-const IGNORED_PARAM_KEYS = new Set([
+const IGNORED_PARAM_NAMES = new Set([
   'rows', 'page', 'return_canonical', 'return_metadata', 'return_ads',
   'return_empty_categories', 'return_super_features', 'return_did_you_mean',
   'return_variants', 'snap_parameters', 'preferred_shipping_location',
@@ -52,13 +52,13 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
     }
 
     for (const [key, vals] of Object.entries(grouped)) {
-      if (IGNORED_PARAM_KEYS.has(key)) continue;
+      if (IGNORED_PARAM_NAMES.has(key)) continue;
 
-      if (key in DISPLAY_NAME_BY_PARAM_KEY) {
+      if (key in DISPLAY_NAME_BY_PARAM_NAME) {
         let filterValue = vals.join(', ');
         if (key === 'condition') filterValue = filterValue[0].toUpperCase() + filterValue.slice(1);
         if (key === 'search_string') filterValue = `"${filterValue}"`;
-        filterRows.push([DISPLAY_NAME_BY_PARAM_KEY[key], filterValue]);
+        filterRows.push([DISPLAY_NAME_BY_PARAM_NAME[key], filterValue]);
         continue;
       }
 
