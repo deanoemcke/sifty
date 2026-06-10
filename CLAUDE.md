@@ -1,3 +1,16 @@
+# Git Worktree Setup
+
+This project uses git worktrees. The `node_modules` directory is not present in each worktree by default — it lives in the main working tree at `../sifty-webapp/node_modules` and is symlinked into each worktree on first use:
+
+```bash
+ln -sf /Users/deanoemcke/Projects/sifty-webapp/node_modules \
+       /Users/deanoemcke/Projects/sifty-webapp.worktrees/<worktree-name>/node_modules
+```
+
+**Always run `vitest` and `tsc` from the worktree's own directory** — never `cd` to the parent project first. Running from the parent will silently test the parent's source files instead of the worktree's, giving false results.
+
+---
+
 # Code Principles
 
 **Named, callable functions only.** Write logic as named, exported functions.
