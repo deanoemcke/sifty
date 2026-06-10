@@ -1,11 +1,11 @@
 // Server-side only — SQLite database singleton, schema init, and all prepared statements.
 // DB is initialised lazily on first call to getDb() — no side effects at module scope.
 
-import fs from 'fs';
-import path from 'path';
-import Database from 'better-sqlite3';
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
 
-const DB_PATH = path.resolve(__dirname, '../../.cache/cache.db');
+const DB_PATH = path.resolve(__dirname, "../../.cache/cache.db");
 
 let _db: Database.Database | null = null;
 
@@ -57,26 +57,25 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   },
 ];
 
-
 function readSchemaVersion(database: Database.Database): number {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
     INSERT INTO schema_version (version) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
   `);
-  const row = database.prepare<[], { version: number }>('SELECT version FROM schema_version').get();
-  if (row === undefined) throw new Error('schema_version table is empty after initialisation');
+  const row = database.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
+  if (row === undefined) throw new Error("schema_version table is empty after initialisation");
   return row.version;
 }
 
 function writeSchemaVersion(database: Database.Database, version: number): void {
-  database.prepare('UPDATE schema_version SET version = ?').run(version);
+  database.prepare("UPDATE schema_version SET version = ?").run(version);
 }
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 
 export function applySchema(database: Database.Database): void {
   const currentVersion = readSchemaVersion(database);
-  const pending = MIGRATIONS.filter(m => m.version > currentVersion);
+  const pending = MIGRATIONS.filter((m) => m.version > currentVersion);
   if (pending.length === 0) return;
 
   database.transaction(() => {
@@ -86,17 +85,29 @@ export function applySchema(database: Database.Database): void {
     }
   })();
 
-  console.log(`[db] schema migrated from v${currentVersion} to v${pending[pending.length - 1].version}`);
+  console.log(
+    `[db] schema migrated from v${currentVersion} to v${pending[pending.length - 1].version}`,
+  );
 }
 
 function logDbStats(database: Database.Database): void {
-  const totalCategoriesCount = (database.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories').get()!).n;
-  if (totalCategoriesCount === 0) console.warn('[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts');
+  const totalCategoriesCount = database
+    .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM trademe_categories")
+    .get()?.n;
+  if (totalCategoriesCount === 0)
+    console.warn(
+      "[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts",
+    );
   else console.log(`[categories] ${totalCategoriesCount} TradeMe categories loaded`);
 
-  const searchCount = (database.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM quick_searches').get()!).n;
-  const detailCount = (database.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM deep_details').get()!).n;
-  if (searchCount > 0 || detailCount > 0) console.log(`[cache] opened db — ${searchCount} searches, ${detailCount} listing details`);
+  const searchCount = database
+    .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM quick_searches")
+    .get()?.n;
+  const detailCount = database
+    .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM deep_details")
+    .get()?.n;
+  if (searchCount > 0 || detailCount > 0)
+    console.log(`[cache] opened db — ${searchCount} searches, ${detailCount} listing details`);
 }
 
 export function getDb(): Database.Database {
@@ -110,8 +121,8 @@ export function getDb(): Database.Database {
 
 // ── Prepared statement types ──────────────────────────────────────────────────
 
-export type SearchRow  = { data: string; cached_at: number };
-export type DetailRow  = { data: string; cached_at: number };
+export type SearchRow = { data: string; cached_at: number };
+export type DetailRow = { data: string; cached_at: number };
 export type SavedSearchRow = {
   id: string;
   name: string;
@@ -129,46 +140,64 @@ export type CountRow = { n: number };
 // for hot-path routes callers should cache the result if needed.
 
 export function stmtGetSearch(database: Database.Database) {
-  return database.prepare<[string], SearchRow>('SELECT data, cached_at FROM quick_searches WHERE url = ?');
+  return database.prepare<[string], SearchRow>(
+    "SELECT data, cached_at FROM quick_searches WHERE url = ?",
+  );
 }
 export function stmtSetSearch(database: Database.Database) {
-  return database.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at, listing_count) VALUES (?, ?, ?, ?)');
+  return database.prepare(
+    "INSERT OR REPLACE INTO quick_searches (url, data, cached_at, listing_count) VALUES (?, ?, ?, ?)",
+  );
 }
 export function stmtClearSearch(database: Database.Database) {
-  return database.prepare('DELETE FROM quick_searches');
+  return database.prepare("DELETE FROM quick_searches");
 }
 export function stmtGetDetail(database: Database.Database) {
-  return database.prepare<[string], DetailRow>('SELECT data, cached_at FROM deep_details WHERE url = ?');
+  return database.prepare<[string], DetailRow>(
+    "SELECT data, cached_at FROM deep_details WHERE url = ?",
+  );
 }
 export function stmtSetDetail(database: Database.Database) {
-  return database.prepare('INSERT OR REPLACE INTO deep_details (url, data, cached_at) VALUES (?, ?, ?)');
+  return database.prepare(
+    "INSERT OR REPLACE INTO deep_details (url, data, cached_at) VALUES (?, ?, ?)",
+  );
 }
 export function stmtClearDetails(database: Database.Database) {
-  return database.prepare('DELETE FROM deep_details');
+  return database.prepare("DELETE FROM deep_details");
 }
 export function stmtCountSearch(database: Database.Database) {
-  return database.prepare<[], CountRow>('SELECT COUNT(*) as n FROM quick_searches');
+  return database.prepare<[], CountRow>("SELECT COUNT(*) as n FROM quick_searches");
 }
 export function stmtCountDetails(database: Database.Database) {
-  return database.prepare<[], CountRow>('SELECT COUNT(*) as n FROM deep_details');
+  return database.prepare<[], CountRow>("SELECT COUNT(*) as n FROM deep_details");
 }
 export function stmtListSavedSearches(database: Database.Database) {
-  return database.prepare<[], SavedSearchRow>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC');
+  return database.prepare<[], SavedSearchRow>(
+    "SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC",
+  );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
-  return database.prepare<[string], SavedSearchRow>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches WHERE id = ?');
+  return database.prepare<[string], SavedSearchRow>(
+    "SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches WHERE id = ?",
+  );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
-  return database.prepare('INSERT INTO saved_searches (id, name, urls, filters, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+  return database.prepare(
+    "INSERT INTO saved_searches (id, name, urls, filters, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  );
 }
 export function stmtDeleteSavedSearch(database: Database.Database) {
-  return database.prepare('DELETE FROM saved_searches WHERE id = ?');
+  return database.prepare("DELETE FROM saved_searches WHERE id = ?");
 }
 export function stmtGetCategoriesAtDepth2(database: Database.Database) {
-  return database.prepare<[], CategoryRow>('SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug');
+  return database.prepare<[], CategoryRow>(
+    "SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug",
+  );
 }
 export function stmtGetCategoriesByTop2(database: Database.Database) {
-  return database.prepare<[string], CategoryRow>('SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug');
+  return database.prepare<[string], CategoryRow>(
+    "SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug",
+  );
 }
 
 // ── Cache freshness helpers ───────────────────────────────────────────────────
@@ -181,5 +210,5 @@ export function isFresh(cachedAt: number): boolean {
 
 export function cacheAge(cachedAt: number): string {
   const mins = Math.floor((Date.now() - cachedAt) / 60000);
-  return mins === 0 ? 'less than a minute ago' : `${mins} minute${mins !== 1 ? 's' : ''} ago`;
+  return mins === 0 ? "less than a minute ago" : `${mins} minute${mins !== 1 ? "s" : ""} ago`;
 }

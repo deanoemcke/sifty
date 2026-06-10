@@ -9,7 +9,7 @@
  */
 
 export function requireString(val: unknown, field: string): string {
-  if (typeof val !== 'string' || val.trim() === '') {
+  if (typeof val !== "string" || val.trim() === "") {
     throw new Error(`${field} is required and must be a non-empty string`);
   }
   return val;
@@ -24,7 +24,7 @@ export function requireArray(val: unknown, field: string): unknown[] {
 
 export function requirePositiveNumber(val: unknown, field: string): number {
   const n = Number(val);
-  if (!isFinite(n) || n <= 0) {
+  if (!Number.isFinite(n) || n <= 0) {
     throw new Error(`${field} must be a positive number`);
   }
   return n;
@@ -35,12 +35,15 @@ export function requirePositiveNumber(val: unknown, field: string): number {
  * property.  Used when iterating over a client-supplied listings array before
  * passing any element to recipe code or cache writes.
  */
-export function requireListingUrl(item: unknown, index: number): { url: string } & Record<string, unknown> {
-  if (typeof item !== 'object' || item === null) {
+export function requireListingUrl(
+  item: unknown,
+  index: number,
+): { url: string } & Record<string, unknown> {
+  if (typeof item !== "object" || item === null) {
     throw new Error(`listings[${index}] must be an object`);
   }
   const obj = item as Record<string, unknown>;
-  if (typeof obj['url'] !== 'string' || obj['url'].trim() === '') {
+  if (typeof obj.url !== "string" || obj.url.trim() === "") {
     throw new Error(`listings[${index}].url is required and must be a non-empty string`);
   }
   return obj as { url: string } & Record<string, unknown>;

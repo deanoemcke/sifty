@@ -1,4 +1,4 @@
-import type { Listing } from './recipes/base';
+import type { Listing } from "./recipes/base";
 
 export interface FrontendFilters {
   minPrice?: number;
@@ -9,22 +9,30 @@ export interface FrontendFilters {
   pickupAvailable: boolean;
 }
 
-export type FilterReason = 'keyword' | 'price' | 'shipping';
+export type FilterReason = "keyword" | "price" | "shipping";
 
-export function computeFilterReason(listing: Listing, filters: FrontendFilters): FilterReason | null {
+export function computeFilterReason(
+  listing: Listing,
+  filters: FrontendFilters,
+): FilterReason | null {
   const t = listing.title.toLowerCase();
 
   if (filters.keywords?.length) {
-    if (!filters.keywords.every(kw => t.includes(kw.toLowerCase()))) return 'keyword';
+    if (!filters.keywords.every((kw) => t.includes(kw.toLowerCase()))) return "keyword";
   }
   if (filters.excludeKeywords?.length) {
-    const d = listing.description?.toLowerCase() ?? '';
-    if (filters.excludeKeywords.some(kw => t.includes(kw.toLowerCase()) || d.includes(kw.toLowerCase()))) return 'keyword';
+    const d = listing.description?.toLowerCase() ?? "";
+    if (
+      filters.excludeKeywords.some(
+        (kw) => t.includes(kw.toLowerCase()) || d.includes(kw.toLowerCase()),
+      )
+    )
+      return "keyword";
   }
 
   if (listing.price !== null) {
-    if (filters.minPrice !== undefined && listing.price < filters.minPrice) return 'price';
-    if (filters.maxPrice !== undefined && listing.price > filters.maxPrice) return 'price';
+    if (filters.minPrice !== undefined && listing.price < filters.minPrice) return "price";
+    if (filters.maxPrice !== undefined && listing.price > filters.maxPrice) return "price";
   }
 
   // When both checkboxes are unchecked, treat it as "no fulfillment filter" —
@@ -32,9 +40,10 @@ export function computeFilterReason(listing: Listing, filters: FrontendFilters):
   const fulfillmentFilterActive = filters.shippingAvailable || filters.pickupAvailable;
   if (fulfillmentFilterActive && listing.fulfillment !== undefined) {
     const { pickupAvailable, shippingAvailable } = listing.fulfillment;
-    const matches = (filters.shippingAvailable && shippingAvailable) ||
-                    (filters.pickupAvailable   && pickupAvailable);
-    if (!matches) return 'shipping';
+    const matches =
+      (filters.shippingAvailable && shippingAvailable) ||
+      (filters.pickupAvailable && pickupAvailable);
+    if (!matches) return "shipping";
   }
 
   return null;

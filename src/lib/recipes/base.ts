@@ -1,4 +1,4 @@
-import type { RecipeSource } from './metadata';
+import type { RecipeSource } from "./metadata";
 
 export interface Listing {
   source: RecipeSource;
@@ -25,22 +25,30 @@ export interface ListingDetail {
 }
 
 export type QuickSearchEvent =
-  | { type: 'criteria'; filters: Array<[string, string]> }
-  | { type: 'progress'; message: string }
-  | { type: 'listing'; data: Listing }
-  | { type: 'complete' }
-  | { type: 'error'; message: string };
+  | { type: "criteria"; filters: Array<[string, string]> }
+  | { type: "progress"; message: string }
+  | { type: "listing"; data: Listing }
+  | { type: "complete" }
+  | { type: "error"; message: string };
 
 export type DeepSearchEvent =
-  | { type: 'progress'; index: number; total: number; title: string }
-  | { type: 'detail'; url: string; detail: ListingDetail }
-  | { type: 'complete' }
-  | { type: 'error'; message: string };
+  | { type: "progress"; index: number; total: number; title: string }
+  | { type: "detail"; url: string; detail: ListingDetail }
+  | { type: "complete" }
+  | { type: "error"; message: string };
 
 export interface Recipe {
   readonly name: string;
   matches(url: string): boolean;
   extractImplicitFilters(url: string): Array<[string, string]>;
-  quickSearchAsync(url: string, onEvent: (event: QuickSearchEvent) => void, isCancelled?: () => boolean): Promise<void>;
-  deepSearchAsync(listings: Listing[], onEvent: (event: DeepSearchEvent) => void, isCancelled?: () => boolean): Promise<void>;
+  quickSearchAsync(
+    url: string,
+    onEvent: (event: QuickSearchEvent) => void,
+    isCancelled?: () => boolean,
+  ): Promise<void>;
+  deepSearchAsync(
+    listings: Listing[],
+    onEvent: (event: DeepSearchEvent) => void,
+    isCancelled?: () => boolean,
+  ): Promise<void>;
 }

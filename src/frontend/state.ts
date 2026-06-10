@@ -2,27 +2,31 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
-import type { Listing, ListingDetail } from '../lib/recipes/base';
-import type { FilterReason } from '../lib/filters';
+import type { FilterReason } from "../lib/filters";
+import type { Listing, ListingDetail } from "../lib/recipes/base";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type UrlCardSearchStatus = 'idle' | 'searching' | 'cancelling' | 'done';
+export type UrlCardSearchStatus = "idle" | "searching" | "cancelling" | "done";
 
 export function isSearchButtonDisabled(
   status: UrlCardSearchStatus,
   searchedUrl: string,
-  inputValue: string
+  inputValue: string,
 ): boolean {
-  return status === 'searching' || status === 'cancelling' || (status === 'done' && searchedUrl === inputValue);
+  return (
+    status === "searching" ||
+    status === "cancelling" ||
+    (status === "done" && searchedUrl === inputValue)
+  );
 }
 
 export function canCancelSearch(status: UrlCardSearchStatus): boolean {
-  return status === 'searching';
+  return status === "searching";
 }
 
 export function isCardSearchActive(status: UrlCardSearchStatus): boolean {
-  return status === 'searching' || status === 'cancelling';
+  return status === "searching" || status === "cancelling";
 }
 
 export interface ListingItem {
@@ -53,7 +57,7 @@ export interface SavedSearch {
   id: string;
   name: string;
   urls: string[];
-  filters: import('../lib/filters').FrontendFilters;
+  filters: import("../lib/filters").FrontendFilters;
   aiFilter: string | null;
   createdAt: number;
 }
