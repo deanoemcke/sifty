@@ -10,7 +10,8 @@
     "test:watch": "vitest",
     "lint": "biome check src/",
     "format": "biome format --write src/",
-    "check": "biome check --write src/"
+    "fix": "biome check --write src/",
+    "check": "biome check src/"
   },
   "keywords": [],
   "author": "",
