@@ -38,15 +38,7 @@ export interface ListingItem {
   aiFilterReason: string | null;
 }
 
-export interface UrlCardState {
-  containerElement: HTMLElement;
-  input: HTMLInputElement;
-  searchButton: HTMLButtonElement;
-  removeButton: HTMLButtonElement;
-  criteriaElement: HTMLElement;
-  countElement: HTMLElement;
-  cacheStatusElement: HTMLElement;
-  statusElement: HTMLElement;
+export interface UrlCardData {
   searchStatus: UrlCardSearchStatus;
   searchedUrl: string;
   searchId: string | null;
@@ -70,7 +62,7 @@ export let isDeepSearchRunning = false;
 export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
 export const listingsByUrl = new Map<string, ListingItem>();
-export const urlCardStates: UrlCardState[] = [];
+export const urlCardData: UrlCardData[] = [];
 // Stable, collision-free DOM ids assigned at card insertion time via crypto.randomUUID().
 // Keyed by listing URL so callers can look up a card without re-deriving its id from the URL.
 export const cardIdByUrl = new Map<string, string>();
@@ -108,6 +100,6 @@ export function resetState(): void {
   deepSearchId = null;
   deepSearchCancellationRequested = false;
   listingsByUrl.clear();
-  urlCardStates.length = 0;
+  urlCardData.length = 0;
   cardIdByUrl.clear();
 }

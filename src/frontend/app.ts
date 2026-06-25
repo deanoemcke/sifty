@@ -22,10 +22,27 @@ import {
   setIsDeepSearchRunning,
   setShowFilteredListings,
   showFilteredListings,
+  type UrlCardData,
   type UrlCardSearchStatus,
-  type UrlCardState,
-  urlCardStates,
+  urlCardData,
 } from "./state";
+
+// ── URL card DOM handles ──────────────────────────────────────────────────────
+// UrlCardData (serialisable state) lives in state.ts; DOM refs live here only.
+
+interface UrlCardDom {
+  containerElement: HTMLElement;
+  input: HTMLInputElement;
+  searchButton: HTMLButtonElement;
+  removeButton: HTMLButtonElement;
+  criteriaElement: HTMLElement;
+  countElement: HTMLElement;
+  cacheStatusElement: HTMLElement;
+  statusElement: HTMLElement;
+}
+
+type UrlCard = { data: UrlCardData; dom: UrlCardDom };
+const urlCards: UrlCard[] = [];
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -74,11 +91,11 @@ function setFilters(filters: FrontendFilters): void {
 }
 
 function setCardStatus(
-  state: UrlCardState,
+  card: UrlCard,
   statusMessage: string | null,
   type: "info" | "success" | "error" = "info",
 ): void {
-  const statusBar = state.statusElement;
+  const statusBar = card.dom.statusElement;
   if (!statusMessage) {
     statusBar.classList.add("hidden");
     return;
@@ -91,29 +108,29 @@ function setCardStatus(
   statusBar.classList.remove("hidden");
 }
 
-function setSearchingStatus(state: UrlCardState, statusMessage: string): void {
-  const statusBar = state.statusElement;
+function setSearchingStatus(card: UrlCard, statusMessage: string): void {
+  const statusBar = card.dom.statusElement;
   statusBar.className = "url-card-status info";
   statusBar.innerHTML = `<span class="spinner"></span><span>${esc(statusMessage)}</span>`;
-  if (canCancelSearch(state.searchStatus)) {
+  if (canCancelSearch(card.data.searchStatus)) {
     const cancelButton = document.createElement("button");
     cancelButton.className = "cache-clear-btn";
     cancelButton.style.marginLeft = "0.5rem";
     cancelButton.textContent = "cancel";
-    cancelButton.addEventListener("click", () => cancelSearch(state));
+    cancelButton.addEventListener("click", () => cancelSearch(card));
     statusBar.appendChild(cancelButton);
   }
   statusBar.classList.remove("hidden");
 }
 
-function cancelSearch(state: UrlCardState): void {
-  if (!canCancelSearch(state.searchStatus)) return;
-  state.searchStatus = "cancelling";
-  setSearchingStatus(state, "Cancelling…");
+function cancelSearch(card: UrlCard): void {
+  if (!canCancelSearch(card.data.searchStatus)) return;
+  card.data.searchStatus = "cancelling";
+  setSearchingStatus(card, "Cancelling…");
   fetch("/api/cancel-search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ searchId: state.searchId }),
+    body: JSON.stringify({ searchId: card.data.searchId }),
   }).catch(() => null);
 }
 
@@ -160,27 +177,27 @@ function setStatus(
   statusBar.classList.remove("hidden");
 }
 
-function updateCardSearchBtn(state: UrlCardState): void {
-  const current = state.input.value.trim();
-  state.searchButton.disabled =
+function updateCardSearchBtn(card: UrlCard): void {
+  const current = card.dom.input.value.trim();
+  card.dom.searchButton.disabled =
     isDeepSearchRunning ||
     !isValidRecipeUrl(current) ||
-    isSearchButtonDisabled(state.searchStatus, state.searchedUrl, current);
+    isSearchButtonDisabled(card.data.searchStatus, card.data.searchedUrl, current);
 }
 
 function setDeepSearchBusy(busy: boolean): void {
   setIsDeepSearchRunning(busy);
-  for (const state of urlCardStates) updateCardSearchBtn(state);
+  for (const card of urlCards) updateCardSearchBtn(card);
   renderDerived();
 }
 
 const SEARCH_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 
-function createUrlCard(): UrlCardState {
-  const idx = urlCardStates.length;
-  const card = document.createElement("div");
-  card.className = "card url-card";
-  card.innerHTML = `
+function createUrlCard(): UrlCard {
+  const idx = urlCards.length;
+  const cardEl = document.createElement("div");
+  cardEl.className = "card url-card";
+  cardEl.innerHTML = `
     <div class="card-label" style="display:flex;align-items:center">URL ${idx + 1}<span class="url-card-count"></span><button class="btn btn-ghost url-remove-btn hidden" style="margin-left:auto;padding:0.15rem 0.45rem;line-height:1" title="Remove">✕</button></div>
     <div class="url-row">
       <input type="url" class="url-input" placeholder="Paste search URL…" />
@@ -189,18 +206,24 @@ function createUrlCard(): UrlCardState {
     <div class="url-card-status hidden"></div>
     <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
   `;
-  getElement("urlCardsContainer").appendChild(card);
+  getElement("urlCardsContainer").appendChild(cardEl);
 
-  const input = requireChild<HTMLInputElement>(card, ".url-input");
-  const searchButton = requireChild<HTMLButtonElement>(card, ".url-search-btn");
-  const removeButton = requireChild<HTMLButtonElement>(card, ".url-remove-btn");
-  const criteriaElement = requireChild<HTMLElement>(card, ".url-criteria");
-  const countElement = requireChild<HTMLElement>(card, ".url-card-count");
-  const cacheStatusElement = requireChild<HTMLElement>(card, ".cache-status");
-  const statusElement = requireChild<HTMLElement>(card, ".url-card-status");
+  const input = requireChild<HTMLInputElement>(cardEl, ".url-input");
+  const searchButton = requireChild<HTMLButtonElement>(cardEl, ".url-search-btn");
+  const removeButton = requireChild<HTMLButtonElement>(cardEl, ".url-remove-btn");
+  const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-criteria");
+  const countElement = requireChild<HTMLElement>(cardEl, ".url-card-count");
+  const cacheStatusElement = requireChild<HTMLElement>(cardEl, ".cache-status");
+  const statusElement = requireChild<HTMLElement>(cardEl, ".url-card-status");
 
-  const state: UrlCardState = {
-    containerElement: card,
+  const data: UrlCardData = {
+    searchStatus: "idle",
+    searchedUrl: "",
+    searchId: null,
+    listingUrls: [],
+  };
+  const dom: UrlCardDom = {
+    containerElement: cardEl,
     input,
     searchButton,
     removeButton,
@@ -208,22 +231,20 @@ function createUrlCard(): UrlCardState {
     countElement,
     cacheStatusElement,
     statusElement,
-    searchStatus: "idle",
-    searchedUrl: "",
-    searchId: null,
-    listingUrls: [],
   };
-  urlCardStates.push(state);
+  const urlCard: UrlCard = { data, dom };
+  urlCards.push(urlCard);
+  urlCardData.push(data);
 
-  input.addEventListener("input", () => updateCardSearchBtn(state));
+  input.addEventListener("input", () => updateCardSearchBtn(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
-    if (keyboardEvent.key === "Enter" && !searchButton.disabled) searchUrlCardAsync(state);
+    if (keyboardEvent.key === "Enter" && !searchButton.disabled) searchUrlCardAsync(urlCard);
   });
-  searchButton.addEventListener("click", () => searchUrlCardAsync(state));
-  removeButton.addEventListener("click", () => removeUrlCard(state));
+  searchButton.addEventListener("click", () => searchUrlCardAsync(urlCard));
+  removeButton.addEventListener("click", () => removeUrlCard(urlCard));
 
   updateRemoveButtons();
-  return state;
+  return urlCard;
 }
 
 function resetAllResults(): void {
@@ -234,28 +255,28 @@ function resetAllResults(): void {
   getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = "show";
   getElement("filteredCount").classList.add("hidden");
   getElement("resultsSection").classList.add("hidden");
-  for (const cardState of urlCardStates) {
-    cardState.listingUrls = [];
-    cardState.searchStatus = "idle";
-    cardState.searchedUrl = "";
-    cardState.countElement.textContent = "";
-    requireChild<HTMLElement>(cardState.criteriaElement, ".criteria-grid").innerHTML = "";
-    cardState.criteriaElement.classList.add("hidden");
-    cardState.cacheStatusElement.classList.add("hidden");
-    cardState.cacheStatusElement.innerHTML = "";
-    cardState.statusElement.classList.add("hidden");
-    cardState.searchId = null;
-    cardState.input.readOnly = false;
-    updateCardSearchBtn(cardState);
+  for (const card of urlCards) {
+    card.data.listingUrls = [];
+    card.data.searchStatus = "idle";
+    card.data.searchedUrl = "";
+    card.dom.countElement.textContent = "";
+    requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
+    card.dom.criteriaElement.classList.add("hidden");
+    card.dom.cacheStatusElement.classList.add("hidden");
+    card.dom.cacheStatusElement.innerHTML = "";
+    card.dom.statusElement.classList.add("hidden");
+    card.data.searchId = null;
+    card.dom.input.readOnly = false;
+    updateCardSearchBtn(card);
   }
   renderDerived();
 }
 
 function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
-  return urlCardStates
-    .flatMap((cardState) =>
-      cardState.listingUrls.filter((listingUrl) => !seen.has(listingUrl) && seen.add(listingUrl)),
+  return urlCards
+    .flatMap((card) =>
+      card.data.listingUrls.filter((listingUrl) => !seen.has(listingUrl) && seen.add(listingUrl)),
     )
     .flatMap((listingUrl) => {
       // Every URL in listingUrls was added to listingsByUrl at the same time in searchUrlCardAsync.
@@ -273,8 +294,8 @@ function renderDerived(): void {
   getElement("resultCount").textContent = String(visible.length);
   getElement("filteredCountNum").textContent = String(filtered);
   getElement("filteredCount").classList.toggle("hidden", filtered === 0);
-  const isAnyCardSearching = urlCardStates.some((cardState) =>
-    isCardSearchActive(cardState.searchStatus),
+  const isAnyCardSearching = urlCards.some((card) =>
+    isCardSearchActive(card.data.searchStatus),
   );
   const hasUnscraped = visible.some((listingItem) => !listingItem.hasBeenDeepSearched);
   getElement<HTMLButtonElement>("deepBtn").disabled =
@@ -288,89 +309,92 @@ function renderDerived(): void {
 }
 
 function updateRemoveButtons(): void {
-  const show = urlCardStates.length > 1;
-  for (const cardState of urlCardStates) cardState.removeButton.classList.toggle("hidden", !show);
+  const show = urlCards.length > 1;
+  for (const card of urlCards) card.dom.removeButton.classList.toggle("hidden", !show);
 }
 
-function resetCardForResearch(state: UrlCardState): void {
+function resetCardForResearch(card: UrlCard): void {
   const otherUrls = new Set(
-    urlCardStates.flatMap((cardState) => (cardState === state ? [] : cardState.listingUrls)),
+    urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)),
   );
-  for (const url of state.listingUrls) {
+  for (const url of card.data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);
       cardIdByUrl.delete(url);
     }
   }
-  state.listingUrls = [];
-  state.searchStatus = "idle";
-  state.searchedUrl = "";
-  state.countElement.textContent = "";
-  requireChild<HTMLElement>(state.criteriaElement, ".criteria-grid").innerHTML = "";
-  state.criteriaElement.classList.add("hidden");
-  state.cacheStatusElement.classList.add("hidden");
-  state.cacheStatusElement.innerHTML = "";
-  state.statusElement.classList.add("hidden");
-  state.input.readOnly = false;
+  card.data.listingUrls = [];
+  card.data.searchStatus = "idle";
+  card.data.searchedUrl = "";
+  card.dom.countElement.textContent = "";
+  requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
+  card.dom.criteriaElement.classList.add("hidden");
+  card.dom.cacheStatusElement.classList.add("hidden");
+  card.dom.cacheStatusElement.innerHTML = "";
+  card.dom.statusElement.classList.add("hidden");
+  card.dom.input.readOnly = false;
   if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
   renderDerived();
 }
 
-function removeUrlCard(state: UrlCardState): void {
+function removeUrlCard(card: UrlCard): void {
   const otherUrls = new Set(
-    urlCardStates.flatMap((cardState) => (cardState === state ? [] : cardState.listingUrls)),
+    urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)),
   );
-  for (const url of state.listingUrls) {
+  for (const url of card.data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);
       cardIdByUrl.delete(url);
     }
   }
-  state.containerElement.remove();
-  const cardIndex = urlCardStates.indexOf(state);
-  if (cardIndex !== -1) urlCardStates.splice(cardIndex, 1);
+  card.dom.containerElement.remove();
+  const cardIndex = urlCards.indexOf(card);
+  if (cardIndex !== -1) {
+    urlCards.splice(cardIndex, 1);
+    urlCardData.splice(cardIndex, 1);
+  }
   if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
   updateRemoveButtons();
   applyClientFilters();
 }
 
-async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
-  const url = state.input.value.trim();
+async function searchUrlCardAsync(card: UrlCard): Promise<void> {
+  const url = card.dom.input.value.trim();
   if (!isValidRecipeUrl(url)) return;
 
-  if (state.searchStatus === "done") resetCardForResearch(state);
+  if (card.data.searchStatus === "done") resetCardForResearch(card);
 
   getElement("resultsSection").classList.remove("hidden");
-  state.searchStatus = "searching";
-  state.searchId = crypto.randomUUID();
-  updateCardSearchBtn(state);
+  card.data.searchStatus = "searching";
+  card.data.searchId = crypto.randomUUID();
+  updateCardSearchBtn(card);
   renderDerived();
-  setSearchingStatus(state, "Fetching listings…");
+  setSearchingStatus(card, "Fetching listings…");
 
   let totalFound = 0;
   let cachedAge = "";
   let searchError = false;
   try {
-    await streamPostAsync("/api/quick-search", { url, searchId: state.searchId }, (ev) => {
+    await streamPostAsync("/api/quick-search", { url, searchId: card.data.searchId }, (ev) => {
       if (ev.type === "criteria") {
         const filters = ev.filters as Array<[string, string]>;
-        requireChild<HTMLElement>(state.criteriaElement, ".criteria-grid").innerHTML = filters
+        requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = filters
           .map(
             ([k, v]) =>
               `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`,
           )
           .join("");
-        state.criteriaElement.classList.remove("hidden");
+        card.dom.criteriaElement.classList.remove("hidden");
       } else if (ev.type === "cached") {
         cachedAge = ev.age as string;
       } else if (ev.type === "progress") {
-        if (canCancelSearch(state.searchStatus)) setSearchingStatus(state, ev.message as string);
+        if (canCancelSearch(card.data.searchStatus)) setSearchingStatus(card, ev.message as string);
       } else if (ev.type === "listing") {
         const listing = ev.data as Listing;
         totalFound++;
-        state.listingUrls.push(listing.url);
+        card.data.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = {
             data: listing,
@@ -386,44 +410,44 @@ async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
         }
       } else if (ev.type === "error") {
         searchError = true;
-        setCardStatus(state, ev.message as string, "error");
+        setCardStatus(card, ev.message as string, "error");
       }
     });
   } catch (error) {
     searchError = true;
-    setCardStatus(state, (error as Error).message, "error");
+    setCardStatus(card, (error as Error).message, "error");
   }
 
-  const wasCancelled = (state.searchStatus as UrlCardSearchStatus) === "cancelling";
-  state.searchStatus = wasCancelled ? "idle" : "done";
-  state.searchId = null;
+  const wasCancelled = (card.data.searchStatus as UrlCardSearchStatus) === "cancelling";
+  card.data.searchStatus = wasCancelled ? "idle" : "done";
+  card.data.searchId = null;
 
   if (wasCancelled) {
     setCardStatus(
-      state,
+      card,
       `Cancelled — ${totalFound} listing${totalFound !== 1 ? "s" : ""} loaded`,
       "error",
     );
-    updateCardSearchBtn(state);
+    updateCardSearchBtn(card);
     if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
-  state.searchedUrl = url;
-  state.input.readOnly = true;
-  updateCardSearchBtn(state);
+  card.data.searchedUrl = url;
+  card.dom.input.readOnly = true;
+  updateCardSearchBtn(card);
 
   if (cachedAge) {
-    state.cacheStatusElement.innerHTML = `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
-    state.cacheStatusElement.classList.remove("hidden");
-    requireChild<HTMLButtonElement>(state.cacheStatusElement, ".cache-clear-btn").addEventListener(
+    card.dom.cacheStatusElement.innerHTML = `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
+    card.dom.cacheStatusElement.classList.remove("hidden");
+    requireChild<HTMLButtonElement>(card.dom.cacheStatusElement, ".cache-clear-btn").addEventListener(
       "click",
       clearQuickSearchCacheAsync,
     );
   }
-  state.countElement.textContent = `— ${totalFound} listing${totalFound !== 1 ? "s" : ""}`;
+  card.dom.countElement.textContent = `— ${totalFound} listing${totalFound !== 1 ? "s" : ""}`;
 
   if (!searchError) {
-    setCardStatus(state, `${totalFound} listing${totalFound !== 1 ? "s" : ""} found`, "success");
+    setCardStatus(card, `${totalFound} listing${totalFound !== 1 ? "s" : ""} found`, "success");
   }
   if (listingsByUrl.size > 0) {
     applyClientFilters();
@@ -433,6 +457,18 @@ async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
 }
 
 // ── Client-side filtering ─────────────────────────────────────────────────────
+
+// Returns a Listing with deep-search data merged in, without mutating item.data.
+function effectiveListing(item: ListingItem): Listing {
+  if (!item.detail) return item.data;
+  return {
+    ...item.data,
+    description: item.detail.description || item.data.description,
+    ...(item.detail.shippingAvailable !== null && item.detail.pickupAvailable !== null
+      ? { fulfillment: { shippingAvailable: item.detail.shippingAvailable, pickupAvailable: item.detail.pickupAvailable } }
+      : {}),
+  };
+}
 
 function filterBannerText(item: ListingItem): string {
   if (item.aiFilterReason) return `Filtered by AI: ${item.aiFilterReason}`;
@@ -445,7 +481,7 @@ function filterBannerText(item: ListingItem): string {
 function applyClientFilters(): void {
   const filters = getFilters();
   for (const item of getOrderedListings()) {
-    item.filterReason = computeFilterReason(item.data, filters);
+    item.filterReason = computeFilterReason(effectiveListing(item), filters);
     const passes = item.filterReason === null && item.aiFilterReason === null;
     const card = getCardByUrl(item.data.url);
     if (card) {
@@ -503,7 +539,7 @@ async function runAiFilterAsync(): Promise<void> {
           title: item.data.title,
           price: item.data.priceDisplay,
           location: item.data.location,
-          description: item.data.description?.slice(0, 300) ?? "",
+          description: (item.detail?.description ?? item.data.description)?.slice(0, 300) ?? "",
         })),
       },
       (event) => {
@@ -814,19 +850,12 @@ async function runDeepSearchAsync(): Promise<void> {
         if (item) {
           item.hasBeenDeepSearched = true;
           item.detail = detail;
-          item.data.description = detail.description;
-          if (detail.shippingAvailable !== null && detail.pickupAvailable !== null) {
-            item.data.fulfillment = {
-              shippingAvailable: detail.shippingAvailable,
-              pickupAvailable: detail.pickupAvailable,
-            };
-          }
           item.aiCheckedHash = null;
           renderCard(item);
 
           const card = getCardByUrl(item.data.url);
           const wasVisible = card !== null && card.style.display !== "none";
-          item.filterReason = computeFilterReason(item.data, getFilters());
+          item.filterReason = computeFilterReason(effectiveListing(item), getFilters());
           if (card && wasVisible && item.filterReason !== null) {
             const banner = requireChild<HTMLElement>(card, ".filter-banner");
             card.classList.add("filtered-out");
@@ -922,7 +951,7 @@ function renderSavedSearches(searches: SavedSearch[]): void {
 }
 
 async function saveCurrentSearchAsync(name: string): Promise<void> {
-  const urls = urlCardStates.map((cardState) => cardState.input.value.trim()).filter(Boolean);
+  const urls = urlCards.map((card) => card.dom.input.value.trim()).filter(Boolean);
   if (!name.trim() || urls.length === 0) return;
   const response = await fetch("/api/saved-searches", {
     method: "POST",
@@ -947,13 +976,13 @@ function loadDiscoveryResults(
   aiPrompt: string,
 ): void {
   resetAllResults();
-  while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
-  urlCardStates[0].input.value = data.urls[0];
-  updateCardSearchBtn(urlCardStates[0]);
+  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+  urlCards[0].dom.input.value = data.urls[0];
+  updateCardSearchBtn(urlCards[0]);
   for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
-    const state = createUrlCard();
-    state.input.value = data.urls[urlIndex];
-    updateCardSearchBtn(state);
+    const card = createUrlCard();
+    card.dom.input.value = data.urls[urlIndex];
+    updateCardSearchBtn(card);
   }
   setFilters(data.filters);
   setSearchName(data.name);
@@ -964,21 +993,21 @@ function loadDiscoveryResults(
 
 async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   resetAllResults();
-  while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
+  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   if (search.urls.length === 0) return;
-  urlCardStates[0].input.value = search.urls[0];
-  updateCardSearchBtn(urlCardStates[0]);
+  urlCards[0].dom.input.value = search.urls[0];
+  updateCardSearchBtn(urlCards[0]);
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
-    const state = createUrlCard();
-    state.input.value = search.urls[urlIndex];
-    updateCardSearchBtn(state);
+    const card = createUrlCard();
+    card.dom.input.value = search.urls[urlIndex];
+    updateCardSearchBtn(card);
   }
   setFilters(search.filters);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
   getElement("savedSearchesPanel").classList.add("hidden");
   applyClientFilters();
-  for (const state of urlCardStates) searchUrlCardAsync(state);
+  for (const card of urlCards) searchUrlCardAsync(card);
 }
 
 // ── Event listeners ───────────────────────────────────────────────────────────
@@ -989,8 +1018,8 @@ function initApp(): void {
 
   getElement("addUrlBtn").addEventListener("click", () => {
     const newCard = createUrlCard();
-    newCard.input.focus();
-    newCard.containerElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    newCard.dom.input.focus();
+    newCard.dom.containerElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
   });
 
   getElement<HTMLButtonElement>("deepBtn").addEventListener("click", () => runDeepSearchAsync());
