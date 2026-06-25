@@ -273,7 +273,7 @@ describe("discoverCategoriesAsync", () => {
 
   it("returns filters without a minPrice field", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], name: "laptop" } as any)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "laptop", searchQuery: "laptop" } as any)
       .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
 
     const result = await discoverCategoriesAsync("laptop", 500, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
@@ -282,11 +282,32 @@ describe("discoverCategoriesAsync", () => {
 
   it("throws a meaningful error (not TypeError) when a step2 result is null", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], name: "laptop" } as any)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "laptop", searchQuery: "laptop" } as any)
       .mockResolvedValueOnce(null as any);
 
     await expect(
       discoverCategoriesAsync("laptop", 500, "any", undefined, MOCK_AI_CONFIG, MOCK_DB),
     ).rejects.toThrow("AI returned no valid specific categories");
+  });
+
+  it("returns name equal to searchLabel from step1", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "MacBook laptops", searchQuery: "macbook" } as any)
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
+
+    const result = await discoverCategoriesAsync("macbook pro", 0, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
+    expect(result.name).toBe("MacBook laptops");
+  });
+
+  it("uses searchQuery (not searchLabel or raw prompt) for the Facebook URL", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "MacBook laptops", searchQuery: "macbook" } as any)
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
+
+    const result = await discoverCategoriesAsync("macbook pro m1", 0, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
+    const fbUrl = result.urls.find((url) => url.includes("facebook.com"));
+    expect(fbUrl).toContain("query=macbook");
+    expect(fbUrl).not.toContain("pro");
+    expect(fbUrl).not.toContain("laptops");
   });
 });

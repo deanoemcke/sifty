@@ -13,6 +13,9 @@ const TRADEME_SECTIONS = new Set(["motors", "property", "jobs", "flatmates-wante
 export type DiscoverEntry = { slug: string; searchString: string | null };
 type Step2Category = { slug: string; searchString?: string | null };
 
+export const STEP1_SYSTEM_PROMPT =
+  'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also suggest a short label for the search and a search query. Return JSON: { "categories": string[], "searchLabel": string, "searchQuery": string | null } using the exact category names from the list. For searchLabel: a short human-readable label for the search (e.g. "MacBook Pro laptops"). For searchQuery: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchQuery=\'macbook pro\'.';
+
 export const STEP2_SYSTEM_PROMPT =
   "You are a TradeMe NZ shopping assistant. From the categories below pick all subcategories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { \"categories\": [{ \"slug\": string, \"searchString\": string | null }] }. Each slug must be a value shown in parentheses. For searchString: rule: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString='bookshelf'; category=apple-laptops, user wants 'Apple MacBook Pro M1 16gb 2021' → searchString='macbook pro'.";
 
@@ -103,10 +106,11 @@ export async function discoverCategoriesAsync(
   // Show only display names (not slugs) to avoid confusing the model, then map back.
   const broad = stmtGetCategoriesAtDepth2(database).all();
   const broadDisplayList = broad.map((category) => category.display).join("\n");
+
   const broadCategoryPick = (await aiJSON(
     aiConfig,
     "step1",
-    'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also suggest a short label for the search. Return JSON: { "categories": string[], "name": string } using the exact category names from the list.',
+    STEP1_SYSTEM_PROMPT,
     `I'm looking for: ${discoveryPrompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
     4096,
   )) as Record<string, unknown> | null;
@@ -163,7 +167,6 @@ export async function discoverCategoriesAsync(
   }
 
   const collapsedEntries = collapseEntries(allEntries);
-  const pickupOnly = discoveryFulfillment === "pickup" && !!discoveryRegion;
   const urls = collapsedEntries.map((entry) =>
     buildTrademeUrl(entry, discoveryMaxPrice, discoveryFulfillment, discoveryRegion),
   );
@@ -171,20 +174,19 @@ export async function discoverCategoriesAsync(
     throw new Error("AI returned no valid specific categories");
   }
 
-  // Append a Facebook Marketplace URL
-  const fbSearchTerm = String(broadCategoryPick.name ?? "").trim() || discoveryPrompt.trim();
-  urls.push(buildFacebookUrl(fbSearchTerm, discoveryMaxPrice, discoveryFulfillment, discoveryRegion));
+  const searchLabel = String(broadCategoryPick.searchLabel ?? "").trim() || discoveryPrompt.trim();
+  const searchQuery = String(broadCategoryPick.searchQuery ?? "").trim() || discoveryPrompt.trim();
+  urls.push(buildFacebookUrl(searchQuery, discoveryMaxPrice, discoveryFulfillment, discoveryRegion));
 
   const filters = {
     maxPrice: discoveryMaxPrice,
-    shippingAvailable: !pickupOnly,
+    shippingAvailable: !(discoveryFulfillment === "pickup" && !!discoveryRegion),
     pickupAvailable: true,
   };
-  const discoveryLabel = String(broadCategoryPick.name ?? "").trim() || discoveryPrompt.trim();
   console.log(
-    `[discover] "${discoveryPrompt}" → step1: ${selectedBroadSlugs.join(", ")} → ${urls.length} URL(s) (incl. Facebook), name="${discoveryLabel}"`,
+    `[discover] "${discoveryPrompt}" → step1: ${selectedBroadSlugs.join(", ")} → ${urls.length} URL(s) (incl. Facebook), name="${searchLabel}"`,
   );
-  return { urls, filters, name: discoveryLabel };
+  return { urls, filters, name: searchLabel };
 }
 
 export async function handleDiscover(
