@@ -20,12 +20,12 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
 
 export type AiConfig = { url: string; model: string; apiKey: string };
 
-export function getAIConfig(): AiConfig | string {
+export function getAIConfig(): AiConfig {
   const provider = (process.env.AI_PROVIDER ?? "groq").toLowerCase();
   const providerConfig = AI_PROVIDERS[provider];
-  if (!providerConfig) return `Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`;
+  if (!providerConfig) throw new Error(`Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`);
   const apiKey = process.env[providerConfig.keyVar];
-  if (!apiKey) return `${providerConfig.keyVar} is not set`;
+  if (!apiKey) throw new Error(`${providerConfig.keyVar} is not set`);
   return { url: providerConfig.url, model: providerConfig.model, apiKey };
 }
 

@@ -37,6 +37,14 @@ export type DeepSearchEvent =
   | { type: "complete" }
   | { type: "error"; message: string };
 
+export type Fulfillment = "any" | "pickup" | "shipping";
+
+export type DiscoverContext = {
+  maxPrice: number;
+  fulfillment: Fulfillment;
+  regionValue?: string;
+};
+
 export interface Recipe {
   readonly name: string;
   matches(url: string): boolean;
@@ -51,4 +59,5 @@ export interface Recipe {
     onEvent: (event: DeepSearchEvent) => void,
     isCancelled?: () => boolean,
   ): Promise<void>;
+  buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext): Promise<string[]>;
 }

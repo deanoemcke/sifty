@@ -8,3 +8,7 @@ const recipes: Recipe[] = [trademeRecipe, facebookRecipe];
 export function getRecipeForUrl(url: string): Recipe | null {
   return recipes.find((r) => r.matches(url)) ?? null;
 }
+
+export function getAllRecipes(): readonly Recipe[] {
+  return recipes;
+}

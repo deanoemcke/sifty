@@ -37,9 +37,11 @@ export async function handleAiFilter(
     return;
   }
 
-  const aiConfig = getAIConfig();
-  if (typeof aiConfig === "string") {
-    sendJSON(response, 500, { error: aiConfig });
+  let aiConfig: ReturnType<typeof getAIConfig>;
+  try {
+    aiConfig = getAIConfig();
+  } catch (err) {
+    sendJSON(response, 500, { error: (err as Error).message });
     return;
   }
 

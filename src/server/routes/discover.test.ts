@@ -1,313 +1,147 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AiConfig } from "../ai";
-import { aiJSON } from "../ai";
-import { stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
-import type { DiscoverEntry } from "./discover";
-import {
-  STEP2_SYSTEM_PROMPT,
-  buildFacebookUrl,
-  buildTrademeUrl,
-  collapseEntries,
-  discoverCategoriesAsync,
-} from "./discover";
+import { describe, expect, it, vi } from "vitest";
+import { discoverCategoriesAsync } from "./discover";
 
-// Mock server-only deps that are not exercised by the pure functions under test.
-vi.mock("../db", () => ({
-  getDb: vi.fn(),
-  stmtGetCategoriesAtDepth2: vi.fn(),
-  stmtGetCategoriesByTop2: vi.fn(),
-}));
-vi.mock("../ai", () => ({
-  aiJSON: vi.fn(),
-  getAIConfig: vi.fn(),
+vi.mock("../../lib/recipes/server", () => ({
+  getAllRecipes: vi.fn(),
 }));
 vi.mock("../helpers", () => ({}));
 vi.mock("../../lib/validate", () => ({}));
-vi.mock("./regions", () => ({ getRegions: () => [] }));
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+import { getAllRecipes } from "../../lib/recipes/server";
 
-function entry(slug: string, searchString: string | null = null): DiscoverEntry {
-  return { slug, searchString };
+function makeStubRecipe(urls: string[]) {
+  return {
+    name: "stub",
+    matches: () => false,
+    extractImplicitFilters: () => [],
+    quickSearchAsync: async () => {},
+    deepSearchAsync: async () => {},
+    buildDiscoverUrlsAsync: async () => urls,
+  };
 }
 
-// ── collapseEntries ───────────────────────────────────────────────────────────
-
-describe("collapseEntries", () => {
-  it("returns an empty array unchanged", () => {
-    expect(collapseEntries([])).toEqual([]);
-  });
-
-  it("passes through a single entry with no siblings", () => {
-    const input = [entry("computers/laptops/apple")];
-    expect(collapseEntries(input)).toEqual(input);
-  });
-
-  it("drops a child when its parent is also present in the list", () => {
-    // parent present → child must be dropped (Dedup 1)
-    const input = [entry("computers/laptops"), entry("computers/laptops/apple")];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0].slug).toBe("computers/laptops");
-  });
-
-  it("collapses two siblings with the same searchString to their parent", () => {
-    // Siblings at depth 4 (parentSlug has 3 segments) → collapse
-    // e.g. marketplace/computers/laptops/apple & .../dell → marketplace/computers/laptops
-    const input = [
-      entry("marketplace/computers/laptops/apple", "macbook"),
-      entry("marketplace/computers/laptops/dell", "macbook"),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ slug: "marketplace/computers/laptops", searchString: "macbook" });
-  });
-
-  it("does not collapse siblings when their shared parent slug has fewer than 3 segments", () => {
-    // parentSlug = 'computers/laptops' (2 segments) → below the minimum → no collapse
-    const input = [
-      entry("computers/laptops/apple", "macbook"),
-      entry("computers/laptops/dell", "macbook"),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(2);
-  });
-
-  it("does not collapse siblings with different searchStrings", () => {
-    const input = [
-      entry("marketplace/computers/laptops/apple", "macbook"),
-      entry("marketplace/computers/laptops/dell", "latitude"),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(2);
-  });
-
-  it("does not collapse a lone entry with no siblings", () => {
-    const input = [entry("marketplace/computers/laptops/apple", "macbook")];
-    expect(collapseEntries(input)).toEqual(input);
-  });
-
-  it("collapses three siblings to one parent entry", () => {
-    const input = [
-      entry("marketplace/computers/laptops/apple", null),
-      entry("marketplace/computers/laptops/dell", null),
-      entry("marketplace/computers/laptops/lenovo", null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ slug: "marketplace/computers/laptops", searchString: null });
-  });
-
-  it("collapses one sibling group and leaves unrelated entries untouched", () => {
-    const input = [
-      entry("marketplace/computers/laptops/apple", "macbook"),
-      entry("marketplace/computers/laptops/dell", "macbook"),
-      entry("marketplace/electronics/cameras/dslr", null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(2);
-    const slugs = result.map((e) => e.slug);
-    expect(slugs).toContain("marketplace/computers/laptops");
-    expect(slugs).toContain("marketplace/electronics/cameras/dslr");
-  });
-
-  it("does not emit the collapsed parent slug twice when three siblings collapse", () => {
-    // All three share the same parent — result must contain exactly one collapsed entry
-    const input = [
-      entry("marketplace/furniture/home/bedroom", null),
-      entry("marketplace/furniture/home/living", null),
-      entry("marketplace/furniture/home/dining", null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0].slug).toBe("marketplace/furniture/home");
-  });
-
-  it("does not collapse siblings when their parent is present in the input", () => {
-    // parent present means children are dropped by Dedup 1 before sibling collapse runs
-    const input = [
-      entry("marketplace/furniture/home"),
-      entry("marketplace/furniture/home/bedroom", null),
-      entry("marketplace/furniture/home/living", null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0].slug).toBe("marketplace/furniture/home");
-  });
-});
-
-// ── buildTrademeUrl ───────────────────────────────────────────────────────────
-
-describe("buildTrademeUrl", () => {
-  it('wraps a non-section slug in "marketplace/"', () => {
-    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
-    expect(url).toContain("/a/marketplace/computers/laptops/search");
-  });
-
-  it('does not prefix a section slug with "marketplace/"', () => {
-    const url = buildTrademeUrl(entry("motors/cars"), 0, "any", undefined);
-    expect(url).toContain("/a/motors/cars/search");
-    expect(url).not.toContain("marketplace");
-  });
-
-  it("appends search_string when set", () => {
-    const url = buildTrademeUrl(entry("computers/laptops", "macbook"), 0, "any", undefined);
-    expect(url).toContain("search_string=macbook");
-  });
-
-  it("appends price_max when maxPrice > 0", () => {
-    const url = buildTrademeUrl(entry("computers/laptops"), 500, "any", undefined);
-    expect(url).toContain("price_max=500");
-  });
-
-  it("omits price_max when maxPrice is 0", () => {
-    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
-    expect(url).not.toContain("price_max");
-  });
-
-  it('adds pickup params when fulfillment is "pickup" and regionValue is set', () => {
-    const url = buildTrademeUrl(entry("computers/laptops"), 0, "pickup", "2");
-    expect(url).toContain("user_region=2");
-    expect(url).toContain("shipping_method=pickup");
-  });
-
-  it('does not add pickup params when fulfillment is "pickup" but regionValue is missing', () => {
-    const url = buildTrademeUrl(entry("computers/laptops"), 0, "pickup", undefined);
-    expect(url).not.toContain("shipping_method");
-  });
-
-  it("produces a bare search URL when no params apply", () => {
-    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
-    expect(url).toBe("https://www.trademe.co.nz/a/marketplace/computers/laptops/search");
-  });
-});
-
-// ── buildFacebookUrl ──────────────────────────────────────────────────────────
-
-const TEST_REGIONS = [
-  { name: "Auckland", tradeMeRegionId: 2, facebookLocation: "auckland" },
-  { name: "Wellington", tradeMeRegionId: 12, facebookLocation: "wellington" },
-];
-
-describe("buildFacebookUrl", () => {
-  it("always sets query, exact, and sortBy", () => {
-    const url = buildFacebookUrl("macbook", 0, "any", undefined, TEST_REGIONS);
-    expect(url).toContain("query=macbook");
-    expect(url).toContain("exact=false");
-    expect(url).toContain("sortBy=creation_time_descend");
-  });
-
-  it("adds maxPrice when > 0", () => {
-    const url = buildFacebookUrl("macbook", 800, "any", undefined, TEST_REGIONS);
-    expect(url).toContain("maxPrice=800");
-  });
-
-  it("omits maxPrice when 0", () => {
-    const url = buildFacebookUrl("macbook", 0, "any", undefined, TEST_REGIONS);
-    expect(url).not.toContain("maxPrice");
-  });
-
-  it("sets deliveryMethod=local_pick_up for pickup fulfillment", () => {
-    const url = buildFacebookUrl("macbook", 0, "pickup", undefined, TEST_REGIONS);
-    expect(url).toContain("deliveryMethod=local_pick_up");
-  });
-
-  it("sets deliveryMethod=shipping for shipping fulfillment", () => {
-    const url = buildFacebookUrl("macbook", 0, "shipping", undefined, TEST_REGIONS);
-    expect(url).toContain("deliveryMethod=shipping");
-  });
-
-  it('omits deliveryMethod for "any" fulfillment', () => {
-    const url = buildFacebookUrl("macbook", 0, "any", undefined, TEST_REGIONS);
-    expect(url).not.toContain("deliveryMethod");
-  });
-
-  it("injects location segment when pickup and regionValue matches a region", () => {
-    const url = buildFacebookUrl("macbook", 0, "pickup", "2", TEST_REGIONS);
-    expect(url).toContain("/marketplace/auckland/search");
-  });
-
-  it("omits location segment when pickup but regionValue is undefined", () => {
-    const url = buildFacebookUrl("macbook", 0, "pickup", undefined, TEST_REGIONS);
-    expect(url).toContain("/marketplace/search");
-    expect(url).not.toContain("/marketplace/auckland/");
-  });
-
-  it('omits location segment when fulfillment is "any" even with regionValue', () => {
-    const url = buildFacebookUrl("macbook", 0, "any", "2", TEST_REGIONS);
-    expect(url).not.toContain("/marketplace/auckland/");
-  });
-
-  it("omits location segment when regionValue does not match any region", () => {
-    const url = buildFacebookUrl("macbook", 0, "pickup", "999", TEST_REGIONS);
-    expect(url).toContain("/marketplace/search");
-    expect(url).not.toContain("/marketplace/undefined/");
-  });
-});
-
-// ── STEP2_SYSTEM_PROMPT ───────────────────────────────────────────────────────
-
-describe("STEP2_SYSTEM_PROMPT", () => {
-  it("is a non-empty string", () => {
-    expect(typeof STEP2_SYSTEM_PROMPT).toBe("string");
-    expect(STEP2_SYSTEM_PROMPT.length).toBeGreaterThan(20);
-  });
-});
-
-// ── discoverCategoriesAsync ───────────────────────────────────────────────────
-
-const MOCK_BROAD_CATEGORIES = [{ display: "Electronics", slug: "electronics/electronics" }];
-const MOCK_SUB_CATEGORIES = [{ display: "Laptops", slug: "electronics/laptops" }];
-const MOCK_DB = {} as ReturnType<typeof import("../db").getDb>;
-const MOCK_AI_CONFIG = {} as AiConfig;
-
 describe("discoverCategoriesAsync", () => {
-  beforeEach(() => {
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD_CATEGORIES } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_SUB_CATEGORIES } as any);
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("returns filters without a minPrice field", async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "laptop", searchQuery: "laptop" } as any)
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
+    vi.mocked(getAllRecipes).mockReturnValue([
+      makeStubRecipe(["https://www.trademe.co.nz/a/marketplace/computers/laptops/search"]),
+    ]);
 
-    const result = await discoverCategoriesAsync("laptop", 500, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
+    const result = await discoverCategoriesAsync("laptop", 500, "any", undefined);
     expect(result.filters).not.toHaveProperty("minPrice");
   });
 
-  it("throws a meaningful error (not TypeError) when a step2 result is null", async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "laptop", searchQuery: "laptop" } as any)
-      .mockResolvedValueOnce(null as any);
+  it("aggregates URLs from all recipes", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      makeStubRecipe(["https://www.trademe.co.nz/a/marketplace/computers/search"]),
+      makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
+    ]);
 
-    await expect(
-      discoverCategoriesAsync("laptop", 500, "any", undefined, MOCK_AI_CONFIG, MOCK_DB),
-    ).rejects.toThrow("AI returned no valid specific categories");
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.urls).toHaveLength(2);
+    expect(result.urls.some((u) => u.includes("trademe"))).toBe(true);
+    expect(result.urls.some((u) => u.includes("facebook"))).toBe(true);
   });
 
-  it("returns name equal to searchLabel from step1", async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "MacBook laptops", searchQuery: "macbook" } as any)
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
+  it("throws when no recipes return any URLs", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe([])]);
 
-    const result = await discoverCategoriesAsync("macbook pro", 0, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
-    expect(result.name).toBe("MacBook laptops");
+    await expect(discoverCategoriesAsync("laptop", 0, "any", undefined)).rejects.toThrow(
+      "No URLs returned from any recipe",
+    );
   });
 
-  it("uses searchQuery (not searchLabel or raw prompt) for the Facebook URL", async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "MacBook laptops", searchQuery: "macbook" } as any)
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
+  it("sets name to the trimmed prompt", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      makeStubRecipe(["https://www.trademe.co.nz/a/marketplace/computers/laptops/search"]),
+    ]);
 
-    const result = await discoverCategoriesAsync("macbook pro m1", 0, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
-    const fbUrl = result.urls.find((url) => url.includes("facebook.com"));
-    expect(fbUrl).toContain("query=macbook");
-    expect(fbUrl).not.toContain("pro");
-    expect(fbUrl).not.toContain("laptops");
+    const result = await discoverCategoriesAsync("  macbook pro  ", 0, "any", undefined);
+    expect(result.name).toBe("macbook pro");
+  });
+
+  it("sets shippingAvailable=false when fulfillment is pickup with a region", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "pickup", "2");
+    expect(result.filters.shippingAvailable).toBe(false);
+    expect(result.filters.pickupAvailable).toBe(true);
+  });
+
+  it("sets shippingAvailable=true when fulfillment is any", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.filters.shippingAvailable).toBe(true);
+  });
+
+  it("passes maxPrice from context through to filters", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
+
+    const result = await discoverCategoriesAsync("laptop", 750, "any", undefined);
+    expect(result.filters.maxPrice).toBe(750);
+  });
+
+  it("sets pickupAvailable=false when fulfillment is shipping", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "shipping", undefined);
+    expect(result.filters.pickupAvailable).toBe(false);
+    expect(result.filters.shippingAvailable).toBe(true);
+  });
+
+  it("sets shippingAvailable=false when fulfillment is pickup even without a region", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "pickup", undefined);
+    expect(result.filters.shippingAvailable).toBe(false);
+  });
+
+  it("passes the correct DiscoverContext to each recipe", async () => {
+    const captured: { prompt: string; context: unknown }[] = [];
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
+        buildDiscoverUrlsAsync: async (p, ctx) => {
+          captured.push({ prompt: p, context: ctx });
+          return ["https://www.trademe.co.nz/a/x"];
+        },
+      },
+    ]);
+
+    await discoverCategoriesAsync("  macbook  ", 800, "pickup", "2");
+    expect(captured).toHaveLength(1);
+    expect(captured[0].prompt).toBe("  macbook  ");
+    expect(captured[0].context).toEqual({ maxPrice: 800, fulfillment: "pickup", regionValue: "2" });
+  });
+
+  it("returns URLs from successful recipes even when another recipe throws", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        buildDiscoverUrlsAsync: async () => {
+          throw new Error("AI unavailable");
+        },
+      },
+      makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.urls).toHaveLength(1);
+    expect(result.urls[0]).toContain("facebook.com");
+  });
+
+  it("throws when all recipes fail", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        buildDiscoverUrlsAsync: async () => {
+          throw new Error("AI unavailable");
+        },
+      },
+    ]);
+
+    await expect(discoverCategoriesAsync("laptop", 0, "any", undefined)).rejects.toThrow(
+      "No URLs returned from any recipe",
+    );
   });
 });

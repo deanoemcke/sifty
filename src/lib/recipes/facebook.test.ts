@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { buildFacebookListing, parseFacebookPriceLines } from "./facebook";
+import { describe, expect, it, vi } from "vitest";
+import { buildFacebookListing, buildFacebookUrl, facebookRecipe, parseFacebookPriceLines } from "./facebook";
+
+const TEST_REGIONS = [
+  { name: "Auckland", tradeMeRegionId: 2, facebookLocation: "auckland" },
+  { name: "Wellington", tradeMeRegionId: 12, facebookLocation: "wellington" },
+];
+
+// This mock is load-bearing for buildDiscoverUrlsAsync tests below, which rely on
+// buildFacebookUrl's default `regions` argument being supplied by the mocked getRegions.
+vi.mock("../../server/routes/regions", () => ({ getRegions: () => TEST_REGIONS }));
 
 describe("parseFacebookPriceLines", () => {
   it("returns the single price when only one price line is present", () => {
@@ -51,6 +60,102 @@ describe("parseFacebookPriceLines", () => {
   it("returns normalised lines for caller reuse", () => {
     const result = parseFacebookPriceLines("Vintage lamp\nNZ$80\nAuckland");
     expect(result.lines).toEqual(["Vintage lamp", "NZ$80", "Auckland"]);
+  });
+});
+
+// ── buildFacebookUrl ──────────────────────────────────────────────────────────
+
+describe("buildFacebookUrl", () => {
+  it("always sets query, exact, and sortBy", () => {
+    const url = buildFacebookUrl("macbook", 0, "any", undefined, TEST_REGIONS);
+    expect(url).toContain("query=macbook");
+    expect(url).toContain("exact=false");
+    expect(url).toContain("sortBy=creation_time_descend");
+  });
+
+  it("adds maxPrice when > 0", () => {
+    const url = buildFacebookUrl("macbook", 800, "any", undefined, TEST_REGIONS);
+    expect(url).toContain("maxPrice=800");
+  });
+
+  it("omits maxPrice when 0", () => {
+    const url = buildFacebookUrl("macbook", 0, "any", undefined, TEST_REGIONS);
+    expect(url).not.toContain("maxPrice");
+  });
+
+  it("sets deliveryMethod=local_pick_up for pickup fulfillment", () => {
+    const url = buildFacebookUrl("macbook", 0, "pickup", undefined, TEST_REGIONS);
+    expect(url).toContain("deliveryMethod=local_pick_up");
+  });
+
+  it("sets deliveryMethod=shipping for shipping fulfillment", () => {
+    const url = buildFacebookUrl("macbook", 0, "shipping", undefined, TEST_REGIONS);
+    expect(url).toContain("deliveryMethod=shipping");
+  });
+
+  it('omits deliveryMethod for "any" fulfillment', () => {
+    const url = buildFacebookUrl("macbook", 0, "any", undefined, TEST_REGIONS);
+    expect(url).not.toContain("deliveryMethod");
+  });
+
+  it("injects location segment when pickup and regionValue matches a region", () => {
+    const url = buildFacebookUrl("macbook", 0, "pickup", "2", TEST_REGIONS);
+    expect(url).toContain("/marketplace/auckland/search");
+  });
+
+  it("omits location segment when pickup but regionValue is undefined", () => {
+    const url = buildFacebookUrl("macbook", 0, "pickup", undefined, TEST_REGIONS);
+    expect(url).toContain("/marketplace/search");
+    expect(url).not.toContain("/marketplace/auckland/");
+  });
+
+  it('omits location segment when fulfillment is "any" even with regionValue', () => {
+    const url = buildFacebookUrl("macbook", 0, "any", "2", TEST_REGIONS);
+    expect(url).not.toContain("/marketplace/auckland/");
+  });
+
+  it("omits location segment when regionValue does not match any region", () => {
+    const url = buildFacebookUrl("macbook", 0, "pickup", "999", TEST_REGIONS);
+    expect(url).toContain("/marketplace/search");
+    expect(url).not.toContain("/marketplace/undefined/");
+  });
+});
+
+// ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
+
+describe("buildDiscoverUrlsAsync", () => {
+  it("returns a single Facebook Marketplace URL", async () => {
+    const urls = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
+      maxPrice: 0,
+      fulfillment: "any",
+    });
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain("facebook.com/marketplace");
+  });
+
+  it("includes the prompt as the search query", async () => {
+    const urls = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
+      maxPrice: 0,
+      fulfillment: "any",
+    });
+    expect(urls[0]).toContain("query=macbook+pro");
+  });
+
+  it("includes maxPrice when > 0", async () => {
+    const urls = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 500,
+      fulfillment: "any",
+    });
+    expect(urls[0]).toContain("maxPrice=500");
+  });
+
+  it("injects region location segment when pickup fulfillment and matching region", async () => {
+    const urls = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "pickup",
+      regionValue: "2",
+    });
+    expect(urls[0]).toContain("/marketplace/auckland/search");
   });
 });
 

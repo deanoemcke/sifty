@@ -1,7 +1,17 @@
 import { chromium, type Page, type Response } from "playwright";
+import { aiJSON, getAIConfig } from "../../server/ai";
 import { MAX_PAGES_PER_SEARCH } from "../../server/constants";
+import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../../server/db";
 import { enqueue } from "../queue";
-import type { DeepSearchEvent, Listing, ListingDetail, QuickSearchEvent, Recipe } from "./base";
+import type {
+  DiscoverContext,
+  DeepSearchEvent,
+  Fulfillment,
+  Listing,
+  ListingDetail,
+  QuickSearchEvent,
+  Recipe,
+} from "./base";
 import { requirePattern } from "./metadata";
 
 const USER_AGENT =
@@ -467,6 +477,142 @@ export async function fetchSingleListingDetailAsync(
   };
 }
 
+// ── Discover URL building ─────────────────────────────────────────────────────
+
+const TRADEME_SECTIONS = new Set(["motors", "property", "jobs", "flatmates-wanted", "services"]);
+
+export type DiscoverEntry = { slug: string; searchString: string | null };
+
+export const STEP1_SYSTEM_PROMPT =
+  'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also suggest a short label for the search and a search query. Return JSON: { "categories": string[], "searchLabel": string, "searchQuery": string | null } using the exact category names from the list. For searchLabel: a short human-readable label for the search (e.g. "MacBook Pro laptops"). For searchQuery: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchQuery=\'macbook pro\'.';
+
+export const STEP2_SYSTEM_PROMPT =
+  "You are a TradeMe NZ shopping assistant. From the categories below pick all subcategories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { \"categories\": [{ \"slug\": string, \"searchString\": string | null }] }. Each slug must be a value shown in parentheses. For searchString: rule: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString='bookshelf'; category=apple-laptops, user wants 'Apple MacBook Pro M1 16gb 2021' → searchString='macbook pro'.";
+
+export function buildTrademeUrl(
+  entry: DiscoverEntry,
+  maxPrice: number,
+  fulfillment: Fulfillment,
+  regionValue: string | undefined,
+): string {
+  const topLevel = entry.slug.split("/")[0];
+  const urlSlug = TRADEME_SECTIONS.has(topLevel) ? entry.slug : `marketplace/${entry.slug}`;
+  const params = new URLSearchParams();
+  if (entry.searchString) params.set("search_string", entry.searchString);
+  if (maxPrice > 0) params.set("price_max", String(maxPrice));
+  if (fulfillment === "pickup" && regionValue) {
+    params.set("user_region", regionValue);
+    params.set("shipping_method", "pickup");
+  }
+  const qs = params.toString();
+  return `https://www.trademe.co.nz/a/${urlSlug}/search${qs ? `?${qs}` : ""}`;
+}
+
+export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
+  const allSlugs = new Set(allEntries.map((e) => e.slug));
+  const collapsed: DiscoverEntry[] = [];
+  const consumed = new Set<string>();
+
+  for (const entry of allEntries) {
+    if (consumed.has(entry.slug)) continue;
+    const parentSlug = entry.slug.split("/").slice(0, -1).join("/");
+    if (allSlugs.has(parentSlug)) continue;
+    const siblings = allEntries.filter(
+      (e) =>
+        e !== entry &&
+        e.slug.split("/").slice(0, -1).join("/") === parentSlug &&
+        e.searchString === entry.searchString,
+    );
+    // Collapse siblings only when the shared parent is at least 3 segments deep
+    // (e.g. marketplace/computers/laptops) to avoid collapsing into a bare top-level slug.
+    const MIN_COLLAPSIBLE_PARENT_DEPTH = 3;
+    if (siblings.length >= 1 && parentSlug && parentSlug.split("/").length >= MIN_COLLAPSIBLE_PARENT_DEPTH) {
+      for (const sibling of siblings) consumed.add(sibling.slug);
+      consumed.add(entry.slug);
+      collapsed.push({ slug: parentSlug, searchString: entry.searchString });
+    } else {
+      collapsed.push(entry);
+    }
+  }
+  return collapsed;
+}
+
+type Step2Category = { slug: string; searchString?: string | null };
+
+async function buildDiscoverUrlsAsync(
+  prompt: string,
+  context: DiscoverContext,
+): Promise<string[]> {
+  const aiConfig = getAIConfig();
+  const database = getDb();
+  const broad = stmtGetCategoriesAtDepth2(database).all();
+  const broadDisplayList = broad.map((category) => category.display).join("\n");
+
+  const broadCategoryPick = (await aiJSON(
+    aiConfig,
+    "step1",
+    STEP1_SYSTEM_PROMPT,
+    `I'm looking for: ${prompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
+    512,
+  )) as Record<string, unknown> | null;
+  if (typeof broadCategoryPick !== "object" || broadCategoryPick === null)
+    throw new Error("discover step1: expected object response");
+  const rawCategories = (
+    Array.isArray(broadCategoryPick.categories) ? broadCategoryPick.categories : []
+  ) as string[];
+  const selectedBroadSlugs: string[] = rawCategories
+    .map((display: string) => broad.find((category) => category.display === display)?.slug)
+    .filter((slug): slug is string => !!slug);
+  if (selectedBroadSlugs.length === 0) throw new Error("AI returned no valid broad categories");
+  if (selectedBroadSlugs.length < rawCategories.length)
+    throw new Error("AI hallucination detected — please try again");
+
+  const subcategoryPickResults = await Promise.all(
+    selectedBroadSlugs.map((top2Slug) => {
+      const broadEntry = broad.find((category) => category.slug === top2Slug);
+      if (!broadEntry) throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
+      const candidates = stmtGetCategoriesByTop2(database).all(top2Slug);
+      const specificList = candidates
+        .map((category) => `${category.display} (slug: ${category.slug})`)
+        .join("\n");
+      return aiJSON(
+        aiConfig,
+        `step2:${top2Slug}`,
+        STEP2_SYSTEM_PROMPT,
+        `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
+        1024,
+      ).then((result) => ({
+        top2Slug,
+        candidates,
+        result: result as Record<string, unknown> | null,
+      }));
+    }),
+  );
+
+  const allEntries: DiscoverEntry[] = [];
+  const step2Errors: string[] = [];
+  for (const { top2Slug, candidates, result } of subcategoryPickResults) {
+    const validSlugs = new Set(candidates.map((category) => category.slug));
+    if (result === null || !Array.isArray(result.categories)) {
+      step2Errors.push(`step2:${top2Slug} unexpected result`);
+      continue;
+    }
+    for (const category of (result.categories as Step2Category[]).filter((category) =>
+      validSlugs.has(category.slug),
+    )) {
+      allEntries.push({ slug: category.slug, searchString: category.searchString ?? null });
+    }
+  }
+
+  const collapsedEntries = collapseEntries(allEntries);
+  const urls = collapsedEntries.map((entry) =>
+    buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue),
+  );
+  if (urls.length === 0)
+    throw new Error(`AI returned no valid specific categories. ${step2Errors.join("; ")}`);
+  return urls;
+}
+
 // ── Recipe implementation ─────────────────────────────────────────────────────
 
 async function quickSearchAsync(
@@ -628,4 +774,5 @@ export const trademeRecipe: Recipe = {
   extractImplicitFilters,
   quickSearchAsync,
   deepSearchAsync,
+  buildDiscoverUrlsAsync,
 };

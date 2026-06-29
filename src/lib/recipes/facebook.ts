@@ -1,6 +1,15 @@
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
+import { getRegions } from "../../server/routes/regions";
 import { enqueue } from "../queue";
-import type { DeepSearchEvent, Listing, ListingDetail, QuickSearchEvent, Recipe } from "./base";
+import type {
+  DiscoverContext,
+  DeepSearchEvent,
+  Fulfillment,
+  Listing,
+  ListingDetail,
+  QuickSearchEvent,
+  Recipe,
+} from "./base";
 import { requirePattern } from "./metadata";
 
 const USER_AGENT =
@@ -483,6 +492,37 @@ async function deepSearchAsync(
   }
 }
 
+// ── Discover URL building ─────────────────────────────────────────────────────
+
+export function buildFacebookUrl(
+  searchTerm: string,
+  maxPrice: number,
+  fulfillment: Fulfillment,
+  regionValue: string | undefined,
+  regions = getRegions(),
+): string {
+  const pickupOnly = fulfillment === "pickup" && !!regionValue;
+  const fbParams = new URLSearchParams();
+  fbParams.set("query", searchTerm);
+  if (maxPrice > 0) fbParams.set("maxPrice", String(maxPrice));
+  if (fulfillment === "pickup") fbParams.set("deliveryMethod", "local_pick_up");
+  else if (fulfillment === "shipping") fbParams.set("deliveryMethod", "shipping");
+  fbParams.set("exact", "false");
+  fbParams.set("sortBy", "creation_time_descend");
+  let fbLocationSegment = "";
+  if (pickupOnly) {
+    const region = regions.find((r) => String(r.tradeMeRegionId) === regionValue);
+    if (region?.facebookLocation) fbLocationSegment = `${region.facebookLocation}/`;
+  }
+  return `https://www.facebook.com/marketplace/${fbLocationSegment}search?${fbParams.toString()}`;
+}
+
+function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext): Promise<string[]> {
+  return Promise.resolve([
+    buildFacebookUrl(prompt, context.maxPrice, context.fulfillment, context.regionValue),
+  ]);
+}
+
 // ── Recipe ────────────────────────────────────────────────────────────────────
 
 export const facebookRecipe: Recipe = {
@@ -501,4 +541,5 @@ export const facebookRecipe: Recipe = {
   extractImplicitFilters,
   quickSearchAsync,
   deepSearchAsync,
+  buildDiscoverUrlsAsync,
 };

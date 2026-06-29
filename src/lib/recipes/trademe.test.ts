@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listing } from "./base";
 import {
+  STEP2_SYSTEM_PROMPT,
   buildListing,
+  buildTrademeUrl,
+  collapseEntries,
   extractDescriptionFromText,
   extractDetails,
   extractImplicitFilters,
@@ -11,7 +14,17 @@ import {
   parseFrendState,
   parseSearchApiResponse,
   trademeRecipe,
+  type DiscoverEntry,
 } from "./trademe";
+import { aiJSON, getAIConfig } from "../../server/ai";
+import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../../server/db";
+
+vi.mock("../../server/ai", () => ({ aiJSON: vi.fn(), getAIConfig: vi.fn() }));
+vi.mock("../../server/db", () => ({
+  getDb: vi.fn(),
+  stmtGetCategoriesAtDepth2: vi.fn(),
+  stmtGetCategoriesByTop2: vi.fn(),
+}));
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
@@ -520,6 +533,234 @@ describe("extractImplicitFilters", () => {
 
   it("returns empty array for invalid URL", () => {
     expect(extractImplicitFilters("not a url")).toEqual([]);
+  });
+});
+
+// ── STEP2_SYSTEM_PROMPT ───────────────────────────────────────────────────────
+
+describe("STEP2_SYSTEM_PROMPT", () => {
+  it("is a non-empty string", () => {
+    expect(typeof STEP2_SYSTEM_PROMPT).toBe("string");
+    expect(STEP2_SYSTEM_PROMPT.length).toBeGreaterThan(20);
+  });
+});
+
+// ── collapseEntries ───────────────────────────────────────────────────────────
+
+function entry(slug: string, searchString: string | null = null): DiscoverEntry {
+  return { slug, searchString };
+}
+
+describe("collapseEntries", () => {
+  it("returns an empty array unchanged", () => {
+    expect(collapseEntries([])).toEqual([]);
+  });
+
+  it("passes through a single entry with no siblings", () => {
+    const input = [entry("computers/laptops/apple")];
+    expect(collapseEntries(input)).toEqual(input);
+  });
+
+  it("drops a child when its parent is also present in the list", () => {
+    const input = [entry("computers/laptops"), entry("computers/laptops/apple")];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].slug).toBe("computers/laptops");
+  });
+
+  it("collapses two siblings with the same searchString to their parent", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "macbook"),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ slug: "marketplace/computers/laptops", searchString: "macbook" });
+  });
+
+  it("does not collapse siblings when their shared parent slug has fewer than 3 segments", () => {
+    const input = [
+      entry("computers/laptops/apple", "macbook"),
+      entry("computers/laptops/dell", "macbook"),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not collapse siblings with different searchStrings", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "latitude"),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not collapse a lone entry with no siblings", () => {
+    const input = [entry("marketplace/computers/laptops/apple", "macbook")];
+    expect(collapseEntries(input)).toEqual(input);
+  });
+
+  it("collapses three siblings to one parent entry", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", null),
+      entry("marketplace/computers/laptops/dell", null),
+      entry("marketplace/computers/laptops/lenovo", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ slug: "marketplace/computers/laptops", searchString: null });
+  });
+
+  it("collapses one sibling group and leaves unrelated entries untouched", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "macbook"),
+      entry("marketplace/electronics/cameras/dslr", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+    const slugs = result.map((e) => e.slug);
+    expect(slugs).toContain("marketplace/computers/laptops");
+    expect(slugs).toContain("marketplace/electronics/cameras/dslr");
+  });
+
+  it("does not emit the collapsed parent slug twice when three siblings collapse", () => {
+    const input = [
+      entry("marketplace/furniture/home/bedroom", null),
+      entry("marketplace/furniture/home/living", null),
+      entry("marketplace/furniture/home/dining", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].slug).toBe("marketplace/furniture/home");
+  });
+
+  it("does not collapse siblings when their parent is present in the input", () => {
+    const input = [
+      entry("marketplace/furniture/home"),
+      entry("marketplace/furniture/home/bedroom", null),
+      entry("marketplace/furniture/home/living", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].slug).toBe("marketplace/furniture/home");
+  });
+});
+
+// ── buildTrademeUrl ───────────────────────────────────────────────────────────
+
+describe("buildTrademeUrl", () => {
+  it('wraps a non-section slug in "marketplace/"', () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
+    expect(url).toContain("/a/marketplace/computers/laptops/search");
+  });
+
+  it('does not prefix a section slug with "marketplace/"', () => {
+    const url = buildTrademeUrl(entry("motors/cars"), 0, "any", undefined);
+    expect(url).toContain("/a/motors/cars/search");
+    expect(url).not.toContain("marketplace");
+  });
+
+  it("appends search_string when set", () => {
+    const url = buildTrademeUrl(entry("computers/laptops", "macbook"), 0, "any", undefined);
+    expect(url).toContain("search_string=macbook");
+  });
+
+  it("appends price_max when maxPrice > 0", () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 500, "any", undefined);
+    expect(url).toContain("price_max=500");
+  });
+
+  it("omits price_max when maxPrice is 0", () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
+    expect(url).not.toContain("price_max");
+  });
+
+  it('adds pickup params when fulfillment is "pickup" and regionValue is set', () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "pickup", "2");
+    expect(url).toContain("user_region=2");
+    expect(url).toContain("shipping_method=pickup");
+  });
+
+  it('does not add pickup params when fulfillment is "pickup" but regionValue is missing', () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "pickup", undefined);
+    expect(url).not.toContain("shipping_method");
+  });
+
+  it("produces a bare search URL when no params apply", () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
+    expect(url).toBe("https://www.trademe.co.nz/a/marketplace/computers/laptops/search");
+  });
+});
+
+// ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
+
+describe("buildDiscoverUrlsAsync", () => {
+  const MOCK_BROAD = [{ display: "Electronics", slug: "electronics/electronics" }];
+  const MOCK_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
+  const MOCK_AI: ReturnType<typeof getAIConfig> = {
+    url: "http://example.com",
+    model: "llama",
+    apiKey: "key",
+  };
+
+  beforeEach(() => {
+    vi.mocked(getAIConfig).mockReturnValue(MOCK_AI);
+    vi.mocked(getDb).mockReturnValue({} as any);
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_SUBS } as any);
+  });
+
+  afterEach(() => vi.clearAllMocks());
+
+  it("returns Trade Me search URLs for AI-selected categories", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const urls = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+    });
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.includes("trademe.co.nz"))).toBe(true);
+    expect(urls[0]).toContain("electronics/laptops");
+  });
+
+  it("applies maxPrice to the generated URL", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const urls = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 800,
+      fulfillment: "any",
+    });
+    expect(urls[0]).toContain("price_max=800");
+  });
+
+  it("throws when AI config is unavailable", async () => {
+    vi.mocked(getAIConfig).mockImplementation(() => {
+      throw new Error("GROQ_API_KEY is not set");
+    });
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
+    ).rejects.toThrow("GROQ_API_KEY is not set");
+  });
+
+  it("throws a meaningful error when all step-2 calls return unexpected results", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
+    ).rejects.toThrow("step2:electronics/electronics");
   });
 });
 
