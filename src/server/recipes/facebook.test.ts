@@ -8,7 +8,7 @@ const TEST_REGIONS = [
 
 // This mock is load-bearing for buildDiscoverUrlsAsync tests below, which rely on
 // buildFacebookUrl's default `regions` argument being supplied by the mocked getRegions.
-vi.mock("../../server/routes/regions", () => ({ getRegions: () => TEST_REGIONS }));
+vi.mock("../routes/regions", () => ({ getRegions: () => TEST_REGIONS }));
 
 describe("parseFacebookPriceLines", () => {
   it("returns the single price when only one price line is present", () => {

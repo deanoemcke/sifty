@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { discoverCategoriesAsync } from "./discover";
 
-vi.mock("../../lib/recipes/server", () => ({
+vi.mock("../recipes/registry", () => ({
   getAllRecipes: vi.fn(),
 }));
 vi.mock("../helpers", () => ({}));
 vi.mock("../../lib/validate", () => ({}));
 
-import { getAllRecipes } from "../../lib/recipes/server";
+import { getAllRecipes } from "../recipes/registry";
 
 function makeStubRecipe(urls: string[]) {
   return {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "./base";
+import type { Listing } from "../../lib/recipes/base";
 import {
   STEP2_SYSTEM_PROMPT,
   buildListing,
@@ -16,11 +16,11 @@ import {
   trademeRecipe,
   type DiscoverEntry,
 } from "./trademe";
-import { aiJSON, getAIConfig } from "../../server/ai";
-import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../../server/db";
+import { aiJSON, getAIConfig } from "../ai";
+import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 
-vi.mock("../../server/ai", () => ({ aiJSON: vi.fn(), getAIConfig: vi.fn() }));
-vi.mock("../../server/db", () => ({
+vi.mock("../ai", () => ({ aiJSON: vi.fn(), getAIConfig: vi.fn() }));
+vi.mock("../db", () => ({
   getDb: vi.fn(),
   stmtGetCategoriesAtDepth2: vi.fn(),
   stmtGetCategoriesByTop2: vi.fn(),

@@ -1,6 +1,6 @@
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
-import { getRegions } from "../../server/routes/regions";
-import { enqueue } from "../queue";
+import { getRegions } from "../routes/regions";
+import { enqueue } from "../../lib/queue";
 import type {
   DiscoverContext,
   DeepSearchEvent,
@@ -9,8 +9,8 @@ import type {
   ListingDetail,
   QuickSearchEvent,
   Recipe,
-} from "./base";
-import { requirePattern } from "./metadata";
+} from "../../lib/recipes/base";
+import { requirePattern } from "../../lib/recipes/metadata";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";

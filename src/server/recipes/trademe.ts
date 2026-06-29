@@ -1,8 +1,8 @@
 import { chromium, type Page, type Response } from "playwright";
-import { aiJSON, getAIConfig } from "../../server/ai";
-import { MAX_PAGES_PER_SEARCH } from "../../server/constants";
-import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../../server/db";
-import { enqueue } from "../queue";
+import { aiJSON, getAIConfig } from "../ai";
+import { MAX_PAGES_PER_SEARCH } from "../constants";
+import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
+import { enqueue } from "../../lib/queue";
 import type {
   DiscoverContext,
   DeepSearchEvent,
@@ -11,8 +11,8 @@ import type {
   ListingDetail,
   QuickSearchEvent,
   Recipe,
-} from "./base";
-import { requirePattern } from "./metadata";
+} from "../../lib/recipes/base";
+import { requirePattern } from "../../lib/recipes/metadata";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";

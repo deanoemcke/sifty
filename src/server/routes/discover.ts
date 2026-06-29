@@ -2,7 +2,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DiscoverContext, Fulfillment } from "../../lib/recipes/base";
-import { getAllRecipes } from "../../lib/recipes/server";
+import { getAllRecipes } from "../recipes/registry";
 import { requirePositiveNumber, requireString } from "../../lib/validate";
 import { readBody, sendJSON } from "../helpers";
 
