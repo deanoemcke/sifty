@@ -723,13 +723,13 @@ describe("buildDiscoverUrlsAsync", () => {
       })
       .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
 
-    const urls = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
     });
-    expect(urls.length).toBeGreaterThan(0);
-    expect(urls.every((u) => u.includes("trademe.co.nz"))).toBe(true);
-    expect(urls[0]).toContain("electronics/laptops");
+    expect(result.urls.length).toBeGreaterThan(0);
+    expect(result.urls.every((u) => u.includes("trademe.co.nz"))).toBe(true);
+    expect(result.urls[0]).toContain("electronics/laptops");
   });
 
   it("applies maxPrice to the generated URL", async () => {
@@ -737,11 +737,23 @@ describe("buildDiscoverUrlsAsync", () => {
       .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
       .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
 
-    const urls = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 800,
       fulfillment: "any",
     });
-    expect(urls[0]).toContain("price_max=800");
+    expect(result.urls[0]).toContain("price_max=800");
+  });
+
+  it("returns an empty warnings array on full success", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+    });
+    expect(result.warnings).toEqual([]);
   });
 
   it("throws when AI config is unavailable", async () => {
@@ -753,7 +765,7 @@ describe("buildDiscoverUrlsAsync", () => {
     ).rejects.toThrow("GROQ_API_KEY is not set");
   });
 
-  it("throws a meaningful error when all step-2 calls return unexpected results", async () => {
+  it("throws when any step-2 call returns an unexpected result", async () => {
     vi.mocked(aiJSON)
       .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
       .mockResolvedValueOnce(null);
@@ -761,6 +773,26 @@ describe("buildDiscoverUrlsAsync", () => {
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
     ).rejects.toThrow("step2:electronics/electronics");
+  });
+
+  it("throws when one step-2 call fails even if another would succeed", async () => {
+    const MOCK_TWO_BROAD = [
+      { display: "Electronics", slug: "electronics/electronics" },
+      { display: "Computers", slug: "computers/computers" },
+    ];
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics", "Computers"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
+    ).rejects.toThrow("step2:computers/computers");
   });
 });
 

@@ -11,6 +11,7 @@ import type {
   ListingDetail,
   QuickSearchEvent,
   Recipe,
+  RecipeDiscoverResult,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
 
@@ -542,7 +543,7 @@ type Step2Category = { slug: string; searchString?: string | null };
 async function buildDiscoverUrlsAsync(
   prompt: string,
   context: DiscoverContext,
-): Promise<string[]> {
+): Promise<RecipeDiscoverResult> {
   const aiConfig = getAIConfig();
   const database = getDb();
   const broad = stmtGetCategoriesAtDepth2(database).all();
@@ -590,13 +591,10 @@ async function buildDiscoverUrlsAsync(
   );
 
   const allEntries: DiscoverEntry[] = [];
-  const step2Errors: string[] = [];
   for (const { top2Slug, candidates, result } of subcategoryPickResults) {
     const validSlugs = new Set(candidates.map((category) => category.slug));
-    if (result === null || !Array.isArray(result.categories)) {
-      step2Errors.push(`step2:${top2Slug} unexpected result`);
-      continue;
-    }
+    if (result === null || !Array.isArray(result.categories))
+      throw new Error(`step2:${top2Slug} unexpected result`);
     for (const category of (result.categories as Step2Category[]).filter((category) =>
       validSlugs.has(category.slug),
     )) {
@@ -608,9 +606,8 @@ async function buildDiscoverUrlsAsync(
   const urls = collapsedEntries.map((entry) =>
     buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue),
   );
-  if (urls.length === 0)
-    throw new Error(`AI returned no valid specific categories. ${step2Errors.join("; ")}`);
-  return urls;
+  if (urls.length === 0) throw new Error("AI returned no valid specific categories");
+  return { urls, warnings: [] as string[] };
 }
 
 // ── Recipe implementation ─────────────────────────────────────────────────────

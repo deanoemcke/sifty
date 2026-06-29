@@ -125,37 +125,45 @@ describe("buildFacebookUrl", () => {
 
 describe("buildDiscoverUrlsAsync", () => {
   it("returns a single Facebook Marketplace URL", async () => {
-    const urls = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
+    const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
     });
-    expect(urls).toHaveLength(1);
-    expect(urls[0]).toContain("facebook.com/marketplace");
+    expect(result.urls).toHaveLength(1);
+    expect(result.urls[0]).toContain("facebook.com/marketplace");
   });
 
   it("includes the prompt as the search query", async () => {
-    const urls = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
+    const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
     });
-    expect(urls[0]).toContain("query=macbook+pro");
+    expect(result.urls[0]).toContain("query=macbook+pro");
   });
 
   it("includes maxPrice when > 0", async () => {
-    const urls = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
+    const result = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 500,
       fulfillment: "any",
     });
-    expect(urls[0]).toContain("maxPrice=500");
+    expect(result.urls[0]).toContain("maxPrice=500");
   });
 
   it("injects region location segment when pickup fulfillment and matching region", async () => {
-    const urls = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
+    const result = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "pickup",
       regionValue: "2",
     });
-    expect(urls[0]).toContain("/marketplace/auckland/search");
+    expect(result.urls[0]).toContain("/marketplace/auckland/search");
+  });
+
+  it("returns an empty warnings array", async () => {
+    const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
+      maxPrice: 0,
+      fulfillment: "any",
+    });
+    expect(result.warnings).toEqual([]);
   });
 });
 

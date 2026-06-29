@@ -10,6 +10,7 @@ type DiscoverResult = {
   urls: string[];
   filters: { maxPrice: number; shippingAvailable: boolean; pickupAvailable: boolean };
   name: string;
+  warnings: string[];
 };
 
 export async function discoverCategoriesAsync(
@@ -26,19 +27,21 @@ export async function discoverCategoriesAsync(
   const settled = await Promise.allSettled(
     getAllRecipes().map((r) => r.buildDiscoverUrlsAsync(discoveryPrompt, context)),
   );
-  const urls = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
-  const errors = settled
-    .filter((r): r is PromiseRejectedResult => r.status === "rejected")
-    .map((r) => String(r.reason));
-  if (errors.length > 0) console.warn("[discover] recipe errors:", errors);
+  const urls = settled.flatMap((r) => (r.status === "fulfilled" ? r.value.urls : []));
+  const warnings = [
+    ...settled.flatMap((r) => (r.status === "fulfilled" ? r.value.warnings : [])),
+    ...settled
+      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .map((r) => String(r.reason)),
+  ];
   if (urls.length === 0)
-    throw new Error(`No URLs returned from any recipe. Errors: ${errors.join("; ")}`);
+    throw new Error(`No URLs returned from any recipe. Errors: ${warnings.join("; ")}`);
   const filters = {
     maxPrice: discoveryMaxPrice,
     shippingAvailable: discoveryFulfillment !== "pickup",
     pickupAvailable: discoveryFulfillment !== "shipping",
   };
-  return { urls, filters, name: discoveryPrompt.trim() };
+  return { urls, filters, name: discoveryPrompt.trim(), warnings };
 }
 
 export async function handleDiscover(

@@ -9,14 +9,14 @@ vi.mock("../../lib/validate", () => ({}));
 
 import { getAllRecipes } from "../recipes/registry";
 
-function makeStubRecipe(urls: string[]) {
+function makeStubRecipe(urls: string[], warnings: string[] = []) {
   return {
     name: "stub",
     matches: () => false,
     extractImplicitFilters: () => [],
     quickSearchAsync: async () => {},
     deepSearchAsync: async () => {},
-    buildDiscoverUrlsAsync: async () => urls,
+    buildDiscoverUrlsAsync: async () => ({ urls, warnings }),
   };
 }
 
@@ -103,7 +103,7 @@ describe("discoverCategoriesAsync", () => {
         ...makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
         buildDiscoverUrlsAsync: async (p, ctx) => {
           captured.push({ prompt: p, context: ctx });
-          return ["https://www.trademe.co.nz/a/x"];
+          return { urls: ["https://www.trademe.co.nz/a/x"], warnings: [] };
         },
       },
     ]);
@@ -128,6 +128,40 @@ describe("discoverCategoriesAsync", () => {
     const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
     expect(result.urls).toHaveLength(1);
     expect(result.urls[0]).toContain("facebook.com");
+  });
+
+  it("includes a warning for each recipe that throws", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        buildDiscoverUrlsAsync: async () => {
+          throw new Error("AI unavailable");
+        },
+      },
+      makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("AI unavailable");
+  });
+
+  it("propagates warnings returned by a recipe", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      makeStubRecipe(["https://www.trademe.co.nz/a/x"], ["step2:computers/computers unexpected result"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toContain("step2:computers/computers unexpected result");
+  });
+
+  it("returns an empty warnings array when all recipes succeed cleanly", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toEqual([]);
   });
 
   it("throws when all recipes fail", async () => {
