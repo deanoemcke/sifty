@@ -811,6 +811,45 @@ describe("buildDiscoverUrlsAsync", () => {
       trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
     ).rejects.toThrow("AI returned no valid specific categories");
   });
+
+  it("filters out unrecognised step-1 slugs, adds a warning, and continues with valid ones", async () => {
+    const MOCK_TWO_BROAD = [
+      { display: "Electronics", slug: "electronics/electronics" },
+      { display: "Computers", slug: "computers/computers" },
+    ];
+    const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_TWO_SUBS } as any);
+    // AI returns one valid category and one hallucinated one that doesn't exist in MOCK_TWO_BROAD
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics", "Hallucinated Category"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+    });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("Hallucinated Category");
+    expect(result.urls).toHaveLength(1);
+    expect(result.urls[0]).toContain("electronics/laptops");
+  });
+
+  it("throws when all step-1 categories are unrecognised (zero valid slugs)", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      categories: ["Hallucinated Category A", "Hallucinated Category B"],
+      searchLabel: "laptops",
+      searchQuery: "laptop",
+    });
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
+    ).rejects.toThrow("AI returned no valid broad categories");
+  });
 });
 
 // ── quickSearch multi-page accumulation ───────────────────────────────────────

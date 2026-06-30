@@ -565,8 +565,13 @@ async function buildDiscoverUrlsAsync(
     .map((display: string) => broad.find((category) => category.display === display)?.slug)
     .filter((slug): slug is string => !!slug);
   if (selectedBroadSlugs.length === 0) throw new Error("AI returned no valid broad categories");
-  if (selectedBroadSlugs.length < rawCategories.length)
-    throw new Error("AI hallucination detected — please try again");
+  const step1Warnings: string[] = [];
+  if (selectedBroadSlugs.length < rawCategories.length) {
+    const unrecognised = rawCategories.filter(
+      (display: string) => !broad.some((category) => category.display === display),
+    );
+    step1Warnings.push(`step1: unrecognised categories ignored: ${unrecognised.join(", ")}`);
+  }
 
   const subcategoryPickResults = await Promise.all(
     selectedBroadSlugs.map((top2Slug) => {
@@ -610,7 +615,7 @@ async function buildDiscoverUrlsAsync(
     buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue),
   );
   if (urls.length === 0) throw new Error("AI returned no valid specific categories");
-  return { urls, warnings };
+  return { urls, warnings: [...step1Warnings, ...warnings] };
 }
 
 // ── Recipe implementation ─────────────────────────────────────────────────────
