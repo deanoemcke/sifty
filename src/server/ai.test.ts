@@ -66,4 +66,10 @@ describe("aiJSON", () => {
     await vi.runAllTimersAsync();
     await assertion;
   });
+
+  it("propagates the original error when fetch rejects rather than a cryptic TypeError", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+
+    await expect(aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100)).rejects.toThrow("network failure");
+  });
 });

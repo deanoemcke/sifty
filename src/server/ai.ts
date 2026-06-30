@@ -95,17 +95,18 @@ export async function aiJSON(
     }
     break;
   }
-  if (!apiResponse!.ok) {
+  if (apiResponse === undefined) throw new Error(`AI request failed: no response received (${label})`);
+  if (!apiResponse.ok) {
     const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<string, unknown>;
     const errorMessage =
       (errorBody?.error as Record<string, unknown>)?.message ??
       errorBody?.message ??
       JSON.stringify(lastErrorData);
     throw new Error(
-      `AI error (${label}) [${apiResponse!.status}]: ${errorMessage || apiResponse!.statusText}`,
+      `AI error (${label}) [${apiResponse.status}]: ${errorMessage || apiResponse.statusText}`,
     );
   }
-  const responseData = (await apiResponse!.json()) as OpenAIResponseShape;
+  const responseData = (await apiResponse.json()) as OpenAIResponseShape;
   const raw: string = responseData.choices?.[0]?.message?.content ?? "{}";
   // Extract JSON from a markdown code fence if the model wrapped it in prose
   let stripped: string;
