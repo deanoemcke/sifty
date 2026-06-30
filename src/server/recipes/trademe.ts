@@ -549,6 +549,7 @@ async function buildDiscoverUrlsAsync(
   const broad = stmtGetCategoriesAtDepth2(database).all();
   const broadDisplayList = broad.map((category) => category.display).join("\n");
 
+  // 512 output tokens: step-1 returns a tiny JSON object (3 string fields) — input size (~3 k tokens for 392 categories) is unlimited by this parameter.
   const broadCategoryPick = (await aiJSON(
     aiConfig,
     "step1",
@@ -581,6 +582,7 @@ async function buildDiscoverUrlsAsync(
       const specificList = candidates
         .map((category) => `${category.display} (slug: ${category.slug})`)
         .join("\n");
+      // 1024 output tokens: step-2 returns a JSON array of slug+searchString pairs; a broad category can have dozens of subcategories, so 1024 gives headroom over step-1's 512.
       return aiJSON(
         aiConfig,
         `step2:${top2Slug}`,
