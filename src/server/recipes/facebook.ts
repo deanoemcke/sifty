@@ -1,5 +1,5 @@
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
-import { getRegions } from "../routes/regions";
+import { getRegions } from "../services/regions";
 import { enqueue } from "../../lib/queue";
 import type {
   DiscoverContext,
