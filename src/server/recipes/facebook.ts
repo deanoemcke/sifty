@@ -1,7 +1,17 @@
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
-import { enqueue } from "../queue";
-import type { DeepSearchEvent, Listing, ListingDetail, QuickSearchEvent, Recipe } from "./base";
-import { requirePattern } from "./metadata";
+import { getRegions } from "../services/regions";
+import { enqueue } from "../../lib/queue";
+import type {
+  DiscoverContext,
+  DeepSearchEvent,
+  DiscoverableRecipe,
+  Fulfillment,
+  Listing,
+  ListingDetail,
+  QuickSearchEvent,
+  Recipe,
+} from "../../lib/recipes/base";
+import { requirePattern } from "../../lib/recipes/metadata";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -483,9 +493,41 @@ async function deepSearchAsync(
   }
 }
 
+// ── Discover URL building ─────────────────────────────────────────────────────
+
+export function buildFacebookUrl(
+  searchTerm: string,
+  maxPrice: number,
+  fulfillment: Fulfillment,
+  regionValue: string | undefined,
+  regions = getRegions(),
+): string {
+  const pickupOnly = fulfillment === "pickup" && !!regionValue;
+  const fbParams = new URLSearchParams();
+  fbParams.set("query", searchTerm);
+  if (maxPrice > 0) fbParams.set("maxPrice", String(maxPrice));
+  if (fulfillment === "pickup") fbParams.set("deliveryMethod", "local_pick_up");
+  else if (fulfillment === "shipping") fbParams.set("deliveryMethod", "shipping");
+  fbParams.set("exact", "false");
+  fbParams.set("sortBy", "creation_time_descend");
+  let fbLocationSegment = "";
+  if (pickupOnly) {
+    const region = regions.find((r) => String(r.tradeMeRegionId) === regionValue);
+    if (region?.facebookLocation) fbLocationSegment = `${region.facebookLocation}/`;
+  }
+  return `https://www.facebook.com/marketplace/${fbLocationSegment}search?${fbParams.toString()}`;
+}
+
+async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
+  return {
+    urls: [buildFacebookUrl(prompt.trim(), context.maxPrice, context.fulfillment, context.regionValue)],
+    warnings: [] as string[],
+  };
+}
+
 // ── Recipe ────────────────────────────────────────────────────────────────────
 
-export const facebookRecipe: Recipe = {
+export const facebookRecipe: DiscoverableRecipe = {
   name: FACEBOOK_PATTERN.name,
   matches(url: string): boolean {
     try {
@@ -501,4 +543,5 @@ export const facebookRecipe: Recipe = {
   extractImplicitFilters,
   quickSearchAsync,
   deepSearchAsync,
+  buildDiscoverUrlsAsync,
 };

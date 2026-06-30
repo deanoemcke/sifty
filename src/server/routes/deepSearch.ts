@@ -2,7 +2,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Listing, ListingDetail } from "../../lib/recipes/base";
-import { getRecipeForUrl } from "../../lib/recipes/server";
+import { getRecipeForUrl } from "../recipes/registry";
 import { requireArray, requireListingUrl } from "../../lib/validate";
 import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from "../cancellation";
 import { MAX_DEEP_SEARCH_ITEMS } from "../constants";
