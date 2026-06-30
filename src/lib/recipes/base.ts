@@ -71,5 +71,12 @@ export interface Recipe {
     onEvent: (event: DeepSearchEvent) => void,
     isCancelled?: () => boolean,
   ): Promise<void>;
+}
+
+export interface DiscoverableRecipe extends Recipe {
   buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext): Promise<RecipeDiscoverResult>;
+}
+
+export function isDiscoverableRecipe(recipe: Recipe): recipe is DiscoverableRecipe {
+  return typeof (recipe as DiscoverableRecipe).buildDiscoverUrlsAsync === "function";
 }

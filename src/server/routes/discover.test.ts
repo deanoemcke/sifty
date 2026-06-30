@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Recipe } from "../../lib/recipes/base";
+import type { DiscoverContext, DiscoverableRecipe, RecipeDiscoverResult } from "../../lib/recipes/base";
 import { discoverCategoriesAsync } from "./discover";
 
 vi.mock("../recipes/registry", () => ({
@@ -14,7 +14,7 @@ vi.mock("../ai", () => ({
 import { getAllRecipes } from "../recipes/registry";
 import { getAIConfig } from "../ai";
 
-function makeStubRecipe(urls: string[], warnings: string[] = []): Recipe {
+function makeStubRecipe(urls: string[], warnings: string[] = []): DiscoverableRecipe {
   return {
     name: "stub",
     matches: () => false,
@@ -23,6 +23,13 @@ function makeStubRecipe(urls: string[], warnings: string[] = []): Recipe {
     deepSearchAsync: async () => {},
     buildDiscoverUrlsAsync: async () => ({ urls, warnings }),
   };
+}
+
+function withBuildDiscover(
+  base: DiscoverableRecipe,
+  buildDiscoverUrlsAsync: (prompt: string, context: DiscoverContext) => Promise<RecipeDiscoverResult>,
+): DiscoverableRecipe {
+  return { ...base, buildDiscoverUrlsAsync };
 }
 
 const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key" };
@@ -112,13 +119,10 @@ describe("discoverCategoriesAsync", () => {
   it("passes the correct DiscoverContext to each recipe", async () => {
     const captured: { prompt: string; context: unknown }[] = [];
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
-        buildDiscoverUrlsAsync: async (p, ctx) => {
-          captured.push({ prompt: p, context: ctx });
-          return { urls: ["https://www.trademe.co.nz/a/x"], warnings: [] };
-        },
-      },
+      withBuildDiscover(makeStubRecipe(["https://www.trademe.co.nz/a/x"]), async (p, ctx) => {
+        captured.push({ prompt: p, context: ctx });
+        return { urls: ["https://www.trademe.co.nz/a/x"], warnings: [] };
+      }),
     ]);
 
     await discoverCategoriesAsync("  macbook  ", 800, "pickup", "2");
@@ -134,12 +138,9 @@ describe("discoverCategoriesAsync", () => {
 
   it("returns URLs from successful recipes even when another recipe throws", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        buildDiscoverUrlsAsync: async () => {
-          throw new Error("AI unavailable");
-        },
-      },
+      withBuildDiscover(makeStubRecipe([]), async () => {
+        throw new Error("AI unavailable");
+      }),
       makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
     ]);
 
@@ -150,12 +151,9 @@ describe("discoverCategoriesAsync", () => {
 
   it("includes a warning for each recipe that throws", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        buildDiscoverUrlsAsync: async () => {
-          throw new Error("AI unavailable");
-        },
-      },
+      withBuildDiscover(makeStubRecipe([]), async () => {
+        throw new Error("AI unavailable");
+      }),
       makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
     ]);
 
@@ -184,12 +182,9 @@ describe("discoverCategoriesAsync", () => {
 
   it("throws when all recipes fail", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        buildDiscoverUrlsAsync: async () => {
-          throw new Error("AI unavailable");
-        },
-      },
+      withBuildDiscover(makeStubRecipe([]), async () => {
+        throw new Error("AI unavailable");
+      }),
     ]);
 
     await expect(discoverCategoriesAsync("laptop", 0, "any", undefined)).rejects.toThrow(
@@ -199,12 +194,9 @@ describe("discoverCategoriesAsync", () => {
 
   it("strips bearer tokens from warning messages", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        buildDiscoverUrlsAsync: async () => {
-          throw new Error("Unauthorized: bearer abc123xyz");
-        },
-      },
+      withBuildDiscover(makeStubRecipe([]), async () => {
+        throw new Error("Unauthorized: bearer abc123xyz");
+      }),
       makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
     ]);
 
@@ -216,12 +208,9 @@ describe("discoverCategoriesAsync", () => {
 
   it("strips API keys from warning messages", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        buildDiscoverUrlsAsync: async () => {
-          throw new Error("Invalid api-key=sk-secretvalue123 provided");
-        },
-      },
+      withBuildDiscover(makeStubRecipe([]), async () => {
+        throw new Error("Invalid api-key=sk-secretvalue123 provided");
+      }),
       makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
     ]);
 
@@ -233,12 +222,9 @@ describe("discoverCategoriesAsync", () => {
 
   it("strips sk- prefixed tokens from warning messages", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        buildDiscoverUrlsAsync: async () => {
-          throw new Error("Authentication failed with token sk-abcDEF123456");
-        },
-      },
+      withBuildDiscover(makeStubRecipe([]), async () => {
+        throw new Error("Authentication failed with token sk-abcDEF123456");
+      }),
       makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
     ]);
 
@@ -250,13 +236,12 @@ describe("discoverCategoriesAsync", () => {
 
   it("prefixes rejection warning with the recipe name", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        name: "trademe",
-        buildDiscoverUrlsAsync: async () => {
+      withBuildDiscover(
+        { ...makeStubRecipe([]), name: "trademe" },
+        async () => {
           throw new Error("AI unavailable");
         },
-      },
+      ),
       makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
     ]);
 
@@ -267,13 +252,10 @@ describe("discoverCategoriesAsync", () => {
 
   it("uses 'Recipe failed' for non-Error rejections", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      {
-        ...makeStubRecipe([]),
-        buildDiscoverUrlsAsync: async () => {
-          // eslint-disable-next-line @typescript-eslint/no-throw-literal
-          throw "some string rejection with api_key=secret";
-        },
-      },
+      withBuildDiscover(makeStubRecipe([]), async () => {
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        throw "some string rejection with api_key=secret";
+      }),
       makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
     ]);
 
@@ -288,7 +270,7 @@ describe("discoverCategoriesAsync", () => {
     });
     const buildSpy = vi.fn().mockResolvedValue({ urls: ["https://example.com"], warnings: [] });
     vi.mocked(getAllRecipes).mockReturnValue([
-      { ...makeStubRecipe([]), buildDiscoverUrlsAsync: buildSpy },
+      withBuildDiscover(makeStubRecipe([]), buildSpy),
     ]);
 
     await expect(discoverCategoriesAsync("laptop", 0, "any", undefined)).rejects.toThrow(

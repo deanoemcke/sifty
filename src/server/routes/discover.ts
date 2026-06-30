@@ -2,6 +2,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DiscoverContext, Fulfillment } from "../../lib/recipes/base";
+import { isDiscoverableRecipe } from "../../lib/recipes/base";
 import { getAllRecipes } from "../recipes/registry";
 import { getAIConfig } from "../ai";
 import { requirePositiveNumber, requireString } from "../../lib/validate";
@@ -41,7 +42,8 @@ export async function discoverCategoriesAsync(
     regionValue: discoveryRegion,
     aiConfig,
   };
-  const recipes = getAllRecipes();
+  const allRecipes = getAllRecipes();
+  const recipes = allRecipes.filter(isDiscoverableRecipe);
   const settled = await Promise.allSettled(
     recipes.map((r) => r.buildDiscoverUrlsAsync(discoveryPrompt, context)),
   );

@@ -6,6 +6,7 @@ import { enqueue } from "../../lib/queue";
 import type {
   DiscoverContext,
   DeepSearchEvent,
+  DiscoverableRecipe,
   Fulfillment,
   Listing,
   ListingDetail,
@@ -769,7 +770,7 @@ async function deepSearchAsync(
   }
 }
 
-export const trademeRecipe: Recipe = {
+export const trademeRecipe: DiscoverableRecipe = {
   name: TRADEME_PATTERN.name,
   matches(url: string): boolean {
     try {

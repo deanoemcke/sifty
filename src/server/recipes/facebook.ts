@@ -4,6 +4,7 @@ import { enqueue } from "../../lib/queue";
 import type {
   DiscoverContext,
   DeepSearchEvent,
+  DiscoverableRecipe,
   Fulfillment,
   Listing,
   ListingDetail,
@@ -526,7 +527,7 @@ function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
 
 // ── Recipe ────────────────────────────────────────────────────────────────────
 
-export const facebookRecipe: Recipe = {
+export const facebookRecipe: DiscoverableRecipe = {
   name: FACEBOOK_PATTERN.name,
   matches(url: string): boolean {
     try {
