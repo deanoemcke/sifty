@@ -57,4 +57,13 @@ describe("aiJSON", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(3); // initial + 2 retries
   });
+
+  it("exhausts retries and includes the error body message on persistent 429", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(0.01, "you hit the rate limit"));
+
+    const promise = aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100);
+    const assertion = expect(promise).rejects.toThrow("you hit the rate limit");
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
 });

@@ -66,6 +66,7 @@ export async function aiJSON(
   });
   const MAX_RETRIES = 2;
   let apiResponse: Response | undefined;
+  let lastErrorData: Record<string, unknown> = {};
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
@@ -79,27 +80,27 @@ export async function aiJSON(
     } finally {
       clearTimeout(timer);
     }
-    if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
-      const errorData = (await apiResponse.json().catch(() => ({}))) as Record<string, unknown>;
-      const errorBody = (Array.isArray(errorData) ? errorData[0] : errorData) as Record<string, unknown>;
-      const errorMessage = String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
-      const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
-      console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
-      await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
-      continue;
+    if (!apiResponse.ok) {
+      const parsed = (await apiResponse.json().catch(() => null)) as Record<string, unknown> | null;
+      if (parsed !== null) lastErrorData = parsed;
+      if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
+        const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<string, unknown>;
+        const errorMessage = String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
+        const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
+        console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
+        continue;
+      }
+      break;
     }
     break;
   }
   if (!apiResponse!.ok) {
-    const errorData = (await apiResponse!.json().catch(() => ({}))) as Record<string, unknown>;
-    const errorBody = (Array.isArray(errorData) ? errorData[0] : errorData) as Record<
-      string,
-      unknown
-    >;
+    const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<string, unknown>;
     const errorMessage =
       (errorBody?.error as Record<string, unknown>)?.message ??
       errorBody?.message ??
-      JSON.stringify(errorData);
+      JSON.stringify(lastErrorData);
     throw new Error(
       `AI error (${label}) [${apiResponse!.status}]: ${errorMessage || apiResponse!.statusText}`,
     );
