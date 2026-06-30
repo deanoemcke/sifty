@@ -704,7 +704,12 @@ describe("buildDiscoverUrlsAsync", () => {
   beforeEach(() => {
     vi.mocked(getDb).mockReturnValue({} as any);
     vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_SUBS } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
+      all: (top2Slug: string) => {
+        expect(top2Slug).toBe("electronics/electronics");
+        return MOCK_SUBS;
+      },
+    } as any);
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -771,7 +776,12 @@ describe("buildDiscoverUrlsAsync", () => {
     ];
     const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "computers/laptops" }];
     vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_TWO_SUBS } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
+      all: (top2Slug: string) => {
+        expect(["electronics/electronics", "computers/computers"]).toContain(top2Slug);
+        return MOCK_TWO_SUBS;
+      },
+    } as any);
     vi.mocked(aiJSON)
       .mockResolvedValueOnce({
         categories: ["Electronics", "Computers"],
@@ -809,7 +819,12 @@ describe("buildDiscoverUrlsAsync", () => {
     ];
     const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
     vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_TWO_SUBS } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
+      all: (top2Slug: string) => {
+        expect(top2Slug).toBe("electronics/electronics");
+        return MOCK_TWO_SUBS;
+      },
+    } as any);
     // AI returns one valid category and one hallucinated one that doesn't exist in MOCK_TWO_BROAD
     vi.mocked(aiJSON)
       .mockResolvedValueOnce({
