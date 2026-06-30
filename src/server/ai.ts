@@ -1,5 +1,9 @@
 // Server-side only — AI provider configuration and JSON completion helper.
 
+import type { AiConfig } from "../lib/recipes/base";
+
+export type { AiConfig };
+
 const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string }> = {
   groq: {
     url: "https://api.groq.com/openai/v1/chat/completions",
@@ -17,8 +21,6 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
     keyVar: "GEMINI_API_KEY",
   },
 };
-
-export type AiConfig = { url: string; model: string; apiKey: string };
 
 export function getAIConfig(): AiConfig {
   const provider = (process.env.AI_PROVIDER ?? "groq").toLowerCase();

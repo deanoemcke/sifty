@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { discoverCategoriesAsync } from "./discover";
 
 vi.mock("../recipes/registry", () => ({
@@ -6,8 +6,12 @@ vi.mock("../recipes/registry", () => ({
 }));
 vi.mock("../helpers", () => ({}));
 vi.mock("../../lib/validate", () => ({}));
+vi.mock("../ai", () => ({
+  getAIConfig: vi.fn(),
+}));
 
 import { getAllRecipes } from "../recipes/registry";
+import { getAIConfig } from "../ai";
 
 function makeStubRecipe(urls: string[], warnings: string[] = []) {
   return {
@@ -20,7 +24,15 @@ function makeStubRecipe(urls: string[], warnings: string[] = []) {
   };
 }
 
+const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key" };
+
 describe("discoverCategoriesAsync", () => {
+  beforeEach(() => {
+    vi.mocked(getAIConfig).mockReturnValue(MOCK_AI_CONFIG);
+  });
+
+  afterEach(() => vi.clearAllMocks());
+
   it("returns filters without a minPrice field", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
       makeStubRecipe(["https://www.trademe.co.nz/a/marketplace/computers/laptops/search"]),
@@ -111,7 +123,12 @@ describe("discoverCategoriesAsync", () => {
     await discoverCategoriesAsync("  macbook  ", 800, "pickup", "2");
     expect(captured).toHaveLength(1);
     expect(captured[0].prompt).toBe("  macbook  ");
-    expect(captured[0].context).toEqual({ maxPrice: 800, fulfillment: "pickup", regionValue: "2" });
+    expect(captured[0].context).toEqual({
+      maxPrice: 800,
+      fulfillment: "pickup",
+      regionValue: "2",
+      aiConfig: MOCK_AI_CONFIG,
+    });
   });
 
   it("returns URLs from successful recipes even when another recipe throws", async () => {
@@ -245,5 +262,20 @@ describe("discoverCategoriesAsync", () => {
     const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toBe("Recipe failed");
+  });
+
+  it("throws before calling any recipe when AI config is misconfigured", async () => {
+    vi.mocked(getAIConfig).mockImplementation(() => {
+      throw new Error("GROQ_API_KEY is not set");
+    });
+    const buildSpy = vi.fn().mockResolvedValue({ urls: ["https://example.com"], warnings: [] });
+    vi.mocked(getAllRecipes).mockReturnValue([
+      { ...makeStubRecipe([]), buildDiscoverUrlsAsync: buildSpy },
+    ]);
+
+    await expect(discoverCategoriesAsync("laptop", 0, "any", undefined)).rejects.toThrow(
+      "GROQ_API_KEY is not set",
+    );
+    expect(buildSpy).not.toHaveBeenCalled();
   });
 });

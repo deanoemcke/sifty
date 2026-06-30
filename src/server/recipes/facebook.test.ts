@@ -123,11 +123,14 @@ describe("buildFacebookUrl", () => {
 
 // ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
 
+const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key" };
+
 describe("buildDiscoverUrlsAsync", () => {
   it("returns a single Facebook Marketplace URL", async () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
+      aiConfig: MOCK_AI_CONFIG,
     });
     expect(result.urls).toHaveLength(1);
     expect(result.urls[0]).toContain("facebook.com/marketplace");
@@ -137,6 +140,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
+      aiConfig: MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain("query=macbook+pro");
   });
@@ -145,6 +149,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 500,
       fulfillment: "any",
+      aiConfig: MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain("maxPrice=500");
   });
@@ -154,6 +159,7 @@ describe("buildDiscoverUrlsAsync", () => {
       maxPrice: 0,
       fulfillment: "pickup",
       regionValue: "2",
+      aiConfig: MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain("/marketplace/auckland/search");
   });
@@ -162,6 +168,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
+      aiConfig: MOCK_AI_CONFIG,
     });
     expect(result.warnings).toEqual([]);
   });

@@ -16,10 +16,10 @@ import {
   trademeRecipe,
   type DiscoverEntry,
 } from "./trademe";
-import { aiJSON, getAIConfig } from "../ai";
+import { aiJSON } from "../ai";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 
-vi.mock("../ai", () => ({ aiJSON: vi.fn(), getAIConfig: vi.fn() }));
+vi.mock("../ai", () => ({ aiJSON: vi.fn() }));
 vi.mock("../db", () => ({
   getDb: vi.fn(),
   stmtGetCategoriesAtDepth2: vi.fn(),
@@ -699,14 +699,9 @@ describe("buildTrademeUrl", () => {
 describe("buildDiscoverUrlsAsync", () => {
   const MOCK_BROAD = [{ display: "Electronics", slug: "electronics/electronics" }];
   const MOCK_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
-  const MOCK_AI: ReturnType<typeof getAIConfig> = {
-    url: "http://example.com",
-    model: "llama",
-    apiKey: "key",
-  };
+  const MOCK_AI = { url: "http://example.com", model: "llama", apiKey: "key" };
 
   beforeEach(() => {
-    vi.mocked(getAIConfig).mockReturnValue(MOCK_AI);
     vi.mocked(getDb).mockReturnValue({} as any);
     vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD } as any);
     vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_SUBS } as any);
@@ -726,6 +721,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
+      aiConfig: MOCK_AI,
     });
     expect(result.urls.length).toBeGreaterThan(0);
     expect(result.urls.every((u) => u.includes("trademe.co.nz"))).toBe(true);
@@ -740,6 +736,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 800,
       fulfillment: "any",
+      aiConfig: MOCK_AI,
     });
     expect(result.urls[0]).toContain("price_max=800");
   });
@@ -752,17 +749,9 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
+      aiConfig: MOCK_AI,
     });
     expect(result.warnings).toEqual([]);
-  });
-
-  it("throws when AI config is unavailable", async () => {
-    vi.mocked(getAIConfig).mockImplementation(() => {
-      throw new Error("GROQ_API_KEY is not set");
-    });
-    await expect(
-      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
-    ).rejects.toThrow("GROQ_API_KEY is not set");
   });
 
   it("accumulates a warning for a step-2 null response and throws only when no URLs result", async () => {
@@ -771,7 +760,7 @@ describe("buildDiscoverUrlsAsync", () => {
       .mockResolvedValueOnce(null);
 
     await expect(
-      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
     ).rejects.toThrow("AI returned no valid specific categories");
   });
 
@@ -795,6 +784,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
+      aiConfig: MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("step2:electronics/electronics");
@@ -808,7 +798,7 @@ describe("buildDiscoverUrlsAsync", () => {
       .mockResolvedValueOnce({ notCategories: [] });
 
     await expect(
-      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
     ).rejects.toThrow("AI returned no valid specific categories");
   });
 
@@ -832,6 +822,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
+      aiConfig: MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("Hallucinated Category");
@@ -847,7 +838,7 @@ describe("buildDiscoverUrlsAsync", () => {
     });
 
     await expect(
-      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
     ).rejects.toThrow("AI returned no valid broad categories");
   });
 });

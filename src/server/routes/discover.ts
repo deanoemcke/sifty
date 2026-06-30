@@ -3,6 +3,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DiscoverContext, Fulfillment } from "../../lib/recipes/base";
 import { getAllRecipes } from "../recipes/registry";
+import { getAIConfig } from "../ai";
 import { requirePositiveNumber, requireString } from "../../lib/validate";
 import { readBody, sendJSON } from "../helpers";
 
@@ -33,10 +34,12 @@ export async function discoverCategoriesAsync(
   discoveryFulfillment: Fulfillment,
   discoveryRegion: string | undefined,
 ): Promise<DiscoverResult> {
+  const aiConfig = getAIConfig();
   const context: DiscoverContext = {
     maxPrice: discoveryMaxPrice,
     fulfillment: discoveryFulfillment,
     regionValue: discoveryRegion,
+    aiConfig,
   };
   const settled = await Promise.allSettled(
     getAllRecipes().map((r) => r.buildDiscoverUrlsAsync(discoveryPrompt, context)),

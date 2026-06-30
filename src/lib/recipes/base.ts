@@ -44,10 +44,17 @@ export type RecipeDiscoverResult = {
   warnings: string[];
 };
 
+export type AiConfig = {
+  url: string;
+  model: string;
+  apiKey: string;
+};
+
 export type DiscoverContext = {
   maxPrice: number;
   fulfillment: Fulfillment;
   regionValue?: string;
+  aiConfig: AiConfig;
 };
 
 export interface Recipe {

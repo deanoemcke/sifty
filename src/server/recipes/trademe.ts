@@ -1,5 +1,5 @@
 import { chromium, type Page, type Response } from "playwright";
-import { aiJSON, getAIConfig } from "../ai";
+import { aiJSON } from "../ai";
 import { MAX_PAGES_PER_SEARCH } from "../constants";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import { enqueue } from "../../lib/queue";
@@ -544,7 +544,7 @@ async function buildDiscoverUrlsAsync(
   prompt: string,
   context: DiscoverContext,
 ): Promise<RecipeDiscoverResult> {
-  const aiConfig = getAIConfig();
+  const aiConfig = context.aiConfig;
   const database = getDb();
   const broad = stmtGetCategoriesAtDepth2(database).all();
   const broadDisplayList = broad.map((category) => category.display).join("\n");
