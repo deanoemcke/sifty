@@ -50,6 +50,10 @@ export type AiConfig = {
   apiKey: string;
 };
 
+// `fulfillment` and `regionValue` represent user search intent (delivery preference
+// and geographic region) that every classifieds recipe needs to honour, not
+// Trade Me / Facebook internals. Both current recipes use them, and any future
+// recipe that searches by location or delivery method will too. Keep them here.
 export type DiscoverContext = {
   maxPrice: number;
   fulfillment: Fulfillment;

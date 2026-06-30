@@ -518,11 +518,11 @@ export function buildFacebookUrl(
   return `https://www.facebook.com/marketplace/${fbLocationSegment}search?${fbParams.toString()}`;
 }
 
-function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
-  return Promise.resolve({
+async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
+  return {
     urls: [buildFacebookUrl(prompt.trim(), context.maxPrice, context.fulfillment, context.regionValue)],
     warnings: [] as string[],
-  });
+  };
 }
 
 // ── Recipe ────────────────────────────────────────────────────────────────────

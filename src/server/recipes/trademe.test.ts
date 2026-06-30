@@ -651,6 +651,26 @@ describe("collapseEntries", () => {
     expect(result).toHaveLength(1);
     expect(result[0].slug).toBe("marketplace/furniture/home");
   });
+
+  it("collapses two independent sibling groups under separate parents without merging them", () => {
+    // Regression guard: collapsing siblings in one group must not affect siblings in an
+    // unrelated group that shares no ancestor. Each group produces its own parent entry.
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "macbook"),
+      entry("marketplace/furniture/home/bedroom", null),
+      entry("marketplace/furniture/home/living", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+    const slugs = result.map((e) => e.slug);
+    expect(slugs).toContain("marketplace/computers/laptops");
+    expect(slugs).toContain("marketplace/furniture/home");
+    const laptops = result.find((e) => e.slug === "marketplace/computers/laptops");
+    const home = result.find((e) => e.slug === "marketplace/furniture/home");
+    expect(laptops?.searchString).toBe("macbook");
+    expect(home?.searchString).toBeNull();
+  });
 });
 
 // ── buildTrademeUrl ───────────────────────────────────────────────────────────
