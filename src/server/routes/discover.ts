@@ -113,6 +113,7 @@ export async function discoverCategoriesAsync(
     STEP1_SYSTEM_PROMPT,
     `I'm looking for: ${discoveryPrompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
     4096,
+    `I'm looking for: ${discoveryPrompt.trim()} [+ ${broad.length} categories omitted from log]`,
   )) as Record<string, unknown> | null;
   if (typeof broadCategoryPick !== "object" || broadCategoryPick === null)
     throw new Error("discover step1: expected object response");
@@ -127,28 +128,34 @@ export async function discoverCategoriesAsync(
     throw new Error("AI returned no valid broad categories");
   }
   if (selectedBroadSlugs.length < rawCategories.length) {
-    throw new Error("AI hallucination detected — please try again");
+    const unmatched = rawCategories.filter(
+      (display: string) => !broad.find((category) => category.display === display),
+    );
+    console.warn(
+      `[discover] step1: ignoring ${unmatched.length} unrecognised category name(s): ${unmatched.join(", ")}`,
+    );
   }
 
-  // Step 2: one parallel call per broad category — pick all plausible subcategories within it.
-  const subcategoryPickResults = await Promise.all(
-    selectedBroadSlugs.map((top2Slug) => {
-      const broadEntry = broad.find((category) => category.slug === top2Slug);
-      if (!broadEntry)
-        throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
-      const candidates = stmtGetCategoriesByTop2(database).all(top2Slug);
-      const specificList = candidates
-        .map((category) => `${category.display} (slug: ${category.slug})`)
-        .join("\n");
-      return aiJSON(
-        aiConfig,
-        `step2:${top2Slug}`,
-        STEP2_SYSTEM_PROMPT,
-        `I'm looking for: ${discoveryPrompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
-        4096,
-      ).then((result) => ({ top2Slug, candidates, result: result as Record<string, unknown> | null }));
-    }),
-  );
+  // Step 2: one sequential call per broad category — pick all plausible subcategories within it.
+  // Sequential (not parallel) so concurrent bursts don't collide on the provider's TPM limit.
+  const subcategoryPickResults: Array<{ top2Slug: string; candidates: typeof broad; result: Record<string, unknown> | null }> = [];
+  for (const top2Slug of selectedBroadSlugs) {
+    const broadEntry = broad.find((category) => category.slug === top2Slug);
+    if (!broadEntry)
+      throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
+    const candidates = stmtGetCategoriesByTop2(database).all(top2Slug);
+    const specificList = candidates
+      .map((category) => `${category.display} (slug: ${category.slug})`)
+      .join("\n");
+    const result = await aiJSON(
+      aiConfig,
+      `step2:${top2Slug}`,
+      STEP2_SYSTEM_PROMPT,
+      `I'm looking for: ${discoveryPrompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
+      4096,
+    );
+    subcategoryPickResults.push({ top2Slug, candidates, result: result as Record<string, unknown> | null });
+  }
 
   // Collect all valid entries across step2 results
   const allEntries: DiscoverEntry[] = [];

@@ -31,40 +31,65 @@ export function getAIConfig(): AiConfig | string {
 
 type OpenAIResponseShape = { choices?: Array<{ message?: { content?: string } }> };
 
+function parseRetryDelaySeconds(response: Response, errorMessage: string): number {
+  const header = response.headers.get("retry-after");
+  if (header) {
+    const parsed = Number.parseFloat(header);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  const match = errorMessage.match(/try again in (\d+\.?\d*)s/i);
+  if (match) return Number.parseFloat(match[1]);
+  return 10;
+}
+
 export async function aiJSON(
   aiConfig: AiConfig,
   label: string,
   systemMessage: string,
   userMessage: string,
   maxTokens: number,
+  logUserMessage?: string,
 ): Promise<unknown> {
-  const trim = (text: string) => text.replace(/\s+/g, " ").slice(0, 100);
   console.log(
-    `[AI] ${label} → model: ${aiConfig.model}\n[system] ${trim(systemMessage)}…\n[user] ${trim(userMessage)}…`,
+    `[AI] ${label} → model: ${aiConfig.model}\n[system] ${systemMessage}\n[user] ${logUserMessage ?? userMessage}`,
   );
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  let apiResponse: Response;
-  try {
-    apiResponse = await fetch(aiConfig.url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: aiConfig.model,
-        max_tokens: maxTokens,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemMessage },
-          { role: "user", content: userMessage },
-        ],
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
+  const requestBody = JSON.stringify({
+    model: aiConfig.model,
+    max_tokens: maxTokens,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemMessage },
+      { role: "user", content: userMessage },
+    ],
+  });
+  const MAX_RETRIES = 2;
+  let apiResponse: Response | undefined;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      apiResponse = await fetch(aiConfig.url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
+        body: requestBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
+      const errorData = (await apiResponse.json().catch(() => ({}))) as Record<string, unknown>;
+      const errorBody = (Array.isArray(errorData) ? errorData[0] : errorData) as Record<string, unknown>;
+      const errorMessage = String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
+      const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
+      console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
+      await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
+      continue;
+    }
+    break;
   }
-  if (!apiResponse.ok) {
-    const errorData = (await apiResponse.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!apiResponse!.ok) {
+    const errorData = (await apiResponse!.json().catch(() => ({}))) as Record<string, unknown>;
     const errorBody = (Array.isArray(errorData) ? errorData[0] : errorData) as Record<
       string,
       unknown
@@ -74,10 +99,10 @@ export async function aiJSON(
       errorBody?.message ??
       JSON.stringify(errorData);
     throw new Error(
-      `AI error (${label}) [${apiResponse.status}]: ${errorMessage || apiResponse.statusText}`,
+      `AI error (${label}) [${apiResponse!.status}]: ${errorMessage || apiResponse!.statusText}`,
     );
   }
-  const responseData = (await apiResponse.json()) as OpenAIResponseShape;
+  const responseData = (await apiResponse!.json()) as OpenAIResponseShape;
   const raw: string = responseData.choices?.[0]?.message?.content ?? "{}";
   // Extract JSON from a markdown code fence if the model wrapped it in prose
   let stripped: string;

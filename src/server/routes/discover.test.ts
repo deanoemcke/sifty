@@ -268,7 +268,7 @@ describe("discoverCategoriesAsync", () => {
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("returns filters without a minPrice field", async () => {
@@ -297,6 +297,19 @@ describe("discoverCategoriesAsync", () => {
 
     const result = await discoverCategoriesAsync("macbook pro", 0, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
     expect(result.name).toBe("MacBook laptops");
+  });
+
+  it("proceeds with valid categories when AI returns some unrecognised category names", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics", "NonExistentCategory"],
+        searchLabel: "gadgets",
+        searchQuery: "gadgets",
+      } as any)
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
+
+    const result = await discoverCategoriesAsync("gadgets", 0, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
+    expect(result.urls.some((url) => url.includes("electronics/laptops"))).toBe(true);
   });
 
   it("uses searchQuery (not searchLabel or raw prompt) for the Facebook URL", async () => {
