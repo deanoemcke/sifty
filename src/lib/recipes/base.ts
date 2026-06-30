@@ -37,6 +37,30 @@ export type DeepSearchEvent =
   | { type: "complete" }
   | { type: "error"; message: string };
 
+export type Fulfillment = "any" | "pickup" | "shipping";
+
+export type RecipeDiscoverResult = {
+  urls: string[];
+  warnings: string[];
+};
+
+export type AiConfig = {
+  url: string;
+  model: string;
+  apiKey: string;
+};
+
+// `fulfillment` and `regionValue` represent user search intent (delivery preference
+// and geographic region) that every classifieds recipe needs to honour, not
+// Trade Me / Facebook internals. Both current recipes use them, and any future
+// recipe that searches by location or delivery method will too. Keep them here.
+export type DiscoverContext = {
+  maxPrice: number;
+  fulfillment: Fulfillment;
+  regionValue?: string;
+  aiConfig: AiConfig;
+};
+
 export interface Recipe {
   readonly name: string;
   matches(url: string): boolean;
@@ -51,4 +75,12 @@ export interface Recipe {
     onEvent: (event: DeepSearchEvent) => void,
     isCancelled?: () => boolean,
   ): Promise<void>;
+}
+
+export interface DiscoverableRecipe extends Recipe {
+  buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext): Promise<RecipeDiscoverResult>;
+}
+
+export function isDiscoverableRecipe(recipe: Recipe): recipe is DiscoverableRecipe {
+  return typeof (recipe as DiscoverableRecipe).buildDiscoverUrlsAsync === "function";
 }

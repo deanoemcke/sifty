@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import type { Listing } from "./base";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Listing } from "../../lib/recipes/base";
 import {
+  STEP2_SYSTEM_PROMPT,
   buildListing,
+  buildTrademeUrl,
+  collapseEntries,
   extractDescriptionFromText,
   extractDetails,
   extractImplicitFilters,
@@ -11,7 +14,17 @@ import {
   parseFrendState,
   parseSearchApiResponse,
   trademeRecipe,
+  type DiscoverEntry,
 } from "./trademe";
+import { aiJSON } from "../ai";
+import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
+
+vi.mock("../ai", () => ({ aiJSON: vi.fn() }));
+vi.mock("../db", () => ({
+  getDb: vi.fn(),
+  stmtGetCategoriesAtDepth2: vi.fn(),
+  stmtGetCategoriesByTop2: vi.fn(),
+}));
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
@@ -520,6 +533,353 @@ describe("extractImplicitFilters", () => {
 
   it("returns empty array for invalid URL", () => {
     expect(extractImplicitFilters("not a url")).toEqual([]);
+  });
+});
+
+// ── STEP2_SYSTEM_PROMPT ───────────────────────────────────────────────────────
+
+describe("STEP2_SYSTEM_PROMPT", () => {
+  it("contains the required JSON schema keywords for the AI response contract", () => {
+    expect(STEP2_SYSTEM_PROMPT).toContain('"categories"');
+    expect(STEP2_SYSTEM_PROMPT).toContain('"slug"');
+    expect(STEP2_SYSTEM_PROMPT).toContain('"searchString"');
+  });
+
+  it("instructs the AI to return JSON", () => {
+    expect(STEP2_SYSTEM_PROMPT).toContain("Return JSON");
+  });
+});
+
+// ── collapseEntries ───────────────────────────────────────────────────────────
+
+function entry(slug: string, searchString: string | null = null): DiscoverEntry {
+  return { slug, searchString };
+}
+
+describe("collapseEntries", () => {
+  it("returns an empty array unchanged", () => {
+    expect(collapseEntries([])).toEqual([]);
+  });
+
+  it("passes through a single entry with no siblings", () => {
+    const input = [entry("computers/laptops/apple")];
+    expect(collapseEntries(input)).toEqual(input);
+  });
+
+  it("drops a child when its parent is also present in the list", () => {
+    const input = [entry("computers/laptops"), entry("computers/laptops/apple")];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].slug).toBe("computers/laptops");
+  });
+
+  it("collapses two siblings with the same searchString to their parent", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "macbook"),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ slug: "marketplace/computers/laptops", searchString: "macbook" });
+  });
+
+  it("does not collapse siblings when their shared parent slug has fewer than 3 segments", () => {
+    const input = [
+      entry("computers/laptops/apple", "macbook"),
+      entry("computers/laptops/dell", "macbook"),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not collapse siblings with different searchStrings", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "latitude"),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not collapse a lone entry with no siblings", () => {
+    const input = [entry("marketplace/computers/laptops/apple", "macbook")];
+    expect(collapseEntries(input)).toEqual(input);
+  });
+
+  it("collapses three siblings to one parent entry", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", null),
+      entry("marketplace/computers/laptops/dell", null),
+      entry("marketplace/computers/laptops/lenovo", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ slug: "marketplace/computers/laptops", searchString: null });
+  });
+
+  it("collapses one sibling group and leaves unrelated entries untouched", () => {
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "macbook"),
+      entry("marketplace/electronics/cameras/dslr", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+    const slugs = result.map((e) => e.slug);
+    expect(slugs).toContain("marketplace/computers/laptops");
+    expect(slugs).toContain("marketplace/electronics/cameras/dslr");
+  });
+
+  it("does not emit the collapsed parent slug twice when three siblings collapse", () => {
+    const input = [
+      entry("marketplace/furniture/home/bedroom", null),
+      entry("marketplace/furniture/home/living", null),
+      entry("marketplace/furniture/home/dining", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].slug).toBe("marketplace/furniture/home");
+  });
+
+  it("does not collapse siblings when their parent is present in the input", () => {
+    const input = [
+      entry("marketplace/furniture/home"),
+      entry("marketplace/furniture/home/bedroom", null),
+      entry("marketplace/furniture/home/living", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].slug).toBe("marketplace/furniture/home");
+  });
+
+  it("collapses two independent sibling groups under separate parents without merging them", () => {
+    // Regression guard: collapsing siblings in one group must not affect siblings in an
+    // unrelated group that shares no ancestor. Each group produces its own parent entry.
+    const input = [
+      entry("marketplace/computers/laptops/apple", "macbook"),
+      entry("marketplace/computers/laptops/dell", "macbook"),
+      entry("marketplace/furniture/home/bedroom", null),
+      entry("marketplace/furniture/home/living", null),
+    ];
+    const result = collapseEntries(input);
+    expect(result).toHaveLength(2);
+    const slugs = result.map((e) => e.slug);
+    expect(slugs).toContain("marketplace/computers/laptops");
+    expect(slugs).toContain("marketplace/furniture/home");
+    const laptops = result.find((e) => e.slug === "marketplace/computers/laptops");
+    const home = result.find((e) => e.slug === "marketplace/furniture/home");
+    expect(laptops?.searchString).toBe("macbook");
+    expect(home?.searchString).toBeNull();
+  });
+});
+
+// ── buildTrademeUrl ───────────────────────────────────────────────────────────
+
+describe("buildTrademeUrl", () => {
+  it('wraps a non-section slug in "marketplace/"', () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
+    expect(url).toContain("/a/marketplace/computers/laptops/search");
+  });
+
+  it('does not prefix a section slug with "marketplace/"', () => {
+    const url = buildTrademeUrl(entry("motors/cars"), 0, "any", undefined);
+    expect(url).toContain("/a/motors/cars/search");
+    expect(url).not.toContain("marketplace");
+  });
+
+  it("appends search_string when set", () => {
+    const url = buildTrademeUrl(entry("computers/laptops", "macbook"), 0, "any", undefined);
+    expect(url).toContain("search_string=macbook");
+  });
+
+  it("appends price_max when maxPrice > 0", () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 500, "any", undefined);
+    expect(url).toContain("price_max=500");
+  });
+
+  it("omits price_max when maxPrice is 0", () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
+    expect(url).not.toContain("price_max");
+  });
+
+  it('adds pickup params when fulfillment is "pickup" and regionValue is set', () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "pickup", "2");
+    expect(url).toContain("user_region=2");
+    expect(url).toContain("shipping_method=pickup");
+  });
+
+  it('does not add pickup params when fulfillment is "pickup" but regionValue is missing', () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "pickup", undefined);
+    expect(url).not.toContain("shipping_method");
+  });
+
+  it("produces a bare search URL when no params apply", () => {
+    const url = buildTrademeUrl(entry("computers/laptops"), 0, "any", undefined);
+    expect(url).toBe("https://www.trademe.co.nz/a/marketplace/computers/laptops/search");
+  });
+});
+
+// ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
+
+describe("buildDiscoverUrlsAsync", () => {
+  const MOCK_BROAD = [{ display: "Electronics", slug: "electronics/electronics" }];
+  const MOCK_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
+  const MOCK_AI = { url: "http://example.com", model: "llama", apiKey: "key" };
+
+  beforeEach(() => {
+    vi.mocked(getDb).mockReturnValue({} as any);
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
+      all: (top2Slug: string) => {
+        expect(top2Slug).toBe("electronics/electronics");
+        return MOCK_SUBS;
+      },
+    } as any);
+  });
+
+  afterEach(() => vi.resetAllMocks());
+
+  it("returns Trade Me search URLs for AI-selected categories", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+      aiConfig: MOCK_AI,
+    });
+    expect(result.urls.length).toBeGreaterThan(0);
+    expect(result.urls.every((u) => u.includes("trademe.co.nz"))).toBe(true);
+    expect(result.urls[0]).toContain("electronics/laptops");
+  });
+
+  it("applies maxPrice to the generated URL", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 800,
+      fulfillment: "any",
+      aiConfig: MOCK_AI,
+    });
+    expect(result.urls[0]).toContain("price_max=800");
+  });
+
+  it("returns an empty warnings array on full success", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+      aiConfig: MOCK_AI,
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("accumulates a warning for a step-2 null response and throws only when no URLs result", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
+    ).rejects.toThrow("AI returned no valid specific categories");
+  });
+
+  it("preserves valid categories from other step-2 calls when one returns null", async () => {
+    const MOCK_TWO_BROAD = [
+      { display: "Electronics", slug: "electronics/electronics" },
+      { display: "Computers", slug: "computers/computers" },
+    ];
+    const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "computers/laptops" }];
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
+      all: (top2Slug: string) => {
+        expect(["electronics/electronics", "computers/computers"]).toContain(top2Slug);
+        return MOCK_TWO_SUBS;
+      },
+    } as any);
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics", "Computers"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ categories: [{ slug: "computers/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+      aiConfig: MOCK_AI,
+    });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("step2:electronics/electronics");
+    expect(result.urls).toHaveLength(1);
+    expect(result.urls[0]).toContain("computers/laptops");
+  });
+
+  it("accumulates a warning for a step-2 malformed response and throws only when no URLs result", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({ notCategories: [] });
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
+    ).rejects.toThrow("AI returned no valid specific categories");
+  });
+
+  it("filters out unrecognised step-1 slugs, adds a warning, and continues with valid ones", async () => {
+    const MOCK_TWO_BROAD = [
+      { display: "Electronics", slug: "electronics/electronics" },
+      { display: "Computers", slug: "computers/computers" },
+    ];
+    const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
+      all: (top2Slug: string) => {
+        expect(top2Slug).toBe("electronics/electronics");
+        return MOCK_TWO_SUBS;
+      },
+    } as any);
+    // AI returns one valid category and one hallucinated one that doesn't exist in MOCK_TWO_BROAD
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics", "Hallucinated Category"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+      aiConfig: MOCK_AI,
+    });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("Hallucinated Category");
+    expect(result.urls).toHaveLength(1);
+    expect(result.urls[0]).toContain("electronics/laptops");
+  });
+
+  it("throws when all step-1 categories are unrecognised (zero valid slugs)", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      categories: ["Hallucinated Category A", "Hallucinated Category B"],
+      searchLabel: "laptops",
+      searchQuery: "laptop",
+    });
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
+    ).rejects.toThrow("AI returned no valid broad categories");
   });
 });
 
