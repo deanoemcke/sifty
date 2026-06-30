@@ -178,4 +178,72 @@ describe("discoverCategoriesAsync", () => {
       "No URLs returned from any recipe",
     );
   });
+
+  it("strips bearer tokens from warning messages", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        buildDiscoverUrlsAsync: async () => {
+          throw new Error("Unauthorized: bearer abc123xyz");
+        },
+      },
+      makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).not.toContain("abc123xyz");
+    expect(result.warnings[0]).toContain("[redacted]");
+  });
+
+  it("strips API keys from warning messages", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        buildDiscoverUrlsAsync: async () => {
+          throw new Error("Invalid api-key=sk-secretvalue123 provided");
+        },
+      },
+      makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).not.toContain("sk-secretvalue123");
+    expect(result.warnings[0]).toContain("[redacted]");
+  });
+
+  it("strips sk- prefixed tokens from warning messages", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        buildDiscoverUrlsAsync: async () => {
+          throw new Error("Authentication failed with token sk-abcDEF123456");
+        },
+      },
+      makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).not.toContain("sk-abcDEF123456");
+    expect(result.warnings[0]).toContain("[redacted]");
+  });
+
+  it("uses 'Recipe failed' for non-Error rejections", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        buildDiscoverUrlsAsync: async () => {
+          // eslint-disable-next-line @typescript-eslint/no-throw-literal
+          throw "some string rejection with api_key=secret";
+        },
+      },
+      makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toBe("Recipe failed");
+  });
 });

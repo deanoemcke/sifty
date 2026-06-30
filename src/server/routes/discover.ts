@@ -6,6 +6,20 @@ import { getAllRecipes } from "../recipes/registry";
 import { requirePositiveNumber, requireString } from "../../lib/validate";
 import { readBody, sendJSON } from "../helpers";
 
+const SENSITIVE_TOKEN_PATTERNS = [
+  /sk-[a-zA-Z0-9]+/g,
+  /api[_-]?key[=:]\S+/gi,
+  /bearer \S+/gi,
+];
+
+export function sanitiseWarningMessage(reason: unknown): string {
+  const rawMessage = reason instanceof Error ? reason.message : "Recipe failed";
+  return SENSITIVE_TOKEN_PATTERNS.reduce(
+    (message, pattern) => message.replace(pattern, "[redacted]"),
+    rawMessage,
+  );
+}
+
 type DiscoverResult = {
   urls: string[];
   filters: { maxPrice: number; shippingAvailable: boolean; pickupAvailable: boolean };
@@ -32,7 +46,7 @@ export async function discoverCategoriesAsync(
     ...settled.flatMap((r) => (r.status === "fulfilled" ? r.value.warnings : [])),
     ...settled
       .filter((r): r is PromiseRejectedResult => r.status === "rejected")
-      .map((r) => String(r.reason)),
+      .map((r) => sanitiseWarningMessage(r.reason)),
   ];
   if (urls.length === 0)
     throw new Error(`No URLs returned from any recipe. Errors: ${warnings.join("; ")}`);
