@@ -247,6 +247,23 @@ describe("discoverCategoriesAsync", () => {
     expect(result.warnings[0]).toContain("[redacted]");
   });
 
+  it("prefixes rejection warning with the recipe name", async () => {
+    vi.mocked(getAllRecipes).mockReturnValue([
+      {
+        ...makeStubRecipe([]),
+        name: "trademe",
+        buildDiscoverUrlsAsync: async () => {
+          throw new Error("AI unavailable");
+        },
+      },
+      makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
+    ]);
+
+    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toBe("trademe: AI unavailable");
+  });
+
   it("uses 'Recipe failed' for non-Error rejections", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
       {
@@ -261,7 +278,7 @@ describe("discoverCategoriesAsync", () => {
 
     const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toBe("Recipe failed");
+    expect(result.warnings[0]).toBe("stub: Recipe failed");
   });
 
   it("throws before calling any recipe when AI config is misconfigured", async () => {

@@ -41,15 +41,20 @@ export async function discoverCategoriesAsync(
     regionValue: discoveryRegion,
     aiConfig,
   };
+  const recipes = getAllRecipes();
   const settled = await Promise.allSettled(
-    getAllRecipes().map((r) => r.buildDiscoverUrlsAsync(discoveryPrompt, context)),
+    recipes.map((r) => r.buildDiscoverUrlsAsync(discoveryPrompt, context)),
   );
   const urls = settled.flatMap((r) => (r.status === "fulfilled" ? r.value.urls : []));
   const warnings = [
     ...settled.flatMap((r) => (r.status === "fulfilled" ? r.value.warnings : [])),
     ...settled
-      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
-      .map((r) => sanitiseWarningMessage(r.reason)),
+      .map((r, i) => ({ result: r, recipe: recipes[i] }))
+      .filter(
+        (entry): entry is { result: PromiseRejectedResult; recipe: (typeof recipes)[number] } =>
+          entry.result.status === "rejected",
+      )
+      .map(({ result, recipe }) => `${recipe.name}: ${sanitiseWarningMessage(result.reason)}`),
   ];
   if (urls.length === 0)
     throw new Error(`No URLs returned from any recipe. Errors: ${warnings.join("; ")}`);
