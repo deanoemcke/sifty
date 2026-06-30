@@ -172,6 +172,17 @@ describe("buildDiscoverUrlsAsync", () => {
     });
     expect(result.warnings).toEqual([]);
   });
+
+  it("trims leading and trailing whitespace from the prompt before encoding into the URL", async () => {
+    const result = await facebookRecipe.buildDiscoverUrlsAsync("  macbook pro  ", {
+      maxPrice: 0,
+      fulfillment: "any",
+      aiConfig: MOCK_AI_CONFIG,
+    });
+    expect(result.urls[0]).toContain("query=macbook+pro");
+    expect(result.urls[0]).not.toMatch(/query=%20|query=\+/);
+    expect(result.urls[0]).not.toMatch(/%20$|%20&|\+$/);
+  });
 });
 
 describe("buildFacebookListing", () => {

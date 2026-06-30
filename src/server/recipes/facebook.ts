@@ -519,7 +519,7 @@ export function buildFacebookUrl(
 
 function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
   return Promise.resolve({
-    urls: [buildFacebookUrl(prompt, context.maxPrice, context.fulfillment, context.regionValue)],
+    urls: [buildFacebookUrl(prompt.trim(), context.maxPrice, context.fulfillment, context.regionValue)],
     warnings: [] as string[],
   });
 }
