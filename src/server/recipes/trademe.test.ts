@@ -765,34 +765,51 @@ describe("buildDiscoverUrlsAsync", () => {
     ).rejects.toThrow("GROQ_API_KEY is not set");
   });
 
-  it("throws when any step-2 call returns an unexpected result", async () => {
+  it("accumulates a warning for a step-2 null response and throws only when no URLs result", async () => {
     vi.mocked(aiJSON)
       .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
       .mockResolvedValueOnce(null);
 
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
-    ).rejects.toThrow("step2:electronics/electronics");
+    ).rejects.toThrow("AI returned no valid specific categories");
   });
 
-  it("throws when one step-2 call fails even if another would succeed", async () => {
+  it("preserves valid categories from other step-2 calls when one returns null", async () => {
     const MOCK_TWO_BROAD = [
       { display: "Electronics", slug: "electronics/electronics" },
       { display: "Computers", slug: "computers/computers" },
     ];
+    const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "computers/laptops" }];
     vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_TWO_SUBS } as any);
     vi.mocked(aiJSON)
       .mockResolvedValueOnce({
         categories: ["Electronics", "Computers"],
         searchLabel: "laptops",
         searchQuery: "laptop",
       })
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] })
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ categories: [{ slug: "computers/laptops", searchString: null }] });
+
+    const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+    });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("step2:electronics/electronics");
+    expect(result.urls).toHaveLength(1);
+    expect(result.urls[0]).toContain("computers/laptops");
+  });
+
+  it("accumulates a warning for a step-2 malformed response and throws only when no URLs result", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({ notCategories: [] });
 
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any" }),
-    ).rejects.toThrow("step2:computers/computers");
+    ).rejects.toThrow("AI returned no valid specific categories");
   });
 });
 
