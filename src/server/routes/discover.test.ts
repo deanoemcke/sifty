@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Recipe } from "../../lib/recipes/base";
 import { discoverCategoriesAsync } from "./discover";
 
 vi.mock("../recipes/registry", () => ({
@@ -13,7 +14,7 @@ vi.mock("../ai", () => ({
 import { getAllRecipes } from "../recipes/registry";
 import { getAIConfig } from "../ai";
 
-function makeStubRecipe(urls: string[], warnings: string[] = []) {
+function makeStubRecipe(urls: string[], warnings: string[] = []): Recipe {
   return {
     name: "stub",
     matches: () => false,
