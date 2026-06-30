@@ -539,9 +539,14 @@ describe("extractImplicitFilters", () => {
 // ── STEP2_SYSTEM_PROMPT ───────────────────────────────────────────────────────
 
 describe("STEP2_SYSTEM_PROMPT", () => {
-  it("is a non-empty string", () => {
-    expect(typeof STEP2_SYSTEM_PROMPT).toBe("string");
-    expect(STEP2_SYSTEM_PROMPT.length).toBeGreaterThan(20);
+  it("contains the required JSON schema keywords for the AI response contract", () => {
+    expect(STEP2_SYSTEM_PROMPT).toContain('"categories"');
+    expect(STEP2_SYSTEM_PROMPT).toContain('"slug"');
+    expect(STEP2_SYSTEM_PROMPT).toContain('"searchString"');
+  });
+
+  it("instructs the AI to return JSON", () => {
+    expect(STEP2_SYSTEM_PROMPT).toContain("Return JSON");
   });
 });
 
