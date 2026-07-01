@@ -240,6 +240,8 @@ function createUrlCard(): UrlCard {
 }
 
 function resetAllResults(): void {
+  setIsAiFilterRunning(false);
+  setAiFilterPendingRun(false);
   listingsByUrl.clear();
   getElement("listingsContainer").innerHTML = "";
   getElement("resultCount").textContent = "0";
