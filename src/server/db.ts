@@ -9,85 +9,41 @@ const DB_PATH = path.resolve(__dirname, "../../.cache/cache.db");
 
 let _db: Database.Database | null = null;
 
-// Each entry is a numbered migration. The version number is the schema version
-// that will be recorded after the migration runs. Migrations run in order and
-// only when the stored version is below the migration's version number.
-const MIGRATIONS: Array<{ version: number; sql: string }> = [
-  {
-    version: 1,
-    sql: `
-      CREATE TABLE IF NOT EXISTS quick_searches (
-        url TEXT PRIMARY KEY,
-        data TEXT NOT NULL,
-        cached_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS deep_details (
-        url TEXT PRIMARY KEY,
-        data TEXT NOT NULL,
-        cached_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS saved_searches (
-        id         TEXT PRIMARY KEY,
-        name       TEXT NOT NULL,
-        urls       TEXT NOT NULL,
-        filters    TEXT NOT NULL,
-        ai_filter  TEXT,
-        created_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS trademe_categories (
-        slug        TEXT PRIMARY KEY,
-        display     TEXT NOT NULL,
-        depth       INTEGER NOT NULL,
-        parent_slug TEXT,
-        top2        TEXT NOT NULL
-      );
-    `,
-  },
-  {
-    version: 2,
-    sql: `ALTER TABLE quick_searches ADD COLUMN listing_count INTEGER;`,
-  },
-  {
-    version: 3,
-    sql: `ALTER TABLE quick_searches ADD COLUMN is_complete INTEGER NOT NULL DEFAULT 1;`,
-  },
-  {
-    version: 4,
-    sql: `ALTER TABLE quick_searches DROP COLUMN is_complete;`,
-  },
-];
-
-function readSchemaVersion(database: Database.Database): number {
+export function initSchema(database: Database.Database): void {
   database.exec(`
-    CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
-    INSERT INTO schema_version (version) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
+    DROP TABLE IF EXISTS schema_version;
+    DROP TABLE IF EXISTS saved_searches;
+    DROP TABLE IF EXISTS quick_searches;
+    DROP TABLE IF EXISTS deep_details;
+    DROP TABLE IF EXISTS trademe_categories;
+
+    CREATE TABLE quick_searches (
+      url           TEXT PRIMARY KEY,
+      data          TEXT NOT NULL,
+      cached_at     INTEGER NOT NULL,
+      listing_count INTEGER
+    );
+    CREATE TABLE deep_details (
+      url       TEXT PRIMARY KEY,
+      data      TEXT NOT NULL,
+      cached_at INTEGER NOT NULL
+    );
+    CREATE TABLE saved_searches (
+      id              TEXT PRIMARY KEY,
+      name            TEXT NOT NULL,
+      urls            TEXT NOT NULL,
+      discover_inputs TEXT,
+      ai_filter       TEXT,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE TABLE trademe_categories (
+      slug        TEXT PRIMARY KEY,
+      display     TEXT NOT NULL,
+      depth       INTEGER NOT NULL,
+      parent_slug TEXT,
+      top2        TEXT NOT NULL
+    );
   `);
-  const row = database.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
-  if (row === undefined) throw new Error("schema_version table is empty after initialisation");
-  return row.version;
-}
-
-function writeSchemaVersion(database: Database.Database, version: number): void {
-  database.prepare("UPDATE schema_version SET version = ?").run(version);
-}
-
-export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
-
-export function applySchema(database: Database.Database): void {
-  const currentVersion = readSchemaVersion(database);
-  const pending = MIGRATIONS.filter((m) => m.version > currentVersion);
-  if (pending.length === 0) return;
-
-  database.transaction(() => {
-    for (const migration of pending) {
-      database.exec(migration.sql);
-      writeSchemaVersion(database, migration.version);
-    }
-  })();
-
-  console.log(
-    `[db] schema migrated from v${currentVersion} to v${pending[pending.length - 1].version}`,
-  );
 }
 
 function logDbStats(database: Database.Database): void {
@@ -102,10 +58,10 @@ function logDbStats(database: Database.Database): void {
 
   const searchCount = database
     .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM quick_searches")
-    .get()?.n;
+    .get()?.n ?? 0;
   const detailCount = database
     .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM deep_details")
-    .get()?.n;
+    .get()?.n ?? 0;
   if (searchCount > 0 || detailCount > 0)
     console.log(`[cache] opened db — ${searchCount} searches, ${detailCount} listing details`);
 }
@@ -114,7 +70,7 @@ export function getDb(): Database.Database {
   if (_db) return _db;
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   _db = new Database(DB_PATH);
-  applySchema(_db);
+  initSchema(_db);
   logDbStats(_db);
   return _db;
 }
@@ -127,7 +83,7 @@ export type SavedSearchRow = {
   id: string;
   name: string;
   urls: string;
-  filters: string;
+  discover_inputs: string | null;
   ai_filter: string | null;
   created_at: number;
 };
@@ -173,17 +129,17 @@ export function stmtCountDetails(database: Database.Database) {
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    "SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC",
+    "SELECT id, name, urls, discover_inputs, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC",
   );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    "SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches WHERE id = ?",
+    "SELECT id, name, urls, discover_inputs, ai_filter, created_at FROM saved_searches WHERE id = ?",
   );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
   return database.prepare(
-    "INSERT INTO saved_searches (id, name, urls, filters, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   );
 }
 export function stmtDeleteSavedSearch(database: Database.Database) {

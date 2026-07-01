@@ -18,7 +18,7 @@ export function handleListSavedSearches(_req: unknown, response: ServerResponse)
     id: row.id,
     name: row.name,
     urls: JSON.parse(row.urls) as string[],
-    filters: JSON.parse(row.filters),
+    discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
     aiFilter: row.ai_filter,
     createdAt: row.created_at,
   }));
@@ -37,7 +37,7 @@ export function handleGetSavedSearch(_req: unknown, response: ServerResponse, id
       id: row.id,
       name: row.name,
       urls: JSON.parse(row.urls),
-      filters: JSON.parse(row.filters),
+      discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
       aiFilter: row.ai_filter,
       createdAt: row.created_at,
     },
@@ -72,12 +72,7 @@ export async function handleCreateSavedSearch(
     return;
   }
 
-  const filters = rawBody.filters;
-  if (typeof filters !== "object" || filters === null) {
-    sendJSON(response, 400, { error: "filters is required" });
-    return;
-  }
-
+  const discoverInputs = rawBody.discoverInputs;
   const aiFilter = rawBody.aiFilter;
   try {
     const database = getDb();
@@ -86,7 +81,7 @@ export async function handleCreateSavedSearch(
       id,
       name.trim(),
       JSON.stringify(urls),
-      JSON.stringify(filters),
+      discoverInputs != null ? JSON.stringify(discoverInputs) : null,
       typeof aiFilter === "string" && aiFilter.trim() ? aiFilter.trim() : null,
       Date.now(),
     );

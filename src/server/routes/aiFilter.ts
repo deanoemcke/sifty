@@ -73,8 +73,9 @@ export async function handleAiFilter(
           );
           if (typeof result !== "object" || result === null)
             throw new Error("AI filter: expected object response");
+          const resultObj = result as Record<string, unknown>;
           const parsed: Array<{ index: number; pass: boolean; reason: string | null }> =
-            Array.isArray(result) ? result : Array.isArray(result.results) ? result.results : [];
+            Array.isArray(result) ? result : Array.isArray(resultObj.results) ? (resultObj.results as Array<{ index: number; pass: boolean; reason: string | null }>) : [];
           const results = parsed
             .map((resultItem) => ({
               url: batch[resultItem.index - 1]?.url ?? "",

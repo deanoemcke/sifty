@@ -1,41 +1,6 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { applySchema, LATEST_VERSION } from "./db";
-
-function dbAtVersion(version: number): Database.Database {
-  const db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE schema_version (version INTEGER NOT NULL);
-    INSERT INTO schema_version (version) VALUES (${version});
-    CREATE TABLE quick_searches (
-      url TEXT PRIMARY KEY,
-      data TEXT NOT NULL,
-      cached_at INTEGER NOT NULL,
-      listing_count INTEGER
-    );
-    CREATE TABLE deep_details (
-      url TEXT PRIMARY KEY,
-      data TEXT NOT NULL,
-      cached_at INTEGER NOT NULL
-    );
-    CREATE TABLE saved_searches (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      urls TEXT NOT NULL,
-      filters TEXT NOT NULL,
-      ai_filter TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE trademe_categories (
-      slug TEXT PRIMARY KEY,
-      display TEXT NOT NULL,
-      depth INTEGER NOT NULL,
-      parent_slug TEXT,
-      top2 TEXT NOT NULL
-    );
-  `);
-  return db;
-}
+import { initSchema } from "./db";
 
 function columnNames(db: Database.Database, table: string): string[] {
   return db
@@ -44,36 +9,34 @@ function columnNames(db: Database.Database, table: string): string[] {
     .map((r) => r.name);
 }
 
-describe("applySchema", () => {
-  it("migrates a fresh empty DB to the latest version", () => {
+describe("initSchema", () => {
+  it("creates all tables on a fresh database", () => {
     const db = new Database(":memory:");
-    expect(() => applySchema(db)).not.toThrow();
-    const row = db.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
-    if (!row) throw new Error("schema_version row not found after applySchema");
-    expect(row.version).toBe(LATEST_VERSION);
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, "quick_searches")).toContain("url");
+    expect(columnNames(db, "deep_details")).toContain("url");
+    expect(columnNames(db, "saved_searches")).toContain("id");
+    expect(columnNames(db, "trademe_categories")).toContain("slug");
   });
 
-  it("does not leave is_complete on quick_searches after a full migration", () => {
+  it("saved_searches has discover_inputs column, not filters", () => {
     const db = new Database(":memory:");
-    applySchema(db);
+    initSchema(db);
+    const cols = columnNames(db, "saved_searches");
+    expect(cols).toContain("discover_inputs");
+    expect(cols).not.toContain("filters");
+  });
+
+  it("quick_searches does not have is_complete column", () => {
+    const db = new Database(":memory:");
+    initSchema(db);
     expect(columnNames(db, "quick_searches")).not.toContain("is_complete");
   });
 
-  it("migrates a DB at version 2 to the latest version", () => {
-    const db = dbAtVersion(2);
-    expect(() => applySchema(db)).not.toThrow();
-    const row = db.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
-    if (!row) throw new Error("schema_version row not found after applySchema");
-    expect(row.version).toBe(LATEST_VERSION);
-    expect(columnNames(db, "quick_searches")).not.toContain("is_complete");
-  });
-
-  it("is idempotent when called on an already-migrated DB", () => {
+  it("is idempotent — calling twice drops and recreates cleanly", () => {
     const db = new Database(":memory:");
-    applySchema(db);
-    expect(() => applySchema(db)).not.toThrow();
-    const row = db.prepare<[], { version: number }>("SELECT version FROM schema_version").get();
-    if (!row) throw new Error("schema_version row not found after applySchema");
-    expect(row.version).toBe(LATEST_VERSION);
+    initSchema(db);
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, "saved_searches")).toContain("discover_inputs");
   });
 });
