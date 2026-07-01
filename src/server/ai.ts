@@ -45,6 +45,7 @@ function parseRetryDelaySeconds(response: Response, errorMessage: string): numbe
 }
 
 export const MAX_RETRIES = 2;
+export const TOTAL_TIMEOUT_MS = 45_000;
 
 function truncate(text: string, limit = 200): string {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
@@ -71,9 +72,12 @@ export async function aiJSON(
   });
   let apiResponse: Response | undefined;
   let lastErrorData: Record<string, unknown> = {};
+  const deadline = Date.now() + TOTAL_TIMEOUT_MS;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`AI request failed: exceeded total budget (${label})`);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
+    const timer = setTimeout(() => controller.abort(), Math.min(30_000, remaining));
     try {
       apiResponse = await fetch(aiConfig.url, {
         method: "POST",

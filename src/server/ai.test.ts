@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiConfig } from "./ai";
-import { MAX_RETRIES, aiJSON } from "./ai";
+import { MAX_RETRIES, TOTAL_TIMEOUT_MS, aiJSON } from "./ai";
 
 const MOCK_CONFIG: AiConfig = { url: "https://api.example.com/chat", model: "test-model", apiKey: "test-key" };
 
@@ -95,6 +95,17 @@ describe("aiJSON", () => {
     const result = await promise;
 
     expect(result).toEqual({ answer: 2 });
+  });
+
+  it("throws with a budget-exceeded message when the total timeout is consumed between retries", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeResponse(429, { error: { message: `try again in ${TOTAL_TIMEOUT_MS / 1000 + 5}s` } }),
+    );
+
+    const promise = aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100);
+    const assertion = expect(promise).rejects.toThrow("exceeded total budget");
+    await vi.runAllTimersAsync();
+    await assertion;
   });
 
   it("truncates long system and user messages to 200 chars in the log", async () => {
