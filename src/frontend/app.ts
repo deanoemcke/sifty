@@ -1,5 +1,6 @@
 import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
+import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
@@ -955,7 +956,8 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
   setSearchName(data.name);
   markDirty();
   getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
-  for (const card of urlCards) searchUrlCardAsync(card);
+  // loadDiscoveryResults owns the dispatch: kick off a search for every configured card.
+  fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
 async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
@@ -973,7 +975,8 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
   getElement("savedSearchesPanel").classList.add("hidden");
-  for (const card of urlCards) searchUrlCardAsync(card);
+  // loadSavedSearchAsync owns the dispatch: kick off a search for every configured card.
+  fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
 // ── Event listeners ───────────────────────────────────────────────────────────
