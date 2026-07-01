@@ -73,6 +73,30 @@ describe("aiJSON", () => {
     await expect(aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100)).rejects.toThrow("network failure");
   });
 
+  it("uses the body message delay when retry-after header is absent", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeResponse(429, { error: { message: "try again in 30s" } }))
+      .mockResolvedValueOnce(makeSuccessResponse({ answer: 1 }));
+
+    const promise = aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ answer: 1 });
+  });
+
+  it("defaults to 10 s delay when neither retry-after header nor body message is present", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeResponse(429, {}))
+      .mockResolvedValueOnce(makeSuccessResponse({ answer: 2 }));
+
+    const promise = aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ answer: 2 });
+  });
+
   it("truncates long system and user messages to 200 chars in the log", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(makeSuccessResponse({}));
