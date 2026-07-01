@@ -33,10 +33,23 @@ describe("initSchema", () => {
     expect(columnNames(db, "quick_searches")).not.toContain("is_complete");
   });
 
-  it("is idempotent — calling twice drops and recreates cleanly", () => {
+  it("is idempotent — calling twice does not throw", () => {
     const db = new Database(":memory:");
     initSchema(db);
     expect(() => initSchema(db)).not.toThrow();
     expect(columnNames(db, "saved_searches")).toContain("discover_inputs");
+  });
+
+  it("preserves existing data when called on an existing database", () => {
+    const db = new Database(":memory:");
+    initSchema(db);
+    db.prepare(
+      "INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2) VALUES (?, ?, ?, ?, ?)",
+    ).run("electronics", "Electronics", 1, null, "electronics");
+    initSchema(db);
+    const count = db
+      .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM trademe_categories")
+      .get()?.n;
+    expect(count).toBe(1);
   });
 });

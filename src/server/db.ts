@@ -11,24 +11,18 @@ let _db: Database.Database | null = null;
 
 export function initSchema(database: Database.Database): void {
   database.exec(`
-    DROP TABLE IF EXISTS schema_version;
-    DROP TABLE IF EXISTS saved_searches;
-    DROP TABLE IF EXISTS quick_searches;
-    DROP TABLE IF EXISTS deep_details;
-    DROP TABLE IF EXISTS trademe_categories;
-
-    CREATE TABLE quick_searches (
+    CREATE TABLE IF NOT EXISTS quick_searches (
       url           TEXT PRIMARY KEY,
       data          TEXT NOT NULL,
       cached_at     INTEGER NOT NULL,
       listing_count INTEGER
     );
-    CREATE TABLE deep_details (
+    CREATE TABLE IF NOT EXISTS deep_details (
       url       TEXT PRIMARY KEY,
       data      TEXT NOT NULL,
       cached_at INTEGER NOT NULL
     );
-    CREATE TABLE saved_searches (
+    CREATE TABLE IF NOT EXISTS saved_searches (
       id              TEXT PRIMARY KEY,
       name            TEXT NOT NULL,
       urls            TEXT NOT NULL,
@@ -36,7 +30,7 @@ export function initSchema(database: Database.Database): void {
       ai_filter       TEXT,
       created_at      INTEGER NOT NULL
     );
-    CREATE TABLE trademe_categories (
+    CREATE TABLE IF NOT EXISTS trademe_categories (
       slug        TEXT PRIMARY KEY,
       display     TEXT NOT NULL,
       depth       INTEGER NOT NULL,
