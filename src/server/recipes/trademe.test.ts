@@ -7,6 +7,7 @@ import {
   collapseEntries,
   extractDescriptionFromText,
   extractDetails,
+  extractFromGraphQL,
   extractImplicitFilters,
   extractQuestionsAndAnswers,
   extractStructuredFromText,
@@ -390,6 +391,42 @@ describe("extractStructuredFromText", () => {
     it("returns empty string when no pickup location", () => {
       expect(extractStructuredFromText("Shipping available").pickupLocation).toBe("");
     });
+  });
+});
+
+// ── extractFromGraphQL ────────────────────────────────────────────────────────
+
+describe("extractFromGraphQL", () => {
+  it("omits pickupAvailable and shippingAvailable when DeliveryOptions is absent", () => {
+    const json = {
+      data: {
+        listing: {
+          attributes: [{ key: "BuyNowPrice", numValue: 5000 }],
+        },
+      },
+    };
+    const result = extractFromGraphQL(json);
+    expect(result.pickupAvailable).toBeUndefined();
+    expect(result.shippingAvailable).toBeUndefined();
+  });
+
+  it("returns fulfillment fields when DeliveryOptions is present", () => {
+    const json = {
+      data: {
+        listing: {
+          attributes: [
+            {
+              key: "DeliveryOptions",
+              options: [{ __typename: "PickupOption", name: "Pick up from Rodney" }],
+            },
+          ],
+        },
+      },
+    };
+    const result = extractFromGraphQL(json);
+    expect(result.pickupAvailable).toBe(true);
+    expect(result.shippingAvailable).toBe(false);
+    expect(result.pickupLocation).toBe("Rodney");
   });
 });
 

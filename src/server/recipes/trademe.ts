@@ -378,7 +378,7 @@ type GraphQLResponse = {
   };
 };
 
-function extractFromGraphQL(json: unknown): Partial<ListingDetail> {
+export function extractFromGraphQL(json: unknown): Partial<ListingDetail> {
   const listing = (json as GraphQLResponse)?.data?.listing;
   if (!listing?.attributes) return {};
   const attrs = listing.attributes;
@@ -386,11 +386,12 @@ function extractFromGraphQL(json: unknown): Partial<ListingDetail> {
   const deliveryAttr = extractAttr(attrs, "DeliveryOptions");
   const buyNowPrice: number | null = buyNowAttr?.numValue ?? null;
   const deliveryOptions: { __typename: string; name: string }[] = deliveryAttr?.options ?? [];
+  const reserveStatus: string =
+    listing?.contentViews?.listingPurchaseContentCard?.auctionDetails?.reserveStatus ?? "UNKNOWN";
+  if (deliveryOptions.length === 0) return { buyNowPrice, reserveStatus };
   const hasShipping = deliveryOptions.some((o) => o.__typename !== "PickupOption");
   const pickupOption = deliveryOptions.find((o) => o.__typename === "PickupOption");
   const pickupLocation = pickupOption?.name?.replace(/^Pick up from\s*/i, "") ?? "";
-  const reserveStatus: string =
-    listing?.contentViews?.listingPurchaseContentCard?.auctionDetails?.reserveStatus ?? "UNKNOWN";
   const pickupAvailable = pickupOption !== undefined;
   return {
     buyNowPrice,
