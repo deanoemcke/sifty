@@ -1,7 +1,7 @@
 // Server-side only — /api/saved-searches route handlers (GET list, GET one, POST, DELETE).
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { requireArray, requireString } from "../../lib/validate";
+import { parseDiscoverInputs, requireArray, requireString } from "../../lib/validate";
 import {
   getDb,
   stmtDeleteSavedSearch,
@@ -64,15 +64,16 @@ export async function handleCreateSavedSearch(
 
   let name: string;
   let urls: unknown[];
+  let discoverInputsSerialized: string | null;
   try {
     name = requireString(rawBody.name, "name");
     urls = requireArray(rawBody.urls, "urls");
+    discoverInputsSerialized = parseDiscoverInputs(rawBody.discoverInputs);
   } catch (err) {
     sendJSON(response, 400, { error: (err as Error).message });
     return;
   }
 
-  const discoverInputs = rawBody.discoverInputs;
   const aiFilter = rawBody.aiFilter;
   try {
     const database = getDb();
@@ -81,7 +82,7 @@ export async function handleCreateSavedSearch(
       id,
       name.trim(),
       JSON.stringify(urls),
-      discoverInputs != null ? JSON.stringify(discoverInputs) : null,
+      discoverInputsSerialized,
       typeof aiFilter === "string" && aiFilter.trim() ? aiFilter.trim() : null,
       Date.now(),
     );

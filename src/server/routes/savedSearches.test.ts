@@ -119,6 +119,54 @@ describe("handleCreateSavedSearch", () => {
     expect(search).not.toHaveProperty("filters");
   });
 
+  it("returns 400 when discoverInputs is a string", async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: "My search",
+      urls: ["https://www.trademe.co.nz/a/x"],
+      discoverInputs: "not-an-object",
+    });
+
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      400,
+      expect.objectContaining({ error: expect.stringContaining("discoverInputs") }),
+    );
+  });
+
+  it("returns 400 when discoverInputs is an array", async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: "My search",
+      urls: ["https://www.trademe.co.nz/a/x"],
+      discoverInputs: ["prompt", "something"],
+    });
+
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      400,
+      expect.objectContaining({ error: expect.stringContaining("discoverInputs") }),
+    );
+  });
+
+  it("returns 400 when discoverInputs exceeds the size limit", async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: "My search",
+      urls: ["https://www.trademe.co.nz/a/x"],
+      discoverInputs: { prompt: "x".repeat(5000) },
+    });
+
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      400,
+      expect.objectContaining({ error: expect.stringContaining("discoverInputs") }),
+    );
+  });
+
   it("returns 400 when name is missing", async () => {
     vi.mocked(readBody).mockResolvedValue({
       urls: ["https://www.trademe.co.nz/a/x"],
