@@ -2,6 +2,7 @@ import { type Browser, type BrowserContext, chromium, type Page } from "playwrig
 import { getRegions } from "../services/regions";
 import { enqueue } from "../../lib/queue";
 import type {
+  AiConfig,
   DiscoverContext,
   DeepSearchEvent,
   DiscoverableRecipe,
@@ -12,6 +13,7 @@ import type {
   Recipe,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
+import { aiJSON } from "../ai";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -495,6 +497,30 @@ async function deepSearchAsync(
 
 // ── Discover URL building ─────────────────────────────────────────────────────
 
+const FACEBOOK_QUERY_SYSTEM_PROMPT =
+  'You extract a concise Facebook Marketplace search query from a user\'s item description. ' +
+  'Return JSON: {"query":"<keywords>"}. ' +
+  "Rules: 2–5 keywords maximum. " +
+  "Keep: product name, brand, model number. " +
+  'Remove: filler phrases ("I\'m looking for", "ideally", "preferably"), price, condition descriptions, delivery preferences, punctuation.';
+
+export async function buildFacebookSearchQueryAsync(
+  prompt: string,
+  aiConfig: AiConfig,
+): Promise<string> {
+  const result = (await aiJSON(
+    aiConfig,
+    "facebook:query",
+    FACEBOOK_QUERY_SYSTEM_PROMPT,
+    prompt.trim(),
+    64,
+  )) as Record<string, unknown> | null;
+  if (typeof result?.query !== "string" || !result.query.trim()) {
+    throw new Error("facebook:query AI returned invalid query");
+  }
+  return result.query.trim();
+}
+
 export function buildFacebookUrl(
   searchTerm: string,
   maxPrice: number,
@@ -519,8 +545,9 @@ export function buildFacebookUrl(
 }
 
 async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
+  const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.aiConfig);
   return {
-    urls: [buildFacebookUrl(prompt.trim(), context.maxPrice, context.fulfillment, context.regionValue)],
+    urls: [buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue)],
     warnings: [] as string[],
   };
 }
