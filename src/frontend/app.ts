@@ -1,6 +1,7 @@
 import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
 import { scheduleAiFilterRun } from "./aiFilter";
+import { shouldDisableUpdateBtn } from "./renderUtils";
 import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
@@ -303,13 +304,9 @@ function renderDerived(): void {
     listings.length === 0 ||
     listings.every((listingItem) => listingItem.aiCheckedHash === hash);
   const updateBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
-  if (isFilterCurrent) {
-    updateBtn.style.display = "none";
-  } else {
-    updateBtn.style.display = "";
-    updateBtn.disabled = isAiFilterRunning;
-    updateBtn.textContent = "Update filter";
-  }
+  updateBtn.style.display = isFilterCurrent ? "none" : "";
+  updateBtn.disabled = shouldDisableUpdateBtn({ isFilterCurrent, isAiFilterRunning });
+  if (!isFilterCurrent) updateBtn.textContent = "Update filter";
 }
 
 function updateRemoveButtons(): void {
