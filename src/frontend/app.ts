@@ -953,6 +953,7 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
   setSearchName(data.name);
   markDirty();
   getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
+  for (const card of urlCards) searchUrlCardAsync(card);
 }
 
 async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
