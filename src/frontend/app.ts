@@ -63,14 +63,17 @@ function readDiscoverInputs(): DiscoverInputs {
   };
 }
 
+function setFulfillmentDisplay(fulfillment: string): void {
+  getElement("discoveryRegion").style.display = fulfillment === "pickup" ? "" : "none";
+}
+
 function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
   if (!inputs) return;
   getElement<HTMLTextAreaElement>("discoveryPrompt").value = inputs.prompt ?? "";
   getElement<HTMLInputElement>("discoveryMaxPrice").value =
     inputs.maxPrice != null ? String(inputs.maxPrice) : "";
   getElement<HTMLSelectElement>("discoveryFulfillment").value = inputs.fulfillment ?? "any";
-  const isPickup = inputs.fulfillment === "pickup";
-  getElement("discoveryRegion").style.display = isPickup ? "" : "none";
+  setFulfillmentDisplay(inputs.fulfillment ?? "any");
   getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region ?? "";
   updateDiscoveryBtn();
 }
@@ -993,8 +996,7 @@ function initApp(): void {
     });
 
   getElement<HTMLSelectElement>("discoveryFulfillment").addEventListener("change", () => {
-    const isPickup = getElement<HTMLSelectElement>("discoveryFulfillment").value === "pickup";
-    getElement("discoveryRegion").style.display = isPickup ? "" : "none";
+    setFulfillmentDisplay(getElement<HTMLSelectElement>("discoveryFulfillment").value);
     updateDiscoveryBtn();
   });
   getElement<HTMLSelectElement>("discoveryRegion").addEventListener("change", updateDiscoveryBtn);
