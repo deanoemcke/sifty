@@ -33,6 +33,24 @@ export function getAIConfig(): AiConfig {
 
 type OpenAIResponseShape = { choices?: Array<{ message?: { content?: string } }> };
 
+function parseRetryDelaySeconds(response: Response, errorMessage: string): number {
+  const header = response.headers.get("retry-after");
+  if (header) {
+    const parsed = Number.parseFloat(header);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  const match = errorMessage.match(/try again in (\d+\.?\d*)s/i);
+  if (match) return Number.parseFloat(match[1]);
+  return 10;
+}
+
+export const MAX_RETRIES = 2;
+export const TOTAL_TIMEOUT_MS = 45_000;
+
+function truncate(text: string, limit = 200): string {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
 export async function aiJSON(
   aiConfig: AiConfig,
   label: string,
@@ -40,41 +58,58 @@ export async function aiJSON(
   userMessage: string,
   maxTokens: number,
 ): Promise<unknown> {
-  const trim = (text: string) => text.replace(/\s+/g, " ").slice(0, 100);
   console.log(
-    `[AI] ${label} → model: ${aiConfig.model}\n[system] ${trim(systemMessage)}…\n[user] ${trim(userMessage)}…`,
+    `[AI] ${label} → model: ${aiConfig.model}\n[system] ${truncate(systemMessage)}\n[user] ${truncate(userMessage)}`,
   );
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  let apiResponse: Response;
-  try {
-    apiResponse = await fetch(aiConfig.url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: aiConfig.model,
-        max_tokens: maxTokens,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemMessage },
-          { role: "user", content: userMessage },
-        ],
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
+  const requestBody = JSON.stringify({
+    model: aiConfig.model,
+    max_tokens: maxTokens,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemMessage },
+      { role: "user", content: userMessage },
+    ],
+  });
+  let apiResponse: Response | undefined;
+  let lastErrorData: Record<string, unknown> = {};
+  const deadline = Date.now() + TOTAL_TIMEOUT_MS;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`AI request failed: exceeded total budget (${label})`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(30_000, remaining));
+    try {
+      apiResponse = await fetch(aiConfig.url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
+        body: requestBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!apiResponse.ok) {
+      const parsed = (await apiResponse.json().catch(() => null)) as Record<string, unknown> | null;
+      if (parsed !== null) lastErrorData = parsed;
+      if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
+        const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<string, unknown>;
+        const errorMessage = String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
+        const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
+        console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
+        continue;
+      }
+      break;
+    }
+    break;
   }
+  if (apiResponse === undefined) throw new Error(`AI request failed: no response received (${label})`);
   if (!apiResponse.ok) {
-    const errorData = (await apiResponse.json().catch(() => ({}))) as Record<string, unknown>;
-    const errorBody = (Array.isArray(errorData) ? errorData[0] : errorData) as Record<
-      string,
-      unknown
-    >;
+    const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<string, unknown>;
     const errorMessage =
       (errorBody?.error as Record<string, unknown>)?.message ??
       errorBody?.message ??
-      JSON.stringify(errorData);
+      JSON.stringify(lastErrorData);
     throw new Error(
       `AI error (${label}) [${apiResponse.status}]: ${errorMessage || apiResponse.statusText}`,
     );

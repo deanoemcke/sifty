@@ -1,6 +1,7 @@
 import { chromium, type Page, type Response } from "playwright";
 import { aiJSON } from "../ai";
 import { MAX_PAGES_PER_SEARCH } from "../constants";
+import type { CategoryRow } from "../db";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import { enqueue } from "../../lib/queue";
 import type {
@@ -575,28 +576,25 @@ async function buildDiscoverUrlsAsync(
     step1Warnings.push(`step1: unrecognised categories ignored: ${unrecognised.join(", ")}`);
   }
 
-  const subcategoryPickResults = await Promise.all(
-    selectedBroadSlugs.map((top2Slug) => {
-      const broadEntry = broad.find((category) => category.slug === top2Slug);
-      if (!broadEntry) throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
-      const candidates = stmtGetCategoriesByTop2(database).all(top2Slug);
-      const specificList = candidates
-        .map((category) => `${category.display} (slug: ${category.slug})`)
-        .join("\n");
-      // 1024 output tokens: step-2 returns a JSON array of slug+searchString pairs; a broad category can have dozens of subcategories, so 1024 gives headroom over step-1's 512.
-      return aiJSON(
-        aiConfig,
-        `step2:${top2Slug}`,
-        STEP2_SYSTEM_PROMPT,
-        `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
-        1024,
-      ).then((result) => ({
-        top2Slug,
-        candidates,
-        result: result as Record<string, unknown> | null,
-      }));
-    }),
-  );
+  // Sequential (not parallel) so concurrent bursts don't collide on the provider's TPM limit.
+  const subcategoryPickResults: Array<{ top2Slug: string; candidates: CategoryRow[]; result: Record<string, unknown> | null }> = [];
+  for (const top2Slug of selectedBroadSlugs) {
+    const broadEntry = broad.find((category) => category.slug === top2Slug);
+    if (!broadEntry) throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
+    const candidates = stmtGetCategoriesByTop2(database).all(top2Slug);
+    const specificList = candidates
+      .map((category) => `${category.display} (slug: ${category.slug})`)
+      .join("\n");
+    // 1024 output tokens: step-2 returns a JSON array of slug+searchString pairs; a broad category can have dozens of subcategories, so 1024 gives headroom over step-1's 512.
+    const result = await aiJSON(
+      aiConfig,
+      `step2:${top2Slug}`,
+      STEP2_SYSTEM_PROMPT,
+      `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
+      1024,
+    );
+    subcategoryPickResults.push({ top2Slug, candidates, result: result as Record<string, unknown> | null });
+  }
 
   const allEntries: DiscoverEntry[] = [];
   const warnings: string[] = [];

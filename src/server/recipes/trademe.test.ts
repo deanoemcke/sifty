@@ -737,7 +737,9 @@ describe("buildDiscoverUrlsAsync", () => {
     } as any);
   });
 
-  afterEach(() => vi.clearAllMocks());
+  // resetAllMocks (not clearAllMocks): strips mock implementations between tests so any test
+  // that omits a per-test mockReturnValue gets an explicit undefined rather than a stale return value.
+  afterEach(() => vi.resetAllMocks());
 
   it("returns Trade Me search URLs for AI-selected categories", async () => {
     vi.mocked(aiJSON)
