@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { canCancelSearch, isCardSearchActive, isSearchButtonDisabled } from "./state";
+import { describe, expect, it, beforeEach } from "vitest";
+import {
+  canCancelSearch,
+  isCardSearchActive,
+  isSearchButtonDisabled,
+  isAiFilterRunning,
+  aiFilterPendingRun,
+  setIsAiFilterRunning,
+  setAiFilterPendingRun,
+  resetState,
+} from "./state";
 
 describe("isSearchButtonDisabled", () => {
   it("returns false when idle and URL is fresh", () => {
@@ -41,6 +50,37 @@ describe("canCancelSearch", () => {
 
   it("returns false when done", () => {
     expect(canCancelSearch("done")).toBe(false);
+  });
+});
+
+describe("isAiFilterRunning / aiFilterPendingRun", () => {
+  beforeEach(() => resetState());
+
+  it("defaults to false", () => {
+    expect(isAiFilterRunning).toBe(false);
+    expect(aiFilterPendingRun).toBe(false);
+  });
+
+  it("setIsAiFilterRunning updates the flag", () => {
+    setIsAiFilterRunning(true);
+    expect(isAiFilterRunning).toBe(true);
+    setIsAiFilterRunning(false);
+    expect(isAiFilterRunning).toBe(false);
+  });
+
+  it("setAiFilterPendingRun updates the flag", () => {
+    setAiFilterPendingRun(true);
+    expect(aiFilterPendingRun).toBe(true);
+    setAiFilterPendingRun(false);
+    expect(aiFilterPendingRun).toBe(false);
+  });
+
+  it("resetState clears both flags", () => {
+    setIsAiFilterRunning(true);
+    setAiFilterPendingRun(true);
+    resetState();
+    expect(isAiFilterRunning).toBe(false);
+    expect(aiFilterPendingRun).toBe(false);
   });
 });
 
