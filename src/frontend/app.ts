@@ -2,6 +2,7 @@ import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
+import { parseMaxPrice } from "./parseUtils";
 import { sourceFaviconHtml } from "./recipeDisplay";
 import {
   canCancelSearch,
@@ -54,10 +55,9 @@ function promptHash(inputString: string): number {
 }
 
 function readDiscoverInputs(): DiscoverInputs {
-  const maxPriceRaw = getElement<HTMLInputElement>("discoveryMaxPrice").value;
   return {
     prompt: getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim(),
-    maxPrice: maxPriceRaw ? parseFloat(maxPriceRaw) : undefined,
+    maxPrice: parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value),
     fulfillment: getElement<HTMLSelectElement>("discoveryFulfillment").value as Fulfillment,
     region: getElement<HTMLSelectElement>("discoveryRegion").value || undefined,
   };
@@ -470,9 +470,8 @@ function applyClientFilters(): void {
 
 function updateDiscoveryBtn(): void {
   const hasPrompt = !!getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
-  const maxPriceRaw = getElement<HTMLInputElement>("discoveryMaxPrice").value.trim();
-  const maxPrice = parseFloat(maxPriceRaw);
-  const hasValidPrice = maxPriceRaw !== "" && Number.isFinite(maxPrice) && maxPrice > 0;
+  const hasValidPrice =
+    parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value) !== undefined;
   const isPickupOnly = getElement<HTMLSelectElement>("discoveryFulfillment").value === "pickup";
   const hasRegion = !isPickupOnly || !!getElement<HTMLSelectElement>("discoveryRegion").value;
   getElement<HTMLButtonElement>("discoveryBtn").disabled =
@@ -1005,8 +1004,7 @@ function initApp(): void {
   getElement<HTMLButtonElement>("discoveryBtn").addEventListener("click", async () => {
     const prompt = getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
     if (!prompt) return;
-    const maxPriceVal = getElement<HTMLInputElement>("discoveryMaxPrice").value.trim();
-    const maxPrice = maxPriceVal ? parseFloat(maxPriceVal) : undefined;
+    const maxPrice = parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value);
     const fulfillment = getElement<HTMLSelectElement>("discoveryFulfillment").value;
     const regionValue =
       fulfillment === "pickup" ? getElement<HTMLSelectElement>("discoveryRegion").value : undefined;
