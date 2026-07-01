@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-07-01T20:36:37.454Z",
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "testId": "trademeStep1-couch",
+  "response": {
+    "categories": [
+      "Home & living > Lounge, dining & hall",
+      "Furniture > Sofas & couches",
+      "Antiques & collectables > Furniture & woodenware"
+    ],
+    "searchLabel": "Grey corner couch",
+    "searchQuery": "corner couch"
+  }
+}

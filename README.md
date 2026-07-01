@@ -1,66 +1,145 @@
-# sifty
+# Sifty
 
-A Node.js/TypeScript web app that scrapes TradeMe for used MacBook Pro listings, with configurable filters and full listing detail extraction (description, buy now price, reserve status, pickup info).
+An AI-powered marketplace search tool. Describe what you're looking for in plain English, and Sifty discovers the right search URLs across TradeMe and Facebook Marketplace, fetches listings, and uses an LLM to filter out the irrelevant ones.
 
 ## How it works
 
-The scraper uses [Playwright](https://playwright.dev/) to drive a headless Chromium browser. It intercepts TradeMe's internal JSON search API to collect listings efficiently, then visits each filtered listing page to extract the full description and structured metadata from the rendered DOM and GraphQL responses.
+1. **Discover** — you type a search prompt (e.g. "Apple MacBook Pro 13 M1"). The AI picks the right TradeMe categories and builds search URLs. Facebook Marketplace uses the prompt directly.
+2. **Quick search** — listings are fetched from each URL using Playwright (headless Chromium). Results stream in via SSE.
+3. **AI filter** — an LLM reviews each listing and removes ones that clearly don't match your criteria.
+4. **Deep search** — click into any listing for the full description, buy now price, reserve status, pickup info, and Q&A.
+5. **Save** — save searches by name for instant replay.
+
+Results and listing details are cached in SQLite for one hour. Repeat searches within that window are served instantly.
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+
 - npm
+- A Groq API key (or OpenRouter / Gemini — see [AI providers](#ai-providers))
 
 ## Setup
 
 ```bash
 npm install
 npx playwright install chromium
+cp .env.example .env   # then fill in your API key
 ```
 
-## Usage
+`.env` minimum:
+
+```
+AI_PROVIDER=groq
+GROQ_API_KEY=your-key-here
+```
+
+## Running
 
 ```bash
-npm start
+npm run dev
 ```
 
-To enable disk-backed caching (useful during development — cache survives server restarts):
+Opens at **http://localhost:5173**.
 
-```bash
-CACHE_DISK=true npm start
+## AI providers
+
+Set `AI_PROVIDER` to one of:
+
+| Provider | Model | Key variable |
+|----------|-------|-------------|
+| `groq` (default) | llama-3.3-70b-versatile | `GROQ_API_KEY` |
+| `openrouter` | meta-llama/llama-3.3-70b-instruct | `OPENROUTER_API_KEY` |
+| `gemini` | gemini-3.1-flash-lite | `GEMINI_API_KEY` |
+
+## Facebook Marketplace
+
+To enable Facebook Marketplace results, add your browser cookies to `.env`:
+
+```
+FB_COOKIES='[{"domain":".facebook.com","name":"datr","value":"..."}]'
 ```
 
-Opens at **http://localhost:3000**.
-
-**Flow:**
-
-1. Paste a TradeMe search URL and press Enter (or click Search)
-2. All matching listings are fetched and displayed. The criteria implicit in the URL (category, search term, condition, RAM, screen size) are shown read-only beneath the URL field
-3. The filter inputs appear — min/max price, keywords, and exclude keywords. These filter the displayed listings **instantly in the browser** with no re-scrape
-4. Click **Deep Search** to fetch the full description, buy now price, reserve status, and pickup info for every currently visible listing. Results populate in real time as each listing is scraped
-5. If you change a filter after a deep search and it reveals listings that haven't been scraped yet, the Deep Search button reactivates and will only fetch the newly visible ones
-
-Search results and listing details are cached in memory for 1 hour. Repeat requests within that window are served instantly without hitting TradeMe. The status bar shows when results come from cache.
-
-## Output fields
-
-For each listing (after Deep Search):
-
-- Title
-- Asking / starting price
-- Buy Now price (if set)
-- Reserve status (no reserve / met / not met)
-- Location
-- Pickup details (and whether pickup-only)
-- Listing URL
-- Full description
+Export them from a logged-in browser session using a cookie export extension.
 
 ## Project structure
 
 ```
 src/
-  lib/scraper.ts   # Core scraper logic
-  server.ts        # Express web server
-public/
-  index.html       # Frontend
+  frontend/          # Client-side TypeScript (Vite SPA)
+  server/
+    ai.ts            # LLM provider config and JSON completion
+    db.ts            # SQLite schema and prepared statements
+    routes/          # API route handlers (discover, quickSearch, aiFilter, …)
+    recipes/         # Marketplace scrapers (TradeMe, Facebook)
+  lib/               # Shared types, validation, concurrency queue
+scripts/
+  prompt-tests/      # AI prompt testing utility (see below)
 ```
+
+## Tests
+
+```bash
+npm test             # unit + integration tests (no API calls, no browser)
+npm run test:watch   # watch mode
+```
+
+## AI prompt testing utility
+
+A standalone CLI for testing the LLM prompts against real providers. Not part of the normal test suite — it makes real API calls and costs credits.
+
+### Modes
+
+| Command | What it does |
+|---------|-------------|
+| `npm run test:prompts` | Replay saved fixture responses through validators (no API calls) |
+| `npm run test:prompts:live` | Call all configured providers and validate responses |
+| `npm run test:prompts:capture` | Same as live, and save responses as fixtures for future replay |
+
+### Options
+
+```bash
+# Single provider
+npx tsx --env-file-if-exists=.env scripts/prompt-tests/runner.ts --live --provider groq
+
+# Single suite
+npx tsx --env-file-if-exists=.env scripts/prompt-tests/runner.ts --live --suite ai-filter
+
+# Available suites: ai-filter, trademe-discover
+```
+
+### TradeMe Discover suite
+
+The TradeMe discover tests need the category database, which is populated after the first `npm run dev` session. If running from a git worktree without its own cache, point the runner at the main project's database:
+
+```bash
+CACHE_DB_PATH=../sifty-webapp/.cache/cache.db npm run test:prompts:live
+```
+
+### Adding a new test case
+
+Open the relevant suite file and add one object to the cases array:
+
+```typescript
+// scripts/prompt-tests/suites/aiFilterSuite.ts
+defineFilterCase({
+  id: "aiFilter-my-new-case",
+  label: "My new case description",
+  criteria: "what the user is searching for",
+  listings: [
+    { title: "...", price: "$100", location: "Auckland", description: "" },
+  ],
+  validate(output) {
+    // call assertPasses / assertFails on listing indices
+  },
+}),
+```
+
+Then run `--live --capture` to generate a fixture for it.
+
+### What the utility is for
+
+- **Prompt regressions** — after changing a prompt, run `--capture` and review the fixture diff
+- **Cross-provider comparison** — run `--live` with multiple providers configured; results are shown side by side
+- **Quality spot-checks** — the validators encode the expected behaviour (e.g. a couch listing must fail a "MacBook Pro" filter). A failure means the prompt or the model isn't meeting that expectation
+
+Fixture files live in `scripts/prompt-tests/fixtures/{provider}/{test-id}.json` and are committed to the repo so the team can replay them without spending credits.

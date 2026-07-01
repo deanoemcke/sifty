@@ -1,0 +1,35 @@
+{
+  "capturedAt": "2026-07-01T20:35:18.334Z",
+  "provider": "openrouter",
+  "model": "meta-llama/llama-3.3-70b-instruct",
+  "testId": "aiFilter-wrong-cars",
+  "response": {
+    "results": [
+      {
+        "index": 1,
+        "pass": false,
+        "reason": "not BMW"
+      },
+      {
+        "index": 2,
+        "pass": false,
+        "reason": "not BMW and not 2019"
+      },
+      {
+        "index": 3,
+        "pass": false,
+        "reason": "not BMW and not 2019"
+      },
+      {
+        "index": 4,
+        "pass": false,
+        "reason": "not BMW"
+      },
+      {
+        "index": 5,
+        "pass": false,
+        "reason": "not BMW"
+      }
+    ]
+  }
+}

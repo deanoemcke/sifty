@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-07-01T20:36:42.371Z",
+  "provider": "openrouter",
+  "model": "meta-llama/llama-3.3-70b-instruct",
+  "testId": "trademeStep1-couch",
+  "response": {
+    "categories": [
+      "Home & living > Lounge, dining & hall",
+      "Antiques & collectables > Furniture & woodenware",
+      "Furniture"
+    ],
+    "searchLabel": "Grey corner couch",
+    "searchQuery": "corner couch"
+  }
+}

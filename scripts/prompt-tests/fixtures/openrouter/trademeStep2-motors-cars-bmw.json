@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-07-01T20:37:37.777Z",
+  "provider": "openrouter",
+  "model": "meta-llama/llama-3.3-70b-instruct",
+  "testId": "trademeStep2-motors-cars-bmw",
+  "response": {
+    "categories": [
+      {
+        "slug": "motors/cars/bmw",
+        "searchString": "3 series"
+      }
+    ]
+  }
+}

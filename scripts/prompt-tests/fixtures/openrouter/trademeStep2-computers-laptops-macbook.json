@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-07-01T20:37:13.055Z",
+  "provider": "openrouter",
+  "model": "meta-llama/llama-3.3-70b-instruct",
+  "testId": "trademeStep2-computers-laptops-macbook",
+  "response": {
+    "categories": [
+      {
+        "slug": "computers/laptops/laptops/apple",
+        "searchString": "macbook pro"
+      }
+    ]
+  }
+}

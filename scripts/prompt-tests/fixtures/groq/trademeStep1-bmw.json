@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-07-01T20:36:09.881Z",
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "testId": "trademeStep1-bmw",
+  "response": {
+    "categories": [
+      "Trade Me Motors > Cars",
+      "Trade Me Motors > Specialist cars"
+    ],
+    "searchLabel": "BMW 3 series cars",
+    "searchQuery": "3 series"
+  }
+}

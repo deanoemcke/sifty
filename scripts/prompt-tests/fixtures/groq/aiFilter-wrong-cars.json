@@ -1,0 +1,35 @@
+{
+  "capturedAt": "2026-07-01T20:35:13.124Z",
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "testId": "aiFilter-wrong-cars",
+  "response": {
+    "results": [
+      {
+        "index": 1,
+        "pass": false,
+        "reason": "wrong make and model"
+      },
+      {
+        "index": 2,
+        "pass": false,
+        "reason": "wrong make and model"
+      },
+      {
+        "index": 3,
+        "pass": false,
+        "reason": "wrong make and model"
+      },
+      {
+        "index": 4,
+        "pass": false,
+        "reason": "wrong make"
+      },
+      {
+        "index": 5,
+        "pass": false,
+        "reason": "wrong make and model"
+      }
+    ]
+  }
+}

@@ -4,7 +4,7 @@ import type { AiConfig } from "../lib/recipes/base";
 
 export type { AiConfig };
 
-const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string }> = {
+export const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string }> = {
   groq: {
     url: "https://api.groq.com/openai/v1/chat/completions",
     model: "llama-3.3-70b-versatile",

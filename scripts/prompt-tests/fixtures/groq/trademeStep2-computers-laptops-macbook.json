@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-07-01T20:37:05.551Z",
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "testId": "trademeStep2-computers-laptops-macbook",
+  "response": {
+    "categories": [
+      {
+        "slug": "computers/laptops/laptops/apple",
+        "searchString": "macbook pro"
+      }
+    ]
+  }
+}

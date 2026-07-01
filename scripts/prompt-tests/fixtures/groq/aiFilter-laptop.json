@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-07-01T20:34:19.185Z",
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "testId": "aiFilter-laptop",
+  "response": {
+    "results": [
+      {
+        "index": 1,
+        "pass": true,
+        "reason": null
+      },
+      {
+        "index": 2,
+        "pass": true,
+        "reason": null
+      },
+      {
+        "index": 3,
+        "pass": true,
+        "reason": null
+      },
+      {
+        "index": 4,
+        "pass": false,
+        "reason": "not a MacBook"
+      }
+    ]
+  }
+}

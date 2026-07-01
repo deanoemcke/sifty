@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-07-01T20:34:49.663Z",
+  "provider": "openrouter",
+  "model": "meta-llama/llama-3.3-70b-instruct",
+  "testId": "aiFilter-couch",
+  "response": {
+    "results": [
+      {
+        "index": 1,
+        "pass": true,
+        "reason": null
+      },
+      {
+        "index": 2,
+        "pass": true,
+        "reason": null
+      },
+      {
+        "index": 3,
+        "pass": false,
+        "reason": "not a couch"
+      },
+      {
+        "index": 4,
+        "pass": false,
+        "reason": "not a couch"
+      }
+    ]
+  }
+}

@@ -11,7 +11,10 @@
     "lint": "biome check src/",
     "format": "biome format --write src/",
     "fix": "biome check --write src/",
-    "check": "biome check src/"
+    "check": "biome check src/",
+    "test:prompts": "tsx --env-file-if-exists=.env scripts/prompt-tests/runner.ts",
+    "test:prompts:live": "tsx --env-file-if-exists=.env scripts/prompt-tests/runner.ts --live",
+    "test:prompts:capture": "tsx --env-file-if-exists=.env scripts/prompt-tests/runner.ts --live --capture"
   },
   "keywords": [],
   "author": "",
