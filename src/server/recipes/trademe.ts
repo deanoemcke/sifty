@@ -1,6 +1,7 @@
 import { chromium, type Page, type Response } from "playwright";
 import { aiJSON } from "../ai";
 import { MAX_PAGES_PER_SEARCH } from "../constants";
+import type { CategoryRow } from "../db";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import { enqueue } from "../../lib/queue";
 import type {
@@ -576,7 +577,7 @@ async function buildDiscoverUrlsAsync(
   }
 
   // Sequential (not parallel) so concurrent bursts don't collide on the provider's TPM limit.
-  const subcategoryPickResults: Array<{ top2Slug: string; candidates: typeof broad; result: Record<string, unknown> | null }> = [];
+  const subcategoryPickResults: Array<{ top2Slug: string; candidates: CategoryRow[]; result: Record<string, unknown> | null }> = [];
   for (const top2Slug of selectedBroadSlugs) {
     const broadEntry = broad.find((category) => category.slug === top2Slug);
     if (!broadEntry) throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
