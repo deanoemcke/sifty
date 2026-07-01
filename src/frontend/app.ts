@@ -1,5 +1,6 @@
 import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
+import { scheduleAiFilterRun } from "./aiFilter";
 import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
@@ -454,7 +455,8 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   if (listingsByUrl.size > 0) {
     applyClientFilters();
     const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-    if (aiPrompt) void runAiFilterAsync();
+    if (aiPrompt)
+      scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
   } else {
     renderDerived();
   }
@@ -873,7 +875,8 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchBusy(false);
   applyClientFilters();
   const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-  if (aiPrompt) void runAiFilterAsync();
+  if (aiPrompt)
+    scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
 }
 
 function markDirty(): void {
@@ -1071,7 +1074,7 @@ function initApp(): void {
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", renderDerived);
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", markDirty);
   getElement<HTMLButtonElement>("applyAiFilterBtn").addEventListener("click", () =>
-    runAiFilterAsync(),
+    scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun }),
   );
 
   // Mark dirty on any URL input change or new URL card
