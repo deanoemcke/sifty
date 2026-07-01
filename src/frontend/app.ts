@@ -1,25 +1,32 @@
 import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
+import { scheduleAiFilterRun } from "./aiFilter";
+import { shouldDisableUpdateBtn } from "./renderUtils";
+import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
 import { sourceFaviconHtml } from "./recipeDisplay";
 import {
+  aiFilterPendingRun,
   canCancelSearch,
   cardIdByUrl,
   currentSearchName,
   deepSearchCancellationRequested,
   deepSearchId,
   type DiscoverInputs,
+  isAiFilterRunning,
   isCardSearchActive,
   isDeepSearchRunning,
   isSearchButtonDisabled,
   type ListingItem,
   listingsByUrl,
   type SavedSearch,
+  setAiFilterPendingRun,
   setCurrentSearchName,
   setDeepSearchCancellationRequested,
   setDeepSearchId,
+  setIsAiFilterRunning,
   setIsDeepSearchRunning,
   setShowFilteredListings,
   showFilteredListings,
@@ -236,6 +243,8 @@ function createUrlCard(): UrlCard {
 }
 
 function resetAllResults(): void {
+  setIsAiFilterRunning(false);
+  setAiFilterPendingRun(false);
   listingsByUrl.clear();
   getElement("listingsContainer").innerHTML = "";
   getElement("resultCount").textContent = "0";
@@ -290,10 +299,14 @@ function renderDerived(): void {
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped;
   const prompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
   const hash = promptHash(prompt);
-  getElement<HTMLButtonElement>("applyAiFilterBtn").disabled =
+  const isFilterCurrent =
     !prompt ||
     listings.length === 0 ||
     listings.every((listingItem) => listingItem.aiCheckedHash === hash);
+  const updateBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
+  updateBtn.style.display = isFilterCurrent ? "none" : "";
+  updateBtn.disabled = shouldDisableUpdateBtn({ isFilterCurrent, isAiFilterRunning });
+  if (!isFilterCurrent) updateBtn.textContent = "Update filter";
 }
 
 function updateRemoveButtons(): void {
@@ -438,6 +451,9 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   }
   if (listingsByUrl.size > 0) {
     applyClientFilters();
+    const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
+    if (aiPrompt)
+      scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
   } else {
     renderDerived();
   }
@@ -482,19 +498,21 @@ function updateDiscoveryBtn(): void {
 }
 
 async function runAiFilterAsync(): Promise<void> {
+  if (isAiFilterRunning) {
+    setAiFilterPendingRun(true);
+    return;
+  }
+
   const prompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
   if (!prompt) return;
   const hash = promptHash(prompt);
-  const toCheck = getOrderedListings().filter(
-    (item) => item.aiCheckedHash !== hash,
-  );
+  const toCheck = getOrderedListings().filter((item) => item.aiCheckedHash !== hash);
   if (toCheck.length === 0) return;
 
-  const applyButton = getElement<HTMLButtonElement>("applyAiFilterBtn");
-  applyButton.disabled = true;
-  let checked = 0;
-  applyButton.textContent = `Filtering 0/${toCheck.length}…`;
+  setIsAiFilterRunning(true);
+  renderDerived();
 
+  let checked = 0;
   let streamError: string | null = null;
 
   try {
@@ -524,7 +542,6 @@ async function runAiFilterAsync(): Promise<void> {
               checked++;
             }
           }
-          applyButton.textContent = `Filtering ${checked}/${toCheck.length}…`;
           applyClientFilters();
         } else if (event.type === "error") {
           streamError = event.message as string;
@@ -535,8 +552,12 @@ async function runAiFilterAsync(): Promise<void> {
   } catch (error) {
     setStatus((error as Error).message, "error");
   } finally {
-    applyButton.textContent = "Apply AI Filter";
+    setIsAiFilterRunning(false);
     renderDerived();
+    if (aiFilterPendingRun) {
+      setAiFilterPendingRun(false);
+      void runAiFilterAsync();
+    }
   }
 }
 
@@ -850,6 +871,9 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(false);
   applyClientFilters();
+  const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
+  if (aiPrompt)
+    scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
 }
 
 function markDirty(): void {
@@ -932,6 +956,8 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
   setSearchName(data.name);
   markDirty();
   getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
+  // loadDiscoveryResults owns the dispatch: kick off a search for every configured card.
+  fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
 async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
@@ -949,7 +975,8 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
   getElement("savedSearchesPanel").classList.add("hidden");
-  for (const card of urlCards) searchUrlCardAsync(card);
+  // loadSavedSearchAsync owns the dispatch: kick off a search for every configured card.
+  fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
 // ── Event listeners ───────────────────────────────────────────────────────────
@@ -1044,7 +1071,7 @@ function initApp(): void {
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", renderDerived);
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", markDirty);
   getElement<HTMLButtonElement>("applyAiFilterBtn").addEventListener("click", () =>
-    runAiFilterAsync(),
+    scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun }),
   );
 
   // Mark dirty on any URL input change or new URL card

@@ -66,6 +66,8 @@ export let showFilteredListings = false;
 export let isDeepSearchRunning = false;
 export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
+export let isAiFilterRunning = false;
+export let aiFilterPendingRun = false;
 export const listingsByUrl = new Map<string, ListingItem>();
 export const urlCardData: UrlCardData[] = [];
 // Stable, collision-free DOM ids assigned at card insertion time via crypto.randomUUID().
@@ -96,6 +98,14 @@ export function setDeepSearchCancellationRequested(value: boolean): void {
   deepSearchCancellationRequested = value;
 }
 
+export function setIsAiFilterRunning(value: boolean): void {
+  isAiFilterRunning = value;
+}
+
+export function setAiFilterPendingRun(value: boolean): void {
+  aiFilterPendingRun = value;
+}
+
 // ── Reset (for tests) ──────────────────────────────────────────────────────────
 
 export function resetState(): void {
@@ -104,6 +114,8 @@ export function resetState(): void {
   isDeepSearchRunning = false;
   deepSearchId = null;
   deepSearchCancellationRequested = false;
+  isAiFilterRunning = false;
+  aiFilterPendingRun = false;
   listingsByUrl.clear();
   urlCardData.length = 0;
   cardIdByUrl.clear();
