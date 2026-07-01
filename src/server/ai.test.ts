@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiConfig } from "./ai";
-import { aiJSON } from "./ai";
+import { MAX_RETRIES, aiJSON } from "./ai";
 
 const MOCK_CONFIG: AiConfig = { url: "https://api.example.com/chat", model: "test-model", apiKey: "test-key" };
 
@@ -55,7 +55,7 @@ describe("aiJSON", () => {
     await vi.runAllTimersAsync();
     await assertion;
 
-    expect(fetchMock).toHaveBeenCalledTimes(3); // initial + 2 retries
+    expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_RETRIES);
   });
 
   it("exhausts retries and includes the error body message on persistent 429", async () => {

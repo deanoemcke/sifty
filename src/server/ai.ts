@@ -44,6 +44,8 @@ function parseRetryDelaySeconds(response: Response, errorMessage: string): numbe
   return 10;
 }
 
+export const MAX_RETRIES = 2;
+
 function truncate(text: string, limit = 200): string {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
@@ -67,7 +69,6 @@ export async function aiJSON(
       { role: "user", content: userMessage },
     ],
   });
-  const MAX_RETRIES = 2;
   let apiResponse: Response | undefined;
   let lastErrorData: Record<string, unknown> = {};
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
