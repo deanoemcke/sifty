@@ -72,4 +72,19 @@ describe("aiJSON", () => {
 
     await expect(aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100)).rejects.toThrow("network failure");
   });
+
+  it("truncates long system and user messages to 200 chars in the log", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(makeSuccessResponse({}));
+
+    const longSystem = "s".repeat(300);
+    const longUser = "u".repeat(300);
+    await aiJSON(MOCK_CONFIG, "test", longSystem, longUser, 100);
+
+    const logCall = consoleSpy.mock.calls[0][0] as string;
+    expect(logCall).toContain("s".repeat(200) + "…");
+    expect(logCall).toContain("u".repeat(200) + "…");
+    expect(logCall).not.toContain("s".repeat(201));
+    expect(logCall).not.toContain("u".repeat(201));
+  });
 });

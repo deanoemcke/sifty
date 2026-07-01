@@ -557,7 +557,6 @@ async function buildDiscoverUrlsAsync(
     STEP1_SYSTEM_PROMPT,
     `I'm looking for: ${prompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
     512,
-    `I'm looking for: ${prompt.trim()} [+ ${broad.length} categories omitted from log]`,
   )) as Record<string, unknown> | null;
   if (typeof broadCategoryPick !== "object" || broadCategoryPick === null)
     throw new Error("discover step1: expected object response");

@@ -44,16 +44,19 @@ function parseRetryDelaySeconds(response: Response, errorMessage: string): numbe
   return 10;
 }
 
+function truncate(text: string, limit = 200): string {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
 export async function aiJSON(
   aiConfig: AiConfig,
   label: string,
   systemMessage: string,
   userMessage: string,
   maxTokens: number,
-  logUserMessage?: string,
 ): Promise<unknown> {
   console.log(
-    `[AI] ${label} → model: ${aiConfig.model}\n[system] ${systemMessage}\n[user] ${logUserMessage ?? userMessage}`,
+    `[AI] ${label} → model: ${aiConfig.model}\n[system] ${truncate(systemMessage)}\n[user] ${truncate(userMessage)}`,
   );
   const requestBody = JSON.stringify({
     model: aiConfig.model,
