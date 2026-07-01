@@ -14,15 +14,19 @@ import { readBody, sendJSON } from "../helpers";
 export function handleListSavedSearches(_req: unknown, response: ServerResponse): void {
   const database = getDb();
   const rows = stmtListSavedSearches(database).all();
-  const searches = rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    urls: JSON.parse(row.urls) as string[],
-    discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
-    aiFilter: row.ai_filter,
-    createdAt: row.created_at,
-  }));
-  sendJSON(response, 200, { searches });
+  try {
+    const searches = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      urls: JSON.parse(row.urls) as string[],
+      discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
+      aiFilter: row.ai_filter,
+      createdAt: row.created_at,
+    }));
+    sendJSON(response, 200, { searches });
+  } catch (err) {
+    sendJSON(response, 500, { error: (err as Error).message });
+  }
 }
 
 export function handleGetSavedSearch(_req: unknown, response: ServerResponse, id: string): void {
@@ -32,16 +36,20 @@ export function handleGetSavedSearch(_req: unknown, response: ServerResponse, id
     sendJSON(response, 404, { error: "Not found" });
     return;
   }
-  sendJSON(response, 200, {
-    search: {
-      id: row.id,
-      name: row.name,
-      urls: JSON.parse(row.urls),
-      discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
-      aiFilter: row.ai_filter,
-      createdAt: row.created_at,
-    },
-  });
+  try {
+    sendJSON(response, 200, {
+      search: {
+        id: row.id,
+        name: row.name,
+        urls: JSON.parse(row.urls),
+        discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
+        aiFilter: row.ai_filter,
+        createdAt: row.created_at,
+      },
+    });
+  } catch (err) {
+    sendJSON(response, 500, { error: (err as Error).message });
+  }
 }
 
 export function handleDeleteSavedSearch(_req: unknown, response: ServerResponse, id: string): void {

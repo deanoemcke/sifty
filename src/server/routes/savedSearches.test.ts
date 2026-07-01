@@ -199,6 +199,20 @@ describe("handleCreateSavedSearch", () => {
 });
 
 describe("handleListSavedSearches", () => {
+  it("returns 500 when a row contains corrupt urls JSON", () => {
+    _testDb!.prepare(
+      "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("bad-id", "bad row", "not-json", null, null, Date.now());
+
+    handleListSavedSearches(makeResponse() as never, makeResponse());
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      500,
+      expect.objectContaining({ error: expect.any(String) }),
+    );
+  });
+
   it("returns discoverInputs not filters in the list", async () => {
     vi.mocked(readBody).mockResolvedValue({
       name: "Test",
@@ -215,6 +229,22 @@ describe("handleListSavedSearches", () => {
     expect(searches).toHaveLength(1);
     expect(searches[0]).toHaveProperty("discoverInputs");
     expect(searches[0]).not.toHaveProperty("filters");
+  });
+});
+
+describe("handleGetSavedSearch", () => {
+  it("returns 500 when the stored row has corrupt urls JSON", () => {
+    _testDb!.prepare(
+      "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("bad-id", "bad row", "not-json", null, null, Date.now());
+
+    handleGetSavedSearch(makeResponse() as never, makeResponse(), "bad-id");
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      500,
+      expect.objectContaining({ error: expect.any(String) }),
+    );
   });
 });
 
