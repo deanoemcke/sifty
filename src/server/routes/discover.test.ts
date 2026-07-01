@@ -41,13 +41,13 @@ describe("discoverCategoriesAsync", () => {
 
   afterEach(() => vi.clearAllMocks());
 
-  it("returns filters without a minPrice field", async () => {
+  it("does not return a filters field", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
       makeStubRecipe(["https://www.trademe.co.nz/a/marketplace/computers/laptops/search"]),
     ]);
 
     const result = await discoverCategoriesAsync("laptop", 500, "any", undefined);
-    expect(result.filters).not.toHaveProperty("minPrice");
+    expect(result).not.toHaveProperty("filters");
   });
 
   it("aggregates URLs from all recipes", async () => {
@@ -77,43 +77,6 @@ describe("discoverCategoriesAsync", () => {
 
     const result = await discoverCategoriesAsync("  macbook pro  ", 0, "any", undefined);
     expect(result.name).toBe("macbook pro");
-  });
-
-  it("sets shippingAvailable=false when fulfillment is pickup with a region", async () => {
-    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
-
-    const result = await discoverCategoriesAsync("laptop", 0, "pickup", "2");
-    expect(result.filters.shippingAvailable).toBe(false);
-    expect(result.filters.pickupAvailable).toBe(true);
-  });
-
-  it("sets shippingAvailable=true when fulfillment is any", async () => {
-    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
-
-    const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
-    expect(result.filters.shippingAvailable).toBe(true);
-  });
-
-  it("passes maxPrice from context through to filters", async () => {
-    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
-
-    const result = await discoverCategoriesAsync("laptop", 750, "any", undefined);
-    expect(result.filters.maxPrice).toBe(750);
-  });
-
-  it("sets pickupAvailable=false when fulfillment is shipping", async () => {
-    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
-
-    const result = await discoverCategoriesAsync("laptop", 0, "shipping", undefined);
-    expect(result.filters.pickupAvailable).toBe(false);
-    expect(result.filters.shippingAvailable).toBe(true);
-  });
-
-  it("sets shippingAvailable=false when fulfillment is pickup even without a region", async () => {
-    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
-
-    const result = await discoverCategoriesAsync("laptop", 0, "pickup", undefined);
-    expect(result.filters.shippingAvailable).toBe(false);
   });
 
   it("passes the correct DiscoverContext to each recipe", async () => {

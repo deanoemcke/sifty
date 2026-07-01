@@ -2,8 +2,7 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
-import type { FilterReason } from "../lib/filters";
-import type { Listing, ListingDetail } from "../lib/recipes/base";
+import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -33,9 +32,15 @@ export interface ListingItem {
   data: Listing;
   detail: ListingDetail | null;
   hasBeenDeepSearched: boolean;
-  filterReason: FilterReason | null;
   aiCheckedHash: number | null;
   aiFilterReason: string | null;
+}
+
+export interface DiscoverInputs {
+  prompt: string;
+  maxPrice?: number;
+  fulfillment: Fulfillment;
+  region?: string;
 }
 
 export interface UrlCardData {
@@ -49,7 +54,7 @@ export interface SavedSearch {
   id: string;
   name: string;
   urls: string[];
-  filters: import("../lib/filters").FrontendFilters;
+  discoverInputs?: DiscoverInputs;
   aiFilter: string | null;
   createdAt: number;
 }

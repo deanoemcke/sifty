@@ -1,8 +1,8 @@
-import { computeFilterReason, type FrontendFilters } from "../lib/filters";
-import type { Listing, ListingDetail } from "../lib/recipes/base";
+import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
+import { parseMaxPrice } from "./parseUtils";
 import { sourceFaviconHtml } from "./recipeDisplay";
 import {
   canCancelSearch,
@@ -10,6 +10,7 @@ import {
   currentSearchName,
   deepSearchCancellationRequested,
   deepSearchId,
+  type DiscoverInputs,
   isCardSearchActive,
   isDeepSearchRunning,
   isSearchButtonDisabled,
@@ -53,41 +54,28 @@ function promptHash(inputString: string): number {
   return h;
 }
 
-function getFilters(overrides?: Partial<FrontendFilters>): FrontendFilters {
-  const minimumPriceRaw = getElement<HTMLInputElement>("minPrice").value;
-  const maximumPriceRaw = getElement<HTMLInputElement>("maxPrice").value;
-  const keywordsRaw = getElement<HTMLInputElement>("keywords").value.trim();
-  const excludedKeywordsRaw = getElement<HTMLInputElement>("excludeKeywords").value.trim();
+function readDiscoverInputs(): DiscoverInputs {
   return {
-    minPrice: minimumPriceRaw ? parseFloat(minimumPriceRaw) : undefined,
-    maxPrice: maximumPriceRaw ? parseFloat(maximumPriceRaw) : undefined,
-    keywords: keywordsRaw
-      ? keywordsRaw
-          .split(",")
-          .map((keyword) => keyword.trim())
-          .filter(Boolean)
-      : undefined,
-    excludeKeywords: excludedKeywordsRaw
-      ? excludedKeywordsRaw
-          .split(",")
-          .map((keyword) => keyword.trim())
-          .filter(Boolean)
-      : undefined,
-    shippingAvailable: getElement<HTMLInputElement>("filterShipping").checked,
-    pickupAvailable: getElement<HTMLInputElement>("filterPickup").checked,
-    ...overrides,
+    prompt: getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim(),
+    maxPrice: parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value),
+    fulfillment: getElement<HTMLSelectElement>("discoveryFulfillment").value as Fulfillment,
+    region: getElement<HTMLSelectElement>("discoveryRegion").value || undefined,
   };
 }
 
-function setFilters(filters: FrontendFilters): void {
-  getElement<HTMLInputElement>("minPrice").value =
-    filters.minPrice != null ? String(filters.minPrice) : "";
-  getElement<HTMLInputElement>("maxPrice").value =
-    filters.maxPrice != null ? String(filters.maxPrice) : "";
-  getElement<HTMLInputElement>("keywords").value = filters.keywords?.join(", ") ?? "";
-  getElement<HTMLInputElement>("excludeKeywords").value = filters.excludeKeywords?.join(", ") ?? "";
-  getElement<HTMLInputElement>("filterShipping").checked = filters.shippingAvailable ?? true;
-  getElement<HTMLInputElement>("filterPickup").checked = filters.pickupAvailable ?? true;
+function setFulfillmentDisplay(fulfillment: string): void {
+  getElement("discoveryRegion").style.display = fulfillment === "pickup" ? "" : "none";
+}
+
+function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
+  if (!inputs) return;
+  getElement<HTMLTextAreaElement>("discoveryPrompt").value = inputs.prompt ?? "";
+  getElement<HTMLInputElement>("discoveryMaxPrice").value =
+    inputs.maxPrice != null ? String(inputs.maxPrice) : "";
+  getElement<HTMLSelectElement>("discoveryFulfillment").value = inputs.fulfillment ?? "any";
+  setFulfillmentDisplay(inputs.fulfillment ?? "any");
+  getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region ?? "";
+  updateDiscoveryBtn();
 }
 
 function setCardStatus(
@@ -288,7 +276,7 @@ function getOrderedListings(): ListingItem[] {
 function renderDerived(): void {
   const listings = getOrderedListings();
   const visible = listings.filter(
-    (listingItem) => listingItem.filterReason === null && listingItem.aiFilterReason === null,
+    (listingItem) => listingItem.aiFilterReason === null,
   );
   const filtered = listings.length - visible.length;
   getElement("resultCount").textContent = String(visible.length);
@@ -400,7 +388,6 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
             data: listing,
             detail: null,
             hasBeenDeepSearched: false,
-            filterReason: null,
             aiCheckedHash: null,
             aiFilterReason: null,
           };
@@ -458,31 +445,13 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
 
 // ── Client-side filtering ─────────────────────────────────────────────────────
 
-// Returns a Listing with deep-search data merged in, without mutating item.data.
-function effectiveListing(item: ListingItem): Listing {
-  if (!item.detail) return item.data;
-  return {
-    ...item.data,
-    description: item.detail.description || item.data.description,
-    ...(item.detail.shippingAvailable !== null && item.detail.pickupAvailable !== null
-      ? { fulfillment: { shippingAvailable: item.detail.shippingAvailable, pickupAvailable: item.detail.pickupAvailable } }
-      : {}),
-  };
-}
-
 function filterBannerText(item: ListingItem): string {
-  if (item.aiFilterReason) return `Filtered by AI: ${item.aiFilterReason}`;
-  if (item.filterReason === "keyword") return "Filtered: does not match keyword criteria";
-  if (item.filterReason === "price") return "Filtered: price out of range";
-  if (item.filterReason === "shipping") return "Filtered: does not match shipping/pickup criteria";
-  return "Filtered";
+  return item.aiFilterReason ? `Filtered by AI: ${item.aiFilterReason}` : "Filtered";
 }
 
 function applyClientFilters(): void {
-  const filters = getFilters();
   for (const item of getOrderedListings()) {
-    item.filterReason = computeFilterReason(effectiveListing(item), filters);
-    const passes = item.filterReason === null && item.aiFilterReason === null;
+    const passes = item.aiFilterReason === null;
     const card = getCardByUrl(item.data.url);
     if (card) {
       const banner = requireChild<HTMLElement>(card, ".filter-banner");
@@ -504,9 +473,8 @@ function applyClientFilters(): void {
 
 function updateDiscoveryBtn(): void {
   const hasPrompt = !!getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
-  const maxPriceRaw = getElement<HTMLInputElement>("discoveryMaxPrice").value.trim();
-  const maxPrice = parseFloat(maxPriceRaw);
-  const hasValidPrice = maxPriceRaw !== "" && Number.isFinite(maxPrice) && maxPrice > 0;
+  const hasValidPrice =
+    parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value) !== undefined;
   const isPickupOnly = getElement<HTMLSelectElement>("discoveryFulfillment").value === "pickup";
   const hasRegion = !isPickupOnly || !!getElement<HTMLSelectElement>("discoveryRegion").value;
   getElement<HTMLButtonElement>("discoveryBtn").disabled =
@@ -518,7 +486,7 @@ async function runAiFilterAsync(): Promise<void> {
   if (!prompt) return;
   const hash = promptHash(prompt);
   const toCheck = getOrderedListings().filter(
-    (item) => item.aiCheckedHash !== hash && item.filterReason === null,
+    (item) => item.aiCheckedHash !== hash,
   );
   if (toCheck.length === 0) return;
 
@@ -808,10 +776,7 @@ function toggleDescription(btn: HTMLButtonElement): void {
 
 async function runDeepSearchAsync(): Promise<void> {
   const toScrape = getOrderedListings()
-    .filter(
-      (item) =>
-        !item.hasBeenDeepSearched && item.filterReason === null && item.aiFilterReason === null,
-    )
+    .filter((item) => !item.hasBeenDeepSearched && item.aiFilterReason === null)
     .map((item) => item.data);
 
   if (toScrape.length === 0) return;
@@ -819,7 +784,6 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchId(crypto.randomUUID());
   setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(true);
-  let hiddenByDescription = 0;
   let detailsReceived = 0;
 
   for (const listing of toScrape) {
@@ -852,27 +816,11 @@ async function runDeepSearchAsync(): Promise<void> {
           item.detail = detail;
           item.aiCheckedHash = null;
           renderCard(item);
-
-          const card = getCardByUrl(item.data.url);
-          const wasVisible = card !== null && card.style.display !== "none";
-          item.filterReason = computeFilterReason(effectiveListing(item), getFilters());
-          if (card && wasVisible && item.filterReason !== null) {
-            const banner = requireChild<HTMLElement>(card, ".filter-banner");
-            card.classList.add("filtered-out");
-            banner.textContent = filterBannerText(item);
-            banner.classList.remove("hidden");
-            if (!showFilteredListings) card.style.display = "none";
-            hiddenByDescription++;
-          }
         }
 
         renderDerived();
       } else if (ev.type === "complete") {
-        const completionMessage =
-          hiddenByDescription > 0
-            ? `Deep search complete — ${hiddenByDescription} listing${hiddenByDescription !== 1 ? "s" : ""} hidden by description filter`
-            : "Deep search complete";
-        setStatus(completionMessage, hiddenByDescription > 0 ? "info" : "success");
+        setStatus("Deep search complete", "success");
         setTimeout(() => setStatus(null), 4000);
       } else if (ev.type === "error") {
         setStatus(ev.message as string, "error");
@@ -959,7 +907,7 @@ async function saveCurrentSearchAsync(name: string): Promise<void> {
     body: JSON.stringify({
       name: name.trim(),
       urls,
-      filters: getFilters(),
+      discoverInputs: readDiscoverInputs(),
       aiFilter: getElement<HTMLTextAreaElement>("aiFilter").value.trim() || null,
     }),
   });
@@ -971,10 +919,7 @@ async function deleteSavedSearchAsync(id: string): Promise<void> {
   await fetchSavedSearchesAsync();
 }
 
-function loadDiscoveryResults(
-  data: { urls: string[]; filters: FrontendFilters; name: string },
-  aiPrompt: string,
-): void {
+function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: string): void {
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   urlCards[0].dom.input.value = data.urls[0];
@@ -984,11 +929,9 @@ function loadDiscoveryResults(
     card.dom.input.value = data.urls[urlIndex];
     updateCardSearchBtn(card);
   }
-  setFilters(data.filters);
   setSearchName(data.name);
   markDirty();
   getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
-  applyClientFilters();
 }
 
 async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
@@ -1002,11 +945,10 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
     card.dom.input.value = search.urls[urlIndex];
     updateCardSearchBtn(card);
   }
-  setFilters(search.filters);
+  applyDiscoverInputs(search.discoverInputs);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
   getElement("savedSearchesPanel").classList.add("hidden");
-  applyClientFilters();
   for (const card of urlCards) searchUrlCardAsync(card);
 }
 
@@ -1030,7 +972,7 @@ function initApp(): void {
       ? "hide"
       : "show";
     for (const item of getOrderedListings()) {
-      if (item.filterReason !== null || item.aiFilterReason !== null) {
+      if (item.aiFilterReason !== null) {
         const card = getCardByUrl(item.data.url);
         if (card) card.style.display = showFilteredListings ? "" : "none";
       }
@@ -1054,8 +996,7 @@ function initApp(): void {
     });
 
   getElement<HTMLSelectElement>("discoveryFulfillment").addEventListener("change", () => {
-    const isPickup = getElement<HTMLSelectElement>("discoveryFulfillment").value === "pickup";
-    getElement("discoveryRegion").style.display = isPickup ? "" : "none";
+    setFulfillmentDisplay(getElement<HTMLSelectElement>("discoveryFulfillment").value);
     updateDiscoveryBtn();
   });
   getElement<HTMLSelectElement>("discoveryRegion").addEventListener("change", updateDiscoveryBtn);
@@ -1065,8 +1006,7 @@ function initApp(): void {
   getElement<HTMLButtonElement>("discoveryBtn").addEventListener("click", async () => {
     const prompt = getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
     if (!prompt) return;
-    const maxPriceVal = getElement<HTMLInputElement>("discoveryMaxPrice").value.trim();
-    const maxPrice = maxPriceVal ? parseFloat(maxPriceVal) : undefined;
+    const maxPrice = parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value);
     const fulfillment = getElement<HTMLSelectElement>("discoveryFulfillment").value;
     const regionValue =
       fulfillment === "pickup" ? getElement<HTMLSelectElement>("discoveryRegion").value : undefined;
@@ -1083,7 +1023,6 @@ function initApp(): void {
       });
       const data = (await response.json()) as {
         urls?: string[];
-        filters?: FrontendFilters;
         name?: string;
         error?: string;
       };
@@ -1092,10 +1031,7 @@ function initApp(): void {
         discoveryErrorElement.style.display = "block";
         return;
       }
-      loadDiscoveryResults(
-        data as { urls: string[]; filters: FrontendFilters; name: string },
-        prompt,
-      );
+      loadDiscoveryResults(data as { urls: string[]; name: string }, prompt);
     } catch {
       discoveryErrorElement.textContent = "Discovery failed";
       discoveryErrorElement.style.display = "block";
@@ -1110,15 +1046,6 @@ function initApp(): void {
   getElement<HTMLButtonElement>("applyAiFilterBtn").addEventListener("click", () =>
     runAiFilterAsync(),
   );
-
-  (["minPrice", "maxPrice", "keywords", "excludeKeywords"] as const).forEach((id) => {
-    getElement(id).addEventListener("input", applyClientFilters);
-    getElement(id).addEventListener("input", markDirty);
-  });
-  (["filterShipping", "filterPickup"] as const).forEach((id) => {
-    getElement(id).addEventListener("change", applyClientFilters);
-    getElement(id).addEventListener("change", markDirty);
-  });
 
   // Mark dirty on any URL input change or new URL card
   getElement("urlCardsContainer").addEventListener("input", markDirty);

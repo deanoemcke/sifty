@@ -24,7 +24,6 @@ export function sanitiseWarningMessage(reason: unknown): string {
 
 type DiscoverResult = {
   urls: string[];
-  filters: { maxPrice: number; shippingAvailable: boolean; pickupAvailable: boolean };
   name: string;
   warnings: string[];
 };
@@ -60,12 +59,7 @@ export async function discoverCategoriesAsync(
   ];
   if (urls.length === 0)
     throw new Error(`No URLs returned from any recipe. Errors: ${warnings.join("; ")}`);
-  const filters = {
-    maxPrice: discoveryMaxPrice,
-    shippingAvailable: discoveryFulfillment !== "pickup",
-    pickupAvailable: discoveryFulfillment !== "shipping",
-  };
-  return { urls, filters, name: discoveryPrompt.trim(), warnings };
+  return { urls, name: discoveryPrompt.trim(), warnings };
 }
 
 export async function handleDiscover(

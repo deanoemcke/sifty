@@ -35,6 +35,20 @@ export function requirePositiveNumber(val: unknown, field: string): number {
  * property.  Used when iterating over a client-supplied listings array before
  * passing any element to recipe code or cache writes.
  */
+const DISCOVER_INPUTS_MAX_BYTES = 4096;
+
+export function parseDiscoverInputs(val: unknown): string | null {
+  if (val == null) return null;
+  if (typeof val !== "object" || Array.isArray(val)) {
+    throw new Error("discoverInputs must be a plain object");
+  }
+  const serialised = JSON.stringify(val);
+  if (serialised.length > DISCOVER_INPUTS_MAX_BYTES) {
+    throw new Error("discoverInputs exceeds maximum size");
+  }
+  return serialised;
+}
+
 export function requireListingUrl(
   item: unknown,
   index: number,
