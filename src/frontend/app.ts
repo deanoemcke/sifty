@@ -71,7 +71,7 @@ function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
   getElement<HTMLSelectElement>("discoveryFulfillment").value = inputs.fulfillment ?? "any";
   const isPickup = inputs.fulfillment === "pickup";
   getElement("discoveryRegion").style.display = isPickup ? "" : "none";
-  if (inputs.region) getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region;
+  getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region ?? "";
   updateDiscoveryBtn();
 }
 
