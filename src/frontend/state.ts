@@ -2,7 +2,7 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
-import type { Listing, ListingDetail } from "../lib/recipes/base";
+import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ export interface ListingItem {
 export interface DiscoverInputs {
   prompt: string;
   maxPrice?: number;
-  fulfillment: string;
+  fulfillment: Fulfillment;
   region?: string;
 }
 

@@ -1,4 +1,4 @@
-import type { Listing, ListingDetail } from "../lib/recipes/base";
+import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
@@ -58,7 +58,7 @@ function readDiscoverInputs(): DiscoverInputs {
   return {
     prompt: getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim(),
     maxPrice: maxPriceRaw ? parseFloat(maxPriceRaw) : undefined,
-    fulfillment: getElement<HTMLSelectElement>("discoveryFulfillment").value,
+    fulfillment: getElement<HTMLSelectElement>("discoveryFulfillment").value as Fulfillment,
     region: getElement<HTMLSelectElement>("discoveryRegion").value || undefined,
   };
 }
