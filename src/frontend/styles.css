@@ -580,9 +580,25 @@ label {
   position: relative;
 }
 .extras-body.collapsed {
-  max-height: 5.5rem;
+  max-height: 3rem;
   overflow: hidden;
   cursor: pointer;
+}
+
+/* Expanded card spans the full grid row and lays out horizontally again */
+.listing-card.expanded {
+  grid-column: 1 / -1;
+}
+.listing-card.expanded .listing-card-content {
+  flex-direction: row;
+}
+.listing-card.expanded .listing-thumb,
+.listing-card.expanded .listing-thumb-placeholder {
+  width: 180px;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 1rem 0 1rem 1rem;
 }
 .extras-fade {
   display: none;

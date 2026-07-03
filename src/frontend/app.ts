@@ -3,6 +3,7 @@ import "./styles.css";
 import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
 import { scheduleAiFilterRun } from "./aiFilter";
+import { collapseExtras, expandExtras } from "./cardExtras";
 import { shouldDisableUpdateBtn } from "./renderUtils";
 import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
@@ -768,18 +769,6 @@ function renderCard(item: ListingItem): void {
   `;
 
   if (!existing) getElement("listingsContainer").appendChild(card);
-}
-
-function expandExtras(body: HTMLElement): void {
-  body.classList.remove("collapsed");
-  const btn = body.nextElementSibling as HTMLElement;
-  if (btn) btn.style.display = "";
-}
-
-function collapseExtras(btn: HTMLButtonElement): void {
-  const body = btn.previousElementSibling as HTMLElement;
-  body.classList.add("collapsed");
-  btn.style.display = "none";
 }
 
 function toggleDescription(btn: HTMLButtonElement): void {
