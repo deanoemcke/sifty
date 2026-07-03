@@ -653,8 +653,8 @@ function buildPricesHtml(item: ListingItem): string {
 }
 
 function buildMetaHtml(item: ListingItem): string {
+  const left = `<span class="meta-left"><span class="meta-text">📍 ${esc(item.data.location)}</span></span>`;
   let html = sourceFaviconHtml(item.data.source);
-  html += `<span class="meta-text">📍 ${esc(item.data.location)}</span>`;
   const detail = item.detail;
   if (detail) {
     const { shippingAvailable, pickupAvailable } = detail;
@@ -678,7 +678,7 @@ function buildMetaHtml(item: ListingItem): string {
   } else {
     html += renderShippingBadgeHtml(item.data.fulfillment);
   }
-  return html;
+  return `${left}<span class="meta-right">${html}</span>`;
 }
 
 function buildExtrasHtml(detail: ListingDetail): string {
@@ -753,16 +753,16 @@ function renderCard(item: ListingItem): void {
     <div class="listing-card-content">
       ${thumb}
       <div class="listing-body">
-        <div class="listing-title">
-          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
-        </div>
-        <div class="listing-prices">
-          ${buildPricesHtml(item)}
-        </div>
         <div class="listing-meta">
           ${buildMetaHtml(item)}
         </div>
+        <div class="listing-title">
+          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+        </div>
         <div class="listing-extras">${item.detail ? buildExtrasHtml(item.detail) : ""}</div>
+        <div class="listing-prices">
+          ${buildPricesHtml(item)}
+        </div>
       </div>
     </div>
   `;
