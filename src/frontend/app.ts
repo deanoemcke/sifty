@@ -1,3 +1,5 @@
+import "./styles.css";
+
 import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
 import { scheduleAiFilterRun } from "./aiFilter";
