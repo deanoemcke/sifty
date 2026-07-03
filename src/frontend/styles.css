@@ -66,6 +66,9 @@ body {
     max-height: none;
     overflow: visible;
   }
+  .main-pane {
+    width: 100%;
+  }
 }
 
 header {
