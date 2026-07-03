@@ -1,5 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import { buildFacebookListing, buildFacebookUrl, facebookRecipe, parseFacebookPriceLines } from "./facebook";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { aiJSON } from "../ai";
+import {
+  buildFacebookListing,
+  buildFacebookSearchQueryAsync,
+  buildFacebookUrl,
+  facebookRecipe,
+  parseFacebookPriceLines,
+} from "./facebook";
 
 const TEST_REGIONS = [
   { name: "Auckland", tradeMeRegionId: 2, facebookLocation: "auckland" },
@@ -9,6 +16,13 @@ const TEST_REGIONS = [
 // This mock is load-bearing for buildDiscoverUrlsAsync tests below, which rely on
 // buildFacebookUrl's default `regions` argument being supplied by the mocked getRegions.
 vi.mock("../services/regions", () => ({ getRegions: () => TEST_REGIONS }));
+vi.mock("../ai", () => ({ aiJSON: vi.fn() }));
+
+const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key" };
+
+beforeEach(() => {
+  vi.resetAllMocks();
+});
 
 describe("parseFacebookPriceLines", () => {
   it("returns the single price when only one price line is present", () => {
@@ -121,12 +135,77 @@ describe("buildFacebookUrl", () => {
   });
 });
 
-// ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
+// ── buildFacebookSearchQueryAsync ─────────────────────────────────────────────
 
-const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key" };
+describe("buildFacebookSearchQueryAsync", () => {
+  it("returns the AI-extracted keyword query", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "macbook pro" });
+    const result = await buildFacebookSearchQueryAsync(
+      "I'm looking for a MacBook Pro from 2019",
+      MOCK_AI_CONFIG,
+    );
+    expect(result).toBe("macbook pro");
+  });
+
+  it("trims whitespace from the AI-returned query", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "  macbook pro  " });
+    const result = await buildFacebookSearchQueryAsync("macbook pro laptop", MOCK_AI_CONFIG);
+    expect(result).toBe("macbook pro");
+  });
+
+  it("passes the trimmed prompt to the AI", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "macbook pro" });
+    await buildFacebookSearchQueryAsync("  macbook pro  ", MOCK_AI_CONFIG);
+    expect(vi.mocked(aiJSON)).toHaveBeenCalledWith(
+      MOCK_AI_CONFIG,
+      "facebook:query",
+      expect.any(String),
+      "macbook pro",
+      64,
+    );
+  });
+
+  it("throws when AI returns null", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(null);
+    await expect(
+      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
+    ).rejects.toThrow();
+  });
+
+  it("throws when AI returns an object with no query field", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ keywords: "macbook pro" });
+    await expect(
+      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
+    ).rejects.toThrow();
+  });
+
+  it("throws when AI returns an empty query string", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "" });
+    await expect(
+      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
+    ).rejects.toThrow();
+  });
+
+  it("throws when AI returns a whitespace-only query string", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "   " });
+    await expect(
+      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
+    ).rejects.toThrow();
+  });
+
+  it("propagates AI errors", async () => {
+    vi.mocked(aiJSON).mockRejectedValueOnce(new Error("Rate limited"));
+    await expect(
+      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
+    ).rejects.toThrow("Rate limited");
+  });
+});
+
+// ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
 
 describe("buildDiscoverUrlsAsync", () => {
   it("returns a single Facebook Marketplace URL", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "macbook pro" });
     const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
@@ -136,16 +215,21 @@ describe("buildDiscoverUrlsAsync", () => {
     expect(result.urls[0]).toContain("facebook.com/marketplace");
   });
 
-  it("includes the prompt as the search query", async () => {
-    const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
-      maxPrice: 0,
-      fulfillment: "any",
-      aiConfig: MOCK_AI_CONFIG,
-    });
+  it("uses the AI-extracted query in the search URL", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "macbook pro" });
+    const result = await facebookRecipe.buildDiscoverUrlsAsync(
+      "I'm looking for a MacBook Pro laptop in good condition",
+      {
+        maxPrice: 0,
+        fulfillment: "any",
+        aiConfig: MOCK_AI_CONFIG,
+      },
+    );
     expect(result.urls[0]).toContain("query=macbook+pro");
   });
 
   it("includes maxPrice when > 0", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "laptop" });
     const result = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 500,
       fulfillment: "any",
@@ -155,6 +239,7 @@ describe("buildDiscoverUrlsAsync", () => {
   });
 
   it("injects region location segment when pickup fulfillment and matching region", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "laptop" });
     const result = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "pickup",
@@ -165,6 +250,7 @@ describe("buildDiscoverUrlsAsync", () => {
   });
 
   it("returns an empty warnings array", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "macbook pro" });
     const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
@@ -173,15 +259,31 @@ describe("buildDiscoverUrlsAsync", () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it("trims leading and trailing whitespace from the prompt before encoding into the URL", async () => {
-    const result = await facebookRecipe.buildDiscoverUrlsAsync("  macbook pro  ", {
+  it("passes the trimmed prompt to the AI", async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce({ query: "macbook pro" });
+    await facebookRecipe.buildDiscoverUrlsAsync("  macbook pro  ", {
       maxPrice: 0,
       fulfillment: "any",
       aiConfig: MOCK_AI_CONFIG,
     });
-    expect(result.urls[0]).toContain("query=macbook+pro");
-    expect(result.urls[0]).not.toMatch(/query=%20|query=\+/);
-    expect(result.urls[0]).not.toMatch(/%20$|%20&|\+$/);
+    expect(vi.mocked(aiJSON)).toHaveBeenCalledWith(
+      MOCK_AI_CONFIG,
+      "facebook:query",
+      expect.any(String),
+      "macbook pro",
+      64,
+    );
+  });
+
+  it("propagates AI errors without fallback", async () => {
+    vi.mocked(aiJSON).mockRejectedValueOnce(new Error("AI unavailable"));
+    await expect(
+      facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
+        maxPrice: 0,
+        fulfillment: "any",
+        aiConfig: MOCK_AI_CONFIG,
+      }),
+    ).rejects.toThrow("AI unavailable");
   });
 });
 
