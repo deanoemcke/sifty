@@ -898,7 +898,7 @@ function renderSavedSearches(searches: SavedSearch[]): void {
   count.classList.toggle("hidden", searches.length === 0);
 
   if (searches.length === 0) {
-    list.innerHTML = '<p class="deep-empty">No saved searches yet.</p>';
+    list.innerHTML = '<p class="deep-empty">No favourites yet.</p>';
     return;
   }
   list.innerHTML = searches
