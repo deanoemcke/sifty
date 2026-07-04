@@ -51,10 +51,9 @@ import {
 interface UrlCardDom {
   containerElement: HTMLElement;
   input: HTMLInputElement;
-  searchButton: HTMLButtonElement;
   removeButton: HTMLButtonElement;
+  // Wraps the info icon and its criteria tooltip; hidden until criteria arrive.
   criteriaElement: HTMLElement;
-  countElement: HTMLElement;
   cacheStatusElement: HTMLElement;
   statusElement: HTMLElement;
 }
@@ -186,42 +185,43 @@ function setStatus(
   statusBar.classList.remove("hidden");
 }
 
-function updateCardSearchBtn(card: UrlCard): void {
+function canSearchCard(card: UrlCard): boolean {
   const current = card.dom.input.value.trim();
-  card.dom.searchButton.disabled =
-    isDeepSearchRunning ||
-    !isValidRecipeUrl(current) ||
-    isSearchButtonDisabled(card.data.searchStatus, card.data.searchedUrl, current);
+  return (
+    !isDeepSearchRunning &&
+    isValidRecipeUrl(current) &&
+    !isSearchButtonDisabled(card.data.searchStatus, card.data.searchedUrl, current)
+  );
 }
 
 function setDeepSearchBusy(busy: boolean): void {
   setIsDeepSearchRunning(busy);
-  for (const card of urlCards) updateCardSearchBtn(card);
   renderDerived();
 }
 
-const SEARCH_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+// assets/info.svg and assets/x.svg, inlined so they inherit currentColor.
+const INFO_ICON = `<svg width="15" height="15" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><path d="m50,20.91c16.04,0,29.09,13.05,29.09,29.09s-13.05,29.09-29.09,29.09-29.09-13.05-29.09-29.09,13.05-29.09,29.09-29.09m0-4.2c-18.39,0-33.3,14.91-33.3,33.3s14.91,33.3,33.3,33.3,33.3-14.91,33.3-33.3-14.91-33.3-33.3-33.3h0Z"/><rect x="46.78" y="43.6" width="6.43" height="23.57"/><circle cx="50" cy="36.89" r="4.07"/></svg>`;
+const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 function createUrlCard(): UrlCard {
-  const idx = urlCards.length;
   const cardEl = document.createElement("div");
-  cardEl.className = "card url-card";
+  cardEl.className = "source-url-row";
   cardEl.innerHTML = `
-    <div class="card-label" style="display:flex;align-items:center">URL ${idx + 1}<span class="url-card-count"></span><button class="btn btn-ghost url-remove-btn hidden" style="margin-left:auto;padding:0.15rem 0.45rem;line-height:1" title="Remove">✕</button></div>
     <div class="url-row">
       <input type="url" class="url-input" placeholder="Paste search URL…" />
-      <button class="btn btn-primary url-search-btn" disabled>${SEARCH_ICON} Search</button>
+      <span class="url-info-wrap hidden">
+        <button class="btn btn-ghost icon-btn url-info-btn" type="button" title="Search criteria">${INFO_ICON}</button>
+        <div class="criteria-tooltip"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
+      </span>
+      <button class="btn btn-ghost icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
     </div>
     <div class="url-card-status hidden"></div>
-    <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
   `;
   getElement("urlCardsContainer").appendChild(cardEl);
 
   const input = requireChild<HTMLInputElement>(cardEl, ".url-input");
-  const searchButton = requireChild<HTMLButtonElement>(cardEl, ".url-search-btn");
   const removeButton = requireChild<HTMLButtonElement>(cardEl, ".url-remove-btn");
-  const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-criteria");
-  const countElement = requireChild<HTMLElement>(cardEl, ".url-card-count");
+  const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-info-wrap");
   const cacheStatusElement = requireChild<HTMLElement>(cardEl, ".cache-status");
   const statusElement = requireChild<HTMLElement>(cardEl, ".url-card-status");
 
@@ -234,10 +234,8 @@ function createUrlCard(): UrlCard {
   const dom: UrlCardDom = {
     containerElement: cardEl,
     input,
-    searchButton,
     removeButton,
     criteriaElement,
-    countElement,
     cacheStatusElement,
     statusElement,
   };
@@ -245,11 +243,9 @@ function createUrlCard(): UrlCard {
   urlCards.push(urlCard);
   urlCardData.push(data);
 
-  input.addEventListener("input", () => updateCardSearchBtn(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
-    if (keyboardEvent.key === "Enter" && !searchButton.disabled) searchUrlCardAsync(urlCard);
+    if (keyboardEvent.key === "Enter" && canSearchCard(urlCard)) searchUrlCardAsync(urlCard);
   });
-  searchButton.addEventListener("click", () => searchUrlCardAsync(urlCard));
   removeButton.addEventListener("click", () => removeUrlCard(urlCard));
 
   updateRemoveButtons();
@@ -270,7 +266,6 @@ function resetAllResults(): void {
     card.data.listingUrls = [];
     card.data.searchStatus = "idle";
     card.data.searchedUrl = "";
-    card.dom.countElement.textContent = "";
     requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
     card.dom.criteriaElement.classList.add("hidden");
     card.dom.cacheStatusElement.classList.add("hidden");
@@ -278,7 +273,6 @@ function resetAllResults(): void {
     card.dom.statusElement.classList.add("hidden");
     card.data.searchId = null;
     card.dom.input.readOnly = false;
-    updateCardSearchBtn(card);
   }
   renderDerived();
 }
@@ -342,7 +336,6 @@ function resetCardForResearch(card: UrlCard): void {
   card.data.listingUrls = [];
   card.data.searchStatus = "idle";
   card.data.searchedUrl = "";
-  card.dom.countElement.textContent = "";
   requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
   card.dom.criteriaElement.classList.add("hidden");
   card.dom.cacheStatusElement.classList.add("hidden");
@@ -384,7 +377,6 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   getElement("resultsSection").classList.remove("hidden");
   card.data.searchStatus = "searching";
   card.data.searchId = crypto.randomUUID();
-  updateCardSearchBtn(card);
   renderDerived();
   setSearchingStatus(card, "Fetching listings…");
 
@@ -442,13 +434,11 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
       `Cancelled — ${totalFound} listing${totalFound !== 1 ? "s" : ""} loaded`,
       "error",
     );
-    updateCardSearchBtn(card);
     if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
   card.data.searchedUrl = url;
   card.dom.input.readOnly = true;
-  updateCardSearchBtn(card);
 
   if (cachedAge) {
     card.dom.cacheStatusElement.innerHTML = `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
@@ -458,7 +448,6 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
       clearQuickSearchCacheAsync,
     );
   }
-  card.dom.countElement.textContent = `— ${totalFound} listing${totalFound !== 1 ? "s" : ""}`;
 
   if (!searchError) {
     setCardStatus(card, `${totalFound} listing${totalFound !== 1 ? "s" : ""} found`, "success");
@@ -955,11 +944,8 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   urlCards[0].dom.input.value = data.urls[0];
-  updateCardSearchBtn(urlCards[0]);
   for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
-    const card = createUrlCard();
-    card.dom.input.value = data.urls[urlIndex];
-    updateCardSearchBtn(card);
+    createUrlCard().dom.input.value = data.urls[urlIndex];
   }
   setSearchName(data.name);
   markDirty();
@@ -974,11 +960,8 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   if (search.urls.length === 0) return;
   urlCards[0].dom.input.value = search.urls[0];
-  updateCardSearchBtn(urlCards[0]);
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
-    const card = createUrlCard();
-    card.dom.input.value = search.urls[urlIndex];
-    updateCardSearchBtn(card);
+    createUrlCard().dom.input.value = search.urls[urlIndex];
   }
   applyDiscoverInputs(search.discoverInputs);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";

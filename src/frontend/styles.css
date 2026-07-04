@@ -174,11 +174,12 @@ header h1 {
 /* ── URL row ── */
 .url-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.3rem;
 }
 .url-row input {
   flex: 1;
+  min-width: 0;
 }
 
 /* ── Inputs ── */
@@ -292,17 +293,30 @@ label {
 .criteria-val {
   font-size: 0.875rem;
 }
-.url-card-count {
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--primary);
-  margin-left: 0.4rem;
+.source-url-row {
+  margin-bottom: 0.5rem;
 }
-.url-criteria {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
+/* Criteria tooltip, shown while the info icon is hovered or focused */
+.url-info-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.criteria-tooltip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 20;
+  width: 250px;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: var(--shadow);
+}
+.url-info-wrap:hover .criteria-tooltip,
+.url-info-wrap:focus-within .criteria-tooltip {
+  display: block;
 }
 
 /* ── Filter grid ── */
@@ -856,6 +870,20 @@ label {
 }
 .btn-ghost:hover:not(:disabled) {
   background: #fee2e2;
+}
+/* Compact square icon buttons (info/delete on URL rows) */
+.icon-btn {
+  padding: 0.35rem;
+  line-height: 1;
+  border: none;
+  background: none;
+}
+.url-info-btn {
+  color: var(--text-muted);
+}
+.url-info-btn:hover:not(:disabled) {
+  color: var(--primary);
+  background: var(--primary-light);
 }
 
 /* ── Misc ── */
