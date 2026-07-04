@@ -62,20 +62,23 @@
   <!-- Save current search -->
   <button id="saveCurrentBtn" class="btn btn-primary hidden" style="padding:0.25rem 0.75rem;font-size:0.8rem;margin-bottom:0.5rem">Add to favourites</button>
 
-  <!-- URL cards (populated by JS) -->
-  <div id="urlCardsContainer"></div>
-  <button id="addUrlBtn" class="btn btn-secondary" style="width:100%;justify-content:center;margin-bottom:0.875rem;border-style:dashed">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    Add URL
-  </button>
+  <!-- Search configuration — revealed once a search runs -->
+  <div id="searchConfigSection" class="hidden">
+    <!-- URL cards (populated by JS) -->
+    <div id="urlCardsContainer"></div>
+    <button id="addUrlBtn" class="btn btn-secondary" style="width:100%;justify-content:center;margin-bottom:0.875rem;border-style:dashed">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add URL
+    </button>
 
-  <!-- AI Filter -->
-  <div class="card">
-    <div class="card-label">AI Filter</div>
-    <label for="aiFilter">Provide a detailed description to help filter out undesired results</label>
-    <div style="display:flex;gap:0.5rem;align-items:flex-start;margin-top:0.4rem">
-      <textarea id="aiFilter" rows="3" style="flex:1;resize:vertical" placeholder="e.g. good condition, no major damage, prefer aluminium frame"></textarea>
-      <button id="applyAiFilterBtn" class="btn btn-primary" style="display:none">Update filter</button>
+    <!-- AI Filter -->
+    <div class="card">
+      <div class="card-label">AI Filter</div>
+      <label for="aiFilter">Provide a detailed description to help filter out undesired results</label>
+      <div style="display:flex;gap:0.5rem;align-items:flex-start;margin-top:0.4rem">
+        <textarea id="aiFilter" rows="3" style="flex:1;resize:vertical" placeholder="e.g. good condition, no major damage, prefer aluminium frame"></textarea>
+        <button id="applyAiFilterBtn" class="btn btn-primary" style="display:none">Update filter</button>
+      </div>
     </div>
   </div>
 

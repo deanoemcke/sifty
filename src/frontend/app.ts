@@ -944,7 +944,14 @@ async function deleteSavedSearchAsync(id: string): Promise<void> {
   await fetchSavedSearchesAsync();
 }
 
+// The URL cards and AI filter stay hidden until the first search of the
+// session — either a discovery run or loading a favourite.
+function revealSearchConfig(): void {
+  getElement("searchConfigSection").classList.remove("hidden");
+}
+
 function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: string): void {
+  revealSearchConfig();
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   urlCards[0].dom.input.value = data.urls[0];
@@ -962,6 +969,7 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
 }
 
 async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
+  revealSearchConfig();
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   if (search.urls.length === 0) return;
