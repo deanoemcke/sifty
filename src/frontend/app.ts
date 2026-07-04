@@ -2,6 +2,8 @@ import "./styles.css";
 
 import type { Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl, recipeIdForUrl } from "../lib/recipes/matcher";
+import type { RecipeId } from "../lib/recipes/metadata";
+import { collapseElementAsync, expandElement } from "./heightAnimation";
 import { scheduleAiFilterRun } from "./aiFilter";
 import { collapseExtras, expandExtras } from "./cardExtras";
 import {
@@ -21,6 +23,7 @@ import {
   cardStatusText,
   parseQuickSearchProgress,
 } from "./searchStatusText";
+import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from "./urlGroups";
 import { activateSidebarTab } from "./sidebarTabs";
 import {
   aiFilterPendingRun,
@@ -141,6 +144,7 @@ function renderCardStatus(card: UrlCard): void {
     statusBar.appendChild(cancelButton);
   }
   statusBar.classList.remove("hidden");
+  updateUrlGroupHeaders();
 }
 
 function cancelSearch(card: UrlCard): void {
@@ -201,6 +205,119 @@ function updateUrlRowFavicon(card: UrlCard): void {
   const recipeId = recipeIdForUrl(card.dom.input.value.trim());
   card.dom.faviconElement.innerHTML = recipeId === null ? "" : recipeFaviconHtml(recipeId);
   card.dom.containerElement.classList.toggle("has-favicon", recipeId !== null);
+  const previousParent = card.dom.containerElement.parentElement;
+  syncUrlGroups();
+  // A row that just moved into a collapsed group would vanish mid-edit —
+  // expand its destination group so the input stays visible.
+  if (card.dom.containerElement.parentElement !== previousParent && recipeId !== null)
+    expandUrlGroup(recipeId);
+}
+
+// ── URL recipe groups ─────────────────────────────────────────────────────────
+
+const CHEVRON_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
+
+const urlGroupExpandedByRecipeId = new Map<RecipeId, boolean>();
+
+function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
+  return {
+    url: card.dom.input.value.trim(),
+    searchStatus: card.data.searchStatus,
+    listingUrls: card.data.listingUrls,
+    lastProgress: card.data.lastProgress,
+    progressSeq: card.data.progressSeq,
+    errorMessage: card.data.errorMessage,
+    wasCancelled: card.data.wasCancelled,
+  };
+}
+
+function findUrlGroupElement(recipeId: RecipeId): HTMLElement | null {
+  return getElement("urlCardsContainer").querySelector<HTMLElement>(
+    `.url-group[data-recipe-id="${recipeId}"]`,
+  );
+}
+
+function buildUrlGroupElement(recipeId: RecipeId): HTMLElement {
+  const groupEl = document.createElement("div");
+  groupEl.className = "url-group";
+  groupEl.dataset.recipeId = String(recipeId);
+  groupEl.innerHTML = `
+    <div class="url-group-header">
+      ${recipeFaviconHtml(recipeId)}
+      <span class="url-group-status"></span>
+      <button class="cache-clear-btn url-group-cancel hidden" type="button">cancel</button>
+      <button class="btn icon-btn url-group-toggle" type="button" title="Show URLs">${CHEVRON_ICON}</button>
+    </div>
+    <div class="url-group-rows hidden"></div>
+  `;
+  return groupEl;
+}
+
+// Reconciles the group containers with the cards' current recipes: groups are
+// kept in recipe-id order at the top, unmatched rows stay loose below them.
+function syncUrlGroups(): void {
+  const container = getElement("urlCardsContainer");
+  const summaries = computeUrlGroups(urlCards.map(urlGroupMemberSnapshot));
+  for (const summary of summaries) {
+    const groupEl = findUrlGroupElement(summary.recipeId) ?? buildUrlGroupElement(summary.recipeId);
+    container.appendChild(groupEl);
+    const rowsEl = requireChild<HTMLElement>(groupEl, ".url-group-rows");
+    if (urlGroupExpandedByRecipeId.get(summary.recipeId)) rowsEl.classList.remove("hidden");
+    groupEl.classList.toggle("expanded", urlGroupExpandedByRecipeId.get(summary.recipeId) ?? false);
+  }
+  for (const card of urlCards) {
+    const recipeId = recipeIdForUrl(card.dom.input.value.trim());
+    const rowEl = card.dom.containerElement;
+    const targetParent =
+      recipeId === null
+        ? container
+        : (findUrlGroupElement(recipeId)?.querySelector<HTMLElement>(".url-group-rows") ??
+          container);
+    if (rowEl.parentElement !== targetParent) targetParent.appendChild(rowEl);
+  }
+  for (const groupEl of [...container.querySelectorAll<HTMLElement>(".url-group")]) {
+    if (requireChild<HTMLElement>(groupEl, ".url-group-rows").children.length === 0)
+      groupEl.remove();
+  }
+  updateUrlGroupHeaders();
+}
+
+function updateUrlGroupHeaders(): void {
+  for (const summary of computeUrlGroups(urlCards.map(urlGroupMemberSnapshot))) {
+    const groupEl = findUrlGroupElement(summary.recipeId);
+    if (!groupEl) continue;
+    const view = groupHeaderView(summary);
+    const statusEl = requireChild<HTMLElement>(groupEl, ".url-group-status");
+    statusEl.innerHTML =
+      (view.showSpinner ? '<span class="spinner"></span>' : "") +
+      `<span>${esc(view.primaryText)}</span>` +
+      (view.detailText ? `<span class="url-group-detail">· ${esc(view.detailText)}</span>` : "") +
+      (view.problemText ? `<span class="url-group-problem">· ${esc(view.problemText)}</span>` : "");
+    requireChild<HTMLElement>(groupEl, ".url-group-cancel").classList.toggle(
+      "hidden",
+      !view.showCancel,
+    );
+  }
+}
+
+function expandUrlGroup(recipeId: RecipeId): void {
+  if (urlGroupExpandedByRecipeId.get(recipeId)) return;
+  urlGroupExpandedByRecipeId.set(recipeId, true);
+  const groupEl = findUrlGroupElement(recipeId);
+  if (!groupEl) return;
+  groupEl.classList.add("expanded");
+  expandElement(requireChild<HTMLElement>(groupEl, ".url-group-rows"));
+}
+
+function toggleUrlGroup(recipeId: RecipeId): void {
+  const groupEl = findUrlGroupElement(recipeId);
+  if (!groupEl) return;
+  const rowsEl = requireChild<HTMLElement>(groupEl, ".url-group-rows");
+  const isExpanded = urlGroupExpandedByRecipeId.get(recipeId) ?? false;
+  urlGroupExpandedByRecipeId.set(recipeId, !isExpanded);
+  groupEl.classList.toggle("expanded", !isExpanded);
+  if (isExpanded) collapseElementAsync(rowsEl);
+  else expandElement(rowsEl);
 }
 
 function canSearchCard(card: UrlCard): boolean {
@@ -277,6 +394,7 @@ function createUrlCard(): UrlCard {
   removeButton.addEventListener("click", () => removeUrlCard(urlCard));
 
   updateRemoveButtons();
+  syncUrlGroups();
   return urlCard;
 }
 
@@ -323,16 +441,12 @@ function getOrderedListings(): ListingItem[] {
 
 function renderDerived(): void {
   const listings = getOrderedListings();
-  const visible = listings.filter(
-    (listingItem) => listingItem.aiFilterReason === null,
-  );
+  const visible = listings.filter((listingItem) => listingItem.aiFilterReason === null);
   const filtered = listings.length - visible.length;
   getElement("resultCount").textContent = String(visible.length);
   getElement("filteredCountNum").textContent = String(filtered);
   getElement("filteredCount").classList.toggle("hidden", filtered === 0);
-  const isAnyCardSearching = urlCards.some((card) =>
-    isCardSearchActive(card.data.searchStatus),
-  );
+  const isAnyCardSearching = urlCards.some((card) => isCardSearchActive(card.data.searchStatus));
   const hasUnscraped = visible.some((listingItem) => !listingItem.hasBeenDeepSearched);
   getElement<HTMLButtonElement>("deepBtn").disabled =
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped;
@@ -346,6 +460,7 @@ function renderDerived(): void {
   updateBtn.style.display = isFilterCurrent ? "none" : "";
   updateBtn.disabled = shouldDisableUpdateBtn({ isFilterCurrent, isAiFilterRunning });
   if (!isFilterCurrent) updateBtn.textContent = "Update filter";
+  updateUrlGroupHeaders();
 }
 
 function updateRemoveButtons(): void {
@@ -354,9 +469,7 @@ function updateRemoveButtons(): void {
 }
 
 function resetCardForResearch(card: UrlCard): void {
-  const otherUrls = new Set(
-    urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)),
-  );
+  const otherUrls = new Set(urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)));
   for (const url of card.data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
@@ -381,9 +494,7 @@ function resetCardForResearch(card: UrlCard): void {
 }
 
 function removeUrlCard(card: UrlCard): void {
-  const otherUrls = new Set(
-    urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)),
-  );
+  const otherUrls = new Set(urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)));
   for (const url of card.data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
@@ -399,6 +510,7 @@ function removeUrlCard(card: UrlCard): void {
   }
   if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
   updateRemoveButtons();
+  syncUrlGroups();
   applyClientFilters();
 }
 
@@ -439,6 +551,7 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           card.data.lastProgress = progress;
           card.data.progressSeq = ++progressSequenceCounter;
           if (canCancelSearch(card.data.searchStatus)) renderCardStatus(card);
+          updateUrlGroupHeaders();
         }
       } else if (ev.type === "listing") {
         const listing = ev.data as Listing;
@@ -454,6 +567,10 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           listingsByUrl.set(listing.url, item);
           renderCard(item);
           renderDerived();
+        } else {
+          // Listing already known from another card — the group count may
+          // still change, since it dedupes per group rather than globally.
+          updateUrlGroupHeaders();
         }
       } else if (ev.type === "error") {
         card.data.errorMessage = typeof ev.message === "string" ? ev.message : "Search failed";
@@ -479,10 +596,10 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   if (cachedAge) {
     card.dom.cacheStatusElement.innerHTML = `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
     card.dom.cacheStatusElement.classList.remove("hidden");
-    requireChild<HTMLButtonElement>(card.dom.cacheStatusElement, ".cache-clear-btn").addEventListener(
-      "click",
-      clearQuickSearchCacheAsync,
-    );
+    requireChild<HTMLButtonElement>(
+      card.dom.cacheStatusElement,
+      ".cache-clear-btn",
+    ).addEventListener("click", clearQuickSearchCacheAsync);
   }
 
   renderCardStatus(card);
@@ -897,8 +1014,7 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchBusy(false);
   applyClientFilters();
   const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-  if (aiPrompt)
-    scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+  if (aiPrompt) scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
 }
 
 function markDirty(): void {
@@ -1105,6 +1221,23 @@ function initApp(): void {
   // Mark dirty on any URL input change or new URL card
   getElement("urlCardsContainer").addEventListener("input", markDirty);
   getElement("addUrlBtn").addEventListener("click", markDirty);
+
+  // Recipe group headers: chevron toggles the rows, cancel stops all of the
+  // group's running searches.
+  getElement("urlCardsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
+    const groupEl = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".url-group");
+    if (!groupEl) return;
+    const recipeId = Number(groupEl.dataset.recipeId) as RecipeId;
+    if ((mouseEvent.target as HTMLElement).closest(".url-group-toggle")) {
+      toggleUrlGroup(recipeId);
+      return;
+    }
+    if ((mouseEvent.target as HTMLElement).closest(".url-group-cancel")) {
+      for (const card of urlCards) {
+        if (recipeIdForUrl(card.dom.input.value.trim()) === recipeId) cancelSearch(card);
+      }
+    }
+  });
 
   // Event delegation for description toggles (avoids global onclick)
   getElement("listingsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {

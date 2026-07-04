@@ -309,6 +309,49 @@ label {
 .source-url-row {
   margin-bottom: 0.5rem;
 }
+
+/* ── URL recipe groups ── */
+.url-group {
+  margin-bottom: 0.5rem;
+}
+.url-group + .url-group {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+.url-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.url-group-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.url-group-detail {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.url-group-problem {
+  color: var(--red);
+  font-size: 0.78rem;
+}
+.url-group-toggle {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.url-group.expanded .url-group-toggle {
+  transform: rotate(180deg);
+}
+.url-group-rows {
+  padding-top: 0.5rem;
+}
 /* Criteria tooltip, shown while the info icon is hovered or focused */
 .url-info-wrap {
   position: relative;
