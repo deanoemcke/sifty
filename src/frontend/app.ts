@@ -1,9 +1,15 @@
 import "./styles.css";
 
-import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
+import type { Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl } from "../lib/recipes/matcher";
 import { scheduleAiFilterRun } from "./aiFilter";
 import { collapseExtras, expandExtras } from "./cardExtras";
+import {
+  allowShippingFromFulfillment,
+  fulfillmentFromAllowShipping,
+  populateRegionSelect,
+  type RegionOption,
+} from "./discoveryForm";
 import { shouldDisableUpdateBtn } from "./renderUtils";
 import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
@@ -58,6 +64,10 @@ const urlCards: UrlCard[] = [];
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
+// Region search intent defaults to the user's home region; matched against the
+// display names served by /api/regions so region ids stay a server-side detail.
+const DEFAULT_REGION_DISPLAY = "Wellington";
+
 function promptHash(inputString: string): number {
   let h = 5381;
   for (let charIndex = 0; charIndex < inputString.length; charIndex++)
@@ -69,13 +79,11 @@ function readDiscoverInputs(): DiscoverInputs {
   return {
     prompt: getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim(),
     maxPrice: parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value),
-    fulfillment: getElement<HTMLSelectElement>("discoveryFulfillment").value as Fulfillment,
+    fulfillment: fulfillmentFromAllowShipping(
+      getElement<HTMLInputElement>("discoveryAllowShipping").checked,
+    ),
     region: getElement<HTMLSelectElement>("discoveryRegion").value || undefined,
   };
-}
-
-function setFulfillmentDisplay(fulfillment: string): void {
-  getElement("discoveryRegion").style.display = fulfillment === "pickup" ? "" : "none";
 }
 
 function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
@@ -83,9 +91,11 @@ function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
   getElement<HTMLTextAreaElement>("discoveryPrompt").value = inputs.prompt ?? "";
   getElement<HTMLInputElement>("discoveryMaxPrice").value =
     inputs.maxPrice != null ? String(inputs.maxPrice) : "";
-  getElement<HTMLSelectElement>("discoveryFulfillment").value = inputs.fulfillment ?? "any";
-  setFulfillmentDisplay(inputs.fulfillment ?? "any");
-  getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region ?? "";
+  getElement<HTMLInputElement>("discoveryAllowShipping").checked = allowShippingFromFulfillment(
+    inputs.fulfillment,
+  );
+  // No region in the saved inputs keeps the current selection (Wellington default).
+  if (inputs.region) getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region;
   updateDiscoveryBtn();
 }
 
@@ -495,7 +505,7 @@ function updateDiscoveryBtn(): void {
   const hasPrompt = !!getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
   const hasValidPrice =
     parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value) !== undefined;
-  const isPickupOnly = getElement<HTMLSelectElement>("discoveryFulfillment").value === "pickup";
+  const isPickupOnly = !getElement<HTMLInputElement>("discoveryAllowShipping").checked;
   const hasRegion = !isPickupOnly || !!getElement<HTMLSelectElement>("discoveryRegion").value;
   getElement<HTMLButtonElement>("discoveryBtn").disabled =
     !hasPrompt || !hasValidPrice || !hasRegion;
@@ -998,26 +1008,25 @@ function initApp(): void {
     }
   });
 
-  // Populate region dropdown and wire fulfillment toggle
+  // Populate region dropdown and wire the allow-shipping checkbox
   fetch("/api/regions")
     .then((regionResponse) => regionResponse.json())
-    .then((regions: Array<{ value: string; display: string }>) => {
-      const select = getElement<HTMLSelectElement>("discoveryRegion");
-      for (const region of regions) {
-        const opt = document.createElement("option");
-        opt.value = region.value;
-        opt.textContent = region.display;
-        select.appendChild(opt);
-      }
+    .then((regions: RegionOption[]) => {
+      populateRegionSelect(
+        getElement<HTMLSelectElement>("discoveryRegion"),
+        regions,
+        DEFAULT_REGION_DISPLAY,
+      );
+      updateDiscoveryBtn();
     })
     .catch(() => {
       /* regions unavailable — dropdown stays empty */
     });
 
-  getElement<HTMLSelectElement>("discoveryFulfillment").addEventListener("change", () => {
-    setFulfillmentDisplay(getElement<HTMLSelectElement>("discoveryFulfillment").value);
-    updateDiscoveryBtn();
-  });
+  getElement<HTMLInputElement>("discoveryAllowShipping").addEventListener(
+    "change",
+    updateDiscoveryBtn,
+  );
   getElement<HTMLSelectElement>("discoveryRegion").addEventListener("change", updateDiscoveryBtn);
 
   getElement<HTMLTextAreaElement>("discoveryPrompt").addEventListener("input", updateDiscoveryBtn);
@@ -1026,9 +1035,10 @@ function initApp(): void {
     const prompt = getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
     if (!prompt) return;
     const maxPrice = parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value);
-    const fulfillment = getElement<HTMLSelectElement>("discoveryFulfillment").value;
-    const regionValue =
-      fulfillment === "pickup" ? getElement<HTMLSelectElement>("discoveryRegion").value : undefined;
+    const fulfillment = fulfillmentFromAllowShipping(
+      getElement<HTMLInputElement>("discoveryAllowShipping").checked,
+    );
+    const regionValue = getElement<HTMLSelectElement>("discoveryRegion").value || undefined;
     const discoveryButton = getElement<HTMLButtonElement>("discoveryBtn");
     const discoveryErrorElement = getElement<HTMLDivElement>("discoveryError");
     discoveryErrorElement.style.display = "none";
