@@ -16,6 +16,11 @@ import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
 import { recipeFaviconHtml, sourceFaviconHtml } from "./recipeDisplay";
+import {
+  type CardStatusSnapshot,
+  cardStatusText,
+  parseQuickSearchProgress,
+} from "./searchStatusText";
 import { activateSidebarTab } from "./sidebarTabs";
 import {
   aiFilterPendingRun,
@@ -100,28 +105,33 @@ function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
   updateDiscoveryBtn();
 }
 
-function setCardStatus(
-  card: UrlCard,
-  statusMessage: string | null,
-  type: "info" | "success" | "error" = "info",
-): void {
+// Stamps progress recency across cards so group headers can pick the freshest.
+let progressSequenceCounter = 0;
+
+function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
+  return {
+    searchStatus: card.data.searchStatus,
+    lastProgress: card.data.lastProgress,
+    listingsFoundCount: card.data.listingUrls.length,
+    errorMessage: card.data.errorMessage,
+    wasCancelled: card.data.wasCancelled,
+  };
+}
+
+// Single renderer for the per-row status line — wording derives from the
+// card's semantic state via searchStatusText, never from ad-hoc strings.
+function renderCardStatus(card: UrlCard): void {
+  const status = cardStatusText(cardStatusSnapshot(card));
   const statusBar = card.dom.statusElement;
-  if (!statusMessage) {
+  if (!status) {
     statusBar.classList.add("hidden");
     return;
   }
-  statusBar.className = `url-card-status ${type}`;
+  statusBar.className = `url-card-status ${status.kind}`;
   statusBar.innerHTML =
-    type === "info"
-      ? `<span class="spinner"></span><span>${esc(statusMessage)}</span>`
-      : `<span>${esc(statusMessage)}</span>`;
-  statusBar.classList.remove("hidden");
-}
-
-function setSearchingStatus(card: UrlCard, statusMessage: string): void {
-  const statusBar = card.dom.statusElement;
-  statusBar.className = "url-card-status info";
-  statusBar.innerHTML = `<span class="spinner"></span><span>${esc(statusMessage)}</span>`;
+    status.kind === "info"
+      ? `<span class="spinner"></span><span>${esc(status.text)}</span>`
+      : `<span>${esc(status.text)}</span>`;
   if (canCancelSearch(card.data.searchStatus)) {
     const cancelButton = document.createElement("button");
     cancelButton.className = "cache-clear-btn";
@@ -136,7 +146,7 @@ function setSearchingStatus(card: UrlCard, statusMessage: string): void {
 function cancelSearch(card: UrlCard): void {
   if (!canCancelSearch(card.data.searchStatus)) return;
   card.data.searchStatus = "cancelling";
-  setSearchingStatus(card, "Cancelling…");
+  renderCardStatus(card);
   fetch("/api/cancel-search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -242,6 +252,10 @@ function createUrlCard(): UrlCard {
     searchedUrl: "",
     searchId: null,
     listingUrls: [],
+    lastProgress: null,
+    progressSeq: 0,
+    errorMessage: null,
+    wasCancelled: false,
   };
   const dom: UrlCardDom = {
     containerElement: cardEl,
@@ -280,6 +294,9 @@ function resetAllResults(): void {
     card.data.listingUrls = [];
     card.data.searchStatus = "idle";
     card.data.searchedUrl = "";
+    card.data.lastProgress = null;
+    card.data.errorMessage = null;
+    card.data.wasCancelled = false;
     requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
     card.dom.criteriaElement.classList.add("hidden");
     card.dom.cacheStatusElement.classList.add("hidden");
@@ -350,6 +367,9 @@ function resetCardForResearch(card: UrlCard): void {
   card.data.listingUrls = [];
   card.data.searchStatus = "idle";
   card.data.searchedUrl = "";
+  card.data.lastProgress = null;
+  card.data.errorMessage = null;
+  card.data.wasCancelled = false;
   requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
   card.dom.criteriaElement.classList.add("hidden");
   card.dom.cacheStatusElement.classList.add("hidden");
@@ -391,12 +411,13 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   getElement("resultsSection").classList.remove("hidden");
   card.data.searchStatus = "searching";
   card.data.searchId = crypto.randomUUID();
+  card.data.lastProgress = null;
+  card.data.errorMessage = null;
+  card.data.wasCancelled = false;
   renderDerived();
-  setSearchingStatus(card, "Fetching listings…");
+  renderCardStatus(card);
 
-  let totalFound = 0;
   let cachedAge = "";
-  let searchError = false;
   try {
     await streamPostAsync("/api/quick-search", { url, searchId: card.data.searchId }, (ev) => {
       if (ev.type === "criteria") {
@@ -411,10 +432,16 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
       } else if (ev.type === "cached") {
         cachedAge = ev.age as string;
       } else if (ev.type === "progress") {
-        if (canCancelSearch(card.data.searchStatus)) setSearchingStatus(card, ev.message as string);
+        const progress = parseQuickSearchProgress(ev);
+        if (progress === null) {
+          console.warn("Ignoring malformed progress event", ev);
+        } else {
+          card.data.lastProgress = progress;
+          card.data.progressSeq = ++progressSequenceCounter;
+          if (canCancelSearch(card.data.searchStatus)) renderCardStatus(card);
+        }
       } else if (ev.type === "listing") {
         const listing = ev.data as Listing;
-        totalFound++;
         card.data.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = {
@@ -429,13 +456,11 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           renderDerived();
         }
       } else if (ev.type === "error") {
-        searchError = true;
-        setCardStatus(card, ev.message as string, "error");
+        card.data.errorMessage = typeof ev.message === "string" ? ev.message : "Search failed";
       }
     });
   } catch (error) {
-    searchError = true;
-    setCardStatus(card, (error as Error).message, "error");
+    card.data.errorMessage = (error as Error).message;
   }
 
   const wasCancelled = (card.data.searchStatus as UrlCardSearchStatus) === "cancelling";
@@ -443,11 +468,8 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   card.data.searchId = null;
 
   if (wasCancelled) {
-    setCardStatus(
-      card,
-      `Cancelled — ${totalFound} listing${totalFound !== 1 ? "s" : ""} loaded`,
-      "error",
-    );
+    card.data.wasCancelled = true;
+    renderCardStatus(card);
     if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
@@ -463,9 +485,7 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
     );
   }
 
-  if (!searchError) {
-    setCardStatus(card, `${totalFound} listing${totalFound !== 1 ? "s" : ""} found`, "success");
-  }
+  renderCardStatus(card);
   if (listingsByUrl.size > 0) {
     applyClientFilters();
     const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();

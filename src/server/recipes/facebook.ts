@@ -213,7 +213,7 @@ async function quickSearchAsync(
       processRawListing(raw, seen, onEvent, counter);
     });
 
-    onEvent({ type: "progress", message: "Loading Facebook Marketplace…" });
+    onEvent({ type: "progress", phase: "loading" });
     console.log(`[facebook] fetching: ${searchUrl}`);
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     console.log(`[facebook] loaded — url: ${page.url()}`);
@@ -292,7 +292,12 @@ async function quickSearchAsync(
 
     console.log(`[facebook] observer injected — initial: ${counter.total} listings`);
     if (counter.total > 0)
-      onEvent({ type: "progress", message: `Found ${counter.total} listings…` });
+      onEvent({
+        type: "progress",
+        phase: "collecting",
+        foundSoFar: counter.total,
+        isLoadingMore: false,
+      });
 
     // The login wall modal is present in the DOM from page load — check immediately after
     // the observer fires so we can skip the scroll loop and report the partial results.
@@ -333,7 +338,12 @@ async function quickSearchAsync(
       await page.waitForTimeout(1500);
 
       if (counter.total > lastTotal) {
-        onEvent({ type: "progress", message: `Found ${counter.total} listings, loading more…` });
+        onEvent({
+          type: "progress",
+          phase: "collecting",
+          foundSoFar: counter.total,
+          isLoadingMore: true,
+        });
         noNewCount = 0;
         lastTotal = counter.total;
       } else {

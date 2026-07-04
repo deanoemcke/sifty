@@ -24,9 +24,16 @@ export interface ListingDetail {
   questionsAndAnswers: Array<{ question: string; answer: string }>;
 }
 
+// Structured search progress — display wording is composed on the frontend.
+export type QuickSearchProgress =
+  | { phase: "loading" }
+  | { phase: "counted"; totalResults: number; totalPages: number }
+  | { phase: "paging"; page: number; totalPages?: number }
+  | { phase: "collecting"; foundSoFar: number; isLoadingMore: boolean };
+
 export type QuickSearchEvent =
   | { type: "criteria"; filters: Array<[string, string]> }
-  | { type: "progress"; message: string }
+  | ({ type: "progress" } & QuickSearchProgress)
   | { type: "listing"; data: Listing }
   | { type: "complete" }
   | { type: "error"; message: string };

@@ -2,7 +2,7 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
-import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
+import type { Fulfillment, Listing, ListingDetail, QuickSearchProgress } from "../lib/recipes/base";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -48,6 +48,12 @@ export interface UrlCardData {
   searchedUrl: string;
   searchId: string | null;
   listingUrls: string[];
+  // Latest structured progress event; progressSeq orders progress recency
+  // across cards so group headers can surface the freshest detail.
+  lastProgress: QuickSearchProgress | null;
+  progressSeq: number;
+  errorMessage: string | null;
+  wasCancelled: boolean;
 }
 
 export interface SavedSearch {

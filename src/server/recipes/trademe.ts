@@ -634,7 +634,7 @@ async function quickSearchAsync(
     const context = await browser.newContext({ userAgent: USER_AGENT, locale: "en-NZ" });
     const page = await context.newPage();
 
-    onEvent({ type: "progress", message: "Fetching page 1…" });
+    onEvent({ type: "progress", phase: "paging", page: 1 });
     const p1Promise = waitForSearchApiResponseAsync(page);
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
@@ -663,10 +663,7 @@ async function quickSearchAsync(
 
     const totalPages = Math.min(Math.ceil(totalCount / pageSize), MAX_PAGES_PER_SEARCH);
 
-    onEvent({
-      type: "progress",
-      message: `${totalCount} results across ${totalPages} page${totalPages !== 1 ? "s" : ""}`,
-    });
+    onEvent({ type: "progress", phase: "counted", totalResults: totalCount, totalPages });
 
     const seenUrls = new Set<string>();
     const emit = (listings: Listing[]) => {
@@ -694,7 +691,7 @@ async function quickSearchAsync(
             return;
           }
           try {
-            onEvent({ type: "progress", message: `Fetching page ${pageNumber}/${totalPages}…` });
+            onEvent({ type: "progress", phase: "paging", page: pageNumber, totalPages });
             const promise = waitForSearchApiResponseAsync(currentPage);
             await currentPage.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
