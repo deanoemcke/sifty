@@ -2,6 +2,8 @@
 // The favourites panel keeps its legacy #savedSearchesPanel id until the full
 // saved-searches → favourites internal rename (tracked as deferred work).
 
+import { animateHeightTransition } from "./heightAnimation";
+
 export type SidebarTabName = "search" | "favourites";
 
 const TAB_BUTTON_IDS_BY_TAB_NAME: Record<SidebarTabName, string> = {
@@ -20,32 +22,6 @@ function requireElement(root: ParentNode, id: string): HTMLElement {
   const element = root.querySelector<HTMLElement>(`#${id}`);
   if (!element) throw new Error(`Element #${id} not found`);
   return element;
-}
-
-const TAB_SLIDE_DURATION_MS = 220;
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-
-// Slides the freshly shown panel from the previous panel's height to its own
-// natural height. Uses the Web Animations API so no inline styles linger; the
-// discrete overflow keyframe clips content while the panel is mid-slide.
-function animatePanelHeight(panel: HTMLElement, fromHeight: number): void {
-  if (typeof panel.animate !== "function" || prefersReducedMotion()) return;
-  const toHeight = panel.offsetHeight;
-  if (fromHeight === toHeight) return;
-  panel.animate(
-    [
-      { height: `${fromHeight}px`, overflow: "hidden" },
-      { height: `${toHeight}px`, overflow: "hidden" },
-    ],
-    { duration: TAB_SLIDE_DURATION_MS, easing: "ease" },
-  );
 }
 
 export function activateSidebarTab(root: ParentNode, tabName: SidebarTabName): void {
@@ -67,5 +43,6 @@ export function activateSidebarTab(root: ParentNode, tabName: SidebarTabName): v
     );
   }
 
-  if (outgoingHeight !== undefined) animatePanelHeight(targetPanel, outgoingHeight);
+  // Slide the freshly shown panel from the previous panel's height to its own.
+  if (outgoingHeight !== undefined) animateHeightTransition(targetPanel, outgoingHeight);
 }
