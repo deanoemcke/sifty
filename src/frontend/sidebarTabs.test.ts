@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { activateSidebarTab } from "./sidebarTabs";
 
 function buildSidebar(): {
@@ -73,5 +73,67 @@ describe("activateSidebarTab", () => {
   it("throws when a required element is missing", () => {
     favouritesPanel.remove();
     expect(() => activateSidebarTab(sidebar, "favourites")).toThrowError(/savedSearchesPanel/);
+  });
+});
+
+describe("activateSidebarTab height animation", () => {
+  let sidebar: HTMLElement;
+  let searchTabPanel: HTMLElement;
+  let favouritesPanel: HTMLElement;
+
+  function mockPanelHeights(searchHeight: number, favouritesHeight: number): void {
+    Object.defineProperty(searchTabPanel, "offsetHeight", { value: searchHeight });
+    Object.defineProperty(favouritesPanel, "offsetHeight", { value: favouritesHeight });
+  }
+
+  beforeEach(() => {
+    ({ sidebar, searchTabPanel, favouritesPanel } = buildSidebar());
+  });
+
+  it("slides the incoming panel from the outgoing panel's height to its own", () => {
+    mockPanelHeights(300, 120);
+    const animateSpy = vi.fn();
+    favouritesPanel.animate = animateSpy;
+    activateSidebarTab(sidebar, "favourites");
+    expect(animateSpy).toHaveBeenCalledOnce();
+    const [keyframes] = animateSpy.mock.calls[0];
+    expect(keyframes[0].height).toBe("300px");
+    expect(keyframes[1].height).toBe("120px");
+  });
+
+  it("does not animate when re-activating the already-active tab", () => {
+    mockPanelHeights(300, 120);
+    const animateSpy = vi.fn();
+    searchTabPanel.animate = animateSpy;
+    activateSidebarTab(sidebar, "search");
+    expect(animateSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not animate when both panels have the same height", () => {
+    mockPanelHeights(200, 200);
+    const animateSpy = vi.fn();
+    favouritesPanel.animate = animateSpy;
+    activateSidebarTab(sidebar, "favourites");
+    expect(animateSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips the animation when the user prefers reduced motion", () => {
+    mockPanelHeights(300, 120);
+    const animateSpy = vi.fn();
+    favouritesPanel.animate = animateSpy;
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    try {
+      activateSidebarTab(sidebar, "favourites");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(animateSpy).not.toHaveBeenCalled();
+  });
+
+  it("still switches tabs when the browser lacks the animate API", () => {
+    mockPanelHeights(300, 120);
+    // jsdom elements have no animate() by default — this must not throw.
+    activateSidebarTab(sidebar, "favourites");
+    expect(favouritesPanel.classList.contains("hidden")).toBe(false);
   });
 });
