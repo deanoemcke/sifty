@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { isValidRecipeUrl } from "./matcher";
+import { isValidRecipeUrl, recipeIdForUrl } from "./matcher";
+import { RecipeId } from "./metadata";
 
 describe("isValidRecipeUrl", () => {
   describe("trademe", () => {
@@ -40,5 +41,37 @@ describe("isValidRecipeUrl", () => {
     it("rejects a plain string that is not a URL", () => {
       expect(isValidRecipeUrl("not-a-url")).toBe(false);
     });
+  });
+});
+
+describe("recipeIdForUrl", () => {
+  it("resolves a trademe URL to the Trademe recipe id", () => {
+    expect(recipeIdForUrl("https://www.trademe.co.nz/a/marketplace/listing/123")).toBe(
+      RecipeId.Trademe,
+    );
+  });
+
+  it("resolves a facebook marketplace URL to the Facebook recipe id", () => {
+    expect(recipeIdForUrl("https://www.facebook.com/marketplace/item/123")).toBe(
+      RecipeId.Facebook,
+    );
+  });
+
+  it("returns null for an unrecognised URL", () => {
+    expect(recipeIdForUrl("https://www.google.com/search?q=test")).toBe(null);
+  });
+
+  it("returns null for malformed input", () => {
+    expect(recipeIdForUrl("not-a-url")).toBe(null);
+  });
+});
+
+describe("RecipeId", () => {
+  it("assigns Trademe recipe id 1", () => {
+    expect(RecipeId.Trademe).toBe(1);
+  });
+
+  it("assigns Facebook recipe id 2", () => {
+    expect(RecipeId.Facebook).toBe(2);
   });
 });

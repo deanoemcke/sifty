@@ -1,9 +1,22 @@
 // Browser-safe — no Node/Playwright imports.
 // Single source of truth for which URLs each recipe handles.
-// Update this list when adding a new recipe.
+// Update this list (and RecipeId) when adding a new recipe.
+
+// Stable numeric identifier per recipe; display metadata (e.g. favicons) is
+// keyed by this enum rather than the recipe's name string.
+export enum RecipeId {
+  Trademe = 1,
+  Facebook = 2,
+}
+
 export const RECIPE_PATTERNS = [
-  { name: "trademe", hostname: "trademe.co.nz", pathPrefix: "" },
-  { name: "facebook", hostname: "facebook.com", pathPrefix: "/marketplace/" },
+  { name: "trademe", recipeId: RecipeId.Trademe, hostname: "trademe.co.nz", pathPrefix: "" },
+  {
+    name: "facebook",
+    recipeId: RecipeId.Facebook,
+    hostname: "facebook.com",
+    pathPrefix: "/marketplace/",
+  },
 ] as const;
 
 export type RecipeSource = (typeof RECIPE_PATTERNS)[number]["name"];

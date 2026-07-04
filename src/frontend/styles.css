@@ -177,9 +177,22 @@ header h1 {
   align-items: center;
   gap: 0.3rem;
 }
-.url-row input {
+.url-input-wrap {
+  position: relative;
   flex: 1;
   min-width: 0;
+  display: block;
+}
+.url-favicon {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 0;
+  pointer-events: none;
+}
+.source-url-row.has-favicon .url-input {
+  padding-left: 2rem;
 }
 
 /* ── Inputs ── */

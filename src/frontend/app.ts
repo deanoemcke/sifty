@@ -1,7 +1,7 @@
 import "./styles.css";
 
 import type { Listing, ListingDetail } from "../lib/recipes/base";
-import { isValidRecipeUrl } from "../lib/recipes/matcher";
+import { isValidRecipeUrl, recipeIdForUrl } from "../lib/recipes/matcher";
 import { scheduleAiFilterRun } from "./aiFilter";
 import { collapseExtras, expandExtras } from "./cardExtras";
 import {
@@ -15,7 +15,7 @@ import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
-import { sourceFaviconHtml } from "./recipeDisplay";
+import { recipeFaviconHtml, sourceFaviconHtml } from "./recipeDisplay";
 import { activateSidebarTab } from "./sidebarTabs";
 import {
   aiFilterPendingRun,
@@ -51,6 +51,8 @@ import {
 interface UrlCardDom {
   containerElement: HTMLElement;
   input: HTMLInputElement;
+  // Recipe favicon slot inside the input's left edge; empty while unmatched.
+  faviconElement: HTMLElement;
   removeButton: HTMLButtonElement;
   // Wraps the info icon and its criteria tooltip; hidden until criteria arrive.
   criteriaElement: HTMLElement;
@@ -185,6 +187,12 @@ function setStatus(
   statusBar.classList.remove("hidden");
 }
 
+function updateUrlRowFavicon(card: UrlCard): void {
+  const recipeId = recipeIdForUrl(card.dom.input.value.trim());
+  card.dom.faviconElement.innerHTML = recipeId === null ? "" : recipeFaviconHtml(recipeId);
+  card.dom.containerElement.classList.toggle("has-favicon", recipeId !== null);
+}
+
 function canSearchCard(card: UrlCard): boolean {
   const current = card.dom.input.value.trim();
   return (
@@ -208,7 +216,10 @@ function createUrlCard(): UrlCard {
   cardEl.className = "source-url-row";
   cardEl.innerHTML = `
     <div class="url-row">
-      <input type="url" class="url-input" placeholder="Paste search URL…" />
+      <span class="url-input-wrap">
+        <span class="url-favicon"></span>
+        <input type="url" class="url-input" placeholder="Paste search URL…" />
+      </span>
       <span class="url-info-wrap hidden">
         <button class="btn btn-ghost icon-btn url-info-btn" type="button" title="Search criteria">${INFO_ICON}</button>
         <div class="criteria-tooltip"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
@@ -220,6 +231,7 @@ function createUrlCard(): UrlCard {
   getElement("urlCardsContainer").appendChild(cardEl);
 
   const input = requireChild<HTMLInputElement>(cardEl, ".url-input");
+  const faviconElement = requireChild<HTMLElement>(cardEl, ".url-favicon");
   const removeButton = requireChild<HTMLButtonElement>(cardEl, ".url-remove-btn");
   const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-info-wrap");
   const cacheStatusElement = requireChild<HTMLElement>(cardEl, ".cache-status");
@@ -234,6 +246,7 @@ function createUrlCard(): UrlCard {
   const dom: UrlCardDom = {
     containerElement: cardEl,
     input,
+    faviconElement,
     removeButton,
     criteriaElement,
     cacheStatusElement,
@@ -243,6 +256,7 @@ function createUrlCard(): UrlCard {
   urlCards.push(urlCard);
   urlCardData.push(data);
 
+  input.addEventListener("input", () => updateUrlRowFavicon(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
     if (keyboardEvent.key === "Enter" && canSearchCard(urlCard)) searchUrlCardAsync(urlCard);
   });
@@ -947,6 +961,7 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
   for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
     createUrlCard().dom.input.value = data.urls[urlIndex];
   }
+  for (const card of urlCards) updateUrlRowFavicon(card);
   setSearchName(data.name);
   markDirty();
   getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
@@ -963,6 +978,7 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
     createUrlCard().dom.input.value = search.urls[urlIndex];
   }
+  for (const card of urlCards) updateUrlRowFavicon(card);
   applyDiscoverInputs(search.discoverInputs);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
