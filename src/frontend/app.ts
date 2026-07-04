@@ -59,10 +59,10 @@ import {
 interface UrlCardDom {
   containerElement: HTMLElement;
   input: HTMLInputElement;
-  // Recipe favicon slot inside the input's left edge; empty while unmatched.
-  faviconElement: HTMLElement;
+  // Truncated hyperlink shown in place of the input once a search has run.
+  linkElement: HTMLAnchorElement;
   removeButton: HTMLButtonElement;
-  // Wraps the info icon and its criteria tooltip; hidden until criteria arrive.
+  // Criteria block below the status line; hidden until criteria arrive.
   criteriaElement: HTMLElement;
   cacheStatusElement: HTMLElement;
   statusElement: HTMLElement;
@@ -108,9 +108,6 @@ function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
   updateDiscoveryBtn();
 }
 
-// Stamps progress recency across cards so group headers can pick the freshest.
-let progressSequenceCounter = 0;
-
 function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
   return {
     searchStatus: card.data.searchStatus,
@@ -124,6 +121,7 @@ function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
 // Single renderer for the per-row status line — wording derives from the
 // card's semantic state via searchStatusText, never from ad-hoc strings.
 function renderCardStatus(card: UrlCard): void {
+  renderUrlRowMode(card);
   const status = cardStatusText(cardStatusSnapshot(card));
   const statusBar = card.dom.statusElement;
   if (!status) {
@@ -201,16 +199,26 @@ function setStatus(
   statusBar.classList.remove("hidden");
 }
 
-function updateUrlRowFavicon(card: UrlCard): void {
+function handleUrlInputChanged(card: UrlCard): void {
   const recipeId = recipeIdForUrl(card.dom.input.value.trim());
-  card.dom.faviconElement.innerHTML = recipeId === null ? "" : recipeFaviconHtml(recipeId);
-  card.dom.containerElement.classList.toggle("has-favicon", recipeId !== null);
   const previousParent = card.dom.containerElement.parentElement;
   syncUrlGroups();
   // A row that just moved into a collapsed group would vanish mid-edit —
   // expand its destination group so the input stays visible.
   if (card.dom.containerElement.parentElement !== previousParent && recipeId !== null)
     expandUrlGroup(recipeId);
+}
+
+// Once a search has touched the row, the URL displays as a truncated link;
+// the (hidden) input stays the single source of the row's URL value.
+function renderUrlRowMode(card: UrlCard): void {
+  const url = card.dom.input.value.trim();
+  const showLink =
+    card.data.searchStatus !== "idle" || card.data.wasCancelled || card.data.searchedUrl !== "";
+  card.dom.linkElement.href = url;
+  card.dom.linkElement.textContent = url;
+  card.dom.linkElement.classList.toggle("hidden", !showLink);
+  card.dom.input.classList.toggle("hidden", showLink);
 }
 
 // ── URL recipe groups ─────────────────────────────────────────────────────────
@@ -224,10 +232,6 @@ function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
     url: card.dom.input.value.trim(),
     searchStatus: card.data.searchStatus,
     listingUrls: card.data.listingUrls,
-    lastProgress: card.data.lastProgress,
-    progressSeq: card.data.progressSeq,
-    errorMessage: card.data.errorMessage,
-    wasCancelled: card.data.wasCancelled,
   };
 }
 
@@ -288,11 +292,7 @@ function updateUrlGroupHeaders(): void {
     if (!groupEl) continue;
     const view = groupHeaderView(summary);
     const statusEl = requireChild<HTMLElement>(groupEl, ".url-group-status");
-    statusEl.innerHTML =
-      (view.showSpinner ? '<span class="spinner"></span>' : "") +
-      `<span>${esc(view.primaryText)}</span>` +
-      (view.detailText ? `<span class="url-group-detail">· ${esc(view.detailText)}</span>` : "") +
-      (view.problemText ? `<span class="url-group-problem">· ${esc(view.problemText)}</span>` : "");
+    statusEl.textContent = view.primaryText;
     requireChild<HTMLElement>(groupEl, ".url-group-cancel").classList.toggle(
       "hidden",
       !view.showCancel,
@@ -334,8 +334,7 @@ function setDeepSearchBusy(busy: boolean): void {
   renderDerived();
 }
 
-// assets/info.svg and assets/x.svg, inlined so they inherit currentColor.
-const INFO_ICON = `<svg width="15" height="15" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><path d="m50,20.91c16.04,0,29.09,13.05,29.09,29.09s-13.05,29.09-29.09,29.09-29.09-13.05-29.09-29.09,13.05-29.09,29.09-29.09m0-4.2c-18.39,0-33.3,14.91-33.3,33.3s14.91,33.3,33.3,33.3,33.3-14.91,33.3-33.3-14.91-33.3-33.3-33.3h0Z"/><rect x="46.78" y="43.6" width="6.43" height="23.57"/><circle cx="50" cy="36.89" r="4.07"/></svg>`;
+// assets/x.svg, inlined so it inherits currentColor.
 const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 function createUrlCard(): UrlCard {
@@ -343,24 +342,19 @@ function createUrlCard(): UrlCard {
   cardEl.className = "source-url-row";
   cardEl.innerHTML = `
     <div class="url-row">
-      <span class="url-input-wrap">
-        <span class="url-favicon"></span>
-        <input type="url" class="url-input" placeholder="Paste search URL…" />
-      </span>
-      <span class="url-info-wrap hidden">
-        <button class="btn btn-ghost icon-btn url-info-btn" type="button" title="Search criteria">${INFO_ICON}</button>
-        <div class="criteria-tooltip"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
-      </span>
-      <button class="btn btn-ghost icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
+      <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
+      <input type="url" class="url-input" placeholder="Paste search URL…" />
+      <button class="btn icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
     </div>
     <div class="url-card-status hidden"></div>
+    <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
   `;
   getElement("urlCardsContainer").appendChild(cardEl);
 
   const input = requireChild<HTMLInputElement>(cardEl, ".url-input");
-  const faviconElement = requireChild<HTMLElement>(cardEl, ".url-favicon");
+  const linkElement = requireChild<HTMLAnchorElement>(cardEl, ".url-link");
   const removeButton = requireChild<HTMLButtonElement>(cardEl, ".url-remove-btn");
-  const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-info-wrap");
+  const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-criteria");
   const cacheStatusElement = requireChild<HTMLElement>(cardEl, ".cache-status");
   const statusElement = requireChild<HTMLElement>(cardEl, ".url-card-status");
 
@@ -370,14 +364,13 @@ function createUrlCard(): UrlCard {
     searchId: null,
     listingUrls: [],
     lastProgress: null,
-    progressSeq: 0,
     errorMessage: null,
     wasCancelled: false,
   };
   const dom: UrlCardDom = {
     containerElement: cardEl,
     input,
-    faviconElement,
+    linkElement,
     removeButton,
     criteriaElement,
     cacheStatusElement,
@@ -387,7 +380,7 @@ function createUrlCard(): UrlCard {
   urlCards.push(urlCard);
   urlCardData.push(data);
 
-  input.addEventListener("input", () => updateUrlRowFavicon(urlCard));
+  input.addEventListener("input", () => handleUrlInputChanged(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
     if (keyboardEvent.key === "Enter" && canSearchCard(urlCard)) searchUrlCardAsync(urlCard);
   });
@@ -422,6 +415,7 @@ function resetAllResults(): void {
     card.dom.statusElement.classList.add("hidden");
     card.data.searchId = null;
     card.dom.input.readOnly = false;
+    renderUrlRowMode(card);
   }
   renderDerived();
 }
@@ -489,6 +483,7 @@ function resetCardForResearch(card: UrlCard): void {
   card.dom.cacheStatusElement.innerHTML = "";
   card.dom.statusElement.classList.add("hidden");
   card.dom.input.readOnly = false;
+  renderUrlRowMode(card);
   if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
   renderDerived();
 }
@@ -549,7 +544,6 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           console.warn("Ignoring malformed progress event", ev);
         } else {
           card.data.lastProgress = progress;
-          card.data.progressSeq = ++progressSequenceCounter;
           if (canCancelSearch(card.data.searchStatus)) renderCardStatus(card);
           updateUrlGroupHeaders();
         }
@@ -1097,7 +1091,7 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
   for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
     createUrlCard().dom.input.value = data.urls[urlIndex];
   }
-  for (const card of urlCards) updateUrlRowFavicon(card);
+  for (const card of urlCards) handleUrlInputChanged(card);
   setSearchName(data.name);
   markDirty();
   getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
@@ -1114,7 +1108,7 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
     createUrlCard().dom.input.value = search.urls[urlIndex];
   }
-  for (const card of urlCards) updateUrlRowFavicon(card);
+  for (const card of urlCards) handleUrlInputChanged(card);
   applyDiscoverInputs(search.discoverInputs);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);

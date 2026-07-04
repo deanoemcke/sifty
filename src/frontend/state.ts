@@ -48,10 +48,8 @@ export interface UrlCardData {
   searchedUrl: string;
   searchId: string | null;
   listingUrls: string[];
-  // Latest structured progress event; progressSeq orders progress recency
-  // across cards so group headers can surface the freshest detail.
+  // Latest structured progress event, rendered on the row's status line.
   lastProgress: QuickSearchProgress | null;
-  progressSeq: number;
   errorMessage: string | null;
   wasCancelled: boolean;
 }
