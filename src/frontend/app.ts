@@ -10,6 +10,7 @@ import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
 import { sourceFaviconHtml } from "./recipeDisplay";
+import { activateSidebarTab } from "./sidebarTabs";
 import {
   aiFilterPendingRun,
   canCancelSearch,
@@ -965,7 +966,7 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   applyDiscoverInputs(search.discoverInputs);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
-  getElement("savedSearchesPanel").classList.add("hidden");
+  activateSidebarTab(document, "search");
   // loadSavedSearchAsync owns the dispatch: kick off a search for every configured card.
   fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
@@ -1089,13 +1090,17 @@ function initApp(): void {
     if (descBtn) toggleDescription(descBtn);
   });
 
-  // ── Saved searches UI ─────────────────────────────────────────────────────────
+  // ── Sidebar tabs / saved searches UI ──────────────────────────────────────────
 
-  getElement("savedSearchesToggle").addEventListener("click", () => {
-    const panel = getElement("savedSearchesPanel");
-    const nowHidden = panel.classList.toggle("hidden");
-    if (!nowHidden) fetchSavedSearchesAsync();
+  getElement("searchTabBtn").addEventListener("click", () =>
+    activateSidebarTab(document, "search"),
+  );
+  getElement("favouritesTabBtn").addEventListener("click", () => {
+    activateSidebarTab(document, "favourites");
+    fetchSavedSearchesAsync();
   });
+  // Populate the tab's count badge without waiting for the first tab switch.
+  fetchSavedSearchesAsync();
 
   function openSaveModal(): void {
     const input = getElement<HTMLInputElement>("saveSearchName");
@@ -1126,7 +1131,7 @@ function initApp(): void {
     setSearchName(name);
     closeSaveModal();
     confirmButton.disabled = false;
-    getElement("savedSearchesPanel").classList.remove("hidden");
+    activateSidebarTab(document, "favourites");
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 

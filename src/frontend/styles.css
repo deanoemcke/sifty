@@ -91,6 +91,39 @@ header h1 {
   letter-spacing: -0.02em;
 }
 
+/* ── Sidebar tabs ── */
+.sidebar-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.sidebar-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.sidebar-tab.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
 /* ── Cards ── */
 .card {
   background: var(--surface);
