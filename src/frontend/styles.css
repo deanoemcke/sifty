@@ -129,7 +129,7 @@ header h1 {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: 0.875rem 1rem;
   box-shadow: var(--shadow);
   margin-bottom: 0.875rem;
 }
@@ -191,28 +191,45 @@ label {
 }
 
 /* ── Form field rows ── */
+.prompt-box {
+  position: relative;
+  margin-bottom: 0.5rem;
+}
+.prompt-box .prompt-icon {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.prompt-box textarea {
+  width: 100%;
+  resize: vertical;
+  padding-left: 2rem;
+  display: block;
+}
 .field-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: 0;
+  margin-bottom: 0.5rem;
 }
 .field-row label {
-  flex-shrink: 0;
+  flex: 0 0 50%;
   font-size: 0.8rem;
   color: var(--muted);
   margin-bottom: 0;
 }
 .field-row input,
 .field-row select {
-  flex: 1;
+  flex: 0 0 50%;
   min-width: 0;
 }
 .checkbox-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
   font-size: 0.8rem;
   color: var(--muted);
   cursor: pointer;

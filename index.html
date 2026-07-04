@@ -28,17 +28,20 @@
 
   <!-- Discovery prompt -->
   <div id="discoveryCard" class="card" style="margin-bottom:0.875rem">
-    <textarea id="discoveryPrompt" rows="3" style="width:100%;resize:vertical;margin-bottom:0.75rem" placeholder="Whaddaya want?"></textarea>
+    <div class="prompt-box">
+      <svg class="prompt-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <textarea id="discoveryPrompt" rows="3" placeholder="Whaddaya want?"></textarea>
+    </div>
     <div class="field-row">
       <label for="discoveryMaxPrice">Max price</label>
-      <input id="discoveryMaxPrice" type="number" min="0" placeholder="e.g. 2000" />
+      <input id="discoveryMaxPrice" type="number" min="0" />
     </div>
     <div class="field-row">
       <label for="discoveryRegion">Region</label>
       <select id="discoveryRegion"></select>
     </div>
     <label class="checkbox-row" for="discoveryAllowShipping">
-      <input id="discoveryAllowShipping" type="checkbox" checked />
+      <input id="discoveryAllowShipping" type="checkbox" />
       Allow shipping
     </label>
     <div style="display:flex;justify-content:center">
