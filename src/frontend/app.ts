@@ -292,7 +292,9 @@ function updateUrlGroupHeaders(): void {
     if (!groupEl) continue;
     const view = groupHeaderView(summary);
     const statusEl = requireChild<HTMLElement>(groupEl, ".url-group-status");
-    statusEl.textContent = view.primaryText;
+    statusEl.innerHTML =
+      (view.showSpinner ? '<span class="spinner"></span>' : "") +
+      `<span>${esc(view.primaryText)}</span>`;
     requireChild<HTMLElement>(groupEl, ".url-group-cancel").classList.toggle(
       "hidden",
       !view.showCancel,

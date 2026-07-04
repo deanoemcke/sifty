@@ -48,26 +48,34 @@ describe("computeUrlGroups", () => {
     ]);
     expect(group.canCancel).toBe(false);
   });
+
+  it("stays busy while members are searching or cancelling", () => {
+    expect(computeUrlGroups([member({ searchStatus: "searching" })])[0].isBusy).toBe(true);
+    expect(computeUrlGroups([member({ searchStatus: "cancelling" })])[0].isBusy).toBe(true);
+    expect(computeUrlGroups([member({ searchStatus: "done" })])[0].isBusy).toBe(false);
+  });
 });
 
 describe("groupHeaderView", () => {
-  it("shows the listing count and the cancel link while cancellable", () => {
+  it("shows the count, spinner and cancel link while searches run", () => {
     expect(
       groupHeaderView({
         recipeId: RecipeId.Trademe,
         uniqueListingsCount: 12,
         canCancel: true,
+        isBusy: true,
       }),
-    ).toEqual({ primaryText: "12 listings", showCancel: true });
+    ).toEqual({ primaryText: "12 listings", showCancel: true, showSpinner: true });
   });
 
-  it("hides the cancel link when nothing is running", () => {
+  it("hides the spinner and cancel link when nothing is running", () => {
     expect(
       groupHeaderView({
         recipeId: RecipeId.Trademe,
         uniqueListingsCount: 1,
         canCancel: false,
+        isBusy: false,
       }),
-    ).toEqual({ primaryText: "1 listing", showCancel: false });
+    ).toEqual({ primaryText: "1 listing", showCancel: false, showSpinner: false });
   });
 });

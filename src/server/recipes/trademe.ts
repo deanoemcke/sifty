@@ -60,8 +60,10 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
     const pathMatch = url.pathname.match(/\/a\/(.+?)\/search/);
     if (pathMatch) {
+      // Only the last two breadcrumb sections — deep paths are noise on screen.
       const cat = pathMatch[1]
         .split("/")
+        .slice(-2)
         .map((pathSegment) =>
           pathSegment
             .split("-")
@@ -84,8 +86,13 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
       if (key in DISPLAY_NAME_BY_PARAM_NAME) {
         let filterValue = vals.join(", ");
         if (key === "condition") filterValue = filterValue[0].toUpperCase() + filterValue.slice(1);
-        if (key === "search_string") filterValue = `"${filterValue}"`;
         filterRows.push([DISPLAY_NAME_BY_PARAM_NAME[key], filterValue]);
+        continue;
+      }
+
+      if (key === "price_min" || key === "price_max") {
+        const label = key === "price_min" ? "Price Min" : "Price Max";
+        filterRows.push([label, `$${vals.join(", $")}`]);
         continue;
       }
 

@@ -5,7 +5,7 @@
 import { recipeIdForUrl } from "../lib/recipes/matcher";
 import type { RecipeId } from "../lib/recipes/metadata";
 import { listingsCountText } from "./searchStatusText";
-import { canCancelSearch, type UrlCardSearchStatus } from "./state";
+import { canCancelSearch, isCardSearchActive, type UrlCardSearchStatus } from "./state";
 
 export interface UrlGroupMemberSnapshot {
   url: string;
@@ -17,6 +17,8 @@ export interface UrlGroupSummary {
   recipeId: RecipeId;
   uniqueListingsCount: number;
   canCancel: boolean;
+  // True while any member search is still running or cancelling.
+  isBusy: boolean;
 }
 
 export function computeUrlGroups(members: readonly UrlGroupMemberSnapshot[]): UrlGroupSummary[] {
@@ -34,17 +36,20 @@ export function computeUrlGroups(members: readonly UrlGroupMemberSnapshot[]): Ur
       recipeId,
       uniqueListingsCount: new Set(groupMembers.flatMap((m) => m.listingUrls)).size,
       canCancel: groupMembers.some((m) => canCancelSearch(m.searchStatus)),
+      isBusy: groupMembers.some((m) => isCardSearchActive(m.searchStatus)),
     }));
 }
 
 export interface UrlGroupHeaderView {
   primaryText: string;
   showCancel: boolean;
+  showSpinner: boolean;
 }
 
 export function groupHeaderView(summary: UrlGroupSummary): UrlGroupHeaderView {
   return {
     primaryText: listingsCountText(summary.uniqueListingsCount),
     showCancel: summary.canCancel,
+    showSpinner: summary.isBusy,
   };
 }

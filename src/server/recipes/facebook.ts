@@ -29,7 +29,7 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
     const filterRows: Array<[string, string]> = [];
 
     const query = url.searchParams.get("query");
-    if (query) filterRows.push(["Search", `"${query}"`]);
+    if (query) filterRows.push(["Search", query]);
 
     const minPrice = url.searchParams.get("minPrice");
     const maxPrice = url.searchParams.get("maxPrice");
