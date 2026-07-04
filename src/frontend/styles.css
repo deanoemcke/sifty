@@ -92,10 +92,12 @@ header h1 {
 }
 
 /* ── Sidebar tabs ── */
+/* Connected tabs: the active tab merges into the panel card below it.
+   Tabs overlap the panel's top border by 1px; the active tab's transparent
+   bottom border lets its surface background paint over that border line. */
 .sidebar-tabs {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  position: relative;
 }
 .sidebar-tab {
   flex: 1;
@@ -103,10 +105,11 @@ header h1 {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  padding: 0.45rem 0.75rem;
-  border: 1.5px solid var(--border);
-  border-radius: 999px;
-  background: none;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  margin-bottom: -1px;
+  background: var(--bg);
   font-family: inherit;
   font-size: 0.85rem;
   font-weight: 500;
@@ -114,14 +117,32 @@ header h1 {
   cursor: pointer;
   user-select: none;
   transition:
-    border-color 0.15s,
     background 0.15s,
     color 0.15s;
 }
+.sidebar-tab + .sidebar-tab {
+  margin-left: -1px;
+}
+.sidebar-tab:hover:not(.active) {
+  color: var(--text);
+}
 .sidebar-tab.active {
-  border-color: var(--primary);
-  background: var(--primary-light);
+  background: var(--surface);
+  border-bottom-color: transparent;
   color: var(--primary);
+  font-weight: 600;
+  z-index: 1;
+}
+
+/* Tab panels are the card surface the tabs connect to */
+#searchTabPanel,
+#savedSearchesPanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.875rem 1rem;
+  margin-bottom: 0.875rem;
 }
 
 /* ── Cards ── */
@@ -132,6 +153,14 @@ header h1 {
   padding: 0.875rem 1rem;
   box-shadow: var(--shadow);
   margin-bottom: 0.875rem;
+}
+/* Cards inside a tab panel flatten into sections of the panel surface */
+#searchTabPanel .card {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
 }
 .card-label {
   font-size: 0.7rem;
