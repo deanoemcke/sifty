@@ -884,7 +884,6 @@ function markDirty(): void {
 
 function setSearchName(name: string | null): void {
   setCurrentSearchName(name);
-  getElement("searchTitle").textContent = name ?? "new shiny thing";
   getElement("saveCurrentBtn").classList.add("hidden");
 }
 
@@ -1065,7 +1064,7 @@ function initApp(): void {
       discoveryErrorElement.textContent = "Discovery failed";
       discoveryErrorElement.style.display = "block";
     } finally {
-      discoveryButton.textContent = "Get it!";
+      discoveryButton.textContent = "Go sifting";
       updateDiscoveryBtn();
     }
   });

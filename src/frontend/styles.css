@@ -856,17 +856,6 @@ label {
   margin: 0 0 0.75rem;
   font-size: 0.95rem;
 }
-#searchTitleBar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-#searchTitle {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--text);
-}
 .saved-search-row {
   display: flex;
   align-items: center;
