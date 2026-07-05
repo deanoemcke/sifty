@@ -84,7 +84,7 @@ export let bulkDeepSearchUrls: Set<string> | null = null;
 // search, to dedupe re-clicks/re-opens of the same listing's modal.
 export const singleDeepSearchInFlightUrls = new Set<string>();
 export const listingsByUrl = new Map<string, ListingItem>();
-export const urlCardData: UrlCardData[] = [];
+export const urlCardDataById = new Map<string, UrlCardData>();
 // Stable, collision-free DOM ids assigned at card insertion time via crypto.randomUUID().
 // Keyed by listing URL so callers can look up a card without re-deriving its id from the URL.
 export const cardIdByUrl = new Map<string, string>();
@@ -143,6 +143,6 @@ export function resetState(): void {
   bulkDeepSearchUrls = null;
   singleDeepSearchInFlightUrls.clear();
   listingsByUrl.clear();
-  urlCardData.length = 0;
+  urlCardDataById.clear();
   cardIdByUrl.clear();
 }

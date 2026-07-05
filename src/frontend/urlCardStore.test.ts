@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { resetState, type UrlCardData, urlCardData } from "./state";
+import { resetState, type UrlCardData, urlCardDataById } from "./state";
 import {
   addUrlCard,
   removeUrlCardEntry,
   resetUrlCardStore,
   type UrlCard,
   type UrlCardDom,
+  urlCardData,
   urlCards,
 } from "./urlCardStore";
 
@@ -22,10 +23,8 @@ function makeCardData(searchedUrl: string): UrlCardData {
 }
 
 // The store pairs serialisable data with live DOM handles; tests only exercise
-// the pairing invariant, so stub handles are sufficient.
-function makeCard(searchedUrl: string): UrlCard {
-  return { data: makeCardData(searchedUrl), dom: {} as UrlCardDom };
-}
+// the pairing invariant, so a stub handle is sufficient.
+const stubDom = {} as UrlCardDom;
 
 beforeEach(() => {
   resetState();
@@ -33,46 +32,44 @@ beforeEach(() => {
 });
 
 describe("addUrlCard", () => {
-  it("keeps urlCards and state.urlCardData index-aligned", () => {
-    const first = makeCard("https://example.com/1");
-    const second = makeCard("https://example.com/2");
-    addUrlCard(first);
-    addUrlCard(second);
+  it("joins each card to its own data by id", () => {
+    const first = addUrlCard(stubDom, makeCardData("https://example.com/1"));
+    const second = addUrlCard(stubDom, makeCardData("https://example.com/2"));
     expect(urlCards).toHaveLength(2);
-    expect(urlCardData).toHaveLength(2);
-    expect(urlCardData[0]).toBe(first.data);
-    expect(urlCardData[1]).toBe(second.data);
+    expect(urlCardDataById.size).toBe(2);
+    expect(urlCardData(first).searchedUrl).toBe("https://example.com/1");
+    expect(urlCardData(second).searchedUrl).toBe("https://example.com/2");
   });
 });
 
 describe("removeUrlCardEntry", () => {
-  it("splices both arrays at the same index", () => {
-    const first = makeCard("https://example.com/1");
-    const second = makeCard("https://example.com/2");
-    const third = makeCard("https://example.com/3");
-    addUrlCard(first);
-    addUrlCard(second);
-    addUrlCard(third);
+  it("removes only the given card's own data, leaving others untouched", () => {
+    const first = addUrlCard(stubDom, makeCardData("https://example.com/1"));
+    const second = addUrlCard(stubDom, makeCardData("https://example.com/2"));
+    const third = addUrlCard(stubDom, makeCardData("https://example.com/3"));
 
     removeUrlCardEntry(second);
 
     expect(urlCards).toEqual([first, third]);
-    expect(urlCardData).toEqual([first.data, third.data]);
+    expect(urlCardDataById.has(second.id)).toBe(false);
+    expect(urlCardData(first).searchedUrl).toBe("https://example.com/1");
+    expect(urlCardData(third).searchedUrl).toBe("https://example.com/3");
   });
 
-  it("leaves both arrays untouched for an unknown card", () => {
-    const known = makeCard("https://example.com/1");
-    addUrlCard(known);
-    removeUrlCardEntry(makeCard("https://example.com/ghost"));
+  it("leaves the store untouched for an unknown card", () => {
+    const known = addUrlCard(stubDom, makeCardData("https://example.com/1"));
+    const ghost: UrlCard = { id: "ghost", dom: stubDom };
+    removeUrlCardEntry(ghost);
     expect(urlCards).toHaveLength(1);
-    expect(urlCardData).toHaveLength(1);
+    expect(urlCardData(known).searchedUrl).toBe("https://example.com/1");
   });
 });
 
 describe("resetUrlCardStore", () => {
-  it("clears the card list for test isolation", () => {
-    addUrlCard(makeCard("https://example.com/1"));
+  it("clears both the card list and the data map for test isolation", () => {
+    addUrlCard(stubDom, makeCardData("https://example.com/1"));
     resetUrlCardStore();
     expect(urlCards).toHaveLength(0);
+    expect(urlCardDataById.size).toBe(0);
   });
 });

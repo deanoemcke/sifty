@@ -16,27 +16,28 @@ import {
 } from "./state";
 import { streamPostAsync } from "./streamPost";
 import { renderCardStatus, resetAllResults, resetCardForResearch } from "./urlCardRow";
-import type { UrlCard } from "./urlCardStore";
+import { type UrlCard, urlCardData } from "./urlCardStore";
 import { updateUrlGroupHeaders } from "./urlGroupsView";
 
 export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
+  const data = urlCardData(card);
   const url = card.dom.input.value.trim();
   if (!isValidRecipeUrl(url)) return;
 
-  if (card.data.searchStatus === "done") resetCardForResearch(card);
+  if (data.searchStatus === "done") resetCardForResearch(card);
 
   getElement("resultsSection").classList.remove("hidden");
-  card.data.searchStatus = "searching";
-  card.data.searchId = crypto.randomUUID();
-  card.data.lastProgress = null;
-  card.data.errorMessage = null;
-  card.data.wasCancelled = false;
+  data.searchStatus = "searching";
+  data.searchId = crypto.randomUUID();
+  data.lastProgress = null;
+  data.errorMessage = null;
+  data.wasCancelled = false;
   renderDerived();
   renderCardStatus(card);
 
   let cachedAge = "";
   try {
-    await streamPostAsync("/api/quick-search", { url, searchId: card.data.searchId }, (ev) => {
+    await streamPostAsync("/api/quick-search", { url, searchId: data.searchId }, (ev) => {
       if (ev.type === "criteria") {
         const filters = ev.filters as Array<[string, string]>;
         requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = filters
@@ -53,13 +54,13 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
         if (progress === null) {
           console.warn("Ignoring malformed progress event", ev);
         } else {
-          card.data.lastProgress = progress;
-          if (canCancelSearch(card.data.searchStatus)) renderCardStatus(card);
+          data.lastProgress = progress;
+          if (canCancelSearch(data.searchStatus)) renderCardStatus(card);
           updateUrlGroupHeaders();
         }
       } else if (ev.type === "listing") {
         const listing = ev.data as Listing;
-        card.data.listingUrls.push(listing.url);
+        data.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = {
             data: listing,
@@ -77,24 +78,24 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           updateUrlGroupHeaders();
         }
       } else if (ev.type === "error") {
-        card.data.errorMessage = typeof ev.message === "string" ? ev.message : "Search failed";
+        data.errorMessage = typeof ev.message === "string" ? ev.message : "Search failed";
       }
     });
   } catch (error) {
-    card.data.errorMessage = (error as Error).message;
+    data.errorMessage = (error as Error).message;
   }
 
-  const wasCancelled = (card.data.searchStatus as UrlCardSearchStatus) === "cancelling";
-  card.data.searchStatus = wasCancelled ? "idle" : "done";
-  card.data.searchId = null;
+  const wasCancelled = (data.searchStatus as UrlCardSearchStatus) === "cancelling";
+  data.searchStatus = wasCancelled ? "idle" : "done";
+  data.searchId = null;
 
   if (wasCancelled) {
-    card.data.wasCancelled = true;
+    data.wasCancelled = true;
     renderCardStatus(card);
     if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
-  card.data.searchedUrl = url;
+  data.searchedUrl = url;
   card.dom.input.readOnly = true;
 
   if (cachedAge) {

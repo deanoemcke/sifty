@@ -30,17 +30,19 @@ import {
   removeUrlCardEntry,
   type UrlCard,
   type UrlCardDom,
+  urlCardData,
   urlCards,
 } from "./urlCardStore";
 import { expandUrlGroup, syncUrlGroups, updateUrlGroupHeaders } from "./urlGroupsView";
 
 export function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
+  const data = urlCardData(card);
   return {
-    searchStatus: card.data.searchStatus,
-    lastProgress: card.data.lastProgress,
-    listingsFoundCount: card.data.listingUrls.length,
-    errorMessage: card.data.errorMessage,
-    wasCancelled: card.data.wasCancelled,
+    searchStatus: data.searchStatus,
+    lastProgress: data.lastProgress,
+    listingsFoundCount: data.listingUrls.length,
+    errorMessage: data.errorMessage,
+    wasCancelled: data.wasCancelled,
   };
 }
 
@@ -59,7 +61,7 @@ export function renderCardStatus(card: UrlCard): void {
     status.kind === "info"
       ? `<span class="spinner"></span><span>${esc(status.text)}</span>`
       : `<span>${esc(status.text)}</span>`;
-  if (canCancelSearch(card.data.searchStatus)) {
+  if (canCancelSearch(urlCardData(card).searchStatus)) {
     const cancelButton = document.createElement("button");
     cancelButton.className = "cache-clear-btn";
     cancelButton.style.marginLeft = "0.5rem";
@@ -72,13 +74,14 @@ export function renderCardStatus(card: UrlCard): void {
 }
 
 export function cancelSearch(card: UrlCard): void {
-  if (!canCancelSearch(card.data.searchStatus)) return;
-  card.data.searchStatus = "cancelling";
+  const data = urlCardData(card);
+  if (!canCancelSearch(data.searchStatus)) return;
+  data.searchStatus = "cancelling";
   renderCardStatus(card);
   fetch("/api/cancel-search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ searchId: card.data.searchId }),
+    body: JSON.stringify({ searchId: data.searchId }),
   }).catch(() => null);
 }
 
@@ -96,9 +99,9 @@ export function handleUrlInputChanged(card: UrlCard): void {
 // Once a search has touched the row, the URL displays as a truncated link;
 // the (hidden) input stays the single source of the row's URL value.
 export function renderUrlRowMode(card: UrlCard): void {
+  const data = urlCardData(card);
   const url = card.dom.input.value.trim();
-  const showLink =
-    card.data.searchStatus !== "idle" || card.data.wasCancelled || card.data.searchedUrl !== "";
+  const showLink = data.searchStatus !== "idle" || data.wasCancelled || data.searchedUrl !== "";
   card.dom.linkElement.href = url;
   card.dom.linkElement.textContent = url;
   card.dom.linkElement.classList.toggle("hidden", !showLink);
@@ -107,11 +110,12 @@ export function renderUrlRowMode(card: UrlCard): void {
 }
 
 export function canSearchCard(card: UrlCard): boolean {
+  const data = urlCardData(card);
   const current = card.dom.input.value.trim();
   return (
     !isDeepSearchRunning &&
     isValidRecipeUrl(current) &&
-    !isSearchButtonDisabled(card.data.searchStatus, card.data.searchedUrl, current)
+    !isSearchButtonDisabled(data.searchStatus, data.searchedUrl, current)
   );
 }
 
@@ -162,8 +166,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     cacheStatusElement,
     statusElement,
   };
-  const urlCard: UrlCard = { data, dom };
-  addUrlCard(urlCard);
+  const urlCard = addUrlCard(dom, data);
 
   input.addEventListener("input", () => handleUrlInputChanged(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
@@ -189,18 +192,19 @@ export function resetAllResults(): void {
   getElement("filteredCount").classList.add("hidden");
   getElement("resultsSection").classList.add("hidden");
   for (const card of urlCards) {
-    card.data.listingUrls = [];
-    card.data.searchStatus = "idle";
-    card.data.searchedUrl = "";
-    card.data.lastProgress = null;
-    card.data.errorMessage = null;
-    card.data.wasCancelled = false;
+    const data = urlCardData(card);
+    data.listingUrls = [];
+    data.searchStatus = "idle";
+    data.searchedUrl = "";
+    data.lastProgress = null;
+    data.errorMessage = null;
+    data.wasCancelled = false;
     requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
     card.dom.criteriaElement.classList.add("hidden");
     card.dom.cacheStatusElement.classList.add("hidden");
     card.dom.cacheStatusElement.innerHTML = "";
     card.dom.statusElement.classList.add("hidden");
-    card.data.searchId = null;
+    data.searchId = null;
     card.dom.input.readOnly = false;
     renderUrlRowMode(card);
   }
@@ -213,20 +217,23 @@ export function updateRemoveButtons(): void {
 }
 
 export function resetCardForResearch(card: UrlCard): void {
-  const otherUrls = new Set(urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)));
-  for (const url of card.data.listingUrls) {
+  const data = urlCardData(card);
+  const otherUrls = new Set(
+    urlCards.flatMap((c) => (c === card ? [] : urlCardData(c).listingUrls)),
+  );
+  for (const url of data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);
       cardIdByUrl.delete(url);
     }
   }
-  card.data.listingUrls = [];
-  card.data.searchStatus = "idle";
-  card.data.searchedUrl = "";
-  card.data.lastProgress = null;
-  card.data.errorMessage = null;
-  card.data.wasCancelled = false;
+  data.listingUrls = [];
+  data.searchStatus = "idle";
+  data.searchedUrl = "";
+  data.lastProgress = null;
+  data.errorMessage = null;
+  data.wasCancelled = false;
   requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
   card.dom.criteriaElement.classList.add("hidden");
   card.dom.cacheStatusElement.classList.add("hidden");
@@ -239,8 +246,10 @@ export function resetCardForResearch(card: UrlCard): void {
 }
 
 export function removeUrlCard(card: UrlCard): void {
-  const otherUrls = new Set(urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)));
-  for (const url of card.data.listingUrls) {
+  const otherUrls = new Set(
+    urlCards.flatMap((c) => (c === card ? [] : urlCardData(c).listingUrls)),
+  );
+  for (const url of urlCardData(card).listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);

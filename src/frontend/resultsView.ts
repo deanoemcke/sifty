@@ -17,8 +17,8 @@ import {
   type ListingItem,
   listingsByUrl,
   showFilteredListings,
+  urlCardDataById,
 } from "./state";
-import { urlCards } from "./urlCardStore";
 import { updateUrlGroupHeaders } from "./urlGroupsView";
 
 // Sole writer of the filtered-results toggle label — derives it from state.
@@ -30,9 +30,9 @@ export function renderFilteredToggle(): void {
 
 export function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
-  return urlCards
-    .flatMap((card) =>
-      card.data.listingUrls.filter((listingUrl) => !seen.has(listingUrl) && seen.add(listingUrl)),
+  return [...urlCardDataById.values()]
+    .flatMap((data) =>
+      data.listingUrls.filter((listingUrl) => !seen.has(listingUrl) && seen.add(listingUrl)),
     )
     .flatMap((listingUrl) => {
       // Every URL in listingUrls was added to listingsByUrl at the same time in searchUrlCardAsync.
@@ -48,7 +48,9 @@ export function renderDerived(): void {
   getElement("resultCount").textContent = String(visible.length);
   getElement("filteredCountNum").textContent = String(filtered);
   getElement("filteredCount").classList.toggle("hidden", filtered === 0);
-  const isAnyCardSearching = urlCards.some((card) => isCardSearchActive(card.data.searchStatus));
+  const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
+    isCardSearchActive(data.searchStatus),
+  );
   const hasUnscraped = visible.some((listingItem) => !listingItem.hasBeenDeepSearched);
   getElement("deepBtn").classList.toggle(
     "hidden",

@@ -38,7 +38,7 @@ function addCardWithListings(listingUrls: string[]): void {
     errorMessage: null,
     wasCancelled: false,
   };
-  addUrlCard({ data, dom: {} as UrlCardDom });
+  addUrlCard({} as UrlCardDom, data);
   for (const url of listingUrls) {
     if (!listingsByUrl.has(url)) listingsByUrl.set(url, makeListingItem(url));
   }

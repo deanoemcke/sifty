@@ -1,10 +1,10 @@
 // ── URL card store ────────────────────────────────────────────────────────────
-// Owns the live URL cards: serialisable card data (mirrored into
-// state.urlCardData, which stays DOM-free) paired with the row's DOM handles.
-// All mutation goes through addUrlCard/removeUrlCardEntry so the two arrays
-// can never drift out of index alignment.
+// Owns the live URL cards: each card is a stable id paired with the row's DOM
+// handles; the id also keys state.urlCardDataById, which stays DOM-free.
+// Joining by id (rather than array position) makes the two stores structurally
+// unable to drift out of sync with each other.
 
-import { type UrlCardData, urlCardData } from "./state";
+import { type UrlCardData, urlCardDataById } from "./state";
 
 export interface UrlCardDom {
   containerElement: HTMLElement;
@@ -19,25 +19,32 @@ export interface UrlCardDom {
   statusElement: HTMLElement;
 }
 
-export type UrlCard = { data: UrlCardData; dom: UrlCardDom };
+export type UrlCard = { id: string; dom: UrlCardDom };
 
 export const urlCards: UrlCard[] = [];
 
-export function addUrlCard(card: UrlCard): void {
+export function urlCardData(card: UrlCard): UrlCardData {
+  const data = urlCardDataById.get(card.id);
+  if (!data) throw new Error(`No urlCardData for card id ${card.id}`);
+  return data;
+}
+
+export function addUrlCard(dom: UrlCardDom, data: UrlCardData): UrlCard {
+  const card: UrlCard = { id: crypto.randomUUID(), dom };
+  urlCardDataById.set(card.id, data);
   urlCards.push(card);
-  urlCardData.push(card.data);
+  return card;
 }
 
 export function removeUrlCardEntry(card: UrlCard): void {
   const cardIndex = urlCards.indexOf(card);
   if (cardIndex !== -1) {
     urlCards.splice(cardIndex, 1);
-    urlCardData.splice(cardIndex, 1);
+    urlCardDataById.delete(card.id);
   }
 }
 
-// Test isolation only — clears the DOM-bearing side; resetState() clears
-// state.urlCardData.
 export function resetUrlCardStore(): void {
   urlCards.length = 0;
+  urlCardDataById.clear();
 }
