@@ -478,16 +478,41 @@ label {
 }
 
 /* ── Results ── */
+/* Sticks to the viewport top; opaque so listings scroll underneath it */
 .results-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding: 0.6rem 0;
+  margin-bottom: 0.875rem;
+  border-bottom: 1px solid var(--border);
+}
+.results-header-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.75rem;
-  margin-bottom: 0.875rem;
+}
+.results-header-row + .results-header-row {
+  margin-top: 0.5rem;
 }
 .results-header h2 {
   font-size: 1rem;
   font-weight: 700;
+}
+.results-header-row > .btn-secondary {
+  margin-left: auto;
+}
+.ai-filter-row label {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.ai-filter-row textarea {
+  flex: 1;
+  min-width: 180px;
+  resize: vertical;
 }
 .results-count {
   background: var(--primary);
@@ -500,6 +525,8 @@ label {
 .filtered-count {
   font-size: 0.78rem;
   color: var(--text-muted);
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 /* ── Listing cards ── */
