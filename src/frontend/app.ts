@@ -3,55 +3,61 @@ import "./styles.css";
 import type { Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl, recipeIdForUrl } from "../lib/recipes/matcher";
 import type { RecipeId } from "../lib/recipes/metadata";
-import { collapseElementAsync, expandElement } from "./heightAnimation";
 import { scheduleAiFilterRun } from "./aiFilter";
-import { collapseExtras, expandExtras } from "./cardExtras";
+import { fireAllCardSearches } from "./cardSearch";
+import { decideModalDeepSearchAction } from "./deepSearchTrigger";
 import {
-  allowShippingFromFulfillment,
+  applyLoadedDiscoverInputs,
   fulfillmentFromAllowShipping,
   populateRegionSelect,
+  type DiscoveryFormElements,
   type RegionOption,
 } from "./discoveryForm";
-import { shouldDisableApplyFilterBtn } from "./renderUtils";
-import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
+import { collapseElementAsync, expandElement } from "./heightAnimation";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
 import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
+import { shouldDisableApplyFilterBtn } from "./renderUtils";
 import {
   type CardStatusSnapshot,
   cardStatusText,
   parseQuickSearchProgress,
 } from "./searchStatusText";
-import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from "./urlGroups";
 import { activateSidebarTab } from "./sidebarTabs";
 import {
   aiFilterPendingRun,
+  bulkDeepSearchUrls,
   canCancelSearch,
   cardIdByUrl,
   currentSearchName,
+  type DiscoverInputs,
   deepSearchCancellationRequested,
   deepSearchId,
-  type DiscoverInputs,
   isAiFilterRunning,
   isCardSearchActive,
   isDeepSearchRunning,
   isSearchButtonDisabled,
   type ListingItem,
   listingsByUrl,
+  openModalListingUrl,
   type SavedSearch,
   setAiFilterPendingRun,
+  setBulkDeepSearchUrls,
   setCurrentSearchName,
   setDeepSearchCancellationRequested,
   setDeepSearchId,
   setIsAiFilterRunning,
   setIsDeepSearchRunning,
+  setOpenModalListingUrl,
   setShowFilteredListings,
   showFilteredListings,
+  singleDeepSearchInFlightUrls,
   type UrlCardData,
   type UrlCardSearchStatus,
   urlCardData,
 } from "./state";
+import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from "./urlGroups";
 
 // ── URL card DOM handles ──────────────────────────────────────────────────────
 // UrlCardData (serialisable state) lives in state.ts; DOM refs live here only.
@@ -100,17 +106,14 @@ function readDiscoverInputs(): DiscoverInputs {
   };
 }
 
-function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
-  if (!inputs) return;
-  getElement<HTMLTextAreaElement>("discoveryPrompt").value = inputs.prompt ?? "";
-  getElement<HTMLInputElement>("discoveryMaxPrice").value =
-    inputs.maxPrice != null ? String(inputs.maxPrice) : "";
-  getElement<HTMLInputElement>("discoveryAllowShipping").checked = allowShippingFromFulfillment(
-    inputs.fulfillment,
-  );
-  // No region in the saved inputs keeps the current selection (Wellington default).
-  if (inputs.region) getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region;
-  updateDiscoveryBtn();
+function discoveryFormElements(): DiscoveryFormElements {
+  return {
+    promptInput: getElement<HTMLTextAreaElement>("discoveryPrompt"),
+    maxPriceInput: getElement<HTMLInputElement>("discoveryMaxPrice"),
+    allowShippingCheckbox: getElement<HTMLInputElement>("discoveryAllowShipping"),
+    regionSelect: getElement<HTMLSelectElement>("discoveryRegion"),
+    discoveryButton: getElement<HTMLButtonElement>("discoveryBtn"),
+  };
 }
 
 function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
@@ -624,7 +627,7 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
 // ── Client-side filtering ─────────────────────────────────────────────────────
 
 function filterBannerText(item: ListingItem): string {
-  return item.aiFilterReason ? `Filtered by AI: ${item.aiFilterReason}` : "Filtered";
+  return item.aiFilterReason ? `Filtered: ${item.aiFilterReason}` : "Filtered";
 }
 
 function applyClientFilters(): void {
@@ -700,7 +703,7 @@ async function runAiFilterAsync(): Promise<void> {
             const item = listingsByUrl.get(result.url);
             if (item) {
               item.aiCheckedHash = hash;
-              item.aiFilterReason = result.pass ? null : (result.reason ?? "Filtered by AI");
+              item.aiFilterReason = result.pass ? null : (result.reason ?? "No reason given");
               checked++;
             }
           }
@@ -796,19 +799,26 @@ function cleanDescription(text: string): string {
     .trim();
 }
 
-function buildPricesHtml(item: ListingItem): string {
-  let html = `<span class="price">${esc(item.data.priceDisplay)}</span>`;
-  if (item.detail && item.data.isAuction && item.detail.buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${Number(item.detail.buyNowPrice).toLocaleString()}</strong></span>`;
+function buildCardPriceHtml(listing: Listing): string {
+  return `<span class="price">${esc(listing.priceDisplay)}</span>`;
+}
+
+function buildCardMetaHtml(listing: Listing): string {
+  return `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span><span class="meta-right"></span>`;
+}
+
+function buildDetailPriceHtml(listing: Listing, detail: ListingDetail): string {
+  let html = `<span class="price">${esc(listing.priceDisplay)}</span>`;
+  if (listing.isAuction && detail.buyNowPrice != null) {
+    html += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
   }
   return html;
 }
 
-function buildMetaHtml(item: ListingItem): string {
-  const left = `<span class="meta-left"><span class="meta-text">${esc(item.data.location)}</span></span>`;
+function buildDetailMetaHtml(listing: Listing, detail: ListingDetail): string {
+  const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
   let html = "";
-  const detail = item.detail;
-  if (detail && item.data.isAuction) {
+  if (listing.isAuction) {
     const reserve = formatReserveText(detail.reserveStatus);
     if (reserve)
       html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
@@ -858,13 +868,13 @@ function buildExtrasHtml(detail: ListingDetail): string {
     body += `</div>`;
   }
 
-  return `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
+  return body;
 }
 
 function renderCard(item: ListingItem): void {
   const listing = item.data;
 
-  // Assign a UUID-based id on first render; reuse it on re-renders (e.g. after deep search enrichment).
+  // Assign a UUID-based id on first render; reuse it on re-renders.
   let cardId = cardIdByUrl.get(listing.url);
   if (!cardId) {
     cardId = `card-${crypto.randomUUID()}`;
@@ -873,7 +883,7 @@ function renderCard(item: ListingItem): void {
 
   const existing = document.getElementById(cardId);
   const card = existing ?? document.createElement("div");
-  card.className = `listing-card${item.detail ? " enriched" : ""}`;
+  card.className = "listing-card";
   card.id = cardId;
   card.dataset.url = listing.url;
 
@@ -883,8 +893,10 @@ function renderCard(item: ListingItem): void {
          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
        </div>`;
 
+  // The card never re-renders once a deep search populates item.detail — all
+  // detail-derived content (badges, buy-now price, extras) lives in the modal
+  // only, so this template deliberately never references item.detail.
   card.innerHTML = `
-    <div class="filter-banner hidden"></div>
     <div class="listing-card-content">
       <div class="listing-thumb-wrap">
         ${thumb}
@@ -892,31 +904,109 @@ function renderCard(item: ListingItem): void {
       </div>
       <div class="listing-body">
         <div class="listing-meta">
-          ${buildMetaHtml(item)}
+          ${buildCardMetaHtml(listing)}
         </div>
-        <div class="listing-title">
-          <a href="${esc(listing.url)}" target="_blank" rel="noopener" title="${esc(listing.title)}">${esc(listing.title)}</a>
-        </div>
-        <div class="listing-extras">${item.detail ? buildExtrasHtml(item.detail) : ""}</div>
+        <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>
         <div class="listing-prices">
-          ${buildPricesHtml(item)}
+          ${buildCardPriceHtml(listing)}
         </div>
       </div>
     </div>
+    <div class="filter-banner hidden"></div>
   `;
 
   if (!existing) getElement("listingsContainer").appendChild(card);
 }
 
-function toggleDescription(btn: HTMLButtonElement): void {
-  const desc = btn.closest(".listing-description");
-  if (!desc) throw new Error("toggleDescription: missing .listing-description ancestor");
-  const full = requireChild<HTMLElement>(desc, ".desc-full");
-  const short = requireChild<HTMLElement>(desc, ".desc-short");
-  const expanded = full.classList.contains("open");
-  full.classList.toggle("open", !expanded);
-  short.classList.toggle("hidden", !expanded);
-  btn.textContent = expanded ? "Show more" : "Show less";
+// ── Listing detail modal ──────────────────────────────────────────────────────
+
+function listingModalExtrasHtml(item: ListingItem, errorMessage: string | null): string {
+  if (errorMessage) return `<p class="deep-empty">Couldn't load details — ${esc(errorMessage)}</p>`;
+  if (item.detail) return buildExtrasHtml(item.detail);
+  return `<div class="modal-loading"><span class="spinner"></span><span>Fetching details…</span></div>`;
+}
+
+function renderListingModalContent(item: ListingItem, errorMessage: string | null = null): void {
+  // A previous single-listing fetch may resolve after the modal has closed
+  // or moved on to a different listing — ignore stale writes.
+  if (openModalListingUrl !== item.data.url) return;
+
+  const listing = item.data;
+  const thumb = listing.thumbnailUrl
+    ? `<img class="listing-modal-thumb" src="${esc(listing.thumbnailUrl)}" alt="">`
+    : `<div class="listing-modal-thumb-placeholder"></div>`;
+  const metaHtml = item.detail
+    ? buildDetailMetaHtml(listing, item.detail)
+    : buildCardMetaHtml(listing);
+  const priceHtml = item.detail
+    ? buildDetailPriceHtml(listing, item.detail)
+    : buildCardPriceHtml(listing);
+
+  getElement("listingModalBody").innerHTML = `
+    <div class="listing-modal-header">
+      <div class="listing-modal-thumb-wrap">${thumb}${sourceBadgeHtml(listing.source, 32)}</div>
+      <div class="listing-modal-heading">
+        <div class="listing-modal-title">${esc(listing.title)}</div>
+        <div class="listing-meta">${metaHtml}</div>
+        <div class="listing-prices">${priceHtml}</div>
+        <a class="listing-modal-original-link" href="${esc(listing.url)}" target="_blank" rel="noopener">View original listing ↗</a>
+      </div>
+    </div>
+    <div class="listing-modal-extras">${listingModalExtrasHtml(item, errorMessage)}</div>
+  `;
+}
+
+function applyDeepSearchDetail(item: ListingItem, detail: ListingDetail): void {
+  item.hasBeenDeepSearched = true;
+  item.detail = detail;
+  item.aiCheckedHash = null;
+  if (openModalListingUrl === item.data.url) renderListingModalContent(item);
+}
+
+async function deepSearchListingAsync(item: ListingItem): Promise<void> {
+  const url = item.data.url;
+  singleDeepSearchInFlightUrls.add(url);
+  try {
+    await streamPostAsync(
+      "/api/deep-search",
+      { listings: [item.data], deepSearchId: crypto.randomUUID() },
+      (ev) => {
+        if (ev.type === "detail") {
+          applyDeepSearchDetail(item, ev.detail as ListingDetail);
+          renderDerived();
+        } else if (ev.type === "error") {
+          renderListingModalContent(item, ev.message as string);
+        }
+      },
+    );
+  } catch (error) {
+    renderListingModalContent(item, (error as Error).message);
+  } finally {
+    singleDeepSearchInFlightUrls.delete(url);
+  }
+  if (item.hasBeenDeepSearched) {
+    applyClientFilters();
+    const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
+    if (aiPrompt)
+      scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+  }
+}
+
+async function openListingModalAsync(item: ListingItem): Promise<void> {
+  setOpenModalListingUrl(item.data.url);
+  getElement("listingModal").classList.remove("hidden");
+  renderListingModalContent(item);
+  const action = decideModalDeepSearchAction({
+    hasBeenDeepSearched: item.hasBeenDeepSearched,
+    isCoveredByBulkSearch: bulkDeepSearchUrls?.has(item.data.url) ?? false,
+    isAlreadyFetchingSingle: singleDeepSearchInFlightUrls.has(item.data.url),
+  });
+  if (action === "start") await deepSearchListingAsync(item);
+}
+
+function closeListingModal(): void {
+  getElement("listingModal").classList.add("hidden");
+  setOpenModalListingUrl(null);
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
@@ -925,7 +1015,12 @@ function toggleDescription(btn: HTMLButtonElement): void {
 
 async function runDeepSearchAsync(): Promise<void> {
   const toScrape = getOrderedListings()
-    .filter((item) => !item.hasBeenDeepSearched && item.aiFilterReason === null)
+    .filter(
+      (item) =>
+        !item.hasBeenDeepSearched &&
+        item.aiFilterReason === null &&
+        !singleDeepSearchInFlightUrls.has(item.data.url),
+    )
     .map((item) => item.data);
 
   if (toScrape.length === 0) return;
@@ -933,17 +1028,8 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchId(crypto.randomUUID());
   setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(true);
+  setBulkDeepSearchUrls(new Set(toScrape.map((listing) => listing.url)));
   let detailsReceived = 0;
-
-  for (const listing of toScrape) {
-    const card = getCardByUrl(listing.url);
-    if (card) {
-      requireChild<HTMLElement>(card, ".listing-extras").innerHTML =
-        '<div style="padding-top:0.6rem">' +
-        '<div class="skeleton" style="width:70%;margin-bottom:0.4rem"></div>' +
-        '<div class="skeleton" style="width:40%"></div></div>';
-    }
-  }
 
   setDeepSearchingStatus(
     `Fetching details for ${toScrape.length} listing${toScrape.length !== 1 ? "s" : ""}…`,
@@ -958,15 +1044,8 @@ async function runDeepSearchAsync(): Promise<void> {
           );
       } else if (ev.type === "detail") {
         detailsReceived++;
-        const detail = ev.detail as ListingDetail;
         const item = listingsByUrl.get(ev.url as string);
-        if (item) {
-          item.hasBeenDeepSearched = true;
-          item.detail = detail;
-          item.aiCheckedHash = null;
-          renderCard(item);
-        }
-
+        if (item) applyDeepSearchDetail(item, ev.detail as ListingDetail);
         renderDerived();
       } else if (ev.type === "complete") {
         setStatus("Deep search complete", "success");
@@ -979,14 +1058,7 @@ async function runDeepSearchAsync(): Promise<void> {
     setStatus((error as Error).message, "error");
   }
 
-  // Clear skeleton loaders from listings that never received details
-  for (const listing of toScrape) {
-    const item = listingsByUrl.get(listing.url);
-    if (item && !item.hasBeenDeepSearched) {
-      const card = getCardByUrl(listing.url);
-      if (card) requireChild<HTMLElement>(card, ".listing-extras").innerHTML = "";
-    }
-  }
+  setBulkDeepSearchUrls(null);
 
   if (deepSearchCancellationRequested) {
     setStatus(
@@ -1094,13 +1166,13 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   revealSearchConfig();
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+  applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
   if (search.urls.length === 0) return;
   urlCards[0].dom.input.value = search.urls[0];
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
     createUrlCard().dom.input.value = search.urls[urlIndex];
   }
   for (const card of urlCards) handleUrlInputChanged(card);
-  applyDiscoverInputs(search.discoverInputs);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
   activateSidebarTab(document, "search");
@@ -1224,24 +1296,16 @@ function initApp(): void {
     }
   });
 
-  // Event delegation for description toggles (avoids global onclick)
+  // Clicking anywhere on a listing card opens its detail modal, deep
+  // searching it first if it hasn't been already.
   getElement("listingsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
-    const showLessBtn = (mouseEvent.target as HTMLElement).closest<HTMLButtonElement>(
-      ".extras-toggle",
-    );
-    if (showLessBtn) {
-      collapseExtras(showLessBtn);
-      return;
-    }
-    const collapsedBody = (mouseEvent.target as HTMLElement).closest<HTMLElement>(
-      ".extras-body.collapsed",
-    );
-    if (collapsedBody) {
-      expandExtras(collapsedBody);
-      return;
-    }
-    const descBtn = (mouseEvent.target as HTMLElement).closest<HTMLButtonElement>(".desc-toggle");
-    if (descBtn) toggleDescription(descBtn);
+    const card = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".listing-card");
+    if (!card) return;
+    const url = card.dataset.url;
+    if (!url) throw new Error("listing-card missing data-url attribute");
+    const item = listingsByUrl.get(url);
+    if (!item) throw new Error(`listingsByUrl missing entry for ${url}`);
+    void openListingModalAsync(item);
   });
 
   // ── Sidebar tabs / saved searches UI ──────────────────────────────────────────
@@ -1297,6 +1361,21 @@ function initApp(): void {
       if (keyboardEvent.key === "Escape") closeSaveModal();
     },
   );
+
+  getElement("listingModalCloseBtn").addEventListener("click", closeListingModal);
+
+  getElement("listingModal").addEventListener("click", (mouseEvent: MouseEvent) => {
+    if (mouseEvent.target === getElement("listingModal")) closeListingModal();
+  });
+
+  document.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
+    if (
+      keyboardEvent.key === "Escape" &&
+      !getElement("listingModal").classList.contains("hidden")
+    ) {
+      closeListingModal();
+    }
+  });
 
   getElement("savedSearchesList").addEventListener("click", async (mouseEvent: MouseEvent) => {
     const row = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".saved-search-row");

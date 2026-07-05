@@ -2,8 +2,10 @@
 import { describe, expect, it } from "vitest";
 import {
   allowShippingFromFulfillment,
+  applyLoadedDiscoverInputs,
   fulfillmentFromAllowShipping,
   populateRegionSelect,
+  type DiscoveryFormElements,
 } from "./discoveryForm";
 
 const REGIONS = [
@@ -55,5 +57,73 @@ describe("populateRegionSelect", () => {
     const select = document.createElement("select");
     populateRegionSelect(select, REGIONS, "Atlantis");
     expect(select.value).toBe("1");
+  });
+});
+
+function buildDiscoveryForm(): DiscoveryFormElements {
+  const regionSelect = document.createElement("select");
+  populateRegionSelect(regionSelect, REGIONS, "Wellington");
+  const discoveryButton = document.createElement("button");
+  const allowShippingCheckbox = document.createElement("input");
+  allowShippingCheckbox.type = "checkbox";
+  return {
+    promptInput: document.createElement("textarea"),
+    maxPriceInput: document.createElement("input"),
+    allowShippingCheckbox,
+    regionSelect,
+    discoveryButton,
+  };
+}
+
+describe("applyLoadedDiscoverInputs", () => {
+  it("populates the form fields from the saved inputs", () => {
+    const elements = buildDiscoveryForm();
+    applyLoadedDiscoverInputs(elements, {
+      prompt: "mid-century sideboard",
+      maxPrice: 250,
+      fulfillment: "pickup",
+      region: "1",
+    });
+    expect(elements.promptInput.value).toBe("mid-century sideboard");
+    expect(elements.maxPriceInput.value).toBe("250");
+    expect(elements.allowShippingCheckbox.checked).toBe(false);
+    expect(elements.regionSelect.value).toBe("1");
+  });
+
+  it("disables the discovery button even when the loaded inputs are valid", () => {
+    const elements = buildDiscoveryForm();
+    applyLoadedDiscoverInputs(elements, {
+      prompt: "mid-century sideboard",
+      maxPrice: 250,
+      fulfillment: "any",
+    });
+    expect(elements.discoveryButton.disabled).toBe(true);
+  });
+
+  it("disables the discovery button when the saved search has no discover inputs", () => {
+    const elements = buildDiscoveryForm();
+    elements.promptInput.value = "leftover prompt";
+    applyLoadedDiscoverInputs(elements, undefined);
+    expect(elements.discoveryButton.disabled).toBe(true);
+    expect(elements.promptInput.value).toBe("leftover prompt");
+  });
+
+  it("keeps the current region selection when the saved inputs have no region", () => {
+    const elements = buildDiscoveryForm();
+    applyLoadedDiscoverInputs(elements, {
+      prompt: "mid-century sideboard",
+      fulfillment: "any",
+    });
+    expect(elements.regionSelect.value).toBe("12");
+  });
+
+  it("clears the max price when the saved inputs have none", () => {
+    const elements = buildDiscoveryForm();
+    elements.maxPriceInput.value = "999";
+    applyLoadedDiscoverInputs(elements, {
+      prompt: "mid-century sideboard",
+      fulfillment: "any",
+    });
+    expect(elements.maxPriceInput.value).toBe("");
   });
 });

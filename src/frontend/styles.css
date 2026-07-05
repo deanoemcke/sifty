@@ -550,6 +550,8 @@ label {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  cursor: pointer;
 }
 .listing-card:hover {
   border-color: #cbd5e1;
@@ -561,20 +563,21 @@ label {
   flex: 1;
 }
 .filter-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   padding: 0.35rem 0.8rem;
   background: var(--yellow-bg);
   color: var(--yellow);
-  border-bottom: 1px solid #fde68a;
+  border-top: 1px solid #fde68a;
   font-size: 0.78rem;
   font-weight: 500;
+  z-index: 1;
 }
 .filter-banner.hidden {
   display: none;
 }
-.listing-card.filtered-out .listing-card-content {
-  opacity: 0.6;
-}
-
 /* Wraps the thumbnail so the source favicon can overlay its top-left corner */
 .listing-thumb-wrap {
   position: relative;
@@ -618,6 +621,9 @@ label {
   gap: 0.35rem;
   padding: 0.65rem 0.8rem 0.75rem;
 }
+.listing-card.filtered-out .listing-body {
+  opacity: 0.6;
+}
 
 .listing-title {
   font-size: 0.82rem;
@@ -626,13 +632,7 @@ label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.listing-title a {
   color: var(--primary);
-  text-decoration: none;
-}
-.listing-title a:hover {
-  text-decoration: underline;
 }
 
 .listing-prices {
@@ -785,82 +785,6 @@ label {
   color: var(--text-muted);
   font-style: italic;
 }
-.extras-body {
-  position: relative;
-}
-.extras-body.collapsed {
-  max-height: 3rem;
-  overflow: hidden;
-  cursor: pointer;
-}
-
-/* Expanded card spans the full grid row and lays out horizontally again */
-.listing-card.expanded {
-  grid-column: 1 / -1;
-}
-.listing-card.expanded .listing-card-content {
-  flex-direction: row;
-}
-.listing-card.expanded .listing-thumb-wrap {
-  width: 180px;
-  align-self: flex-start;
-  margin: 1rem 0 1rem 1rem;
-}
-.listing-card.expanded .listing-thumb,
-.listing-card.expanded .listing-thumb-placeholder {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.extras-fade {
-  display: none;
-}
-.collapsed .extras-fade {
-  display: block;
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 3rem;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff);
-  pointer-events: none;
-}
-.extras-toggle {
-  background: none;
-  border: none;
-  padding: 0.5rem 0 0;
-  font-size: 0.78rem;
-  color: var(--primary);
-  cursor: pointer;
-  font-family: inherit;
-  display: block;
-}
-.extras-toggle:hover {
-  text-decoration: underline;
-}
-.desc-toggle {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 0.78rem;
-  color: var(--primary);
-  cursor: pointer;
-  font-family: inherit;
-  margin-top: 0.3rem;
-  display: inline-block;
-}
-.desc-toggle:hover {
-  text-decoration: underline;
-}
-.desc-full {
-  display: none;
-}
-.desc-full.open {
-  display: block;
-}
-.desc-short.hidden {
-  display: none;
-}
-
 /* ── Loading ── */
 .spinner {
   display: inline-block;
@@ -875,22 +799,6 @@ label {
 @keyframes spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-.skeleton {
-  height: 0.85rem;
-  border-radius: 4px;
-  background: linear-gradient(90deg, #e2e8f0 25%, #f8fafc 50%, #e2e8f0 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-}
-@keyframes shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
   }
 }
 
@@ -996,6 +904,66 @@ label {
   font-weight: 600;
   margin: 0 0 0.75rem;
   font-size: 0.95rem;
+}
+.modal-listing {
+  width: min(640px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
+  padding-top: 2.5rem;
+}
+.modal-close-btn {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+}
+.listing-modal-header {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.listing-modal-thumb-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 140px;
+}
+.listing-modal-thumb,
+.listing-modal-thumb-placeholder {
+  width: 140px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  display: block;
+}
+.listing-modal-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.listing-modal-title {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.listing-modal-original-link {
+  font-size: 0.8rem;
+  color: var(--primary);
+}
+.listing-modal-extras {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+.modal-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
 }
 .saved-search-row {
   display: flex;

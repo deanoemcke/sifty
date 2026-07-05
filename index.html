@@ -84,7 +84,7 @@
   <div id="resultsSection" class="results-header hidden">
       <div class="results-header-row results-status-row">
         <span>Matches: <strong id="resultCount">0</strong></span>
-        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search matches</button>
+        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
         <span id="filteredCount" class="filtered-count hidden"><span class="header-sep">|</span> Filtered: <strong id="filteredCountNum">0</strong> <button id="toggleFilteredBtn" class="cache-clear-btn"></button></span>
       </div>
       <div class="results-header-row ai-filter-row">
@@ -106,6 +106,16 @@
       <button id="saveSearchCancelBtn" class="btn btn-secondary">Cancel</button>
       <button id="saveSearchConfirmBtn" class="btn btn-primary">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- Listing detail modal -->
+<div id="listingModal" class="modal-backdrop hidden">
+  <div class="modal modal-listing">
+    <button id="listingModalCloseBtn" class="btn icon-btn modal-close-btn" type="button" title="Close" aria-label="Close">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div id="listingModalBody" class="listing-modal-body"></div>
   </div>
 </div>
 
