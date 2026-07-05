@@ -497,15 +497,17 @@ label {
 .results-header-row + .results-header-row {
   margin-top: 0.5rem;
 }
-.results-header h2 {
-  font-size: 1rem;
-  font-weight: 700;
+.results-status-row {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  gap: 0.5rem;
 }
-.results-header-row > .btn-secondary {
-  margin-left: auto;
+.results-status-row strong {
+  color: var(--text);
+  font-weight: 600;
 }
-.ai-filter-label-row {
-  gap: 0.35rem;
+.header-sep {
+  color: var(--border);
 }
 .ai-filter-label-row label {
   font-size: 0.78rem;
@@ -525,8 +527,6 @@ label {
   font-weight: 700;
 }
 .filtered-count {
-  font-size: 0.78rem;
-  color: var(--text-muted);
   white-space: nowrap;
 }
 
