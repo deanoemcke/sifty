@@ -5,6 +5,7 @@
 // on the quick-search implementation.
 
 import { isValidRecipeUrl, recipeIdForUrl } from "../lib/recipes/matcher";
+import type { RecipeId } from "../lib/recipes/metadata";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import {
@@ -83,6 +84,12 @@ export function cancelSearch(card: UrlCard): void {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ searchId: data.searchId }),
   }).catch(() => null);
+}
+
+export function cancelGroupSearches(recipeId: RecipeId): void {
+  for (const card of urlCards) {
+    if (recipeIdForUrl(card.dom.input.value.trim()) === recipeId) cancelSearch(card);
+  }
 }
 
 export function handleUrlInputChanged(card: UrlCard): void {

@@ -1,6 +1,5 @@
 import "./styles.css";
 
-import { recipeIdForUrl } from "../lib/recipes/matcher";
 import type { RecipeId } from "../lib/recipes/metadata";
 import { requestAiFilterRun } from "./aiFilter";
 import {
@@ -31,8 +30,7 @@ import {
 } from "./searchSession";
 import { activateSidebarTab } from "./sidebarTabs";
 import { setShowFilteredListings, showFilteredListings } from "./state";
-import { cancelSearch, createUrlCard } from "./urlCardRow";
-import { urlCards } from "./urlCardStore";
+import { cancelGroupSearches, createUrlCard } from "./urlCardRow";
 import { toggleUrlGroup } from "./urlGroupsView";
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
@@ -110,9 +108,7 @@ function initApp(): void {
       return;
     }
     if ((mouseEvent.target as HTMLElement).closest(".url-group-cancel")) {
-      for (const card of urlCards) {
-        if (recipeIdForUrl(card.dom.input.value.trim()) === recipeId) cancelSearch(card);
-      }
+      cancelGroupSearches(recipeId);
     }
   });
 
