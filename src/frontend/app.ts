@@ -67,6 +67,7 @@ interface UrlCardDom {
   input: HTMLInputElement;
   // Truncated hyperlink shown in place of the input once a search has run.
   linkElement: HTMLAnchorElement;
+  searchButton: HTMLButtonElement;
   removeButton: HTMLButtonElement;
   // Criteria block below the status line; hidden until criteria arrive.
   criteriaElement: HTMLElement;
@@ -208,6 +209,7 @@ function setStatus(
 }
 
 function handleUrlInputChanged(card: UrlCard): void {
+  card.dom.searchButton.disabled = !canSearchCard(card);
   const recipeId = recipeIdForUrl(card.dom.input.value.trim());
   const previousParent = card.dom.containerElement.parentElement;
   syncUrlGroups();
@@ -227,6 +229,7 @@ function renderUrlRowMode(card: UrlCard): void {
   card.dom.linkElement.textContent = url;
   card.dom.linkElement.classList.toggle("hidden", !showLink);
   card.dom.input.classList.toggle("hidden", showLink);
+  card.dom.searchButton.classList.toggle("hidden", showLink);
 }
 
 // ── URL recipe groups ─────────────────────────────────────────────────────────
@@ -347,6 +350,8 @@ function setDeepSearchBusy(busy: boolean): void {
 // assets/x.svg, inlined so it inherits currentColor.
 const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
+const SEARCH_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+
 function createUrlCard(): UrlCard {
   const cardEl = document.createElement("div");
   cardEl.className = "source-url-row";
@@ -354,6 +359,7 @@ function createUrlCard(): UrlCard {
     <div class="url-row">
       <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
       <input type="url" class="url-input" placeholder="Paste search URL…" />
+      <button class="btn icon-btn url-search-btn" type="button" title="Search" disabled>${SEARCH_ICON}</button>
       <button class="btn icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
     </div>
     <div class="url-card-status hidden"></div>
@@ -363,6 +369,7 @@ function createUrlCard(): UrlCard {
 
   const input = requireChild<HTMLInputElement>(cardEl, ".url-input");
   const linkElement = requireChild<HTMLAnchorElement>(cardEl, ".url-link");
+  const searchButton = requireChild<HTMLButtonElement>(cardEl, ".url-search-btn");
   const removeButton = requireChild<HTMLButtonElement>(cardEl, ".url-remove-btn");
   const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-criteria");
   const cacheStatusElement = requireChild<HTMLElement>(cardEl, ".cache-status");
@@ -381,6 +388,7 @@ function createUrlCard(): UrlCard {
     containerElement: cardEl,
     input,
     linkElement,
+    searchButton,
     removeButton,
     criteriaElement,
     cacheStatusElement,
@@ -393,6 +401,9 @@ function createUrlCard(): UrlCard {
   input.addEventListener("input", () => handleUrlInputChanged(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
     if (keyboardEvent.key === "Enter" && canSearchCard(urlCard)) searchUrlCardAsync(urlCard);
+  });
+  searchButton.addEventListener("click", () => {
+    if (canSearchCard(urlCard)) searchUrlCardAsync(urlCard);
   });
   removeButton.addEventListener("click", () => removeUrlCard(urlCard));
 
