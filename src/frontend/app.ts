@@ -8,10 +8,15 @@ import { fireAllCardSearches } from "./cardSearch";
 import { decideModalDeepSearchAction } from "./deepSearchTrigger";
 import {
   applyLoadedDiscoverInputs,
-  type DiscoveryFormElements,
+  DEFAULT_REGION_DISPLAY,
+  DISCOVERY_BUTTON_BUSY_LABEL,
+  DISCOVERY_BUTTON_LABEL,
+  discoveryFormElements,
   fulfillmentFromAllowShipping,
   populateRegionSelect,
   type RegionOption,
+  readDiscoverInputs,
+  updateDiscoveryBtn,
 } from "./discoveryForm";
 import { getElement, requireChild } from "./domUtils";
 import { collapseElementAsync, expandElement } from "./heightAnimation";
@@ -90,36 +95,6 @@ type UrlCard = { data: UrlCardData; dom: UrlCardDom };
 const urlCards: UrlCard[] = [];
 
 // ── Utility ───────────────────────────────────────────────────────────────────
-
-// Region search intent defaults to the user's home region; matched against the
-// display names served by /api/regions so region ids stay a server-side detail.
-const DEFAULT_REGION_DISPLAY = "Wellington";
-
-// Labels that JS rewrites at runtime are owned here exclusively — the HTML
-// carries no copy, so the wording can never drift between sources.
-const DISCOVERY_BUTTON_LABEL = "Go sifting";
-const DISCOVERY_BUTTON_BUSY_LABEL = "Working…";
-
-function readDiscoverInputs(): DiscoverInputs {
-  return {
-    prompt: getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim(),
-    maxPrice: parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value),
-    fulfillment: fulfillmentFromAllowShipping(
-      getElement<HTMLInputElement>("discoveryAllowShipping").checked,
-    ),
-    region: getElement<HTMLSelectElement>("discoveryRegion").value || undefined,
-  };
-}
-
-function discoveryFormElements(): DiscoveryFormElements {
-  return {
-    promptInput: getElement<HTMLTextAreaElement>("discoveryPrompt"),
-    maxPriceInput: getElement<HTMLInputElement>("discoveryMaxPrice"),
-    allowShippingCheckbox: getElement<HTMLInputElement>("discoveryAllowShipping"),
-    regionSelect: getElement<HTMLSelectElement>("discoveryRegion"),
-    discoveryButton: getElement<HTMLButtonElement>("discoveryBtn"),
-  };
-}
 
 function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
   return {
@@ -643,16 +618,6 @@ function applyClientFilters(): void {
     }
   }
   renderDerived();
-}
-
-function updateDiscoveryBtn(): void {
-  const hasPrompt = !!getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
-  const hasValidPrice =
-    parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value) !== undefined;
-  const isPickupOnly = !getElement<HTMLInputElement>("discoveryAllowShipping").checked;
-  const hasRegion = !isPickupOnly || !!getElement<HTMLSelectElement>("discoveryRegion").value;
-  getElement<HTMLButtonElement>("discoveryBtn").disabled =
-    !hasPrompt || !hasValidPrice || !hasRegion;
 }
 
 async function runAiFilterAsync(): Promise<void> {

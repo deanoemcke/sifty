@@ -4,8 +4,11 @@ import {
   allowShippingFromFulfillment,
   applyLoadedDiscoverInputs,
   type DiscoveryFormElements,
+  discoveryFormElements,
   fulfillmentFromAllowShipping,
   populateRegionSelect,
+  readDiscoverInputs,
+  updateDiscoveryBtn,
 } from "./discoveryForm";
 
 const REGIONS = [
@@ -125,5 +128,85 @@ describe("applyLoadedDiscoverInputs", () => {
       fulfillment: "any",
     });
     expect(elements.maxPriceInput.value).toBe("");
+  });
+});
+
+function mountDiscoveryFormFixture(): void {
+  document.body.innerHTML = `
+    <textarea id="discoveryPrompt"></textarea>
+    <input id="discoveryMaxPrice" />
+    <input id="discoveryAllowShipping" type="checkbox" checked />
+    <select id="discoveryRegion"><option value="">Any</option><option value="12">Wellington</option></select>
+    <button id="discoveryBtn"></button>
+  `;
+}
+
+describe("readDiscoverInputs", () => {
+  it("maps the form fields into DiscoverInputs", () => {
+    mountDiscoveryFormFixture();
+    (document.getElementById("discoveryPrompt") as HTMLTextAreaElement).value = "  lamp  ";
+    (document.getElementById("discoveryMaxPrice") as HTMLInputElement).value = "50";
+    (document.getElementById("discoveryRegion") as HTMLSelectElement).value = "12";
+    expect(readDiscoverInputs()).toEqual({
+      prompt: "lamp",
+      maxPrice: 50,
+      fulfillment: "any",
+      region: "12",
+    });
+  });
+
+  it("omits the region when none is selected and maps pickup-only", () => {
+    mountDiscoveryFormFixture();
+    (document.getElementById("discoveryAllowShipping") as HTMLInputElement).checked = false;
+    const inputs = readDiscoverInputs();
+    expect(inputs.region).toBeUndefined();
+    expect(inputs.fulfillment).toBe("pickup");
+  });
+});
+
+describe("discoveryFormElements", () => {
+  it("gathers the five discovery form elements", () => {
+    mountDiscoveryFormFixture();
+    const elements = discoveryFormElements();
+    expect(elements.promptInput.id).toBe("discoveryPrompt");
+    expect(elements.discoveryButton.id).toBe("discoveryBtn");
+  });
+});
+
+describe("updateDiscoveryBtn", () => {
+  it("disables the button without a prompt", () => {
+    mountDiscoveryFormFixture();
+    updateDiscoveryBtn();
+    expect((document.getElementById("discoveryBtn") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("enables the button with a prompt and valid price", () => {
+    mountDiscoveryFormFixture();
+    (document.getElementById("discoveryPrompt") as HTMLTextAreaElement).value = "lamp";
+    (document.getElementById("discoveryMaxPrice") as HTMLInputElement).value = "50";
+    updateDiscoveryBtn();
+    expect((document.getElementById("discoveryBtn") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables the button on an unparseable price", () => {
+    mountDiscoveryFormFixture();
+    (document.getElementById("discoveryPrompt") as HTMLTextAreaElement).value = "lamp";
+    (document.getElementById("discoveryMaxPrice") as HTMLInputElement).value = "abc";
+    updateDiscoveryBtn();
+    expect((document.getElementById("discoveryBtn") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("requires a region when pickup-only", () => {
+    mountDiscoveryFormFixture();
+    (document.getElementById("discoveryPrompt") as HTMLTextAreaElement).value = "lamp";
+    (document.getElementById("discoveryMaxPrice") as HTMLInputElement).value = "50";
+    (document.getElementById("discoveryAllowShipping") as HTMLInputElement).checked = false;
+    (document.getElementById("discoveryRegion") as HTMLSelectElement).value = "";
+    updateDiscoveryBtn();
+    expect((document.getElementById("discoveryBtn") as HTMLButtonElement).disabled).toBe(true);
+
+    (document.getElementById("discoveryRegion") as HTMLSelectElement).value = "12";
+    updateDiscoveryBtn();
+    expect((document.getElementById("discoveryBtn") as HTMLButtonElement).disabled).toBe(false);
   });
 });
