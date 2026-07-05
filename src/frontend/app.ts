@@ -12,7 +12,7 @@ import {
   populateRegionSelect,
   type RegionOption,
 } from "./discoveryForm";
-import { shouldDisableUpdateBtn } from "./renderUtils";
+import { shouldDisableApplyFilterBtn } from "./renderUtils";
 import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
@@ -76,6 +76,11 @@ const urlCards: UrlCard[] = [];
 // Region search intent defaults to the user's home region; matched against the
 // display names served by /api/regions so region ids stay a server-side detail.
 const DEFAULT_REGION_DISPLAY = "Wellington";
+
+// Labels that JS rewrites at runtime are owned here exclusively — the HTML
+// carries no copy, so the wording can never drift between sources.
+const DISCOVERY_BUTTON_LABEL = "Go sifting";
+const DISCOVERY_BUTTON_BUSY_LABEL = "Working…";
 
 function promptHash(inputString: string): number {
   let h = 5381;
@@ -393,6 +398,13 @@ function createUrlCard(): UrlCard {
   return urlCard;
 }
 
+// Sole writer of the filtered-results toggle label — derives it from state.
+function renderFilteredToggle(): void {
+  getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = showFilteredListings
+    ? "hide"
+    : "show";
+}
+
 function resetAllResults(): void {
   setIsAiFilterRunning(false);
   setAiFilterPendingRun(false);
@@ -400,7 +412,7 @@ function resetAllResults(): void {
   getElement("listingsContainer").innerHTML = "";
   getElement("resultCount").textContent = "0";
   setShowFilteredListings(false);
-  getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = "show";
+  renderFilteredToggle();
   getElement("filteredCount").classList.add("hidden");
   getElement("resultsSection").classList.add("hidden");
   for (const card of urlCards) {
@@ -454,8 +466,8 @@ function renderDerived(): void {
     !prompt ||
     listings.length === 0 ||
     listings.every((listingItem) => listingItem.aiCheckedHash === hash);
-  const updateBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
-  updateBtn.disabled = shouldDisableUpdateBtn({ isFilterCurrent, isAiFilterRunning });
+  const applyFilterBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
+  applyFilterBtn.disabled = shouldDisableApplyFilterBtn({ isFilterCurrent, isAiFilterRunning });
   updateUrlGroupHeaders();
 }
 
@@ -1099,6 +1111,8 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
 // ── Event listeners ───────────────────────────────────────────────────────────
 
 function initApp(): void {
+  getElement("discoveryBtn").textContent = DISCOVERY_BUTTON_LABEL;
+  renderFilteredToggle();
   createUrlCard();
   getElement<HTMLTextAreaElement>("discoveryPrompt").focus();
 
@@ -1112,9 +1126,7 @@ function initApp(): void {
 
   getElement("toggleFilteredBtn").addEventListener("click", () => {
     setShowFilteredListings(!showFilteredListings);
-    getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = showFilteredListings
-      ? "hide"
-      : "show";
+    renderFilteredToggle();
     for (const item of getOrderedListings()) {
       if (item.aiFilterReason !== null) {
         const card = getCardByUrl(item.data.url);
@@ -1158,7 +1170,7 @@ function initApp(): void {
     const discoveryErrorElement = getElement<HTMLDivElement>("discoveryError");
     discoveryErrorElement.style.display = "none";
     discoveryButton.disabled = true;
-    discoveryButton.textContent = "Working…";
+    discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
     try {
       const response = await fetch("/api/discover", {
         method: "POST",
@@ -1180,7 +1192,7 @@ function initApp(): void {
       discoveryErrorElement.textContent = "Discovery failed";
       discoveryErrorElement.style.display = "block";
     } finally {
-      discoveryButton.textContent = "Go sifting";
+      discoveryButton.textContent = DISCOVERY_BUTTON_LABEL;
       updateDiscoveryBtn();
     }
   });
