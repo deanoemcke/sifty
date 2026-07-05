@@ -56,7 +56,6 @@ export async function runAiFilterAsync(): Promise<void> {
   setIsAiFilterRunning(true);
   renderDerived();
 
-  let checked = 0;
   let streamError: string | null = null;
 
   try {
@@ -83,7 +82,6 @@ export async function runAiFilterAsync(): Promise<void> {
             if (item) {
               item.aiCheckedHash = hash;
               item.aiFilterReason = result.pass ? null : (result.reason ?? "No reason given");
-              checked++;
             }
           }
           applyClientFilters();

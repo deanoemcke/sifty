@@ -15,7 +15,7 @@ import {
   buildDetailPriceHtml,
   buildExtrasHtml,
 } from "./listingHtml";
-import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
+import { sourceBadgeHtml } from "./recipeDisplay";
 import { applyClientFilters, getOrderedListings, renderDerived } from "./resultsView";
 import {
   bulkDeepSearchUrls,

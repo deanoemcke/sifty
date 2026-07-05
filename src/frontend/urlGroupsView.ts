@@ -16,11 +16,6 @@ const CHEVRON_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none
 
 const urlGroupExpandedByRecipeId = new Map<RecipeId, boolean>();
 
-// Test isolation only.
-export function resetUrlGroupExpansion(): void {
-  urlGroupExpandedByRecipeId.clear();
-}
-
 export function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
   return {
     url: card.dom.input.value.trim(),

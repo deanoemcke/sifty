@@ -7,7 +7,7 @@ import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { applyListingCardAccessibility } from "./listingCardActivation";
 import { buildCardMetaHtml, buildCardPriceHtml, filterBannerText } from "./listingHtml";
-import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
+import { sourceBadgeHtml } from "./recipeDisplay";
 import { promptHash, shouldDisableApplyFilterBtn } from "./renderUtils";
 import {
   cardIdByUrl,
