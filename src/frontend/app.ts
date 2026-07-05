@@ -66,6 +66,7 @@ import {
   type UrlCardSearchStatus,
   urlCardData,
 } from "./state";
+import { setStatus } from "./statusBar";
 import { streamPostAsync } from "./streamPost";
 import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from "./urlGroups";
 
@@ -192,23 +193,6 @@ function cancelDeepSearch(): void {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ searchId: deepSearchId }),
   }).catch(() => null);
-}
-
-function setStatus(
-  statusMessage: string | null,
-  type: "info" | "success" | "error" = "info",
-): void {
-  const statusBar = getElement("statusBar");
-  if (!statusMessage) {
-    statusBar.classList.add("hidden");
-    return;
-  }
-  statusBar.className = `status-bar ${type}`;
-  statusBar.innerHTML =
-    type === "info"
-      ? `<span class="spinner"></span><span>${esc(statusMessage)}</span>`
-      : `<span>${esc(statusMessage)}</span>`;
-  statusBar.classList.remove("hidden");
 }
 
 function handleUrlInputChanged(card: UrlCard): void {
