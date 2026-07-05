@@ -73,26 +73,14 @@ import {
 } from "./state";
 import { setStatus } from "./statusBar";
 import { streamPostAsync } from "./streamPost";
+import {
+  addUrlCard,
+  removeUrlCardEntry,
+  type UrlCard,
+  type UrlCardDom,
+  urlCards,
+} from "./urlCardStore";
 import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from "./urlGroups";
-
-// ── URL card DOM handles ──────────────────────────────────────────────────────
-// UrlCardData (serialisable state) lives in state.ts; DOM refs live here only.
-
-interface UrlCardDom {
-  containerElement: HTMLElement;
-  input: HTMLInputElement;
-  // Truncated hyperlink shown in place of the input once a search has run.
-  linkElement: HTMLAnchorElement;
-  searchButton: HTMLButtonElement;
-  removeButton: HTMLButtonElement;
-  // Criteria block below the status line; hidden until criteria arrive.
-  criteriaElement: HTMLElement;
-  cacheStatusElement: HTMLElement;
-  statusElement: HTMLElement;
-}
-
-type UrlCard = { data: UrlCardData; dom: UrlCardDom };
-const urlCards: UrlCard[] = [];
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -357,8 +345,7 @@ function createUrlCard(): UrlCard {
     statusElement,
   };
   const urlCard: UrlCard = { data, dom };
-  urlCards.push(urlCard);
-  urlCardData.push(data);
+  addUrlCard(urlCard);
 
   input.addEventListener("input", () => handleUrlInputChanged(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
@@ -487,11 +474,7 @@ function removeUrlCard(card: UrlCard): void {
     }
   }
   card.dom.containerElement.remove();
-  const cardIndex = urlCards.indexOf(card);
-  if (cardIndex !== -1) {
-    urlCards.splice(cardIndex, 1);
-    urlCardData.splice(cardIndex, 1);
-  }
+  removeUrlCardEntry(card);
   if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
   updateRemoveButtons();
   syncUrlGroups();
