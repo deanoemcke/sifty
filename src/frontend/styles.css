@@ -553,9 +553,6 @@ label {
   border-color: #cbd5e1;
   box-shadow: var(--shadow-md);
 }
-.listing-card.enriched {
-  border-left: 3px solid var(--primary);
-}
 .listing-card-content {
   display: flex;
   flex-direction: column;
