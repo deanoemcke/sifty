@@ -1,5 +1,5 @@
-import Database from "better-sqlite3";
 import type { ServerResponse } from "node:http";
+import Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let _testDb: Database.Database | null = null;
@@ -32,7 +32,13 @@ vi.mock("../db", () => {
     return db.prepare("DELETE FROM saved_searches WHERE id = ?");
   }
 
-  return { getDb, stmtListSavedSearches, stmtGetSavedSearch, stmtInsertSavedSearch, stmtDeleteSavedSearch };
+  return {
+    getDb,
+    stmtListSavedSearches,
+    stmtGetSavedSearch,
+    stmtInsertSavedSearch,
+    stmtDeleteSavedSearch,
+  };
 });
 
 vi.mock("../helpers", () => ({
@@ -43,9 +49,9 @@ vi.mock("../helpers", () => ({
 import { readBody, sendJSON } from "../helpers";
 import {
   handleCreateSavedSearch,
+  handleDeleteSavedSearch,
   handleGetSavedSearch,
   handleListSavedSearches,
-  handleDeleteSavedSearch,
 } from "./savedSearches";
 
 function makeResponse(): ServerResponse {
@@ -174,11 +180,7 @@ describe("handleCreateSavedSearch", () => {
 
     await handleCreateSavedSearch(makeResponse() as never, makeResponse());
 
-    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
-      expect.anything(),
-      400,
-      expect.anything(),
-    );
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(expect.anything(), 400, expect.anything());
   });
 
   it("stores null for discoverInputs when not provided", async () => {
@@ -188,7 +190,7 @@ describe("handleCreateSavedSearch", () => {
     });
 
     await handleCreateSavedSearch(makeResponse() as never, makeResponse());
-    const { id } = (vi.mocked(sendJSON).mock.calls[0][2]) as { id: string };
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
     handleGetSavedSearch(makeResponse() as never, makeResponse(), id);
@@ -200,9 +202,11 @@ describe("handleCreateSavedSearch", () => {
 
 describe("handleListSavedSearches", () => {
   it("returns 500 when a row contains corrupt urls JSON", () => {
-    _testDb!.prepare(
-      "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run("bad-id", "bad row", "not-json", null, null, Date.now());
+    _testDb!
+      .prepare(
+        "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("bad-id", "bad row", "not-json", null, null, Date.now());
 
     handleListSavedSearches(makeResponse() as never, makeResponse());
 
@@ -225,7 +229,9 @@ describe("handleListSavedSearches", () => {
 
     handleListSavedSearches(makeResponse() as never, makeResponse());
 
-    const { searches } = vi.mocked(sendJSON).mock.calls[0][2] as { searches: Record<string, unknown>[] };
+    const { searches } = vi.mocked(sendJSON).mock.calls[0][2] as {
+      searches: Record<string, unknown>[];
+    };
     expect(searches).toHaveLength(1);
     expect(searches[0]).toHaveProperty("discoverInputs");
     expect(searches[0]).not.toHaveProperty("filters");
@@ -234,9 +240,11 @@ describe("handleListSavedSearches", () => {
 
 describe("handleGetSavedSearch", () => {
   it("returns 500 when the stored row has corrupt urls JSON", () => {
-    _testDb!.prepare(
-      "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run("bad-id", "bad row", "not-json", null, null, Date.now());
+    _testDb!
+      .prepare(
+        "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("bad-id", "bad row", "not-json", null, null, Date.now());
 
     handleGetSavedSearch(makeResponse() as never, makeResponse(), "bad-id");
 
@@ -271,10 +279,6 @@ describe("handleDeleteSavedSearch", () => {
     vi.mocked(sendJSON).mockClear();
     handleDeleteSavedSearch(makeResponse() as never, makeResponse(), id);
 
-    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
-      expect.anything(),
-      200,
-      { ok: true },
-    );
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(expect.anything(), 200, { ok: true });
   });
 });

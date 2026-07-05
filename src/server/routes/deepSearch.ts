@@ -2,12 +2,12 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Listing, ListingDetail } from "../../lib/recipes/base";
-import { getRecipeForUrl } from "../recipes/registry";
 import { requireArray, requireListingUrl } from "../../lib/validate";
 import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from "../cancellation";
 import { MAX_DEEP_SEARCH_ITEMS } from "../constants";
 import { getDb, isFresh, stmtGetDetail, stmtSetDetail } from "../db";
 import { readBody, sendJSON, sse, startSSE } from "../helpers";
+import { getRecipeForUrl } from "../recipes/registry";
 
 export async function handleDeepSearch(
   request: IncomingMessage,

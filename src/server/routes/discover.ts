@@ -3,16 +3,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DiscoverContext, Fulfillment } from "../../lib/recipes/base";
 import { isDiscoverableRecipe } from "../../lib/recipes/base";
-import { getAllRecipes } from "../recipes/registry";
-import { getAIConfig } from "../ai";
 import { requirePositiveNumber, requireString } from "../../lib/validate";
+import { getAIConfig } from "../ai";
 import { readBody, sendJSON } from "../helpers";
+import { getAllRecipes } from "../recipes/registry";
 
-const SENSITIVE_TOKEN_PATTERNS = [
-  /sk-[a-zA-Z0-9]+/g,
-  /api[_-]?key[=:]\S+/gi,
-  /bearer \S+/gi,
-];
+const SENSITIVE_TOKEN_PATTERNS = [/sk-[a-zA-Z0-9]+/g, /api[_-]?key[=:]\S+/gi, /bearer \S+/gi];
 
 export function sanitiseWarningMessage(reason: unknown): string {
   const rawMessage = reason instanceof Error ? reason.message : "Recipe failed";

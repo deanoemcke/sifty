@@ -2,11 +2,11 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Listing } from "../../lib/recipes/base";
-import { getRecipeForUrl } from "../recipes/registry";
 import { requireString } from "../../lib/validate";
 import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from "../cancellation";
 import { cacheAge, getDb, isFresh, stmtGetSearch, stmtSetSearch } from "../db";
 import { readBody, sendJSON, sse, startSSE } from "../helpers";
+import { getRecipeForUrl } from "../recipes/registry";
 
 export async function handleQuickSearch(
   request: IncomingMessage,

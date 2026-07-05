@@ -8,18 +8,15 @@ import { fireAllCardSearches } from "./cardSearch";
 import { decideModalDeepSearchAction } from "./deepSearchTrigger";
 import {
   applyLoadedDiscoverInputs,
+  type DiscoveryFormElements,
   fulfillmentFromAllowShipping,
   populateRegionSelect,
-  type DiscoveryFormElements,
   type RegionOption,
 } from "./discoveryForm";
 import { getElement, requireChild } from "./domUtils";
 import { collapseElementAsync, expandElement } from "./heightAnimation";
-import {
-  applyListingCardAccessibility,
-  handleListingCardKeydown,
-} from "./listingCardActivation";
 import { esc } from "./html";
+import { applyListingCardAccessibility, handleListingCardKeydown } from "./listingCardActivation";
 import { parseMaxPrice } from "./parseUtils";
 import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
 import { shouldDisableApplyFilterBtn } from "./renderUtils";

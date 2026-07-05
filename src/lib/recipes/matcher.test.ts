@@ -52,9 +52,7 @@ describe("recipeIdForUrl", () => {
   });
 
   it("resolves a facebook marketplace URL to the Facebook recipe id", () => {
-    expect(recipeIdForUrl("https://www.facebook.com/marketplace/item/123")).toBe(
-      RecipeId.Facebook,
-    );
+    expect(recipeIdForUrl("https://www.facebook.com/marketplace/item/123")).toBe(RecipeId.Facebook);
   });
 
   it("returns null for an unrecognised URL", () => {

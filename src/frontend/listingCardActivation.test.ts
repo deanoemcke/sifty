@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import {
-  applyListingCardAccessibility,
-  handleListingCardKeydown,
-} from "./listingCardActivation";
+import { applyListingCardAccessibility, handleListingCardKeydown } from "./listingCardActivation";
 
 function buildListingCard(): { card: HTMLElement; inner: HTMLElement } {
   const card = document.createElement("div");

@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   allowShippingFromFulfillment,
   applyLoadedDiscoverInputs,
+  type DiscoveryFormElements,
   fulfillmentFromAllowShipping,
   populateRegionSelect,
-  type DiscoveryFormElements,
 } from "./discoveryForm";
 
 const REGIONS = [
