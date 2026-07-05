@@ -17,7 +17,7 @@ import { fireAllCardSearches } from "./cardSearch";
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
-import { recipeFaviconHtml, sourceFaviconHtml } from "./recipeDisplay";
+import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
 import {
   type CardStatusSnapshot,
   cardStatusText,
@@ -876,7 +876,7 @@ function renderCard(item: ListingItem): void {
     <div class="listing-card-content">
       <div class="listing-thumb-wrap">
         ${thumb}
-        <span class="listing-source-badge">${sourceFaviconHtml(listing.source, 28)}</span>
+        ${sourceBadgeHtml(listing.source, 28)}
       </div>
       <div class="listing-body">
         <div class="listing-meta">

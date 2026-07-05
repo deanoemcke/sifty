@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RecipeId } from "../lib/recipes/metadata";
-import { recipeFaviconHtml, sourceFaviconHtml } from "./recipeDisplay";
+import { recipeFaviconHtml, sourceBadgeHtml, sourceFaviconHtml } from "./recipeDisplay";
 
 describe("recipeFaviconHtml", () => {
   it("renders the trademe favicon for the Trademe recipe id", () => {
@@ -49,5 +49,19 @@ describe("sourceFaviconHtml", () => {
   it("fetches the small source image at the default size", () => {
     const html = sourceFaviconHtml("trademe");
     expect(html).toContain("sz=16");
+  });
+});
+
+describe("sourceBadgeHtml", () => {
+  it("wraps the favicon in a badge tinted with the trademe brand colour", () => {
+    const html = sourceBadgeHtml("trademe", 28);
+    expect(html).toContain('class="listing-source-badge"');
+    expect(html).toContain("background:#feeb33");
+    expect(html).toContain('width="28"');
+    expect(html).toContain("trademe.co.nz");
+  });
+
+  it("tints the badge with the facebook brand colour", () => {
+    expect(sourceBadgeHtml("facebook", 28)).toContain("background:#0866ff");
   });
 });

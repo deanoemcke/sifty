@@ -1,10 +1,21 @@
 import { RecipeId, type RecipeSource, requirePattern } from "../lib/recipes/metadata";
 import { esc } from "./html";
 
-const SOURCE_META: Record<RecipeId, { label: string; faviconDomain: string }> = {
-  [RecipeId.Trademe]: { label: "Trade Me", faviconDomain: "trademe.co.nz" },
-  [RecipeId.Facebook]: { label: "Facebook", faviconDomain: "facebook.com" },
-};
+// brandColor is the dominant colour sampled from each favicon, used to tint
+// the badge behind it on listing cards.
+const SOURCE_META: Record<RecipeId, { label: string; faviconDomain: string; brandColor: string }> =
+  {
+    [RecipeId.Trademe]: {
+      label: "Trade Me",
+      faviconDomain: "trademe.co.nz",
+      brandColor: "#feeb33",
+    },
+    [RecipeId.Facebook]: {
+      label: "Facebook",
+      faviconDomain: "facebook.com",
+      brandColor: "#0866ff",
+    },
+  };
 
 export function recipeFaviconHtml(recipeId: RecipeId, sizePx = 14): string {
   const { label, faviconDomain } = SOURCE_META[recipeId];
@@ -16,4 +27,10 @@ export function recipeFaviconHtml(recipeId: RecipeId, sizePx = 14): string {
 
 export function sourceFaviconHtml(source: RecipeSource, sizePx = 14): string {
   return recipeFaviconHtml(requirePattern(source).recipeId, sizePx);
+}
+
+export function sourceBadgeHtml(source: RecipeSource, sizePx: number): string {
+  const { recipeId } = requirePattern(source);
+  const { brandColor } = SOURCE_META[recipeId];
+  return `<span class="listing-source-badge" style="background:${brandColor}">${recipeFaviconHtml(recipeId, sizePx)}</span>`;
 }
