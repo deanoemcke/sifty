@@ -4,7 +4,7 @@ export interface UpdateBtnStateArgs {
 }
 
 /**
- * Returns whether the "Update filter" button should be disabled.
+ * Returns whether the "Apply filter" button should be disabled.
  *
  * The button is disabled when:
  * - `isFilterCurrent` is true (no update needed), OR

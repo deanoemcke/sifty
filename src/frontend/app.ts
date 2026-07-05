@@ -455,9 +455,7 @@ function renderDerived(): void {
     listings.length === 0 ||
     listings.every((listingItem) => listingItem.aiCheckedHash === hash);
   const updateBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
-  updateBtn.style.display = isFilterCurrent ? "none" : "";
   updateBtn.disabled = shouldDisableUpdateBtn({ isFilterCurrent, isAiFilterRunning });
-  if (!isFilterCurrent) updateBtn.textContent = "Update filter";
   updateUrlGroupHeaders();
 }
 
