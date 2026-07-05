@@ -507,9 +507,10 @@ label {
   font-weight: 600;
 }
 .header-sep {
-  color: var(--border);
+  color: var(--text-muted);
 }
-.ai-filter-label-row label {
+.ai-filter-row label {
+  flex-shrink: 0;
   font-size: 0.78rem;
   color: var(--text-muted);
 }

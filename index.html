@@ -83,15 +83,11 @@
   <div id="resultsSection" class="results-header hidden">
       <div class="results-header-row results-status-row">
         <span>Matches: <strong id="resultCount">0</strong></span>
-        <span class="header-sep">|</span>
-        <span><strong id="deepSearchedCount">0</strong> of <strong id="deepSearchedTotal">0</strong> deep searched</span>
-        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search all matches</button>
-        <span id="filteredCount" class="filtered-count hidden"><span class="header-sep">|</span> Currently filtering <strong id="filteredCountNum">0</strong> results <button id="toggleFilteredBtn" class="cache-clear-btn">show</button></span>
-      </div>
-      <div class="results-header-row ai-filter-label-row">
-        <label for="aiFilter">Filter results by providing more detailed information</label>
+        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search matches</button>
+        <span id="filteredCount" class="filtered-count hidden"><span class="header-sep">|</span> Filtered results: <strong id="filteredCountNum">0</strong> <button id="toggleFilteredBtn" class="cache-clear-btn">show</button></span>
       </div>
       <div class="results-header-row ai-filter-row">
+        <label for="aiFilter">Refine search</label>
         <textarea id="aiFilter" rows="1" placeholder="e.g. good condition, no major damage, prefer aluminium frame"></textarea>
         <button id="applyAiFilterBtn" class="btn btn-primary" style="display:none">Update filter</button>
       </div>

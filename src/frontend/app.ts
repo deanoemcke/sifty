@@ -442,9 +442,6 @@ function renderDerived(): void {
   getElement("resultCount").textContent = String(visible.length);
   getElement("filteredCountNum").textContent = String(filtered);
   getElement("filteredCount").classList.toggle("hidden", filtered === 0);
-  const deepSearchedCount = visible.filter((listingItem) => listingItem.hasBeenDeepSearched).length;
-  getElement("deepSearchedCount").textContent = String(deepSearchedCount);
-  getElement("deepSearchedTotal").textContent = String(visible.length);
   const isAnyCardSearching = urlCards.some((card) => isCardSearchActive(card.data.searchStatus));
   const hasUnscraped = visible.some((listingItem) => !listingItem.hasBeenDeepSearched);
   getElement("deepBtn").classList.toggle(
