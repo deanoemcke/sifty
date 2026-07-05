@@ -123,6 +123,7 @@ export function renderCard(item: ListingItem): void {
   // only, so this template deliberately never references item.detail.
   card.innerHTML = `
     <div class="listing-card-content">
+      <div class="filter-banner hidden"></div>
       <div class="listing-thumb-wrap">
         ${thumb}
         ${sourceBadgeHtml(listing.source, 28)}
@@ -137,7 +138,6 @@ export function renderCard(item: ListingItem): void {
         </div>
       </div>
     </div>
-    <div class="filter-banner hidden"></div>
   `;
 
   if (!existing) getElement("listingsContainer").appendChild(card);
