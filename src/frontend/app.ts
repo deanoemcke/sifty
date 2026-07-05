@@ -3,7 +3,7 @@ import "./styles.css";
 import type { Listing, ListingDetail } from "../lib/recipes/base";
 import { isValidRecipeUrl, recipeIdForUrl } from "../lib/recipes/matcher";
 import type { RecipeId } from "../lib/recipes/metadata";
-import { scheduleAiFilterRun } from "./aiFilter";
+import { requestAiFilterRun } from "./aiFilter";
 import { fireAllCardSearches } from "./cardSearch";
 import { decideModalDeepSearchAction } from "./deepSearchTrigger";
 import {
@@ -441,78 +441,13 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   if (listingsByUrl.size > 0) {
     applyClientFilters();
     const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-    if (aiPrompt)
-      scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+    if (aiPrompt) requestAiFilterRun();
   } else {
     renderDerived();
   }
 }
 
 // ── Client-side filtering ─────────────────────────────────────────────────────
-
-async function runAiFilterAsync(): Promise<void> {
-  if (isAiFilterRunning) {
-    setAiFilterPendingRun(true);
-    return;
-  }
-
-  const prompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-  if (!prompt) return;
-  const hash = promptHash(prompt);
-  const toCheck = getOrderedListings().filter((item) => item.aiCheckedHash !== hash);
-  if (toCheck.length === 0) return;
-
-  setIsAiFilterRunning(true);
-  renderDerived();
-
-  let checked = 0;
-  let streamError: string | null = null;
-
-  try {
-    await streamPostAsync(
-      "/api/ai-filter",
-      {
-        prompt,
-        listings: toCheck.map((item) => ({
-          url: item.data.url,
-          title: item.data.title,
-          price: item.data.priceDisplay,
-          location: item.data.location,
-          description: (item.detail?.description ?? item.data.description)?.slice(0, 300) ?? "",
-        })),
-      },
-      (event) => {
-        if (event.type === "result") {
-          for (const result of event.results as Array<{
-            url: string;
-            pass: boolean;
-            reason: string | null;
-          }>) {
-            const item = listingsByUrl.get(result.url);
-            if (item) {
-              item.aiCheckedHash = hash;
-              item.aiFilterReason = result.pass ? null : (result.reason ?? "No reason given");
-              checked++;
-            }
-          }
-          applyClientFilters();
-        } else if (event.type === "error") {
-          streamError = event.message as string;
-        }
-      },
-    );
-    if (streamError) throw new Error(streamError);
-  } catch (error) {
-    setStatus((error as Error).message, "error");
-  } finally {
-    setIsAiFilterRunning(false);
-    renderDerived();
-    if (aiFilterPendingRun) {
-      setAiFilterPendingRun(false);
-      void runAiFilterAsync();
-    }
-  }
-}
 
 async function clearQuickSearchCacheAsync(): Promise<void> {
   await fetch("/api/cache/clear", {
@@ -592,8 +527,7 @@ async function deepSearchListingAsync(item: ListingItem): Promise<void> {
   if (item.hasBeenDeepSearched) {
     applyClientFilters();
     const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-    if (aiPrompt)
-      scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+    if (aiPrompt) requestAiFilterRun();
   }
 }
 
@@ -677,7 +611,7 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchBusy(false);
   applyClientFilters();
   const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-  if (aiPrompt) scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+  if (aiPrompt) requestAiFilterRun();
 }
 
 function markDirty(): void {
@@ -877,7 +811,7 @@ function initApp(): void {
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", renderDerived);
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", markDirty);
   getElement<HTMLButtonElement>("applyAiFilterBtn").addEventListener("click", () =>
-    scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun }),
+    requestAiFilterRun(),
   );
 
   // Mark dirty on any URL input change or new URL card
