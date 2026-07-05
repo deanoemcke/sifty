@@ -31,6 +31,7 @@ import {
   filterBannerText,
 } from "./listingHtml";
 import { parseMaxPrice } from "./parseUtils";
+import { searchUrlCardAsync } from "./quickSearch";
 import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
 import { promptHash } from "./renderUtils";
 import {
@@ -137,114 +138,6 @@ function cancelDeepSearch(): void {
 function setDeepSearchBusy(busy: boolean): void {
   setIsDeepSearchRunning(busy);
   renderDerived();
-}
-
-async function searchUrlCardAsync(card: UrlCard): Promise<void> {
-  const url = card.dom.input.value.trim();
-  if (!isValidRecipeUrl(url)) return;
-
-  if (card.data.searchStatus === "done") resetCardForResearch(card);
-
-  getElement("resultsSection").classList.remove("hidden");
-  card.data.searchStatus = "searching";
-  card.data.searchId = crypto.randomUUID();
-  card.data.lastProgress = null;
-  card.data.errorMessage = null;
-  card.data.wasCancelled = false;
-  renderDerived();
-  renderCardStatus(card);
-
-  let cachedAge = "";
-  try {
-    await streamPostAsync("/api/quick-search", { url, searchId: card.data.searchId }, (ev) => {
-      if (ev.type === "criteria") {
-        const filters = ev.filters as Array<[string, string]>;
-        requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = filters
-          .map(
-            ([k, v]) =>
-              `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`,
-          )
-          .join("");
-        card.dom.criteriaElement.classList.remove("hidden");
-      } else if (ev.type === "cached") {
-        cachedAge = ev.age as string;
-      } else if (ev.type === "progress") {
-        const progress = parseQuickSearchProgress(ev);
-        if (progress === null) {
-          console.warn("Ignoring malformed progress event", ev);
-        } else {
-          card.data.lastProgress = progress;
-          if (canCancelSearch(card.data.searchStatus)) renderCardStatus(card);
-          updateUrlGroupHeaders();
-        }
-      } else if (ev.type === "listing") {
-        const listing = ev.data as Listing;
-        card.data.listingUrls.push(listing.url);
-        if (!listingsByUrl.has(listing.url)) {
-          const item: ListingItem = {
-            data: listing,
-            detail: null,
-            hasBeenDeepSearched: false,
-            aiCheckedHash: null,
-            aiFilterReason: null,
-          };
-          listingsByUrl.set(listing.url, item);
-          renderCard(item);
-          renderDerived();
-        } else {
-          // Listing already known from another card — the group count may
-          // still change, since it dedupes per group rather than globally.
-          updateUrlGroupHeaders();
-        }
-      } else if (ev.type === "error") {
-        card.data.errorMessage = typeof ev.message === "string" ? ev.message : "Search failed";
-      }
-    });
-  } catch (error) {
-    card.data.errorMessage = (error as Error).message;
-  }
-
-  const wasCancelled = (card.data.searchStatus as UrlCardSearchStatus) === "cancelling";
-  card.data.searchStatus = wasCancelled ? "idle" : "done";
-  card.data.searchId = null;
-
-  if (wasCancelled) {
-    card.data.wasCancelled = true;
-    renderCardStatus(card);
-    if (listingsByUrl.size > 0) applyClientFilters();
-    return;
-  }
-  card.data.searchedUrl = url;
-  card.dom.input.readOnly = true;
-
-  if (cachedAge) {
-    card.dom.cacheStatusElement.innerHTML = `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
-    card.dom.cacheStatusElement.classList.remove("hidden");
-    requireChild<HTMLButtonElement>(
-      card.dom.cacheStatusElement,
-      ".cache-clear-btn",
-    ).addEventListener("click", clearQuickSearchCacheAsync);
-  }
-
-  renderCardStatus(card);
-  if (listingsByUrl.size > 0) {
-    applyClientFilters();
-    const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-    if (aiPrompt) requestAiFilterRun();
-  } else {
-    renderDerived();
-  }
-}
-
-// ── Client-side filtering ─────────────────────────────────────────────────────
-
-async function clearQuickSearchCacheAsync(): Promise<void> {
-  await fetch("/api/cache/clear", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "quick-search" }),
-  }).catch(() => null);
-  resetAllResults();
 }
 
 // ── Listing detail modal ──────────────────────────────────────────────────────
