@@ -497,8 +497,9 @@ label {
 .results-header-row + .results-header-row {
   margin-top: 0.5rem;
 }
+/* All header text matches the 0.875rem input text */
 .results-status-row {
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   color: var(--text-muted);
   gap: 0.5rem;
 }
@@ -511,7 +512,7 @@ label {
 }
 .ai-filter-row label {
   flex-shrink: 0;
-  font-size: 0.78rem;
+  font-size: 0.875rem;
   color: var(--text-muted);
 }
 .ai-filter-row textarea {
@@ -934,6 +935,9 @@ label {
 }
 .cache-clear-btn:hover {
   color: var(--primary-hover);
+}
+.results-header .cache-clear-btn {
+  font-size: inherit;
 }
 .btn-ghost {
   background: none;
