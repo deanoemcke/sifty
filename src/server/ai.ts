@@ -100,6 +100,12 @@ export async function aiJSON(
           (errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "",
         );
         const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
+        const remainingMs = deadline - Date.now();
+        if (delaySecs * 1000 > remainingMs) {
+          throw new Error(
+            `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
+          );
+        }
         console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
         await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
         continue;

@@ -106,15 +106,17 @@ describe("aiJSON", () => {
     expect(result).toEqual({ answer: 2 });
   });
 
-  it("throws with a budget-exceeded message when the total timeout is consumed between retries", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      makeResponse(429, { error: { message: `try again in ${TOTAL_TIMEOUT_MS / 1000 + 5}s` } }),
+  it("throws immediately without sleeping when the provider's retry delay exceeds the total budget", async () => {
+    const overBudgetSecs = TOTAL_TIMEOUT_MS / 1000 + 5;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(make429Response(overBudgetSecs));
+
+    await expect(aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100)).rejects.toThrow(
+      `AI rate limited (test): provider asks to retry in ${overBudgetSecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
     );
 
-    const promise = aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100);
-    const assertion = expect(promise).rejects.toThrow("exceeded total budget");
-    await vi.runAllTimersAsync();
-    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("truncates long system and user messages to 200 chars in the log", async () => {
