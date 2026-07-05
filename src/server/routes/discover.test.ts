@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DiscoverContext, DiscoverableRecipe, RecipeDiscoverResult } from "../../lib/recipes/base";
+import type {
+  DiscoverableRecipe,
+  DiscoverContext,
+  RecipeDiscoverResult,
+} from "../../lib/recipes/base";
 import { discoverCategoriesAsync } from "./discover";
 
 vi.mock("../recipes/registry", () => ({
@@ -11,8 +15,8 @@ vi.mock("../ai", () => ({
   getAIConfig: vi.fn(),
 }));
 
-import { getAllRecipes } from "../recipes/registry";
 import { getAIConfig } from "../ai";
+import { getAllRecipes } from "../recipes/registry";
 
 function makeStubRecipe(urls: string[], warnings: string[] = []): DiscoverableRecipe {
   return {
@@ -27,7 +31,10 @@ function makeStubRecipe(urls: string[], warnings: string[] = []): DiscoverableRe
 
 function withBuildDiscover(
   base: DiscoverableRecipe,
-  buildDiscoverUrlsAsync: (prompt: string, context: DiscoverContext) => Promise<RecipeDiscoverResult>,
+  buildDiscoverUrlsAsync: (
+    prompt: string,
+    context: DiscoverContext,
+  ) => Promise<RecipeDiscoverResult>,
 ): DiscoverableRecipe {
   return { ...base, buildDiscoverUrlsAsync };
 }
@@ -127,7 +134,10 @@ describe("discoverCategoriesAsync", () => {
 
   it("propagates warnings returned by a recipe", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      makeStubRecipe(["https://www.trademe.co.nz/a/x"], ["step2:computers/computers unexpected result"]),
+      makeStubRecipe(
+        ["https://www.trademe.co.nz/a/x"],
+        ["step2:computers/computers unexpected result"],
+      ),
     ]);
 
     const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
@@ -135,9 +145,7 @@ describe("discoverCategoriesAsync", () => {
   });
 
   it("returns an empty warnings array when all recipes succeed cleanly", async () => {
-    vi.mocked(getAllRecipes).mockReturnValue([
-      makeStubRecipe(["https://www.trademe.co.nz/a/x"]),
-    ]);
+    vi.mocked(getAllRecipes).mockReturnValue([makeStubRecipe(["https://www.trademe.co.nz/a/x"])]);
 
     const result = await discoverCategoriesAsync("laptop", 0, "any", undefined);
     expect(result.warnings).toEqual([]);
@@ -199,12 +207,9 @@ describe("discoverCategoriesAsync", () => {
 
   it("prefixes rejection warning with the recipe name", async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
-      withBuildDiscover(
-        { ...makeStubRecipe([]), name: "trademe" },
-        async () => {
-          throw new Error("AI unavailable");
-        },
-      ),
+      withBuildDiscover({ ...makeStubRecipe([]), name: "trademe" }, async () => {
+        throw new Error("AI unavailable");
+      }),
       makeStubRecipe(["https://www.facebook.com/marketplace/search?query=laptop"]),
     ]);
 
@@ -232,9 +237,7 @@ describe("discoverCategoriesAsync", () => {
       throw new Error("GROQ_API_KEY is not set");
     });
     const buildSpy = vi.fn().mockResolvedValue({ urls: ["https://example.com"], warnings: [] });
-    vi.mocked(getAllRecipes).mockReturnValue([
-      withBuildDiscover(makeStubRecipe([]), buildSpy),
-    ]);
+    vi.mocked(getAllRecipes).mockReturnValue([withBuildDiscover(makeStubRecipe([]), buildSpy)]);
 
     await expect(discoverCategoriesAsync("laptop", 0, "any", undefined)).rejects.toThrow(
       "GROQ_API_KEY is not set",

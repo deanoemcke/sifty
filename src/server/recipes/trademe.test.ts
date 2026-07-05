@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listing } from "../../lib/recipes/base";
+import { aiJSON } from "../ai";
+import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import {
-  STEP2_SYSTEM_PROMPT,
   buildListing,
   buildTrademeUrl,
   collapseEntries,
+  type DiscoverEntry,
   extractDescriptionFromText,
   extractDetails,
   extractFromGraphQL,
@@ -14,11 +16,9 @@ import {
   mapFulfillment,
   parseFrendState,
   parseSearchApiResponse,
+  STEP2_SYSTEM_PROMPT,
   trademeRecipe,
-  type DiscoverEntry,
 } from "./trademe";
-import { aiJSON } from "../ai";
-import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 
 vi.mock("../ai", () => ({ aiJSON: vi.fn() }));
 vi.mock("../db", () => ({
@@ -575,8 +575,7 @@ describe("extractImplicitFilters", () => {
   });
 
   it("prefixes price criteria with a dollar symbol", () => {
-    const url =
-      "https://www.trademe.co.nz/a/marketplace/search?price_min=50&price_max=250";
+    const url = "https://www.trademe.co.nz/a/marketplace/search?price_min=50&price_max=250";
     const filters = extractImplicitFilters(url);
     expect(filters).toContainEqual(["Price Min", "$50"]);
     expect(filters).toContainEqual(["Price Max", "$250"]);
@@ -813,7 +812,11 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("applies maxPrice to the generated URL", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({
+        categories: ["Electronics"],
+        searchLabel: "l",
+        searchQuery: "laptop",
+      })
       .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
@@ -826,7 +829,11 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("returns an empty warnings array on full success", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({
+        categories: ["Electronics"],
+        searchLabel: "l",
+        searchQuery: "laptop",
+      })
       .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
@@ -839,11 +846,19 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("accumulates a warning for a step-2 null response and throws only when no URLs result", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({
+        categories: ["Electronics"],
+        searchLabel: "l",
+        searchQuery: "laptop",
+      })
       .mockResolvedValueOnce(null);
 
     await expect(
-      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+        maxPrice: 0,
+        fulfillment: "any",
+        aiConfig: MOCK_AI,
+      }),
     ).rejects.toThrow("AI returned no valid specific categories");
   });
 
@@ -882,11 +897,19 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("accumulates a warning for a step-2 malformed response and throws only when no URLs result", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ categories: ["Electronics"], searchLabel: "l", searchQuery: "laptop" })
+      .mockResolvedValueOnce({
+        categories: ["Electronics"],
+        searchLabel: "l",
+        searchQuery: "laptop",
+      })
       .mockResolvedValueOnce({ notCategories: [] });
 
     await expect(
-      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+        maxPrice: 0,
+        fulfillment: "any",
+        aiConfig: MOCK_AI,
+      }),
     ).rejects.toThrow("AI returned no valid specific categories");
   });
 
@@ -931,7 +954,11 @@ describe("buildDiscoverUrlsAsync", () => {
     });
 
     await expect(
-      trademeRecipe.buildDiscoverUrlsAsync("laptop", { maxPrice: 0, fulfillment: "any", aiConfig: MOCK_AI }),
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+        maxPrice: 0,
+        fulfillment: "any",
+        aiConfig: MOCK_AI,
+      }),
     ).rejects.toThrow("AI returned no valid broad categories");
   });
 });

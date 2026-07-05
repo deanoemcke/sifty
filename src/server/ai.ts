@@ -25,7 +25,8 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
 export function getAIConfig(): AiConfig {
   const provider = (process.env.AI_PROVIDER ?? "groq").toLowerCase();
   const providerConfig = AI_PROVIDERS[provider];
-  if (!providerConfig) throw new Error(`Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`);
+  if (!providerConfig)
+    throw new Error(`Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`);
   const apiKey = process.env[providerConfig.keyVar];
   if (!apiKey) throw new Error(`${providerConfig.keyVar} is not set`);
   return { url: providerConfig.url, model: providerConfig.model, apiKey };
@@ -92,8 +93,12 @@ export async function aiJSON(
       const parsed = (await apiResponse.json().catch(() => null)) as Record<string, unknown> | null;
       if (parsed !== null) lastErrorData = parsed;
       if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
-        const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<string, unknown>;
-        const errorMessage = String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
+        const errorBody = (
+          Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData
+        ) as Record<string, unknown>;
+        const errorMessage = String(
+          (errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "",
+        );
         const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
         console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
         await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
@@ -103,9 +108,13 @@ export async function aiJSON(
     }
     break;
   }
-  if (apiResponse === undefined) throw new Error(`AI request failed: no response received (${label})`);
+  if (apiResponse === undefined)
+    throw new Error(`AI request failed: no response received (${label})`);
   if (!apiResponse.ok) {
-    const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<string, unknown>;
+    const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<
+      string,
+      unknown
+    >;
     const errorMessage =
       (errorBody?.error as Record<string, unknown>)?.message ??
       errorBody?.message ??

@@ -4,8 +4,8 @@ import type { ServerResponse } from "node:http";
 import { sendJSON } from "../helpers";
 import { getRegions } from "../services/regions";
 
-export { getRegions } from "../services/regions";
 export type { RegionEntry } from "../services/regions";
+export { getRegions } from "../services/regions";
 
 export function handleRegions(_req: unknown, response: ServerResponse): void {
   const regions = getRegions();

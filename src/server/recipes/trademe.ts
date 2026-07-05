@@ -1,13 +1,9 @@
 import { chromium, type Page, type Response } from "playwright";
-import { aiJSON } from "../ai";
-import { MAX_PAGES_PER_SEARCH } from "../constants";
-import type { CategoryRow } from "../db";
-import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import { enqueue } from "../../lib/queue";
 import type {
-  DiscoverContext,
   DeepSearchEvent,
   DiscoverableRecipe,
+  DiscoverContext,
   Fulfillment,
   Listing,
   ListingDetail,
@@ -16,6 +12,10 @@ import type {
   RecipeDiscoverResult,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
+import { aiJSON } from "../ai";
+import { MAX_PAGES_PER_SEARCH } from "../constants";
+import type { CategoryRow } from "../db";
+import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -537,7 +537,11 @@ export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
     // Collapse siblings only when the shared parent is at least 3 segments deep
     // (e.g. marketplace/computers/laptops) to avoid collapsing into a bare top-level slug.
     const MIN_COLLAPSIBLE_PARENT_DEPTH = 3;
-    if (siblings.length >= 1 && parentSlug && parentSlug.split("/").length >= MIN_COLLAPSIBLE_PARENT_DEPTH) {
+    if (
+      siblings.length >= 1 &&
+      parentSlug &&
+      parentSlug.split("/").length >= MIN_COLLAPSIBLE_PARENT_DEPTH
+    ) {
       for (const sibling of siblings) consumed.add(sibling.slug);
       consumed.add(entry.slug);
       collapsed.push({ slug: parentSlug, searchString: entry.searchString });
@@ -585,7 +589,11 @@ async function buildDiscoverUrlsAsync(
   }
 
   // Sequential (not parallel) so concurrent bursts don't collide on the provider's TPM limit.
-  const subcategoryPickResults: Array<{ top2Slug: string; candidates: CategoryRow[]; result: Record<string, unknown> | null }> = [];
+  const subcategoryPickResults: Array<{
+    top2Slug: string;
+    candidates: CategoryRow[];
+    result: Record<string, unknown> | null;
+  }> = [];
   for (const top2Slug of selectedBroadSlugs) {
     const broadEntry = broad.find((category) => category.slug === top2Slug);
     if (!broadEntry) throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
@@ -601,7 +609,11 @@ async function buildDiscoverUrlsAsync(
       `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
       1024,
     );
-    subcategoryPickResults.push({ top2Slug, candidates, result: result as Record<string, unknown> | null });
+    subcategoryPickResults.push({
+      top2Slug,
+      candidates,
+      result: result as Record<string, unknown> | null,
+    });
   }
 
   const allEntries: DiscoverEntry[] = [];

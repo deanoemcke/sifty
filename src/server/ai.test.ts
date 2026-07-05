@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiConfig } from "./ai";
-import { MAX_RETRIES, TOTAL_TIMEOUT_MS, aiJSON } from "./ai";
+import { aiJSON, MAX_RETRIES, TOTAL_TIMEOUT_MS } from "./ai";
 
-const MOCK_CONFIG: AiConfig = { url: "https://api.example.com/chat", model: "test-model", apiKey: "test-key" };
+const MOCK_CONFIG: AiConfig = {
+  url: "https://api.example.com/chat",
+  model: "test-model",
+  apiKey: "test-key",
+};
 
-function makeResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+function makeResponse(
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json", ...headers },
@@ -15,12 +23,11 @@ function makeSuccessResponse(result: unknown): Response {
   return makeResponse(200, { choices: [{ message: { content: JSON.stringify(result) } }] });
 }
 
-function make429Response(retryAfter: number, message = "Rate limit reached. Please try again in 6s."): Response {
-  return makeResponse(
-    429,
-    { error: { message } },
-    { "retry-after": String(retryAfter) },
-  );
+function make429Response(
+  retryAfter: number,
+  message = "Rate limit reached. Please try again in 6s.",
+): Response {
+  return makeResponse(429, { error: { message } }, { "retry-after": String(retryAfter) });
 }
 
 describe("aiJSON", () => {
@@ -59,7 +66,9 @@ describe("aiJSON", () => {
   });
 
   it("exhausts retries and includes the error body message on persistent 429", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(0.01, "you hit the rate limit"));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      make429Response(0.01, "you hit the rate limit"),
+    );
 
     const promise = aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100);
     const assertion = expect(promise).rejects.toThrow("you hit the rate limit");

@@ -50,12 +50,10 @@ function logDbStats(database: Database.Database): void {
     );
   else console.log(`[categories] ${totalCategoriesCount} TradeMe categories loaded`);
 
-  const searchCount = database
-    .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM quick_searches")
-    .get()?.n ?? 0;
-  const detailCount = database
-    .prepare<[], { n: number }>("SELECT COUNT(*) as n FROM deep_details")
-    .get()?.n ?? 0;
+  const searchCount =
+    database.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM quick_searches").get()?.n ?? 0;
+  const detailCount =
+    database.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM deep_details").get()?.n ?? 0;
   if (searchCount > 0 || detailCount > 0)
     console.log(`[cache] opened db — ${searchCount} searches, ${detailCount} listing details`);
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { aiJSON } from "../ai";
 import {
   buildFacebookListing,
@@ -176,37 +176,29 @@ describe("buildFacebookSearchQueryAsync", () => {
 
   it("throws when AI returns null", async () => {
     vi.mocked(aiJSON).mockResolvedValueOnce(null);
-    await expect(
-      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
-    ).rejects.toThrow();
+    await expect(buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG)).rejects.toThrow();
   });
 
   it("throws when AI returns an object with no query field", async () => {
     vi.mocked(aiJSON).mockResolvedValueOnce({ keywords: "macbook pro" });
-    await expect(
-      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
-    ).rejects.toThrow();
+    await expect(buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG)).rejects.toThrow();
   });
 
   it("throws when AI returns an empty query string", async () => {
     vi.mocked(aiJSON).mockResolvedValueOnce({ query: "" });
-    await expect(
-      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
-    ).rejects.toThrow();
+    await expect(buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG)).rejects.toThrow();
   });
 
   it("throws when AI returns a whitespace-only query string", async () => {
     vi.mocked(aiJSON).mockResolvedValueOnce({ query: "   " });
-    await expect(
-      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
-    ).rejects.toThrow();
+    await expect(buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG)).rejects.toThrow();
   });
 
   it("propagates AI errors", async () => {
     vi.mocked(aiJSON).mockRejectedValueOnce(new Error("Rate limited"));
-    await expect(
-      buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG),
-    ).rejects.toThrow("Rate limited");
+    await expect(buildFacebookSearchQueryAsync("macbook pro", MOCK_AI_CONFIG)).rejects.toThrow(
+      "Rate limited",
+    );
   });
 });
 
