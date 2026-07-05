@@ -548,18 +548,22 @@ label {
   opacity: 0.6;
 }
 
-.listing-thumb {
+/* Wraps the thumbnail so the source favicon can overlay its top-left corner */
+.listing-thumb-wrap {
+  position: relative;
   flex-shrink: 0;
+  align-self: stretch;
+}
+.listing-thumb {
+  display: block;
   width: 100%;
   aspect-ratio: 1 / 1;
   height: auto;
   object-fit: cover;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  align-self: stretch;
 }
 .listing-thumb-placeholder {
-  flex-shrink: 0;
   width: 100%;
   aspect-ratio: 1 / 1;
   background: var(--bg);
@@ -568,7 +572,17 @@ label {
   align-items: center;
   justify-content: center;
   color: var(--border);
-  align-self: stretch;
+}
+.listing-source-badge {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.45rem;
+  display: inline-flex;
+  padding: 0.22rem;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  line-height: 0;
 }
 .listing-body {
   flex: 1;
@@ -580,9 +594,12 @@ label {
 }
 
 .listing-title {
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   font-weight: 600;
   line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .listing-title a {
   color: var(--primary);
@@ -654,18 +671,6 @@ label {
 .badge-pickup {
   background: #fef3c7;
   color: #92400e;
-}
-.badge-shipping {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-.badge-pickuponly {
-  background: #fef3c7;
-  color: #92400e;
-}
-.badge-both {
-  background: var(--green-bg);
-  color: var(--green);
 }
 .meta-text {
   font-size: 0.78rem;
@@ -770,13 +775,15 @@ label {
 .listing-card.expanded .listing-card-content {
   flex-direction: row;
 }
-.listing-card.expanded .listing-thumb,
-.listing-card.expanded .listing-thumb-placeholder {
+.listing-card.expanded .listing-thumb-wrap {
   width: 180px;
   align-self: flex-start;
+  margin: 1rem 0 1rem 1rem;
+}
+.listing-card.expanded .listing-thumb,
+.listing-card.expanded .listing-thumb-placeholder {
   border: 1px solid var(--border);
   border-radius: 6px;
-  margin: 1rem 0 1rem 1rem;
 }
 .extras-fade {
   display: none;

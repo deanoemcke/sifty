@@ -768,14 +768,6 @@ function getCardByUrl(url: string): HTMLElement | null {
   return id ? document.getElementById(id) : null;
 }
 
-function renderShippingBadgeHtml(fulfillment: Listing["fulfillment"]): string {
-  if (!fulfillment) return "";
-  if (fulfillment.pickupAvailable && fulfillment.shippingAvailable)
-    return '<span class="badge badge-both">Allows pickups</span>';
-  if (fulfillment.pickupAvailable) return '<span class="badge badge-pickuponly">Pickup only</span>';
-  return "";
-}
-
 function formatReserveText(status: string): string {
   if (status === "NONE") return "No reserve";
   if (status === "MET") return "Reserve met";
@@ -801,30 +793,13 @@ function buildPricesHtml(item: ListingItem): string {
 }
 
 function buildMetaHtml(item: ListingItem): string {
-  const left = `<span class="meta-left"><span class="meta-text">📍 ${esc(item.data.location)}</span></span>`;
-  let html = sourceFaviconHtml(item.data.source);
+  const left = `<span class="meta-left"><span class="meta-text">${esc(item.data.location)}</span></span>`;
+  let html = "";
   const detail = item.detail;
-  if (detail) {
-    const { shippingAvailable, pickupAvailable } = detail;
-    const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
-    if (item.data.isAuction) {
-      const reserve = formatReserveText(detail.reserveStatus);
-      if (reserve)
-        html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
-    }
-    if (hasDefiniteData) {
-      if (shippingAvailable && pickupAvailable) {
-        html += '<span class="badge badge-both">Shipping &amp; pickup</span>';
-      } else if (shippingAvailable) {
-        html += '<span class="badge badge-shipping">Shipping only</span>';
-      } else if (pickupAvailable) {
-        html += '<span class="badge badge-pickuponly">Pickup only</span>';
-      }
-    } else {
-      html += renderShippingBadgeHtml(item.data.fulfillment);
-    }
-  } else {
-    html += renderShippingBadgeHtml(item.data.fulfillment);
+  if (detail && item.data.isAuction) {
+    const reserve = formatReserveText(detail.reserveStatus);
+    if (reserve)
+      html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
   }
   return `${left}<span class="meta-right">${html}</span>`;
 }
@@ -899,13 +874,16 @@ function renderCard(item: ListingItem): void {
   card.innerHTML = `
     <div class="filter-banner hidden"></div>
     <div class="listing-card-content">
-      ${thumb}
+      <div class="listing-thumb-wrap">
+        ${thumb}
+        <span class="listing-source-badge">${sourceFaviconHtml(listing.source)}</span>
+      </div>
       <div class="listing-body">
         <div class="listing-meta">
           ${buildMetaHtml(item)}
         </div>
         <div class="listing-title">
-          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+          <a href="${esc(listing.url)}" target="_blank" rel="noopener" title="${esc(listing.title)}">${esc(listing.title)}</a>
         </div>
         <div class="listing-extras">${item.detail ? buildExtrasHtml(item.detail) : ""}</div>
         <div class="listing-prices">
