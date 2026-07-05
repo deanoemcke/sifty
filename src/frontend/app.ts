@@ -1050,8 +1050,7 @@ function renderSavedSearches(searches: SavedSearch[]): void {
       (savedSearch) => `
     <div class="saved-search-row" data-id="${esc(savedSearch.id)}">
       <a class="saved-search-name load-saved-btn" href="#" title="${esc(savedSearch.name)}">${esc(savedSearch.name)}</a>
-      <span class="saved-search-date">${new Date(savedSearch.createdAt).toLocaleDateString()} ${new Date(savedSearch.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}</span>
-      <button class="btn btn-ghost delete-saved-btn" style="padding:0.25rem 0.65rem;font-size:0.78rem">✕</button>
+      <button class="btn icon-btn delete-saved-btn" type="button" title="Delete">${X_ICON}</button>
     </div>
   `,
     )

@@ -13,7 +13,7 @@
   --yellow-bg: #fef9c3;
   --red: #dc2626;
   --red-bg: #fef2f2;
-  --radius: 10px;
+  --radius: 6px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
 }
@@ -107,7 +107,7 @@ header h1 {
   gap: 0.4rem;
   padding: 0.55rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--radius) var(--radius) 0 0;
   margin-bottom: -1px;
   background: var(--bg);
   font-family: inherit;
@@ -314,7 +314,8 @@ label {
 .url-link:hover {
   text-decoration: underline;
 }
-.url-remove-btn {
+.url-remove-btn,
+.delete-saved-btn {
   color: var(--text);
 }
 /* Criteria lines below the status text */
@@ -920,6 +921,19 @@ label {
   background: none;
 }
 
+/* Discovery action row: search button centred, save-favourite pinned right */
+.discovery-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.save-current-btn {
+  position: absolute;
+  right: 0;
+  color: var(--primary);
+}
+
 /* ── Misc ── */
 .hidden {
   /* biome-ignore lint/complexity/noImportantStyles: .hidden must beat inline display styles set by JS */
@@ -970,11 +984,6 @@ label {
 }
 .saved-search-name:hover {
   text-decoration: underline;
-}
-.saved-search-date {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  flex-shrink: 0;
 }
 .mt-sm {
   margin-top: 0.5rem;
