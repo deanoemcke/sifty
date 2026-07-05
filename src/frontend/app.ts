@@ -876,7 +876,7 @@ function renderCard(item: ListingItem): void {
     <div class="listing-card-content">
       <div class="listing-thumb-wrap">
         ${thumb}
-        <span class="listing-source-badge">${sourceFaviconHtml(listing.source)}</span>
+        <span class="listing-source-badge">${sourceFaviconHtml(listing.source, 28)}</span>
       </div>
       <div class="listing-body">
         <div class="listing-meta">

@@ -38,4 +38,16 @@ describe("sourceFaviconHtml", () => {
     expect(html).toContain('width="14"');
     expect(html).toContain('height="14"');
   });
+
+  it("renders at the requested size, fetching a higher-resolution source", () => {
+    const html = sourceFaviconHtml("trademe", 28);
+    expect(html).toContain('width="28"');
+    expect(html).toContain('height="28"');
+    expect(html).toContain("sz=64");
+  });
+
+  it("fetches the small source image at the default size", () => {
+    const html = sourceFaviconHtml("trademe");
+    expect(html).toContain("sz=16");
+  });
 });
