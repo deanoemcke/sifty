@@ -15,6 +15,10 @@ import {
 } from "./discoveryForm";
 import { getElement, requireChild } from "./domUtils";
 import { collapseElementAsync, expandElement } from "./heightAnimation";
+import {
+  applyListingCardAccessibility,
+  handleListingCardKeydown,
+} from "./listingCardActivation";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
 import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
@@ -896,6 +900,7 @@ function renderCard(item: ListingItem): void {
   card.className = "listing-card";
   card.id = cardId;
   card.dataset.url = listing.url;
+  applyListingCardAccessibility(card, listing.title);
 
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
@@ -1306,17 +1311,26 @@ function initApp(): void {
     }
   });
 
-  // Clicking anywhere on a listing card opens its detail modal, deep
-  // searching it first if it hasn't been already.
-  getElement("listingsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
-    const card = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".listing-card");
-    if (!card) return;
+  // Clicking anywhere on a listing card — or pressing Enter/Space on a
+  // focused one — opens its detail modal, deep searching it first if it
+  // hasn't been already.
+  function openListingCardModal(card: HTMLElement): void {
     const url = card.dataset.url;
     if (!url) throw new Error("listing-card missing data-url attribute");
     const item = listingsByUrl.get(url);
     if (!item) throw new Error(`listingsByUrl missing entry for ${url}`);
     void openListingModalAsync(item);
+  }
+
+  getElement("listingsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
+    const card = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".listing-card");
+    if (!card) return;
+    openListingCardModal(card);
   });
+
+  getElement("listingsContainer").addEventListener("keydown", (keyboardEvent: KeyboardEvent) =>
+    handleListingCardKeydown(keyboardEvent, openListingCardModal),
+  );
 
   // ── Sidebar tabs / saved searches UI ──────────────────────────────────────────
 

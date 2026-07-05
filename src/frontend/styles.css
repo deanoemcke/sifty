@@ -563,6 +563,10 @@ label {
   border-color: #cbd5e1;
   box-shadow: var(--shadow-md);
 }
+.listing-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 .listing-card-content {
   display: flex;
   flex-direction: column;
