@@ -89,11 +89,13 @@
           Deep Search
         </button>
       </div>
-      <div class="results-header-row ai-filter-row">
+      <div class="results-header-row ai-filter-label-row">
         <label for="aiFilter">Filter results by providing more detailed information</label>
+        <span id="filteredCount" class="filtered-count hidden">(Currently filtering <strong id="filteredCountNum">0</strong> results <button id="toggleFilteredBtn" class="cache-clear-btn">show</button>)</span>
+      </div>
+      <div class="results-header-row ai-filter-row">
         <textarea id="aiFilter" rows="1" placeholder="e.g. good condition, no major damage, prefer aluminium frame"></textarea>
         <button id="applyAiFilterBtn" class="btn btn-primary" style="display:none">Update filter</button>
-        <span id="filteredCount" class="filtered-count hidden">Filtered <strong id="filteredCountNum">0</strong> results <button id="toggleFilteredBtn" class="cache-clear-btn">show</button></span>
       </div>
   </div>
   <div id="listingsContainer"></div>

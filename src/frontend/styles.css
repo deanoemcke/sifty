@@ -504,8 +504,10 @@ label {
 .results-header-row > .btn-secondary {
   margin-left: auto;
 }
-.ai-filter-row label {
-  flex-shrink: 0;
+.ai-filter-label-row {
+  gap: 0.35rem;
+}
+.ai-filter-label-row label {
   font-size: 0.78rem;
   color: var(--text-muted);
 }
@@ -525,7 +527,6 @@ label {
 .filtered-count {
   font-size: 0.78rem;
   color: var(--text-muted);
-  margin-left: auto;
   white-space: nowrap;
 }
 
