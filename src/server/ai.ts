@@ -25,13 +25,7 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
 // provider key -> epoch ms when its cooldown ends
 const providerCooldowns = new Map<string, number>();
 
-function findProviderKeyForUrl(url: string): string | undefined {
-  return Object.entries(AI_PROVIDERS).find(([, cfg]) => cfg.url === url)?.[0];
-}
-
-function markProviderExhausted(url: string, cooldownUntilMs: number): void {
-  const providerKey = findProviderKeyForUrl(url);
-  if (providerKey === undefined) return; // unrecognized url (e.g. a test's synthetic config)
+function markProviderExhausted(providerKey: string, cooldownUntilMs: number): void {
   providerCooldowns.set(providerKey, cooldownUntilMs);
 }
 
@@ -67,7 +61,7 @@ function evaluateProviderCandidates(): ProviderCandidate[] {
     return {
       key,
       status: "available",
-      config: { url: providerConfig.url, model: providerConfig.model, apiKey },
+      config: { url: providerConfig.url, model: providerConfig.model, apiKey, providerKey: key },
     };
   });
 }
@@ -172,7 +166,7 @@ export async function aiJSON(
         const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
         const remainingMs = deadline - Date.now();
         if (delaySecs * 1000 > remainingMs) {
-          markProviderExhausted(aiConfig.url, Date.now() + delaySecs * 1000);
+          markProviderExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
           throw new Error(
             `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
           );
@@ -190,7 +184,7 @@ export async function aiJSON(
   if (!apiResponse.ok) {
     if (apiResponse.status === 429) {
       const delaySecs = parseRetryDelaySeconds(apiResponse, extractRetryMessage(lastErrorData));
-      markProviderExhausted(aiConfig.url, Date.now() + delaySecs * 1000);
+      markProviderExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
     }
     const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<
       string,

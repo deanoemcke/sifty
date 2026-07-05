@@ -39,7 +39,12 @@ function withBuildDiscover(
   return { ...base, buildDiscoverUrlsAsync };
 }
 
-const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key" };
+const MOCK_AI_CONFIG = {
+  url: "http://example.com",
+  model: "llama",
+  apiKey: "key",
+  providerKey: "mock",
+};
 
 describe("discoverCategoriesAsync", () => {
   beforeEach(() => {
@@ -102,7 +107,7 @@ describe("discoverCategoriesAsync", () => {
       maxPrice: 800,
       fulfillment: "pickup",
       regionValue: "2",
-      aiConfig: MOCK_AI_CONFIG,
+      getAiConfig: getAIConfig,
     });
   });
 

@@ -6,6 +6,7 @@ const MOCK_CONFIG: AiConfig = {
   url: "https://api.example.com/chat",
   model: "test-model",
   apiKey: "test-key",
+  providerKey: "mock-provider",
 };
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -238,7 +239,7 @@ describe("aiJSON", () => {
       expect(recoveredConfig.url).toBe(GROQ_URL);
     });
 
-    it("does not mark cooldown when the failing config's URL matches no known provider", async () => {
+    it("marks cooldown against the config's own providerKey, so an unrelated config's exhaustion doesn't affect a real provider", async () => {
       const overBudgetSecs = TOTAL_TIMEOUT_MS / 1000 + 5;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(overBudgetSecs));
       await expect(aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100)).rejects.toThrow("AI rate limited");

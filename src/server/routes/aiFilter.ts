@@ -37,9 +37,8 @@ export async function handleAiFilter(
     return;
   }
 
-  let aiConfig: ReturnType<typeof getAIConfig>;
   try {
-    aiConfig = getAIConfig();
+    getAIConfig(); // fail fast before opening the SSE stream if no provider is configured at all
   } catch (err) {
     sendJSON(response, 500, { error: (err as Error).message });
     return;
@@ -64,8 +63,11 @@ export async function handleAiFilter(
           )
           .join("\n");
         try {
+          // Re-resolved fresh per batch (not hoisted) so a 429 on an earlier
+          // batch actually rotates the remaining queued batches to the next
+          // live provider instead of repeating the same doomed one.
           const result = await aiJSON(
-            aiConfig,
+            getAIConfig(),
             "ai-filter",
             AI_FILTER_SYSTEM_MESSAGE,
             `Criteria: ${prompt}\n\nListings:\n${numbered}`,

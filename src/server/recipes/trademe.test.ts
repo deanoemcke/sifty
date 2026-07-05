@@ -774,7 +774,7 @@ describe("buildTrademeUrl", () => {
 describe("buildDiscoverUrlsAsync", () => {
   const MOCK_BROAD = [{ display: "Electronics", slug: "electronics/electronics" }];
   const MOCK_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
-  const MOCK_AI = { url: "http://example.com", model: "llama", apiKey: "key" };
+  const MOCK_AI = { url: "http://example.com", model: "llama", apiKey: "key", providerKey: "mock" };
 
   beforeEach(() => {
     vi.mocked(getDb).mockReturnValue({} as any);
@@ -803,7 +803,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
-      aiConfig: MOCK_AI,
+      getAiConfig: () => MOCK_AI,
     });
     expect(result.urls.length).toBeGreaterThan(0);
     expect(result.urls.every((u) => u.includes("trademe.co.nz"))).toBe(true);
@@ -822,7 +822,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 800,
       fulfillment: "any",
-      aiConfig: MOCK_AI,
+      getAiConfig: () => MOCK_AI,
     });
     expect(result.urls[0]).toContain("price_max=800");
   });
@@ -839,7 +839,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
-      aiConfig: MOCK_AI,
+      getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toEqual([]);
   });
@@ -857,7 +857,7 @@ describe("buildDiscoverUrlsAsync", () => {
       trademeRecipe.buildDiscoverUrlsAsync("laptop", {
         maxPrice: 0,
         fulfillment: "any",
-        aiConfig: MOCK_AI,
+        getAiConfig: () => MOCK_AI,
       }),
     ).rejects.toThrow("AI returned no valid specific categories");
   });
@@ -887,7 +887,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
-      aiConfig: MOCK_AI,
+      getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("step2:electronics/electronics");
@@ -908,7 +908,7 @@ describe("buildDiscoverUrlsAsync", () => {
       trademeRecipe.buildDiscoverUrlsAsync("laptop", {
         maxPrice: 0,
         fulfillment: "any",
-        aiConfig: MOCK_AI,
+        getAiConfig: () => MOCK_AI,
       }),
     ).rejects.toThrow("AI returned no valid specific categories");
   });
@@ -938,7 +938,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
       fulfillment: "any",
-      aiConfig: MOCK_AI,
+      getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("Hallucinated Category");
@@ -957,9 +957,44 @@ describe("buildDiscoverUrlsAsync", () => {
       trademeRecipe.buildDiscoverUrlsAsync("laptop", {
         maxPrice: 0,
         fulfillment: "any",
-        aiConfig: MOCK_AI,
+        getAiConfig: () => MOCK_AI,
       }),
     ).rejects.toThrow("AI returned no valid broad categories");
+  });
+
+  it("re-resolves getAiConfig() before each step-2 call, so a rotated provider is used for later slugs", async () => {
+    const MOCK_TWO_BROAD = [
+      { display: "Electronics", slug: "electronics/electronics" },
+      { display: "Computers", slug: "computers/computers" },
+    ];
+    const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_TWO_SUBS } as any);
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        categories: ["Electronics", "Computers"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] })
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+
+    const ROTATED_AI = { ...MOCK_AI, providerKey: "rotated" };
+    const getAiConfig = vi
+      .fn()
+      .mockReturnValueOnce(MOCK_AI) // step 1
+      .mockReturnValueOnce(MOCK_AI) // step 2, first slug
+      .mockReturnValueOnce(ROTATED_AI); // step 2, second slug — provider rotated mid-pipeline
+
+    await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+      maxPrice: 0,
+      fulfillment: "any",
+      getAiConfig,
+    });
+
+    expect(getAiConfig).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(aiJSON).mock.calls[1][0]).toBe(MOCK_AI);
+    expect(vi.mocked(aiJSON).mock.calls[2][0]).toBe(ROTATED_AI);
   });
 });
 

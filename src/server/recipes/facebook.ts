@@ -555,7 +555,7 @@ export function buildFacebookUrl(
 }
 
 async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
-  const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.aiConfig);
+  const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.getAiConfig());
   return {
     urls: [
       buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue),

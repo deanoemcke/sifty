@@ -30,12 +30,12 @@ export async function discoverCategoriesAsync(
   discoveryFulfillment: Fulfillment,
   discoveryRegion: string | undefined,
 ): Promise<DiscoverResult> {
-  const aiConfig = getAIConfig();
+  getAIConfig(); // fail fast before running any recipe if no provider is configured at all
   const context: DiscoverContext = {
     maxPrice: discoveryMaxPrice,
     fulfillment: discoveryFulfillment,
     regionValue: discoveryRegion,
-    aiConfig,
+    getAiConfig: getAIConfig,
   };
   const allRecipes = getAllRecipes();
   const recipes = allRecipes.filter(isDiscoverableRecipe);

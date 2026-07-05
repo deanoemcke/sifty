@@ -558,14 +558,13 @@ async function buildDiscoverUrlsAsync(
   prompt: string,
   context: DiscoverContext,
 ): Promise<RecipeDiscoverResult> {
-  const aiConfig = context.aiConfig;
   const database = getDb();
   const broad = stmtGetCategoriesAtDepth2(database).all();
   const broadDisplayList = broad.map((category) => category.display).join("\n");
 
   // 512 output tokens: step-1 returns a tiny JSON object (3 string fields) — input size (~3 k tokens for 392 categories) is unlimited by this parameter.
   const broadCategoryPick = (await aiJSON(
-    aiConfig,
+    context.getAiConfig(),
     "step1",
     STEP1_SYSTEM_PROMPT,
     `I'm looking for: ${prompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
@@ -602,8 +601,10 @@ async function buildDiscoverUrlsAsync(
       .map((category) => `${category.display} (slug: ${category.slug})`)
       .join("\n");
     // 1024 output tokens: step-2 returns a JSON array of slug+searchString pairs; a broad category can have dozens of subcategories, so 1024 gives headroom over step-1's 512.
+    // Re-resolved fresh per iteration (not hoisted) so a 429 on an earlier slug
+    // actually rotates to the next live provider for the remaining slugs.
     const result = await aiJSON(
-      aiConfig,
+      context.getAiConfig(),
       `step2:${top2Slug}`,
       STEP2_SYSTEM_PROMPT,
       `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,

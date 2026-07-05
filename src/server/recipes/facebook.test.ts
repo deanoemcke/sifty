@@ -19,7 +19,12 @@ const TEST_REGIONS = [
 vi.mock("../services/regions", () => ({ getRegions: () => TEST_REGIONS }));
 vi.mock("../ai", () => ({ aiJSON: vi.fn() }));
 
-const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key" };
+const MOCK_AI_CONFIG = {
+  url: "http://example.com",
+  model: "llama",
+  apiKey: "key",
+  providerKey: "mock",
+};
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -210,7 +215,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
-      aiConfig: MOCK_AI_CONFIG,
+      getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls).toHaveLength(1);
     expect(result.urls[0]).toContain("facebook.com/marketplace");
@@ -223,7 +228,7 @@ describe("buildDiscoverUrlsAsync", () => {
       {
         maxPrice: 0,
         fulfillment: "any",
-        aiConfig: MOCK_AI_CONFIG,
+        getAiConfig: () => MOCK_AI_CONFIG,
       },
     );
     expect(result.urls[0]).toContain("query=macbook+pro");
@@ -234,7 +239,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 500,
       fulfillment: "any",
-      aiConfig: MOCK_AI_CONFIG,
+      getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain("maxPrice=500");
   });
@@ -245,7 +250,7 @@ describe("buildDiscoverUrlsAsync", () => {
       maxPrice: 0,
       fulfillment: "pickup",
       regionValue: "2",
-      aiConfig: MOCK_AI_CONFIG,
+      getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain("/marketplace/auckland/search");
   });
@@ -255,7 +260,7 @@ describe("buildDiscoverUrlsAsync", () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
       maxPrice: 0,
       fulfillment: "any",
-      aiConfig: MOCK_AI_CONFIG,
+      getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.warnings).toEqual([]);
   });
@@ -265,7 +270,7 @@ describe("buildDiscoverUrlsAsync", () => {
     await facebookRecipe.buildDiscoverUrlsAsync("  macbook pro  ", {
       maxPrice: 0,
       fulfillment: "any",
-      aiConfig: MOCK_AI_CONFIG,
+      getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(vi.mocked(aiJSON)).toHaveBeenCalledWith(
       MOCK_AI_CONFIG,
@@ -282,7 +287,7 @@ describe("buildDiscoverUrlsAsync", () => {
       facebookRecipe.buildDiscoverUrlsAsync("macbook pro", {
         maxPrice: 0,
         fulfillment: "any",
-        aiConfig: MOCK_AI_CONFIG,
+        getAiConfig: () => MOCK_AI_CONFIG,
       }),
     ).rejects.toThrow("AI unavailable");
   });

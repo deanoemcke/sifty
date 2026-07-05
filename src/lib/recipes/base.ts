@@ -55,17 +55,24 @@ export type AiConfig = {
   url: string;
   model: string;
   apiKey: string;
+  providerKey: string;
 };
 
 // `fulfillment` and `regionValue` represent user search intent (delivery preference
 // and geographic region) that every classifieds recipe needs to honour, not
 // Trade Me / Facebook internals. Both current recipes use them, and any future
 // recipe that searches by location or delivery method will too. Keep them here.
+//
+// `getAiConfig` is a function rather than a resolved `AiConfig` so recipes that
+// make multiple AI calls per discover request (e.g. a step-1/step-2 pipeline)
+// can re-resolve it before each call — letting a mid-pipeline provider
+// rotation actually take effect instead of being locked to whichever provider
+// was live when the request started.
 export type DiscoverContext = {
   maxPrice: number;
   fulfillment: Fulfillment;
   regionValue?: string;
-  aiConfig: AiConfig;
+  getAiConfig: () => AiConfig;
 };
 
 export interface Recipe {
