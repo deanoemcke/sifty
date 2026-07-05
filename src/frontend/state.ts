@@ -2,7 +2,7 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
-import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
+import type { Fulfillment, Listing, ListingDetail, QuickSearchProgress } from "../lib/recipes/base";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -48,6 +48,10 @@ export interface UrlCardData {
   searchedUrl: string;
   searchId: string | null;
   listingUrls: string[];
+  // Latest structured progress event, rendered on the row's status line.
+  lastProgress: QuickSearchProgress | null;
+  errorMessage: string | null;
+  wasCancelled: boolean;
 }
 
 export interface SavedSearch {
@@ -62,12 +66,23 @@ export interface SavedSearch {
 // ── State ──────────────────────────────────────────────────────────────────────
 
 export let currentSearchName: string | null = null;
-export let showFilteredListings = false;
+export let showFilteredListings = true;
 export let isDeepSearchRunning = false;
 export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
 export let isAiFilterRunning = false;
 export let aiFilterPendingRun = false;
+// Which listing's detail modal is open, if any — used to guard against a
+// stale deep-search response writing into a modal that has since closed or
+// switched to a different listing.
+export let openModalListingUrl: string | null = null;
+// URLs covered by the in-flight bulk deep search, if one is running — lets a
+// card click detect "this listing is already being fetched" and avoid a
+// duplicate request.
+export let bulkDeepSearchUrls: Set<string> | null = null;
+// URLs currently being fetched via a modal-triggered single-listing deep
+// search, to dedupe re-clicks/re-opens of the same listing's modal.
+export const singleDeepSearchInFlightUrls = new Set<string>();
 export const listingsByUrl = new Map<string, ListingItem>();
 export const urlCardData: UrlCardData[] = [];
 // Stable, collision-free DOM ids assigned at card insertion time via crypto.randomUUID().
@@ -106,16 +121,27 @@ export function setAiFilterPendingRun(value: boolean): void {
   aiFilterPendingRun = value;
 }
 
+export function setOpenModalListingUrl(url: string | null): void {
+  openModalListingUrl = url;
+}
+
+export function setBulkDeepSearchUrls(urls: Set<string> | null): void {
+  bulkDeepSearchUrls = urls;
+}
+
 // ── Reset (for tests) ──────────────────────────────────────────────────────────
 
 export function resetState(): void {
   currentSearchName = null;
-  showFilteredListings = false;
+  showFilteredListings = true;
   isDeepSearchRunning = false;
   deepSearchId = null;
   deepSearchCancellationRequested = false;
   isAiFilterRunning = false;
   aiFilterPendingRun = false;
+  openModalListingUrl = null;
+  bulkDeepSearchUrls = null;
+  singleDeepSearchInFlightUrls.clear();
   listingsByUrl.clear();
   urlCardData.length = 0;
   cardIdByUrl.clear();

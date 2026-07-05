@@ -4,324 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sifty</title>
-  <style>
-    :root {
-      --primary: #2563eb;
-      --primary-hover: #1d4ed8;
-      --primary-light: #eff6ff;
-      --bg: #f1f5f9;
-      --surface: #ffffff;
-      --border: #e2e8f0;
-      --text: #0f172a;
-      --text-muted: #64748b;
-      --green: #16a34a;
-      --green-bg: #dcfce7;
-      --yellow: #92400e;
-      --yellow-bg: #fef9c3;
-      --red: #dc2626;
-      --red-bg: #fef2f2;
-      --radius: 10px;
-      --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05);
-      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
-    }
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.5;
-      font-size: 14px;
-    }
-
-    .page { max-width: 860px; margin: 0 auto; padding: 2rem 1rem 4rem; }
-
-    header { margin-bottom: 1.75rem; display: flex; justify-content: center; }
-    header .brand { position: relative; display: flex; align-items: center; }
-    header .brand img { position: absolute; right: 100%; margin-right: 0.15rem; height: 5rem; width: auto; }
-    header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
-
-    /* ── Cards ── */
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1.25rem 1.5rem;
-      box-shadow: var(--shadow);
-      margin-bottom: 0.875rem;
-    }
-    .card-label {
-      font-size: 0.7rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.07em;
-      color: var(--text-muted); margin-bottom: 0.65rem;
-    }
-
-    /* ── URL row ── */
-    .url-row { display: flex; gap: 0.5rem; }
-    .url-row input { flex: 1; }
-
-    /* ── Inputs ── */
-    input[type="text"], input[type="url"], input[type="number"], textarea, select {
-      width: 100%;
-      padding: 0.5rem 0.75rem;
-      border: 1.5px solid var(--border);
-      border-radius: 7px;
-      font-size: 0.875rem; color: var(--text);
-      background: var(--surface); outline: none;
-      transition: border-color 0.15s, box-shadow 0.15s;
-      font-family: inherit;
-    }
-    input:focus, textarea:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
-    input[readonly] { background: var(--bg); color: var(--text-muted); cursor: default; }
-    label { display: block; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.3rem; }
-
-    /* ── Criteria ── */
-    #criteriaBox { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
-    .criteria-row { display: grid; grid-template-columns: 90px 1fr; gap: 0.5rem; align-items: baseline; margin-bottom: 0.3rem; }
-    .criteria-key { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
-    .criteria-val { font-size: 0.875rem; }
-    .url-card-count { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--primary); margin-left: 0.4rem; }
-    .url-criteria { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
-
-    /* ── Filter grid ── */
-
-    /* ── Toggle group ── */
-    .toggle-group { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.1rem; }
-    .toggle-option {
-      display: inline-flex; align-items: center; gap: 0.4rem;
-      padding: 0.35rem 0.75rem;
-      border: 1.5px solid var(--border); border-radius: 999px;
-      font-size: 0.8rem; font-weight: 500; color: var(--text-muted);
-      cursor: pointer; user-select: none;
-      transition: border-color 0.15s, background 0.15s, color 0.15s;
-    }
-    .toggle-option input[type="checkbox"] { display: none; }
-    .toggle-option:has(input:checked) {
-      border-color: var(--primary); background: var(--primary-light); color: var(--primary);
-    }
-
-    /* ── Buttons ── */
-    .btn {
-      display: inline-flex; align-items: center; gap: 0.4rem;
-      padding: 0.5rem 1.1rem;
-      border: none; border-radius: 7px;
-      font-size: 0.875rem; font-weight: 500; font-family: inherit;
-      cursor: pointer; white-space: nowrap;
-      transition: background 0.13s, opacity 0.13s, box-shadow 0.13s;
-    }
-    .btn-primary { background: var(--primary); color: white; }
-    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); box-shadow: 0 1px 4px rgba(37,99,235,0.3); }
-    .btn-secondary { background: var(--bg); color: var(--text); border: 1.5px solid var(--border); }
-    .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
-    .btn-danger { background: var(--bg); color: #dc2626; border: 1.5px solid #fca5a5; }
-    .btn-danger:hover:not(:disabled) { background: #fee2e2; }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-
-    /* ── Status bar ── */
-    .status-bar {
-      display: flex; align-items: center; gap: 0.5rem;
-      padding: 0.65rem 1rem; border-radius: var(--radius);
-      font-size: 0.8rem; margin-bottom: 0.875rem;
-      border: 1px solid transparent;
-    }
-    .status-bar.info  { background: var(--primary-light); color: var(--primary); border-color: #bfdbfe; }
-    .status-bar.error { background: var(--red-bg); color: var(--red); border-color: #fecaca; }
-    .status-bar.success { background: var(--green-bg); color: var(--green); border-color: #bbf7d0; }
-
-    /* ── Results ── */
-    .results-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.875rem; }
-    .results-header h2 { font-size: 1rem; font-weight: 700; }
-    .results-count {
-      background: var(--primary); color: white;
-      padding: 0.1rem 0.55rem; border-radius: 999px;
-      font-size: 0.72rem; font-weight: 700;
-    }
-    .filtered-count { font-size: 0.78rem; color: var(--text-muted); }
-
-    /* ── Listing cards ── */
-    .listing-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 0;
-      margin-bottom: 0.625rem;
-      box-shadow: var(--shadow);
-      transition: border-color 0.15s, box-shadow 0.15s;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    .listing-card:hover { border-color: #cbd5e1; box-shadow: var(--shadow-md); }
-    .listing-card.enriched { border-left: 3px solid var(--primary); }
-    .listing-card-content { display: flex; gap: 1rem; padding: 1.1rem 1.25rem; }
-    .filter-banner {
-      padding: 0.45rem 1.25rem;
-      background: var(--yellow-bg);
-      color: var(--yellow);
-      border-bottom: 1px solid #fde68a;
-      font-size: 0.78rem;
-      font-weight: 500;
-    }
-    .filter-banner.hidden { display: none; }
-    .listing-card.filtered-out .listing-card-content { opacity: 0.6; }
-
-    .listing-thumb {
-      flex-shrink: 0;
-      width: 120px; height: 120px;
-      border-radius: 6px;
-      object-fit: cover;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      align-self: flex-start;
-    }
-    .listing-thumb-placeholder {
-      flex-shrink: 0;
-      width: 120px; height: 120px;
-      border-radius: 6px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: center;
-      color: var(--border);
-      align-self: flex-start;
-    }
-    .listing-body { flex: 1; min-width: 0; }
-
-    .listing-title { font-size: 0.9rem; font-weight: 600; line-height: 1.35; margin-bottom: 0.4rem; }
-    .listing-title a { color: var(--primary); text-decoration: none; }
-    .listing-title a:hover { text-decoration: underline; }
-
-    .listing-prices { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.45rem; }
-    .price { font-size: 1.05rem; font-weight: 700; }
-    .price-buynow { font-size: 0.8rem; color: var(--text-muted); }
-    .price-buynow strong { color: var(--text); }
-
-    .listing-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
-    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 5px; font-size: 0.7rem; font-weight: 600; }
-    .badge-none        { background: var(--green-bg); color: var(--green); }
-    .badge-met         { background: #d1fae5; color: #065f46; }
-    .badge-notmet      { background: var(--yellow-bg); color: var(--yellow); }
-    .badge-unknown     { background: var(--bg); color: var(--text-muted); }
-    .badge-pickup      { background: #fef3c7; color: #92400e; }
-    .badge-shipping    { background: #eff6ff; color: #1d4ed8; }
-    .badge-pickuponly  { background: #fef3c7; color: #92400e; }
-    .badge-both        { background: var(--green-bg); color: var(--green); }
-    .meta-text { font-size: 0.78rem; color: var(--text-muted); }
-    .source-favicon { vertical-align: middle; border-radius: 2px; flex-shrink: 0; }
-
-    .listing-description {
-      font-size: 0.82rem; line-height: 1.65;
-      color: #334155; white-space: pre-wrap; word-break: break-word;
-    }
-
-    /* ── Deep search sections ── */
-    .deep-section { border-top: 1px solid var(--border); margin-top: 0.75rem; padding-top: 0.75rem; }
-    .deep-section-label {
-      font-size: 0.7rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.07em;
-      color: var(--text-muted); margin-bottom: 0.4rem;
-    }
-    .details-table { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.75rem; }
-    .details-key { font-size: 0.78rem; color: var(--text-muted); }
-    .details-val { font-size: 0.78rem; font-weight: 500; }
-    .qa-pair { margin-bottom: 0.65rem; }
-    .qa-pair:last-child { margin-bottom: 0; }
-    .qa-item { display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.25rem; }
-    .qa-badge {
-      flex-shrink: 0; width: 1.35rem; height: 1.35rem; border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 0.62rem; font-weight: 700; margin-top: 0.1rem;
-    }
-    .qa-q { background: var(--primary-light); color: var(--primary); }
-    .qa-a { background: var(--green-bg); color: var(--green); }
-    .qa-text { font-size: 0.82rem; line-height: 1.5; color: #334155; }
-    .deep-empty { font-size: 0.82rem; color: var(--text-muted); font-style: italic; }
-    .extras-body { position: relative; }
-    .extras-body.collapsed { max-height: 5.5rem; overflow: hidden; cursor: pointer; }
-    .extras-fade { display: none; }
-    .collapsed .extras-fade {
-      display: block; position: absolute; bottom: 0; left: 0; right: 0; height: 3rem;
-      background: linear-gradient(to bottom, rgba(255,255,255,0), #fff);
-      pointer-events: none;
-    }
-    .extras-toggle {
-      background: none; border: none; padding: 0.5rem 0 0;
-      font-size: 0.78rem; color: var(--primary); cursor: pointer;
-      font-family: inherit; display: block;
-    }
-    .extras-toggle:hover { text-decoration: underline; }
-    .desc-toggle {
-      background: none; border: none; padding: 0;
-      font-size: 0.78rem; color: var(--primary); cursor: pointer;
-      font-family: inherit; margin-top: 0.3rem; display: inline-block;
-    }
-    .desc-toggle:hover { text-decoration: underline; }
-    .desc-full { display: none; }
-    .desc-full.open { display: block; }
-    .desc-short.hidden { display: none; }
-
-    /* ── Loading ── */
-    .spinner {
-      display: inline-block; width: 13px; height: 13px; flex-shrink: 0;
-      border: 2px solid rgba(37,99,235,0.25); border-top-color: var(--primary);
-      border-radius: 50%; animation: spin 0.55s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .skeleton {
-      height: 0.85rem; border-radius: 4px;
-      background: linear-gradient(90deg, #e2e8f0 25%, #f8fafc 50%, #e2e8f0 75%);
-      background-size: 200% 100%; animation: shimmer 1.4s infinite;
-    }
-    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
-    /* ── URL card inline status ── */
-    .url-card-status {
-      display: flex; align-items: center; gap: 0.4rem;
-      margin-top: 0.5rem; padding: 0.4rem 0.65rem;
-      border-radius: 6px; font-size: 0.78rem;
-      border: 1px solid transparent;
-    }
-    .url-card-status.info    { background: var(--primary-light); color: var(--primary); border-color: #bfdbfe; }
-    .url-card-status.error   { background: var(--red-bg); color: var(--red); border-color: #fecaca; }
-    .url-card-status.success { background: var(--green-bg); color: var(--green); border-color: #bbf7d0; }
-
-    /* ── Cache status ── */
-    .cache-status {
-      display: flex; align-items: center; gap: 0.4rem;
-      margin-top: 0.6rem; font-size: 0.75rem; color: var(--text-muted);
-    }
-    .cache-clear-btn {
-      background: none; border: none; padding: 0;
-      font-size: 0.75rem; color: var(--primary); cursor: pointer;
-      font-family: inherit; text-decoration: underline;
-    }
-    .cache-clear-btn:hover { color: var(--primary-hover); }
-    .btn-ghost {
-      background: none; color: var(--red); border: 1.5px solid #fca5a5;
-      font-size: 0.75rem; padding: 0.35rem 0.75rem;
-    }
-    .btn-ghost:hover:not(:disabled) { background: #fee2e2; }
-
-    /* ── Misc ── */
-    .hidden { display: none !important; }
-    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:100; }
-    .modal { background:var(--bg); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; width:min(360px,90vw); box-shadow:0 8px 32px rgba(0,0,0,0.18); }
-    .modal-title { font-weight:600; margin:0 0 0.75rem; font-size:0.95rem; }
-    #searchTitleBar { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; }
-    #searchTitle { font-size:1.05rem; font-weight:600; color:var(--text); }
-    .saved-search-row { display:flex; align-items:center; gap:0.5rem; padding:0.45rem 0; border-bottom:1px solid var(--border); font-size:0.875rem; }
-    .saved-search-row:last-child { border-bottom:none; }
-    .saved-search-name { flex:1; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--primary); text-decoration:none; cursor:pointer; }
-    .saved-search-name:hover { text-decoration:underline; }
-    .saved-search-date { font-size:0.72rem; color:var(--text-muted); flex-shrink:0; }
-    .mt-sm { margin-top: 0.5rem; }
-    .empty-state { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.875rem; }
-  </style>
 </head>
 <body>
-<div class="page">
+<div class="app-layout">
+<aside class="sidebar">
   <header>
     <div class="brand">
       <img src="sifty-logo.png" alt="Sifty logo">
@@ -329,88 +15,107 @@
     </div>
   </header>
 
+  <nav class="sidebar-tabs" role="tablist">
+    <button id="searchTabBtn" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="searchTabPanel">Search</button>
+    <button id="favouritesTabBtn" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="savedSearchesPanel">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      Favourites
+      <span id="savedSearchesCount" class="results-count hidden">0</span>
+    </button>
+  </nav>
+
+  <div id="searchTabPanel" role="tabpanel">
+
   <!-- Discovery prompt -->
-  <div id="discoveryCard" class="card" style="margin-bottom:0.875rem">
-    <div class="card-label">what shiny new thing are you looking for?</div>
-    <textarea id="discoveryPrompt" rows="3" style="width:100%;resize:vertical;margin-bottom:0.75rem" placeholder="e.g. a MacBook Pro M3, good condition"></textarea>
-    <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">What's the most you want to pay?</label>
-    <input id="discoveryMaxPrice" type="number" min="0" placeholder="e.g. 2000" style="width:100%;margin-bottom:0.75rem" />
-    <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">Fulfillment</label>
-    <select id="discoveryFulfillment" style="margin-bottom:0.5rem">
-      <option value="any">Pickup or Shipping</option>
-      <option value="pickup">Pickup only</option>
-    </select>
-    <select id="discoveryRegion" style="margin-bottom:0.75rem;display:none">
-      <option value="">Select a region…</option>
-    </select>
-    <div style="display:flex;justify-content:center">
-      <button id="discoveryBtn" class="btn btn-primary" disabled>Get it!</button>
+  <div id="discoveryCard" class="card" style="margin-bottom:0">
+    <div class="prompt-box">
+      <!-- assets/search.svg, inlined so it inherits currentColor -->
+      <svg class="prompt-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><g fill-rule="evenodd" transform="translate(-448 -544)"><g fill-rule="nonzero"><path d="M10.743 2.257a6 6 0 1 1-8.485 8.486 6 6 0 0 1 8.485-8.486zm-1.06 1.06a4.5 4.5 0 1 0-6.365 6.364 4.5 4.5 0 0 0 6.364-6.363z" transform="translate(448 544)"></path><path d="M10.39 8.75a2.94 2.94 0 0 0-.199.432c-.155.417-.23.849-.172 1.284.055.415.232.794.54 1.103a.75.75 0 0 0 1.112-1.004l-.051-.057a.39.39 0 0 1-.114-.24c-.021-.155.014-.356.09-.563.031-.081.06-.145.08-.182l.012-.022a.75.75 0 1 0-1.299-.752z" transform="translate(448 544)"></path><path d="M9.557 11.659c.038-.018.09-.04.15-.064.207-.077.408-.112.562-.092.08.01.143.034.198.077l.041.036a.75.75 0 0 0 1.06-1.06 1.881 1.881 0 0 0-1.103-.54c-.435-.058-.867.018-1.284.175-.189.07-.336.143-.433.2a.75.75 0 0 0 .624 1.356l.066-.027.12-.061z" transform="translate(448 544)"></path><path d="m13.463 15.142-.04-.044-3.574-4.192c-.599-.703.355-1.656 1.058-1.057l4.191 3.574.044.04c.058.059.122.137.182.24.249.425.249.96-.154 1.41l-.057.057c-.45.403-.986.403-1.411.154a1.182 1.182 0 0 1-.24-.182zm.617-.616.444-.444a.31.31 0 0 0-.063-.052c-.093-.055-.263-.055-.35.024l.208.232.207-.206.006.007-.22.257-.026-.024.033-.034.025.027-.257.22-.007-.007zm-.027-.415c-.078.088-.078.257-.023.35a.31.31 0 0 0 .051.063l.205-.204-.233-.209z" transform="translate(448 544)"></path></g></g></svg>
+      <textarea id="discoveryPrompt" rows="3" placeholder="Whaddaya want?"></textarea>
+    </div>
+    <div class="field-row">
+      <label for="discoveryMaxPrice">Max price</label>
+      <input id="discoveryMaxPrice" type="number" min="0" />
+    </div>
+    <div class="field-row">
+      <label for="discoveryRegion">Region</label>
+      <select id="discoveryRegion"></select>
+    </div>
+    <label class="checkbox-row" for="discoveryAllowShipping">
+      <input id="discoveryAllowShipping" type="checkbox" />
+      Allow shipping
+    </label>
+    <div class="discovery-actions">
+      <!-- Label set by JS (DISCOVERY_BUTTON_LABEL) -->
+      <button id="discoveryBtn" class="btn btn-primary" disabled></button>
+      <button id="saveCurrentBtn" class="btn icon-btn save-current-btn hidden" type="button" title="Add to favourites" aria-label="Add to favourites">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><line x1="12" y1="7" x2="12" y2="13"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
+      </button>
     </div>
     <div id="discoveryError" style="display:none;margin-top:0.5rem;color:var(--red);font-size:0.85rem;text-align:center"></div>
   </div>
 
-  <!-- Search title bar -->
-  <div id="searchTitleBar">
-    <div style="display:flex;align-items:center;gap:0.625rem">
-      <span style="font-size:1.05rem;font-weight:600;color:var(--text)">Sifting for: </span><span id="searchTitle">new shiny thing</span>
-      <button id="saveCurrentBtn" class="btn btn-primary hidden" style="padding:0.25rem 0.75rem;font-size:0.8rem">Save</button>
-    </div>
-    <button id="savedSearchesToggle" class="btn btn-secondary" style="gap:0.5rem">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-      Saved Searches
-      <span id="savedSearchesCount" class="results-count hidden">0</span>
-    </button>
-  </div>
-  <div id="savedSearchesPanel" class="card hidden" style="margin-bottom:0.875rem">
+  </div><!-- /searchTabPanel -->
+
+  <div id="savedSearchesPanel" class="hidden" role="tabpanel">
     <div id="savedSearchesList">
-      <p class="deep-empty" id="savedSearchesEmpty">No saved searches yet.</p>
+      <p class="deep-empty" id="savedSearchesEmpty">No favourites yet.</p>
     </div>
   </div>
 
-  <!-- URL cards (populated by JS) -->
-  <div id="urlCardsContainer"></div>
-  <button id="addUrlBtn" class="btn btn-secondary" style="width:100%;justify-content:center;margin-bottom:0.875rem;border-style:dashed">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    Add URL
-  </button>
-
-  <!-- AI Filter -->
-  <div class="card">
-    <div class="card-label">AI Filter</div>
-    <label for="aiFilter">Provide a detailed description to help filter out undesired results</label>
-    <div style="display:flex;gap:0.5rem;align-items:flex-start;margin-top:0.4rem">
-      <textarea id="aiFilter" rows="3" style="flex:1;resize:vertical" placeholder="e.g. good condition, no major damage, prefer aluminium frame"></textarea>
-      <button id="applyAiFilterBtn" class="btn btn-primary" style="display:none">Update filter</button>
+  <!-- Search configuration — revealed once a search runs -->
+  <div id="searchConfigSection" class="hidden">
+    <!-- Source URLs (rows populated by JS) -->
+    <div id="sourceUrlsCard" class="card">
+      <div id="urlCardsContainer"></div>
+      <button id="addUrlBtn" class="btn btn-secondary" style="width:100%;justify-content:center;border-style:dashed">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add URL
+      </button>
     </div>
   </div>
 
   <!-- Status bar -->
   <div id="statusBar" class="status-bar info hidden"></div>
+</aside>
 
-  <!-- Results -->
-  <div id="resultsSection" class="hidden">
-    <div class="results-header">
-      <h2>Results</h2>
-      <span class="results-count" id="resultCount">0</span>
-      <span id="filteredCount" class="filtered-count hidden">Filtered <strong id="filteredCountNum">0</strong> <button id="toggleFilteredBtn" class="cache-clear-btn">show</button></span>
-      <button class="btn btn-secondary" id="deepBtn" disabled>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-        Deep Search
-      </button>
-    </div>
-    <div id="listingsContainer"></div>
+<main class="main-pane">
+  <!-- Results header — sticky above the listings -->
+  <div id="resultsSection" class="results-header hidden">
+      <div class="results-header-row results-status-row">
+        <span>Matches: <strong id="resultCount">0</strong></span>
+        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
+        <span id="filteredCount" class="filtered-count hidden"><span class="header-sep">|</span> Filtered: <strong id="filteredCountNum">0</strong> <button id="toggleFilteredBtn" class="cache-clear-btn"></button></span>
+      </div>
+      <div class="results-header-row ai-filter-row">
+        <label for="aiFilter">Refine search:</label>
+        <textarea id="aiFilter" rows="1" placeholder="e.g. good condition, no major damage, prefer aluminium frame"></textarea>
+        <button id="applyAiFilterBtn" class="btn btn-primary" disabled>Apply filter</button>
+      </div>
   </div>
+  <div id="listingsContainer"></div>
+</main>
 </div>
 
-<!-- Save search modal -->
+<!-- Save favourite modal -->
 <div id="saveSearchModal" class="modal-backdrop hidden">
   <div class="modal">
-    <p class="modal-title">Save search</p>
-    <input type="text" id="saveSearchName" placeholder="Name this search…" style="width:100%;margin-bottom:0.75rem" />
+    <p class="modal-title">Save favourite</p>
+    <input type="text" id="saveSearchName" placeholder="Name this favourite…" style="width:100%;margin-bottom:0.75rem" />
     <div style="display:flex;gap:0.5rem;justify-content:flex-end">
       <button id="saveSearchCancelBtn" class="btn btn-secondary">Cancel</button>
       <button id="saveSearchConfirmBtn" class="btn btn-primary">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- Listing detail modal -->
+<div id="listingModal" class="modal-backdrop hidden">
+  <div class="modal modal-listing">
+    <button id="listingModalCloseBtn" class="btn icon-btn modal-close-btn" type="button" title="Close" aria-label="Close">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div id="listingModalBody" class="listing-modal-body"></div>
   </div>
 </div>
 

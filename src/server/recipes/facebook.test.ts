@@ -4,6 +4,7 @@ import {
   buildFacebookListing,
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
+  extractImplicitFilters,
   facebookRecipe,
   parseFacebookPriceLines,
 } from "./facebook";
@@ -22,6 +23,14 @@ const MOCK_AI_CONFIG = { url: "http://example.com", model: "llama", apiKey: "key
 
 beforeEach(() => {
   vi.resetAllMocks();
+});
+
+describe("extractImplicitFilters", () => {
+  it("extracts the search query without quote marks", () => {
+    const url = "https://www.facebook.com/marketplace/wellington/search?query=pole%20trimmer";
+    const filters = extractImplicitFilters(url);
+    expect(filters).toContainEqual(["Search", "pole trimmer"]);
+  });
 });
 
 describe("parseFacebookPriceLines", () => {

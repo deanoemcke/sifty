@@ -1,13 +1,20 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
+  aiFilterPendingRun,
+  bulkDeepSearchUrls,
   canCancelSearch,
+  isAiFilterRunning,
   isCardSearchActive,
   isSearchButtonDisabled,
-  isAiFilterRunning,
-  aiFilterPendingRun,
-  setIsAiFilterRunning,
-  setAiFilterPendingRun,
+  openModalListingUrl,
   resetState,
+  setAiFilterPendingRun,
+  setBulkDeepSearchUrls,
+  setIsAiFilterRunning,
+  setOpenModalListingUrl,
+  setShowFilteredListings,
+  showFilteredListings,
+  singleDeepSearchInFlightUrls,
 } from "./state";
 
 describe("isSearchButtonDisabled", () => {
@@ -81,6 +88,84 @@ describe("isAiFilterRunning / aiFilterPendingRun", () => {
     resetState();
     expect(isAiFilterRunning).toBe(false);
     expect(aiFilterPendingRun).toBe(false);
+  });
+});
+
+describe("openModalListingUrl", () => {
+  beforeEach(() => resetState());
+
+  it("defaults to null", () => {
+    expect(openModalListingUrl).toBe(null);
+  });
+
+  it("setOpenModalListingUrl updates the value", () => {
+    setOpenModalListingUrl("https://trademe.co.nz/listing/1");
+    expect(openModalListingUrl).toBe("https://trademe.co.nz/listing/1");
+    setOpenModalListingUrl(null);
+    expect(openModalListingUrl).toBe(null);
+  });
+
+  it("resetState clears it back to null", () => {
+    setOpenModalListingUrl("https://trademe.co.nz/listing/1");
+    resetState();
+    expect(openModalListingUrl).toBe(null);
+  });
+});
+
+describe("showFilteredListings", () => {
+  beforeEach(() => resetState());
+
+  it("defaults to true", () => {
+    expect(showFilteredListings).toBe(true);
+  });
+
+  it("setShowFilteredListings updates the value", () => {
+    setShowFilteredListings(false);
+    expect(showFilteredListings).toBe(false);
+    setShowFilteredListings(true);
+    expect(showFilteredListings).toBe(true);
+  });
+
+  it("resetState resets it back to true", () => {
+    setShowFilteredListings(false);
+    resetState();
+    expect(showFilteredListings).toBe(true);
+  });
+});
+
+describe("bulkDeepSearchUrls", () => {
+  beforeEach(() => resetState());
+
+  it("defaults to null", () => {
+    expect(bulkDeepSearchUrls).toBe(null);
+  });
+
+  it("setBulkDeepSearchUrls updates the value", () => {
+    const urls = new Set(["https://trademe.co.nz/listing/1"]);
+    setBulkDeepSearchUrls(urls);
+    expect(bulkDeepSearchUrls).toBe(urls);
+    setBulkDeepSearchUrls(null);
+    expect(bulkDeepSearchUrls).toBe(null);
+  });
+
+  it("resetState clears it back to null", () => {
+    setBulkDeepSearchUrls(new Set(["https://trademe.co.nz/listing/1"]));
+    resetState();
+    expect(bulkDeepSearchUrls).toBe(null);
+  });
+});
+
+describe("singleDeepSearchInFlightUrls", () => {
+  beforeEach(() => resetState());
+
+  it("starts empty", () => {
+    expect(singleDeepSearchInFlightUrls.size).toBe(0);
+  });
+
+  it("resetState clears it", () => {
+    singleDeepSearchInFlightUrls.add("https://trademe.co.nz/listing/1");
+    resetState();
+    expect(singleDeepSearchInFlightUrls.size).toBe(0);
   });
 });
 

@@ -555,17 +555,31 @@ describe("extractDescriptionFromText (real-page patterns)", () => {
 // ── extractImplicitFilters ────────────────────────────────────────────────────
 
 describe("extractImplicitFilters", () => {
-  it("extracts category from path", () => {
+  it("shows only the last two breadcrumb sections of the category", () => {
     const url = "https://www.trademe.co.nz/a/marketplace/computers/laptops/search";
     const filters = extractImplicitFilters(url);
-    expect(filters).toContainEqual(["Category", "Marketplace › Computers › Laptops"]);
+    expect(filters).toContainEqual(["Category", "Computers › Laptops"]);
   });
 
-  it("extracts search string", () => {
+  it("keeps a short category path intact", () => {
+    const url = "https://www.trademe.co.nz/a/marketplace/search";
+    const filters = extractImplicitFilters(url);
+    expect(filters).toContainEqual(["Category", "Marketplace"]);
+  });
+
+  it("extracts the search string without quote marks", () => {
     const url =
       "https://www.trademe.co.nz/a/marketplace/computers/laptops/search?search_string=macbook";
     const filters = extractImplicitFilters(url);
-    expect(filters).toContainEqual(["Search", '"macbook"']);
+    expect(filters).toContainEqual(["Search", "macbook"]);
+  });
+
+  it("prefixes price criteria with a dollar symbol", () => {
+    const url =
+      "https://www.trademe.co.nz/a/marketplace/search?price_min=50&price_max=250";
+    const filters = extractImplicitFilters(url);
+    expect(filters).toContainEqual(["Price Min", "$50"]);
+    expect(filters).toContainEqual(["Price Max", "$250"]);
   });
 
   it("returns empty array for invalid URL", () => {

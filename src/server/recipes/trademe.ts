@@ -60,8 +60,10 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
     const pathMatch = url.pathname.match(/\/a\/(.+?)\/search/);
     if (pathMatch) {
+      // Only the last two breadcrumb sections — deep paths are noise on screen.
       const cat = pathMatch[1]
         .split("/")
+        .slice(-2)
         .map((pathSegment) =>
           pathSegment
             .split("-")
@@ -84,8 +86,13 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
       if (key in DISPLAY_NAME_BY_PARAM_NAME) {
         let filterValue = vals.join(", ");
         if (key === "condition") filterValue = filterValue[0].toUpperCase() + filterValue.slice(1);
-        if (key === "search_string") filterValue = `"${filterValue}"`;
         filterRows.push([DISPLAY_NAME_BY_PARAM_NAME[key], filterValue]);
+        continue;
+      }
+
+      if (key === "price_min" || key === "price_max") {
+        const label = key === "price_min" ? "Price Min" : "Price Max";
+        filterRows.push([label, `$${vals.join(", $")}`]);
         continue;
       }
 
@@ -634,7 +641,7 @@ async function quickSearchAsync(
     const context = await browser.newContext({ userAgent: USER_AGENT, locale: "en-NZ" });
     const page = await context.newPage();
 
-    onEvent({ type: "progress", message: "Fetching page 1…" });
+    onEvent({ type: "progress", phase: "paging", page: 1 });
     const p1Promise = waitForSearchApiResponseAsync(page);
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
@@ -663,10 +670,7 @@ async function quickSearchAsync(
 
     const totalPages = Math.min(Math.ceil(totalCount / pageSize), MAX_PAGES_PER_SEARCH);
 
-    onEvent({
-      type: "progress",
-      message: `${totalCount} results across ${totalPages} page${totalPages !== 1 ? "s" : ""}`,
-    });
+    onEvent({ type: "progress", phase: "counted", totalResults: totalCount, totalPages });
 
     const seenUrls = new Set<string>();
     const emit = (listings: Listing[]) => {
@@ -694,7 +698,7 @@ async function quickSearchAsync(
             return;
           }
           try {
-            onEvent({ type: "progress", message: `Fetching page ${pageNumber}/${totalPages}…` });
+            onEvent({ type: "progress", phase: "paging", page: pageNumber, totalPages });
             const promise = waitForSearchApiResponseAsync(currentPage);
             await currentPage.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 

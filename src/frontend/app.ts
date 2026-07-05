@@ -1,39 +1,67 @@
-import type { Fulfillment, Listing, ListingDetail } from "../lib/recipes/base";
-import { isValidRecipeUrl } from "../lib/recipes/matcher";
+import "./styles.css";
+
+import type { Listing, ListingDetail } from "../lib/recipes/base";
+import { isValidRecipeUrl, recipeIdForUrl } from "../lib/recipes/matcher";
+import type { RecipeId } from "../lib/recipes/metadata";
 import { scheduleAiFilterRun } from "./aiFilter";
-import { shouldDisableUpdateBtn } from "./renderUtils";
 import { fireAllCardSearches } from "./cardSearch";
+import { decideModalDeepSearchAction } from "./deepSearchTrigger";
+import {
+  applyLoadedDiscoverInputs,
+  fulfillmentFromAllowShipping,
+  populateRegionSelect,
+  type DiscoveryFormElements,
+  type RegionOption,
+} from "./discoveryForm";
 import { getElement, requireChild } from "./domUtils";
+import { collapseElementAsync, expandElement } from "./heightAnimation";
+import {
+  applyListingCardAccessibility,
+  handleListingCardKeydown,
+} from "./listingCardActivation";
 import { esc } from "./html";
 import { parseMaxPrice } from "./parseUtils";
-import { sourceFaviconHtml } from "./recipeDisplay";
+import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
+import { shouldDisableApplyFilterBtn } from "./renderUtils";
+import {
+  type CardStatusSnapshot,
+  cardStatusText,
+  parseQuickSearchProgress,
+} from "./searchStatusText";
+import { activateSidebarTab } from "./sidebarTabs";
 import {
   aiFilterPendingRun,
+  bulkDeepSearchUrls,
   canCancelSearch,
   cardIdByUrl,
   currentSearchName,
+  type DiscoverInputs,
   deepSearchCancellationRequested,
   deepSearchId,
-  type DiscoverInputs,
   isAiFilterRunning,
   isCardSearchActive,
   isDeepSearchRunning,
   isSearchButtonDisabled,
   type ListingItem,
   listingsByUrl,
+  openModalListingUrl,
   type SavedSearch,
   setAiFilterPendingRun,
+  setBulkDeepSearchUrls,
   setCurrentSearchName,
   setDeepSearchCancellationRequested,
   setDeepSearchId,
   setIsAiFilterRunning,
   setIsDeepSearchRunning,
+  setOpenModalListingUrl,
   setShowFilteredListings,
   showFilteredListings,
+  singleDeepSearchInFlightUrls,
   type UrlCardData,
   type UrlCardSearchStatus,
   urlCardData,
 } from "./state";
+import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from "./urlGroups";
 
 // ── URL card DOM handles ──────────────────────────────────────────────────────
 // UrlCardData (serialisable state) lives in state.ts; DOM refs live here only.
@@ -41,10 +69,12 @@ import {
 interface UrlCardDom {
   containerElement: HTMLElement;
   input: HTMLInputElement;
+  // Truncated hyperlink shown in place of the input once a search has run.
+  linkElement: HTMLAnchorElement;
   searchButton: HTMLButtonElement;
   removeButton: HTMLButtonElement;
+  // Criteria block below the status line; hidden until criteria arrive.
   criteriaElement: HTMLElement;
-  countElement: HTMLElement;
   cacheStatusElement: HTMLElement;
   statusElement: HTMLElement;
 }
@@ -53,6 +83,15 @@ type UrlCard = { data: UrlCardData; dom: UrlCardDom };
 const urlCards: UrlCard[] = [];
 
 // ── Utility ───────────────────────────────────────────────────────────────────
+
+// Region search intent defaults to the user's home region; matched against the
+// display names served by /api/regions so region ids stay a server-side detail.
+const DEFAULT_REGION_DISPLAY = "Wellington";
+
+// Labels that JS rewrites at runtime are owned here exclusively — the HTML
+// carries no copy, so the wording can never drift between sources.
+const DISCOVERY_BUTTON_LABEL = "Go sifting";
+const DISCOVERY_BUTTON_BUSY_LABEL = "Working…";
 
 function promptHash(inputString: string): number {
   let h = 5381;
@@ -65,48 +104,48 @@ function readDiscoverInputs(): DiscoverInputs {
   return {
     prompt: getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim(),
     maxPrice: parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value),
-    fulfillment: getElement<HTMLSelectElement>("discoveryFulfillment").value as Fulfillment,
+    fulfillment: fulfillmentFromAllowShipping(
+      getElement<HTMLInputElement>("discoveryAllowShipping").checked,
+    ),
     region: getElement<HTMLSelectElement>("discoveryRegion").value || undefined,
   };
 }
 
-function setFulfillmentDisplay(fulfillment: string): void {
-  getElement("discoveryRegion").style.display = fulfillment === "pickup" ? "" : "none";
+function discoveryFormElements(): DiscoveryFormElements {
+  return {
+    promptInput: getElement<HTMLTextAreaElement>("discoveryPrompt"),
+    maxPriceInput: getElement<HTMLInputElement>("discoveryMaxPrice"),
+    allowShippingCheckbox: getElement<HTMLInputElement>("discoveryAllowShipping"),
+    regionSelect: getElement<HTMLSelectElement>("discoveryRegion"),
+    discoveryButton: getElement<HTMLButtonElement>("discoveryBtn"),
+  };
 }
 
-function applyDiscoverInputs(inputs: DiscoverInputs | undefined): void {
-  if (!inputs) return;
-  getElement<HTMLTextAreaElement>("discoveryPrompt").value = inputs.prompt ?? "";
-  getElement<HTMLInputElement>("discoveryMaxPrice").value =
-    inputs.maxPrice != null ? String(inputs.maxPrice) : "";
-  getElement<HTMLSelectElement>("discoveryFulfillment").value = inputs.fulfillment ?? "any";
-  setFulfillmentDisplay(inputs.fulfillment ?? "any");
-  getElement<HTMLSelectElement>("discoveryRegion").value = inputs.region ?? "";
-  updateDiscoveryBtn();
+function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
+  return {
+    searchStatus: card.data.searchStatus,
+    lastProgress: card.data.lastProgress,
+    listingsFoundCount: card.data.listingUrls.length,
+    errorMessage: card.data.errorMessage,
+    wasCancelled: card.data.wasCancelled,
+  };
 }
 
-function setCardStatus(
-  card: UrlCard,
-  statusMessage: string | null,
-  type: "info" | "success" | "error" = "info",
-): void {
+// Single renderer for the per-row status line — wording derives from the
+// card's semantic state via searchStatusText, never from ad-hoc strings.
+function renderCardStatus(card: UrlCard): void {
+  renderUrlRowMode(card);
+  const status = cardStatusText(cardStatusSnapshot(card));
   const statusBar = card.dom.statusElement;
-  if (!statusMessage) {
+  if (!status) {
     statusBar.classList.add("hidden");
     return;
   }
-  statusBar.className = `url-card-status ${type}`;
+  statusBar.className = `url-card-status ${status.kind}`;
   statusBar.innerHTML =
-    type === "info"
-      ? `<span class="spinner"></span><span>${esc(statusMessage)}</span>`
-      : `<span>${esc(statusMessage)}</span>`;
-  statusBar.classList.remove("hidden");
-}
-
-function setSearchingStatus(card: UrlCard, statusMessage: string): void {
-  const statusBar = card.dom.statusElement;
-  statusBar.className = "url-card-status info";
-  statusBar.innerHTML = `<span class="spinner"></span><span>${esc(statusMessage)}</span>`;
+    status.kind === "info"
+      ? `<span class="spinner"></span><span>${esc(status.text)}</span>`
+      : `<span>${esc(status.text)}</span>`;
   if (canCancelSearch(card.data.searchStatus)) {
     const cancelButton = document.createElement("button");
     cancelButton.className = "cache-clear-btn";
@@ -116,12 +155,13 @@ function setSearchingStatus(card: UrlCard, statusMessage: string): void {
     statusBar.appendChild(cancelButton);
   }
   statusBar.classList.remove("hidden");
+  updateUrlGroupHeaders();
 }
 
 function cancelSearch(card: UrlCard): void {
   if (!canCancelSearch(card.data.searchStatus)) return;
   card.data.searchStatus = "cancelling";
-  setSearchingStatus(card, "Cancelling…");
+  renderCardStatus(card);
   fetch("/api/cancel-search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -172,31 +212,159 @@ function setStatus(
   statusBar.classList.remove("hidden");
 }
 
-function updateCardSearchBtn(card: UrlCard): void {
+function handleUrlInputChanged(card: UrlCard): void {
+  card.dom.searchButton.disabled = !canSearchCard(card);
+  const recipeId = recipeIdForUrl(card.dom.input.value.trim());
+  const previousParent = card.dom.containerElement.parentElement;
+  syncUrlGroups();
+  // A row that just moved into a collapsed group would vanish mid-edit —
+  // expand its destination group so the input stays visible.
+  if (card.dom.containerElement.parentElement !== previousParent && recipeId !== null)
+    expandUrlGroup(recipeId);
+}
+
+// Once a search has touched the row, the URL displays as a truncated link;
+// the (hidden) input stays the single source of the row's URL value.
+function renderUrlRowMode(card: UrlCard): void {
+  const url = card.dom.input.value.trim();
+  const showLink =
+    card.data.searchStatus !== "idle" || card.data.wasCancelled || card.data.searchedUrl !== "";
+  card.dom.linkElement.href = url;
+  card.dom.linkElement.textContent = url;
+  card.dom.linkElement.classList.toggle("hidden", !showLink);
+  card.dom.input.classList.toggle("hidden", showLink);
+  card.dom.searchButton.classList.toggle("hidden", showLink);
+}
+
+// ── URL recipe groups ─────────────────────────────────────────────────────────
+
+const CHEVRON_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
+
+const urlGroupExpandedByRecipeId = new Map<RecipeId, boolean>();
+
+function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
+  return {
+    url: card.dom.input.value.trim(),
+    searchStatus: card.data.searchStatus,
+    listingUrls: card.data.listingUrls,
+  };
+}
+
+function findUrlGroupElement(recipeId: RecipeId): HTMLElement | null {
+  return getElement("urlCardsContainer").querySelector<HTMLElement>(
+    `.url-group[data-recipe-id="${recipeId}"]`,
+  );
+}
+
+function buildUrlGroupElement(recipeId: RecipeId): HTMLElement {
+  const groupEl = document.createElement("div");
+  groupEl.className = "url-group";
+  groupEl.dataset.recipeId = String(recipeId);
+  groupEl.innerHTML = `
+    <div class="url-group-header">
+      ${recipeFaviconHtml(recipeId)}
+      <span class="url-group-status"></span>
+      <button class="cache-clear-btn url-group-cancel hidden" type="button">cancel</button>
+      <button class="btn icon-btn url-group-toggle" type="button" title="Show URLs">${CHEVRON_ICON}</button>
+    </div>
+    <div class="url-group-rows hidden"></div>
+  `;
+  return groupEl;
+}
+
+// Reconciles the group containers with the cards' current recipes: groups are
+// kept in recipe-id order at the top, unmatched rows stay loose below them.
+function syncUrlGroups(): void {
+  const container = getElement("urlCardsContainer");
+  const summaries = computeUrlGroups(urlCards.map(urlGroupMemberSnapshot));
+  for (const summary of summaries) {
+    const groupEl = findUrlGroupElement(summary.recipeId) ?? buildUrlGroupElement(summary.recipeId);
+    container.appendChild(groupEl);
+    const rowsEl = requireChild<HTMLElement>(groupEl, ".url-group-rows");
+    if (urlGroupExpandedByRecipeId.get(summary.recipeId)) rowsEl.classList.remove("hidden");
+    groupEl.classList.toggle("expanded", urlGroupExpandedByRecipeId.get(summary.recipeId) ?? false);
+  }
+  for (const card of urlCards) {
+    const recipeId = recipeIdForUrl(card.dom.input.value.trim());
+    const rowEl = card.dom.containerElement;
+    const targetParent =
+      recipeId === null
+        ? container
+        : (findUrlGroupElement(recipeId)?.querySelector<HTMLElement>(".url-group-rows") ??
+          container);
+    if (rowEl.parentElement !== targetParent) targetParent.appendChild(rowEl);
+  }
+  for (const groupEl of [...container.querySelectorAll<HTMLElement>(".url-group")]) {
+    if (requireChild<HTMLElement>(groupEl, ".url-group-rows").children.length === 0)
+      groupEl.remove();
+  }
+  updateUrlGroupHeaders();
+}
+
+function updateUrlGroupHeaders(): void {
+  for (const summary of computeUrlGroups(urlCards.map(urlGroupMemberSnapshot))) {
+    const groupEl = findUrlGroupElement(summary.recipeId);
+    if (!groupEl) continue;
+    const view = groupHeaderView(summary);
+    const statusEl = requireChild<HTMLElement>(groupEl, ".url-group-status");
+    statusEl.innerHTML =
+      (view.showSpinner ? '<span class="spinner"></span>' : "") +
+      `<span>${esc(view.primaryText)}</span>`;
+    requireChild<HTMLElement>(groupEl, ".url-group-cancel").classList.toggle(
+      "hidden",
+      !view.showCancel,
+    );
+  }
+}
+
+function expandUrlGroup(recipeId: RecipeId): void {
+  if (urlGroupExpandedByRecipeId.get(recipeId)) return;
+  urlGroupExpandedByRecipeId.set(recipeId, true);
+  const groupEl = findUrlGroupElement(recipeId);
+  if (!groupEl) return;
+  groupEl.classList.add("expanded");
+  expandElement(requireChild<HTMLElement>(groupEl, ".url-group-rows"));
+}
+
+function toggleUrlGroup(recipeId: RecipeId): void {
+  const groupEl = findUrlGroupElement(recipeId);
+  if (!groupEl) return;
+  const rowsEl = requireChild<HTMLElement>(groupEl, ".url-group-rows");
+  const isExpanded = urlGroupExpandedByRecipeId.get(recipeId) ?? false;
+  urlGroupExpandedByRecipeId.set(recipeId, !isExpanded);
+  groupEl.classList.toggle("expanded", !isExpanded);
+  if (isExpanded) collapseElementAsync(rowsEl);
+  else expandElement(rowsEl);
+}
+
+function canSearchCard(card: UrlCard): boolean {
   const current = card.dom.input.value.trim();
-  card.dom.searchButton.disabled =
-    isDeepSearchRunning ||
-    !isValidRecipeUrl(current) ||
-    isSearchButtonDisabled(card.data.searchStatus, card.data.searchedUrl, current);
+  return (
+    !isDeepSearchRunning &&
+    isValidRecipeUrl(current) &&
+    !isSearchButtonDisabled(card.data.searchStatus, card.data.searchedUrl, current)
+  );
 }
 
 function setDeepSearchBusy(busy: boolean): void {
   setIsDeepSearchRunning(busy);
-  for (const card of urlCards) updateCardSearchBtn(card);
   renderDerived();
 }
 
-const SEARCH_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+// assets/x.svg, inlined so it inherits currentColor.
+const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+const SEARCH_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
 
 function createUrlCard(): UrlCard {
-  const idx = urlCards.length;
   const cardEl = document.createElement("div");
-  cardEl.className = "card url-card";
+  cardEl.className = "source-url-row";
   cardEl.innerHTML = `
-    <div class="card-label" style="display:flex;align-items:center">URL ${idx + 1}<span class="url-card-count"></span><button class="btn btn-ghost url-remove-btn hidden" style="margin-left:auto;padding:0.15rem 0.45rem;line-height:1" title="Remove">✕</button></div>
     <div class="url-row">
+      <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
       <input type="url" class="url-input" placeholder="Paste search URL…" />
-      <button class="btn btn-primary url-search-btn" disabled>${SEARCH_ICON} Search</button>
+      <button class="btn icon-btn url-search-btn" type="button" title="Search" disabled>${SEARCH_ICON}</button>
+      <button class="btn icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
     </div>
     <div class="url-card-status hidden"></div>
     <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
@@ -204,10 +372,10 @@ function createUrlCard(): UrlCard {
   getElement("urlCardsContainer").appendChild(cardEl);
 
   const input = requireChild<HTMLInputElement>(cardEl, ".url-input");
+  const linkElement = requireChild<HTMLAnchorElement>(cardEl, ".url-link");
   const searchButton = requireChild<HTMLButtonElement>(cardEl, ".url-search-btn");
   const removeButton = requireChild<HTMLButtonElement>(cardEl, ".url-remove-btn");
   const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-criteria");
-  const countElement = requireChild<HTMLElement>(cardEl, ".url-card-count");
   const cacheStatusElement = requireChild<HTMLElement>(cardEl, ".cache-status");
   const statusElement = requireChild<HTMLElement>(cardEl, ".url-card-status");
 
@@ -216,14 +384,17 @@ function createUrlCard(): UrlCard {
     searchedUrl: "",
     searchId: null,
     listingUrls: [],
+    lastProgress: null,
+    errorMessage: null,
+    wasCancelled: false,
   };
   const dom: UrlCardDom = {
     containerElement: cardEl,
     input,
+    linkElement,
     searchButton,
     removeButton,
     criteriaElement,
-    countElement,
     cacheStatusElement,
     statusElement,
   };
@@ -231,15 +402,25 @@ function createUrlCard(): UrlCard {
   urlCards.push(urlCard);
   urlCardData.push(data);
 
-  input.addEventListener("input", () => updateCardSearchBtn(urlCard));
+  input.addEventListener("input", () => handleUrlInputChanged(urlCard));
   input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
-    if (keyboardEvent.key === "Enter" && !searchButton.disabled) searchUrlCardAsync(urlCard);
+    if (keyboardEvent.key === "Enter" && canSearchCard(urlCard)) searchUrlCardAsync(urlCard);
   });
-  searchButton.addEventListener("click", () => searchUrlCardAsync(urlCard));
+  searchButton.addEventListener("click", () => {
+    if (canSearchCard(urlCard)) searchUrlCardAsync(urlCard);
+  });
   removeButton.addEventListener("click", () => removeUrlCard(urlCard));
 
   updateRemoveButtons();
+  syncUrlGroups();
   return urlCard;
+}
+
+// Sole writer of the filtered-results toggle label — derives it from state.
+function renderFilteredToggle(): void {
+  getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = showFilteredListings
+    ? "hide"
+    : "show";
 }
 
 function resetAllResults(): void {
@@ -248,15 +429,16 @@ function resetAllResults(): void {
   listingsByUrl.clear();
   getElement("listingsContainer").innerHTML = "";
   getElement("resultCount").textContent = "0";
-  setShowFilteredListings(false);
-  getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = "show";
+  renderFilteredToggle();
   getElement("filteredCount").classList.add("hidden");
   getElement("resultsSection").classList.add("hidden");
   for (const card of urlCards) {
     card.data.listingUrls = [];
     card.data.searchStatus = "idle";
     card.data.searchedUrl = "";
-    card.dom.countElement.textContent = "";
+    card.data.lastProgress = null;
+    card.data.errorMessage = null;
+    card.data.wasCancelled = false;
     requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
     card.dom.criteriaElement.classList.add("hidden");
     card.dom.cacheStatusElement.classList.add("hidden");
@@ -264,7 +446,7 @@ function resetAllResults(): void {
     card.dom.statusElement.classList.add("hidden");
     card.data.searchId = null;
     card.dom.input.readOnly = false;
-    updateCardSearchBtn(card);
+    renderUrlRowMode(card);
   }
   renderDerived();
 }
@@ -284,29 +466,26 @@ function getOrderedListings(): ListingItem[] {
 
 function renderDerived(): void {
   const listings = getOrderedListings();
-  const visible = listings.filter(
-    (listingItem) => listingItem.aiFilterReason === null,
-  );
+  const visible = listings.filter((listingItem) => listingItem.aiFilterReason === null);
   const filtered = listings.length - visible.length;
   getElement("resultCount").textContent = String(visible.length);
   getElement("filteredCountNum").textContent = String(filtered);
   getElement("filteredCount").classList.toggle("hidden", filtered === 0);
-  const isAnyCardSearching = urlCards.some((card) =>
-    isCardSearchActive(card.data.searchStatus),
-  );
+  const isAnyCardSearching = urlCards.some((card) => isCardSearchActive(card.data.searchStatus));
   const hasUnscraped = visible.some((listingItem) => !listingItem.hasBeenDeepSearched);
-  getElement<HTMLButtonElement>("deepBtn").disabled =
-    isDeepSearchRunning || isAnyCardSearching || !hasUnscraped;
+  getElement("deepBtn").classList.toggle(
+    "hidden",
+    isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,
+  );
   const prompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
   const hash = promptHash(prompt);
   const isFilterCurrent =
     !prompt ||
     listings.length === 0 ||
     listings.every((listingItem) => listingItem.aiCheckedHash === hash);
-  const updateBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
-  updateBtn.style.display = isFilterCurrent ? "none" : "";
-  updateBtn.disabled = shouldDisableUpdateBtn({ isFilterCurrent, isAiFilterRunning });
-  if (!isFilterCurrent) updateBtn.textContent = "Update filter";
+  const applyFilterBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
+  applyFilterBtn.disabled = shouldDisableApplyFilterBtn({ isFilterCurrent, isAiFilterRunning });
+  updateUrlGroupHeaders();
 }
 
 function updateRemoveButtons(): void {
@@ -315,9 +494,7 @@ function updateRemoveButtons(): void {
 }
 
 function resetCardForResearch(card: UrlCard): void {
-  const otherUrls = new Set(
-    urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)),
-  );
+  const otherUrls = new Set(urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)));
   for (const url of card.data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
@@ -328,21 +505,22 @@ function resetCardForResearch(card: UrlCard): void {
   card.data.listingUrls = [];
   card.data.searchStatus = "idle";
   card.data.searchedUrl = "";
-  card.dom.countElement.textContent = "";
+  card.data.lastProgress = null;
+  card.data.errorMessage = null;
+  card.data.wasCancelled = false;
   requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
   card.dom.criteriaElement.classList.add("hidden");
   card.dom.cacheStatusElement.classList.add("hidden");
   card.dom.cacheStatusElement.innerHTML = "";
   card.dom.statusElement.classList.add("hidden");
   card.dom.input.readOnly = false;
+  renderUrlRowMode(card);
   if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
   renderDerived();
 }
 
 function removeUrlCard(card: UrlCard): void {
-  const otherUrls = new Set(
-    urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)),
-  );
+  const otherUrls = new Set(urlCards.flatMap((c) => (c === card ? [] : c.data.listingUrls)));
   for (const url of card.data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
@@ -358,6 +536,7 @@ function removeUrlCard(card: UrlCard): void {
   }
   if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
   updateRemoveButtons();
+  syncUrlGroups();
   applyClientFilters();
 }
 
@@ -370,13 +549,13 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   getElement("resultsSection").classList.remove("hidden");
   card.data.searchStatus = "searching";
   card.data.searchId = crypto.randomUUID();
-  updateCardSearchBtn(card);
+  card.data.lastProgress = null;
+  card.data.errorMessage = null;
+  card.data.wasCancelled = false;
   renderDerived();
-  setSearchingStatus(card, "Fetching listings…");
+  renderCardStatus(card);
 
-  let totalFound = 0;
   let cachedAge = "";
-  let searchError = false;
   try {
     await streamPostAsync("/api/quick-search", { url, searchId: card.data.searchId }, (ev) => {
       if (ev.type === "criteria") {
@@ -391,10 +570,16 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
       } else if (ev.type === "cached") {
         cachedAge = ev.age as string;
       } else if (ev.type === "progress") {
-        if (canCancelSearch(card.data.searchStatus)) setSearchingStatus(card, ev.message as string);
+        const progress = parseQuickSearchProgress(ev);
+        if (progress === null) {
+          console.warn("Ignoring malformed progress event", ev);
+        } else {
+          card.data.lastProgress = progress;
+          if (canCancelSearch(card.data.searchStatus)) renderCardStatus(card);
+          updateUrlGroupHeaders();
+        }
       } else if (ev.type === "listing") {
         const listing = ev.data as Listing;
-        totalFound++;
         card.data.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = {
@@ -407,15 +592,17 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           listingsByUrl.set(listing.url, item);
           renderCard(item);
           renderDerived();
+        } else {
+          // Listing already known from another card — the group count may
+          // still change, since it dedupes per group rather than globally.
+          updateUrlGroupHeaders();
         }
       } else if (ev.type === "error") {
-        searchError = true;
-        setCardStatus(card, ev.message as string, "error");
+        card.data.errorMessage = typeof ev.message === "string" ? ev.message : "Search failed";
       }
     });
   } catch (error) {
-    searchError = true;
-    setCardStatus(card, (error as Error).message, "error");
+    card.data.errorMessage = (error as Error).message;
   }
 
   const wasCancelled = (card.data.searchStatus as UrlCardSearchStatus) === "cancelling";
@@ -423,32 +610,24 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   card.data.searchId = null;
 
   if (wasCancelled) {
-    setCardStatus(
-      card,
-      `Cancelled — ${totalFound} listing${totalFound !== 1 ? "s" : ""} loaded`,
-      "error",
-    );
-    updateCardSearchBtn(card);
+    card.data.wasCancelled = true;
+    renderCardStatus(card);
     if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
   card.data.searchedUrl = url;
   card.dom.input.readOnly = true;
-  updateCardSearchBtn(card);
 
   if (cachedAge) {
     card.dom.cacheStatusElement.innerHTML = `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
     card.dom.cacheStatusElement.classList.remove("hidden");
-    requireChild<HTMLButtonElement>(card.dom.cacheStatusElement, ".cache-clear-btn").addEventListener(
-      "click",
-      clearQuickSearchCacheAsync,
-    );
+    requireChild<HTMLButtonElement>(
+      card.dom.cacheStatusElement,
+      ".cache-clear-btn",
+    ).addEventListener("click", clearQuickSearchCacheAsync);
   }
-  card.dom.countElement.textContent = `— ${totalFound} listing${totalFound !== 1 ? "s" : ""}`;
 
-  if (!searchError) {
-    setCardStatus(card, `${totalFound} listing${totalFound !== 1 ? "s" : ""} found`, "success");
-  }
+  renderCardStatus(card);
   if (listingsByUrl.size > 0) {
     applyClientFilters();
     const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
@@ -462,7 +641,7 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
 // ── Client-side filtering ─────────────────────────────────────────────────────
 
 function filterBannerText(item: ListingItem): string {
-  return item.aiFilterReason ? `Filtered by AI: ${item.aiFilterReason}` : "Filtered";
+  return item.aiFilterReason ? `Filtered: ${item.aiFilterReason}` : "Filtered";
 }
 
 function applyClientFilters(): void {
@@ -491,7 +670,7 @@ function updateDiscoveryBtn(): void {
   const hasPrompt = !!getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
   const hasValidPrice =
     parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value) !== undefined;
-  const isPickupOnly = getElement<HTMLSelectElement>("discoveryFulfillment").value === "pickup";
+  const isPickupOnly = !getElement<HTMLInputElement>("discoveryAllowShipping").checked;
   const hasRegion = !isPickupOnly || !!getElement<HTMLSelectElement>("discoveryRegion").value;
   getElement<HTMLButtonElement>("discoveryBtn").disabled =
     !hasPrompt || !hasValidPrice || !hasRegion;
@@ -538,7 +717,7 @@ async function runAiFilterAsync(): Promise<void> {
             const item = listingsByUrl.get(result.url);
             if (item) {
               item.aiCheckedHash = hash;
-              item.aiFilterReason = result.pass ? null : (result.reason ?? "Filtered by AI");
+              item.aiFilterReason = result.pass ? null : (result.reason ?? "No reason given");
               checked++;
             }
           }
@@ -618,14 +797,6 @@ function getCardByUrl(url: string): HTMLElement | null {
   return id ? document.getElementById(id) : null;
 }
 
-function renderShippingBadgeHtml(fulfillment: Listing["fulfillment"]): string {
-  if (!fulfillment) return "";
-  if (fulfillment.pickupAvailable && fulfillment.shippingAvailable)
-    return '<span class="badge badge-both">Allows pickups</span>';
-  if (fulfillment.pickupAvailable) return '<span class="badge badge-pickuponly">Pickup only</span>';
-  return "";
-}
-
 function formatReserveText(status: string): string {
   if (status === "NONE") return "No reserve";
   if (status === "MET") return "Reserve met";
@@ -642,41 +813,31 @@ function cleanDescription(text: string): string {
     .trim();
 }
 
-function buildPricesHtml(item: ListingItem): string {
-  let html = `<span class="price">${esc(item.data.priceDisplay)}</span>`;
-  if (item.detail && item.data.isAuction && item.detail.buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${Number(item.detail.buyNowPrice).toLocaleString()}</strong></span>`;
+function buildCardPriceHtml(listing: Listing): string {
+  return `<span class="price">${esc(listing.priceDisplay)}</span>`;
+}
+
+function buildCardMetaHtml(listing: Listing): string {
+  return `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span><span class="meta-right"></span>`;
+}
+
+function buildDetailPriceHtml(listing: Listing, detail: ListingDetail): string {
+  let html = `<span class="price">${esc(listing.priceDisplay)}</span>`;
+  if (listing.isAuction && detail.buyNowPrice != null) {
+    html += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
   }
   return html;
 }
 
-function buildMetaHtml(item: ListingItem): string {
-  let html = sourceFaviconHtml(item.data.source);
-  html += `<span class="meta-text">📍 ${esc(item.data.location)}</span>`;
-  const detail = item.detail;
-  if (detail) {
-    const { shippingAvailable, pickupAvailable } = detail;
-    const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
-    if (item.data.isAuction) {
-      const reserve = formatReserveText(detail.reserveStatus);
-      if (reserve)
-        html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
-    }
-    if (hasDefiniteData) {
-      if (shippingAvailable && pickupAvailable) {
-        html += '<span class="badge badge-both">Shipping &amp; pickup</span>';
-      } else if (shippingAvailable) {
-        html += '<span class="badge badge-shipping">Shipping only</span>';
-      } else if (pickupAvailable) {
-        html += '<span class="badge badge-pickuponly">Pickup only</span>';
-      }
-    } else {
-      html += renderShippingBadgeHtml(item.data.fulfillment);
-    }
-  } else {
-    html += renderShippingBadgeHtml(item.data.fulfillment);
+function buildDetailMetaHtml(listing: Listing, detail: ListingDetail): string {
+  const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
+  let html = "";
+  if (listing.isAuction) {
+    const reserve = formatReserveText(detail.reserveStatus);
+    if (reserve)
+      html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
   }
-  return html;
+  return `${left}<span class="meta-right">${html}</span>`;
 }
 
 function buildExtrasHtml(detail: ListingDetail): string {
@@ -721,13 +882,13 @@ function buildExtrasHtml(detail: ListingDetail): string {
     body += `</div>`;
   }
 
-  return `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
+  return body;
 }
 
 function renderCard(item: ListingItem): void {
   const listing = item.data;
 
-  // Assign a UUID-based id on first render; reuse it on re-renders (e.g. after deep search enrichment).
+  // Assign a UUID-based id on first render; reuse it on re-renders.
   let cardId = cardIdByUrl.get(listing.url);
   if (!cardId) {
     cardId = `card-${crypto.randomUUID()}`;
@@ -736,9 +897,10 @@ function renderCard(item: ListingItem): void {
 
   const existing = document.getElementById(cardId);
   const card = existing ?? document.createElement("div");
-  card.className = `listing-card${item.detail ? " enriched" : ""}`;
+  card.className = "listing-card";
   card.id = cardId;
   card.dataset.url = listing.url;
+  applyListingCardAccessibility(card, listing.title);
 
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
@@ -746,49 +908,120 @@ function renderCard(item: ListingItem): void {
          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
        </div>`;
 
+  // The card never re-renders once a deep search populates item.detail — all
+  // detail-derived content (badges, buy-now price, extras) lives in the modal
+  // only, so this template deliberately never references item.detail.
   card.innerHTML = `
-    <div class="filter-banner hidden"></div>
     <div class="listing-card-content">
-      ${thumb}
+      <div class="listing-thumb-wrap">
+        ${thumb}
+        ${sourceBadgeHtml(listing.source, 28)}
+      </div>
       <div class="listing-body">
-        <div class="listing-title">
-          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
-        </div>
-        <div class="listing-prices">
-          ${buildPricesHtml(item)}
-        </div>
         <div class="listing-meta">
-          ${buildMetaHtml(item)}
+          ${buildCardMetaHtml(listing)}
         </div>
-        <div class="listing-extras">${item.detail ? buildExtrasHtml(item.detail) : ""}</div>
+        <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>
+        <div class="listing-prices">
+          ${buildCardPriceHtml(listing)}
+        </div>
       </div>
     </div>
+    <div class="filter-banner hidden"></div>
   `;
 
   if (!existing) getElement("listingsContainer").appendChild(card);
 }
 
-function expandExtras(body: HTMLElement): void {
-  body.classList.remove("collapsed");
-  const btn = body.nextElementSibling as HTMLElement;
-  if (btn) btn.style.display = "";
+// ── Listing detail modal ──────────────────────────────────────────────────────
+
+function listingModalExtrasHtml(item: ListingItem, errorMessage: string | null): string {
+  if (errorMessage) return `<p class="deep-empty">Couldn't load details — ${esc(errorMessage)}</p>`;
+  if (item.detail) return buildExtrasHtml(item.detail);
+  return `<div class="modal-loading"><span class="spinner"></span><span>Fetching details…</span></div>`;
 }
 
-function collapseExtras(btn: HTMLButtonElement): void {
-  const body = btn.previousElementSibling as HTMLElement;
-  body.classList.add("collapsed");
-  btn.style.display = "none";
+function renderListingModalContent(item: ListingItem, errorMessage: string | null = null): void {
+  // A previous single-listing fetch may resolve after the modal has closed
+  // or moved on to a different listing — ignore stale writes.
+  if (openModalListingUrl !== item.data.url) return;
+
+  const listing = item.data;
+  const thumb = listing.thumbnailUrl
+    ? `<img class="listing-modal-thumb" src="${esc(listing.thumbnailUrl)}" alt="">`
+    : `<div class="listing-modal-thumb-placeholder"></div>`;
+  const metaHtml = item.detail
+    ? buildDetailMetaHtml(listing, item.detail)
+    : buildCardMetaHtml(listing);
+  const priceHtml = item.detail
+    ? buildDetailPriceHtml(listing, item.detail)
+    : buildCardPriceHtml(listing);
+
+  getElement("listingModalBody").innerHTML = `
+    <div class="listing-modal-header">
+      <div class="listing-modal-thumb-wrap">${thumb}${sourceBadgeHtml(listing.source, 32)}</div>
+      <div class="listing-modal-heading">
+        <div class="listing-modal-title">${esc(listing.title)}</div>
+        <div class="listing-meta">${metaHtml}</div>
+        <div class="listing-prices">${priceHtml}</div>
+        <a class="listing-modal-original-link" href="${esc(listing.url)}" target="_blank" rel="noopener">View original listing ↗</a>
+      </div>
+    </div>
+    <div class="listing-modal-extras">${listingModalExtrasHtml(item, errorMessage)}</div>
+  `;
 }
 
-function toggleDescription(btn: HTMLButtonElement): void {
-  const desc = btn.closest(".listing-description");
-  if (!desc) throw new Error("toggleDescription: missing .listing-description ancestor");
-  const full = requireChild<HTMLElement>(desc, ".desc-full");
-  const short = requireChild<HTMLElement>(desc, ".desc-short");
-  const expanded = full.classList.contains("open");
-  full.classList.toggle("open", !expanded);
-  short.classList.toggle("hidden", !expanded);
-  btn.textContent = expanded ? "Show more" : "Show less";
+function applyDeepSearchDetail(item: ListingItem, detail: ListingDetail): void {
+  item.hasBeenDeepSearched = true;
+  item.detail = detail;
+  item.aiCheckedHash = null;
+  if (openModalListingUrl === item.data.url) renderListingModalContent(item);
+}
+
+async function deepSearchListingAsync(item: ListingItem): Promise<void> {
+  const url = item.data.url;
+  singleDeepSearchInFlightUrls.add(url);
+  try {
+    await streamPostAsync(
+      "/api/deep-search",
+      { listings: [item.data], deepSearchId: crypto.randomUUID() },
+      (ev) => {
+        if (ev.type === "detail") {
+          applyDeepSearchDetail(item, ev.detail as ListingDetail);
+          renderDerived();
+        } else if (ev.type === "error") {
+          renderListingModalContent(item, ev.message as string);
+        }
+      },
+    );
+  } catch (error) {
+    renderListingModalContent(item, (error as Error).message);
+  } finally {
+    singleDeepSearchInFlightUrls.delete(url);
+  }
+  if (item.hasBeenDeepSearched) {
+    applyClientFilters();
+    const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
+    if (aiPrompt)
+      scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+  }
+}
+
+async function openListingModalAsync(item: ListingItem): Promise<void> {
+  setOpenModalListingUrl(item.data.url);
+  getElement("listingModal").classList.remove("hidden");
+  renderListingModalContent(item);
+  const action = decideModalDeepSearchAction({
+    hasBeenDeepSearched: item.hasBeenDeepSearched,
+    isCoveredByBulkSearch: bulkDeepSearchUrls?.has(item.data.url) ?? false,
+    isAlreadyFetchingSingle: singleDeepSearchInFlightUrls.has(item.data.url),
+  });
+  if (action === "start") await deepSearchListingAsync(item);
+}
+
+function closeListingModal(): void {
+  getElement("listingModal").classList.add("hidden");
+  setOpenModalListingUrl(null);
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
@@ -797,7 +1030,12 @@ function toggleDescription(btn: HTMLButtonElement): void {
 
 async function runDeepSearchAsync(): Promise<void> {
   const toScrape = getOrderedListings()
-    .filter((item) => !item.hasBeenDeepSearched && item.aiFilterReason === null)
+    .filter(
+      (item) =>
+        !item.hasBeenDeepSearched &&
+        item.aiFilterReason === null &&
+        !singleDeepSearchInFlightUrls.has(item.data.url),
+    )
     .map((item) => item.data);
 
   if (toScrape.length === 0) return;
@@ -805,17 +1043,8 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchId(crypto.randomUUID());
   setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(true);
+  setBulkDeepSearchUrls(new Set(toScrape.map((listing) => listing.url)));
   let detailsReceived = 0;
-
-  for (const listing of toScrape) {
-    const card = getCardByUrl(listing.url);
-    if (card) {
-      requireChild<HTMLElement>(card, ".listing-extras").innerHTML =
-        '<div style="padding-top:0.6rem">' +
-        '<div class="skeleton" style="width:70%;margin-bottom:0.4rem"></div>' +
-        '<div class="skeleton" style="width:40%"></div></div>';
-    }
-  }
 
   setDeepSearchingStatus(
     `Fetching details for ${toScrape.length} listing${toScrape.length !== 1 ? "s" : ""}…`,
@@ -830,15 +1059,8 @@ async function runDeepSearchAsync(): Promise<void> {
           );
       } else if (ev.type === "detail") {
         detailsReceived++;
-        const detail = ev.detail as ListingDetail;
         const item = listingsByUrl.get(ev.url as string);
-        if (item) {
-          item.hasBeenDeepSearched = true;
-          item.detail = detail;
-          item.aiCheckedHash = null;
-          renderCard(item);
-        }
-
+        if (item) applyDeepSearchDetail(item, ev.detail as ListingDetail);
         renderDerived();
       } else if (ev.type === "complete") {
         setStatus("Deep search complete", "success");
@@ -851,14 +1073,7 @@ async function runDeepSearchAsync(): Promise<void> {
     setStatus((error as Error).message, "error");
   }
 
-  // Clear skeleton loaders from listings that never received details
-  for (const listing of toScrape) {
-    const item = listingsByUrl.get(listing.url);
-    if (item && !item.hasBeenDeepSearched) {
-      const card = getCardByUrl(listing.url);
-      if (card) requireChild<HTMLElement>(card, ".listing-extras").innerHTML = "";
-    }
-  }
+  setBulkDeepSearchUrls(null);
 
   if (deepSearchCancellationRequested) {
     setStatus(
@@ -872,8 +1087,7 @@ async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchBusy(false);
   applyClientFilters();
   const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-  if (aiPrompt)
-    scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+  if (aiPrompt) scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
 }
 
 function markDirty(): void {
@@ -882,7 +1096,6 @@ function markDirty(): void {
 
 function setSearchName(name: string | null): void {
   setCurrentSearchName(name);
-  getElement("searchTitle").textContent = name ?? "new shiny thing";
   getElement("saveCurrentBtn").classList.add("hidden");
 }
 
@@ -906,7 +1119,7 @@ function renderSavedSearches(searches: SavedSearch[]): void {
   count.classList.toggle("hidden", searches.length === 0);
 
   if (searches.length === 0) {
-    list.innerHTML = '<p class="deep-empty">No saved searches yet.</p>';
+    list.innerHTML = '<p class="deep-empty">No favourites yet.</p>';
     return;
   }
   list.innerHTML = searches
@@ -914,8 +1127,7 @@ function renderSavedSearches(searches: SavedSearch[]): void {
       (savedSearch) => `
     <div class="saved-search-row" data-id="${esc(savedSearch.id)}">
       <a class="saved-search-name load-saved-btn" href="#" title="${esc(savedSearch.name)}">${esc(savedSearch.name)}</a>
-      <span class="saved-search-date">${new Date(savedSearch.createdAt).toLocaleDateString()} ${new Date(savedSearch.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}</span>
-      <button class="btn btn-ghost delete-saved-btn" style="padding:0.25rem 0.65rem;font-size:0.78rem">✕</button>
+      <button class="btn icon-btn delete-saved-btn" type="button" title="Delete">${X_ICON}</button>
     </div>
   `,
     )
@@ -943,16 +1155,21 @@ async function deleteSavedSearchAsync(id: string): Promise<void> {
   await fetchSavedSearchesAsync();
 }
 
+// The URL cards and AI filter stay hidden until the first search of the
+// session — either a discovery run or loading a favourite.
+function revealSearchConfig(): void {
+  getElement("searchConfigSection").classList.remove("hidden");
+}
+
 function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: string): void {
+  revealSearchConfig();
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   urlCards[0].dom.input.value = data.urls[0];
-  updateCardSearchBtn(urlCards[0]);
   for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
-    const card = createUrlCard();
-    card.dom.input.value = data.urls[urlIndex];
-    updateCardSearchBtn(card);
+    createUrlCard().dom.input.value = data.urls[urlIndex];
   }
+  for (const card of urlCards) handleUrlInputChanged(card);
   setSearchName(data.name);
   markDirty();
   getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
@@ -961,20 +1178,19 @@ function loadDiscoveryResults(data: { urls: string[]; name: string }, aiPrompt: 
 }
 
 async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
+  revealSearchConfig();
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+  applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
   if (search.urls.length === 0) return;
   urlCards[0].dom.input.value = search.urls[0];
-  updateCardSearchBtn(urlCards[0]);
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
-    const card = createUrlCard();
-    card.dom.input.value = search.urls[urlIndex];
-    updateCardSearchBtn(card);
+    createUrlCard().dom.input.value = search.urls[urlIndex];
   }
-  applyDiscoverInputs(search.discoverInputs);
+  for (const card of urlCards) handleUrlInputChanged(card);
   getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
   setSearchName(search.name);
-  getElement("savedSearchesPanel").classList.add("hidden");
+  activateSidebarTab(document, "search");
   // loadSavedSearchAsync owns the dispatch: kick off a search for every configured card.
   fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
@@ -982,6 +1198,8 @@ async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
 // ── Event listeners ───────────────────────────────────────────────────────────
 
 function initApp(): void {
+  getElement("discoveryBtn").textContent = DISCOVERY_BUTTON_LABEL;
+  renderFilteredToggle();
   createUrlCard();
   getElement<HTMLTextAreaElement>("discoveryPrompt").focus();
 
@@ -995,9 +1213,7 @@ function initApp(): void {
 
   getElement("toggleFilteredBtn").addEventListener("click", () => {
     setShowFilteredListings(!showFilteredListings);
-    getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = showFilteredListings
-      ? "hide"
-      : "show";
+    renderFilteredToggle();
     for (const item of getOrderedListings()) {
       if (item.aiFilterReason !== null) {
         const card = getCardByUrl(item.data.url);
@@ -1006,26 +1222,25 @@ function initApp(): void {
     }
   });
 
-  // Populate region dropdown and wire fulfillment toggle
+  // Populate region dropdown and wire the allow-shipping checkbox
   fetch("/api/regions")
     .then((regionResponse) => regionResponse.json())
-    .then((regions: Array<{ value: string; display: string }>) => {
-      const select = getElement<HTMLSelectElement>("discoveryRegion");
-      for (const region of regions) {
-        const opt = document.createElement("option");
-        opt.value = region.value;
-        opt.textContent = region.display;
-        select.appendChild(opt);
-      }
+    .then((regions: RegionOption[]) => {
+      populateRegionSelect(
+        getElement<HTMLSelectElement>("discoveryRegion"),
+        regions,
+        DEFAULT_REGION_DISPLAY,
+      );
+      updateDiscoveryBtn();
     })
     .catch(() => {
       /* regions unavailable — dropdown stays empty */
     });
 
-  getElement<HTMLSelectElement>("discoveryFulfillment").addEventListener("change", () => {
-    setFulfillmentDisplay(getElement<HTMLSelectElement>("discoveryFulfillment").value);
-    updateDiscoveryBtn();
-  });
+  getElement<HTMLInputElement>("discoveryAllowShipping").addEventListener(
+    "change",
+    updateDiscoveryBtn,
+  );
   getElement<HTMLSelectElement>("discoveryRegion").addEventListener("change", updateDiscoveryBtn);
 
   getElement<HTMLTextAreaElement>("discoveryPrompt").addEventListener("input", updateDiscoveryBtn);
@@ -1034,14 +1249,15 @@ function initApp(): void {
     const prompt = getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
     if (!prompt) return;
     const maxPrice = parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value);
-    const fulfillment = getElement<HTMLSelectElement>("discoveryFulfillment").value;
-    const regionValue =
-      fulfillment === "pickup" ? getElement<HTMLSelectElement>("discoveryRegion").value : undefined;
+    const fulfillment = fulfillmentFromAllowShipping(
+      getElement<HTMLInputElement>("discoveryAllowShipping").checked,
+    );
+    const regionValue = getElement<HTMLSelectElement>("discoveryRegion").value || undefined;
     const discoveryButton = getElement<HTMLButtonElement>("discoveryBtn");
     const discoveryErrorElement = getElement<HTMLDivElement>("discoveryError");
     discoveryErrorElement.style.display = "none";
     discoveryButton.disabled = true;
-    discoveryButton.textContent = "Working…";
+    discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
     try {
       const response = await fetch("/api/discover", {
         method: "POST",
@@ -1063,7 +1279,7 @@ function initApp(): void {
       discoveryErrorElement.textContent = "Discovery failed";
       discoveryErrorElement.style.display = "block";
     } finally {
-      discoveryButton.textContent = "Get it!";
+      discoveryButton.textContent = DISCOVERY_BUTTON_LABEL;
       updateDiscoveryBtn();
     }
   });
@@ -1078,33 +1294,55 @@ function initApp(): void {
   getElement("urlCardsContainer").addEventListener("input", markDirty);
   getElement("addUrlBtn").addEventListener("click", markDirty);
 
-  // Event delegation for description toggles (avoids global onclick)
+  // Recipe group headers: chevron toggles the rows, cancel stops all of the
+  // group's running searches.
+  getElement("urlCardsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
+    const groupEl = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".url-group");
+    if (!groupEl) return;
+    const recipeId = Number(groupEl.dataset.recipeId) as RecipeId;
+    if ((mouseEvent.target as HTMLElement).closest(".url-group-toggle")) {
+      toggleUrlGroup(recipeId);
+      return;
+    }
+    if ((mouseEvent.target as HTMLElement).closest(".url-group-cancel")) {
+      for (const card of urlCards) {
+        if (recipeIdForUrl(card.dom.input.value.trim()) === recipeId) cancelSearch(card);
+      }
+    }
+  });
+
+  // Clicking anywhere on a listing card — or pressing Enter/Space on a
+  // focused one — opens its detail modal, deep searching it first if it
+  // hasn't been already.
+  function openListingCardModal(card: HTMLElement): void {
+    const url = card.dataset.url;
+    if (!url) throw new Error("listing-card missing data-url attribute");
+    const item = listingsByUrl.get(url);
+    if (!item) throw new Error(`listingsByUrl missing entry for ${url}`);
+    void openListingModalAsync(item);
+  }
+
   getElement("listingsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
-    const showLessBtn = (mouseEvent.target as HTMLElement).closest<HTMLButtonElement>(
-      ".extras-toggle",
-    );
-    if (showLessBtn) {
-      collapseExtras(showLessBtn);
-      return;
-    }
-    const collapsedBody = (mouseEvent.target as HTMLElement).closest<HTMLElement>(
-      ".extras-body.collapsed",
-    );
-    if (collapsedBody) {
-      expandExtras(collapsedBody);
-      return;
-    }
-    const descBtn = (mouseEvent.target as HTMLElement).closest<HTMLButtonElement>(".desc-toggle");
-    if (descBtn) toggleDescription(descBtn);
+    const card = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".listing-card");
+    if (!card) return;
+    openListingCardModal(card);
   });
 
-  // ── Saved searches UI ─────────────────────────────────────────────────────────
+  getElement("listingsContainer").addEventListener("keydown", (keyboardEvent: KeyboardEvent) =>
+    handleListingCardKeydown(keyboardEvent, openListingCardModal),
+  );
 
-  getElement("savedSearchesToggle").addEventListener("click", () => {
-    const panel = getElement("savedSearchesPanel");
-    const nowHidden = panel.classList.toggle("hidden");
-    if (!nowHidden) fetchSavedSearchesAsync();
+  // ── Sidebar tabs / saved searches UI ──────────────────────────────────────────
+
+  getElement("searchTabBtn").addEventListener("click", () =>
+    activateSidebarTab(document, "search"),
+  );
+  getElement("favouritesTabBtn").addEventListener("click", () => {
+    activateSidebarTab(document, "favourites");
+    fetchSavedSearchesAsync();
   });
+  // Populate the tab's count badge without waiting for the first tab switch.
+  fetchSavedSearchesAsync();
 
   function openSaveModal(): void {
     const input = getElement<HTMLInputElement>("saveSearchName");
@@ -1135,7 +1373,7 @@ function initApp(): void {
     setSearchName(name);
     closeSaveModal();
     confirmButton.disabled = false;
-    getElement("savedSearchesPanel").classList.remove("hidden");
+    activateSidebarTab(document, "favourites");
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
@@ -1147,6 +1385,21 @@ function initApp(): void {
       if (keyboardEvent.key === "Escape") closeSaveModal();
     },
   );
+
+  getElement("listingModalCloseBtn").addEventListener("click", closeListingModal);
+
+  getElement("listingModal").addEventListener("click", (mouseEvent: MouseEvent) => {
+    if (mouseEvent.target === getElement("listingModal")) closeListingModal();
+  });
+
+  document.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
+    if (
+      keyboardEvent.key === "Escape" &&
+      !getElement("listingModal").classList.contains("hidden")
+    ) {
+      closeListingModal();
+    }
+  });
 
   getElement("savedSearchesList").addEventListener("click", async (mouseEvent: MouseEvent) => {
     const row = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".saved-search-row");
