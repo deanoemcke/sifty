@@ -17,9 +17,17 @@ import { getElement, requireChild } from "./domUtils";
 import { collapseElementAsync, expandElement } from "./heightAnimation";
 import { esc } from "./html";
 import { applyListingCardAccessibility, handleListingCardKeydown } from "./listingCardActivation";
+import {
+  buildCardMetaHtml,
+  buildCardPriceHtml,
+  buildDetailMetaHtml,
+  buildDetailPriceHtml,
+  buildExtrasHtml,
+  filterBannerText,
+} from "./listingHtml";
 import { parseMaxPrice } from "./parseUtils";
 import { recipeFaviconHtml, sourceBadgeHtml } from "./recipeDisplay";
-import { shouldDisableApplyFilterBtn } from "./renderUtils";
+import { promptHash, shouldDisableApplyFilterBtn } from "./renderUtils";
 import {
   type CardStatusSnapshot,
   cardStatusText,
@@ -90,13 +98,6 @@ const DEFAULT_REGION_DISPLAY = "Wellington";
 // carries no copy, so the wording can never drift between sources.
 const DISCOVERY_BUTTON_LABEL = "Go sifting";
 const DISCOVERY_BUTTON_BUSY_LABEL = "Working…";
-
-function promptHash(inputString: string): number {
-  let h = 5381;
-  for (let charIndex = 0; charIndex < inputString.length; charIndex++)
-    h = ((h * 33) ^ inputString.charCodeAt(charIndex)) >>> 0;
-  return h;
-}
 
 function readDiscoverInputs(): DiscoverInputs {
   return {
@@ -638,10 +639,6 @@ async function searchUrlCardAsync(card: UrlCard): Promise<void> {
 
 // ── Client-side filtering ─────────────────────────────────────────────────────
 
-function filterBannerText(item: ListingItem): string {
-  return item.aiFilterReason ? `Filtered: ${item.aiFilterReason}` : "Filtered";
-}
-
 function applyClientFilters(): void {
   for (const item of getOrderedListings()) {
     const passes = item.aiFilterReason === null;
@@ -753,94 +750,6 @@ async function clearQuickSearchCacheAsync(): Promise<void> {
 function getCardByUrl(url: string): HTMLElement | null {
   const id = cardIdByUrl.get(url);
   return id ? document.getElementById(id) : null;
-}
-
-function formatReserveText(status: string): string {
-  if (status === "NONE") return "No reserve";
-  if (status === "MET") return "Reserve met";
-  if (status === "NOT_MET") return "Reserve not met";
-  return "";
-}
-
-function cleanDescription(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function buildCardPriceHtml(listing: Listing): string {
-  return `<span class="price">${esc(listing.priceDisplay)}</span>`;
-}
-
-function buildCardMetaHtml(listing: Listing): string {
-  return `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span><span class="meta-right"></span>`;
-}
-
-function buildDetailPriceHtml(listing: Listing, detail: ListingDetail): string {
-  let html = `<span class="price">${esc(listing.priceDisplay)}</span>`;
-  if (listing.isAuction && detail.buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
-  }
-  return html;
-}
-
-function buildDetailMetaHtml(listing: Listing, detail: ListingDetail): string {
-  const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
-  let html = "";
-  if (listing.isAuction) {
-    const reserve = formatReserveText(detail.reserveStatus);
-    if (reserve)
-      html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
-  }
-  return `${left}<span class="meta-right">${html}</span>`;
-}
-
-function buildExtrasHtml(detail: ListingDetail): string {
-  let body = "";
-
-  // ── Details ───────────────────────────────────────────────────────────────
-  if (detail.details.length > 0) {
-    body += `<div class="deep-section">
-      <div class="deep-section-label">Details</div>
-      <div class="details-table">${detail.details
-        .map(
-          ({ key, value }) =>
-            `<span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span>`,
-        )
-        .join("")}</div>
-    </div>`;
-  }
-
-  // ── Description ───────────────────────────────────────────────────────────
-  body += `<div class="deep-section"><div class="deep-section-label">Description</div>`;
-  if (detail.description) {
-    body += `<div class="listing-description">${esc(cleanDescription(detail.description))}</div>`;
-  } else {
-    body += `<p class="deep-empty">No description provided.</p>`;
-  }
-  body += `</div>`;
-
-  // ── Questions & Answers ───────────────────────────────────────────────────
-  if (detail.questionsAndAnswers.length > 0) {
-    body += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
-    body += detail.questionsAndAnswers
-      .map(
-        ({ question, answer }) =>
-          `<div class="qa-pair">` +
-          `<div class="qa-item"><span class="qa-badge qa-q">Q</span><span class="qa-text">${esc(question)}</span></div>` +
-          (answer
-            ? `<div class="qa-item"><span class="qa-badge qa-a">A</span><span class="qa-text">${esc(answer)}</span></div>`
-            : "") +
-          `</div>`,
-      )
-      .join("");
-    body += `</div>`;
-  }
-
-  return body;
 }
 
 function renderCard(item: ListingItem): void {
