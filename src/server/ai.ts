@@ -22,17 +22,87 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
   },
 };
 
+// provider key -> epoch ms when its cooldown ends
+const providerCooldowns = new Map<string, number>();
+
+function findProviderKeyForUrl(url: string): string | undefined {
+  return Object.entries(AI_PROVIDERS).find(([, cfg]) => cfg.url === url)?.[0];
+}
+
+function markProviderExhausted(url: string, cooldownUntilMs: number): void {
+  const providerKey = findProviderKeyForUrl(url);
+  if (providerKey === undefined) return; // unrecognized url (e.g. a test's synthetic config)
+  providerCooldowns.set(providerKey, cooldownUntilMs);
+}
+
+export function resetProviderCooldowns(): void {
+  providerCooldowns.clear();
+}
+
+type ProviderCandidate =
+  | { key: string; status: "available"; config: AiConfig }
+  | { key: string; status: "no-key" }
+  | { key: string; status: "cooldown"; recoversInSecs: number };
+
+function resolveProviderPriorityOrder(): string[] {
+  const allKeys = Object.keys(AI_PROVIDERS);
+  const preferredRaw = process.env.AI_PROVIDER;
+  if (preferredRaw === undefined) return allKeys;
+  const preferred = preferredRaw.toLowerCase();
+  if (!AI_PROVIDERS[preferred])
+    throw new Error(`Unknown AI_PROVIDER "${preferredRaw}" — use groq, openrouter, or gemini`);
+  return [preferred, ...allKeys.filter((key) => key !== preferred)];
+}
+
+function evaluateProviderCandidates(): ProviderCandidate[] {
+  const now = Date.now();
+  return resolveProviderPriorityOrder().map((key): ProviderCandidate => {
+    const providerConfig = AI_PROVIDERS[key];
+    const apiKey = process.env[providerConfig.keyVar];
+    if (!apiKey) return { key, status: "no-key" };
+    const cooldownUntil = providerCooldowns.get(key);
+    if (cooldownUntil !== undefined && cooldownUntil > now) {
+      return { key, status: "cooldown", recoversInSecs: Math.ceil((cooldownUntil - now) / 1000) };
+    }
+    return {
+      key,
+      status: "available",
+      config: { url: providerConfig.url, model: providerConfig.model, apiKey },
+    };
+  });
+}
+
+function formatUnavailableProvidersError(candidates: ProviderCandidate[]): string {
+  const details = candidates
+    .filter((c): c is Exclude<ProviderCandidate, { status: "available" }> => c.status !== "available")
+    .map((c) =>
+      c.status === "no-key"
+        ? `${c.key}: no ${AI_PROVIDERS[c.key].keyVar} configured`
+        : `${c.key}: recovers in ${c.recoversInSecs}s`,
+    );
+  return `All AI providers unavailable — ${details.join("; ")}`;
+}
+
 export function getAIConfig(): AiConfig {
-  const provider = (process.env.AI_PROVIDER ?? "groq").toLowerCase();
-  const providerConfig = AI_PROVIDERS[provider];
-  if (!providerConfig)
-    throw new Error(`Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`);
-  const apiKey = process.env[providerConfig.keyVar];
-  if (!apiKey) throw new Error(`${providerConfig.keyVar} is not set`);
-  return { url: providerConfig.url, model: providerConfig.model, apiKey };
+  const candidates = evaluateProviderCandidates();
+  const available = candidates.find(
+    (c): c is Extract<ProviderCandidate, { status: "available" }> => c.status === "available",
+  );
+  if (!available) throw new Error(formatUnavailableProvidersError(candidates));
+  if (available.key !== candidates[0].key) {
+    console.warn(`[AI] ${candidates[0].key} unavailable, using ${available.key} instead`);
+  }
+  return available.config;
 }
 
 type OpenAIResponseShape = { choices?: Array<{ message?: { content?: string } }> };
+
+function extractRetryMessage(lastErrorData: Record<string, unknown>): string {
+  const errorBody = (
+    Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData
+  ) as Record<string, unknown>;
+  return String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
+}
 
 function parseRetryDelaySeconds(response: Response, errorMessage: string): number {
   const header = response.headers.get("retry-after");
@@ -42,6 +112,11 @@ function parseRetryDelaySeconds(response: Response, errorMessage: string): numbe
   }
   const match = errorMessage.match(/try again in (\d+\.?\d*)s/i);
   if (match) return Number.parseFloat(match[1]);
+  // Verified accurate for Groq (its reported delay matches its real daily-quota
+  // reset). NOT verified for OpenRouter or Gemini — confirm their actual 429
+  // response shape (header vs. body message; per-minute vs. per-day/quota
+  // wording) against the live APIs before trusting this default to
+  // distinguish a short rate limit from a full quota exhaustion for those two.
   return 10;
 }
 
@@ -93,15 +168,11 @@ export async function aiJSON(
       const parsed = (await apiResponse.json().catch(() => null)) as Record<string, unknown> | null;
       if (parsed !== null) lastErrorData = parsed;
       if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
-        const errorBody = (
-          Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData
-        ) as Record<string, unknown>;
-        const errorMessage = String(
-          (errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "",
-        );
+        const errorMessage = extractRetryMessage(lastErrorData);
         const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
         const remainingMs = deadline - Date.now();
         if (delaySecs * 1000 > remainingMs) {
+          markProviderExhausted(aiConfig.url, Date.now() + delaySecs * 1000);
           throw new Error(
             `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
           );
@@ -117,6 +188,10 @@ export async function aiJSON(
   if (apiResponse === undefined)
     throw new Error(`AI request failed: no response received (${label})`);
   if (!apiResponse.ok) {
+    if (apiResponse.status === 429) {
+      const delaySecs = parseRetryDelaySeconds(apiResponse, extractRetryMessage(lastErrorData));
+      markProviderExhausted(aiConfig.url, Date.now() + delaySecs * 1000);
+    }
     const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<
       string,
       unknown
