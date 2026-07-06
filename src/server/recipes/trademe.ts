@@ -1,15 +1,16 @@
 import { chromium, type Page, type Response } from "playwright";
 import { enqueue } from "../../lib/queue";
 import type {
+  DeepSearchDetail,
   DeepSearchEvent,
   DiscoverableRecipe,
   DiscoverContext,
   Fulfillment,
   Listing,
-  ListingDetail,
   QuickSearchEvent,
   Recipe,
   RecipeDiscoverResult,
+  ReserveStatus,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
 import { aiJSON } from "../ai";
@@ -118,32 +119,13 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
   }
 }
 
-// ── Price + fulfillment helpers ───────────────────────────────────────────────
+// ── Price helpers ──────────────────────────────────────────────────────────────
 
 function parsePriceValue(display: string): number | null {
   const match = String(display)
     .replace(/,/g, "")
     .match(/[\d.]+/);
   return match ? parseFloat(match[0]) : null;
-}
-
-export function mapFulfillment(
-  raw: number | undefined,
-): { pickupAvailable: boolean; shippingAvailable: boolean } | undefined {
-  switch (raw) {
-    case 1:
-      return { pickupAvailable: true, shippingAvailable: true }; // ships NZ
-    case 2:
-      return { pickupAvailable: true, shippingAvailable: false }; // pickup only
-    case 3:
-      return { pickupAvailable: true, shippingAvailable: true }; // ships NZ (paid)
-    case 0:
-    case undefined:
-      return undefined;
-    default:
-      console.warn(`[trademe] unknown allowsPickups value: ${raw}`);
-      return undefined;
-  }
 }
 
 // ── API response parsing ──────────────────────────────────────────────────────
@@ -155,22 +137,18 @@ export type RawApiItem = {
   region?: string;
   canonicalPath: string;
   pictureHref?: string;
-  allowsPickups?: number;
 };
 
 export function buildListing(raw: RawApiItem): Listing | null {
-  const display = raw.priceDisplay || "Price on request";
   const url = raw.canonicalPath ? `${TRADEME_BASE}${raw.canonicalPath}` : "";
   if (!raw.title || !url) return null;
   return {
     source: TRADEME_PATTERN.name,
     title: raw.title,
-    price: parsePriceValue(display),
-    priceDisplay: display,
+    price: parsePriceValue(raw.priceDisplay),
     location: [raw.suburb, raw.region].filter(Boolean).join(", ") || "Unknown",
     url,
     thumbnailUrl: raw.pictureHref?.replace("/photoserver/thumb/", "/photoserver/full/"),
-    fulfillment: mapFulfillment(raw.allowsPickups),
     isAuction: true,
   };
 }
@@ -193,7 +171,6 @@ export function parseFrendState(
           region: item.region as string | undefined,
           canonicalPath: (item.canonicalPath as string) ?? "",
           pictureHref: (item.pictureHref as string) || undefined,
-          allowsPickups: item.allowsPickups as number | undefined,
         }),
       )
       .map(buildListing)
@@ -220,7 +197,6 @@ export function parseSearchApiResponse(data: Record<string, unknown>): {
         region: item.Region as string | undefined,
         canonicalPath: (item.CanonicalPath as string) ?? "",
         pictureHref: (item.PictureHref as string) || undefined,
-        allowsPickups: item.AllowsPickups as number | undefined,
       }),
     )
     .map(buildListing)
@@ -337,27 +313,35 @@ export function extractDescriptionFromText(bodyText: string): string {
     .trim();
 }
 
-export function extractStructuredFromText(bodyText: string): Partial<ListingDetail> {
-  let buyNowPrice: number | null = null;
-  const bnMatch = bodyText.match(/Buy [Nn]ow\s*\n\s*\$([\d,]+(?:\.\d+)?)/);
-  if (bnMatch) buyNowPrice = parseFloat(bnMatch[1].replace(/,/g, ""));
+type StructuredAttributes = Pick<
+  Listing,
+  "reserveStatus" | "buyNowPrice" | "pickupLocation" | "shippingAvailable" | "pickupAvailable"
+>;
 
-  let reserveStatus = "UNKNOWN";
+export function extractStructuredFromText(bodyText: string): StructuredAttributes {
+  let reserveStatus: ReserveStatus = "UNKNOWN";
   if (/No reserve/.test(bodyText)) reserveStatus = "NONE";
   else if (/Reserve met/.test(bodyText)) reserveStatus = "MET";
   else if (/Reserve not met/.test(bodyText)) reserveStatus = "NOT_MET";
 
+  const attributes: StructuredAttributes = { reserveStatus };
+
+  const bnMatch = bodyText.match(/Buy [Nn]ow\s*\n\s*\$([\d,]+(?:\.\d+)?)/);
+  if (bnMatch) attributes.buyNowPrice = parseFloat(bnMatch[1].replace(/,/g, ""));
+
   const pickupMatch = bodyText.match(/Pick up from ([^\n]+)/);
   const pickupLocation = pickupMatch ? pickupMatch[1].trim() : "";
+  if (pickupLocation) attributes.pickupLocation = pickupLocation;
+
   const shippingIdx = bodyText.indexOf("Shipping & pick-up options");
   const shippingSection = shippingIdx >= 0 ? bodyText.slice(shippingIdx) : "";
   const isPickupOnly =
     /Pick-?up only|pickup only/i.test(bodyText) ||
     (pickupLocation !== "" && !/North Island|South Island|NZ Post|Courier/i.test(shippingSection));
-  const shippingAvailable = !isPickupOnly;
-  const pickupAvailable = pickupLocation !== "";
+  attributes.shippingAvailable = !isPickupOnly;
+  attributes.pickupAvailable = pickupLocation !== "";
 
-  return { buyNowPrice, reserveStatus, shippingAvailable, pickupAvailable, pickupLocation };
+  return attributes;
 }
 
 // ── GraphQL extraction ────────────────────────────────────────────────────────
@@ -385,28 +369,28 @@ type GraphQLResponse = {
   };
 };
 
-export function extractFromGraphQL(json: unknown): Partial<ListingDetail> {
+export function extractFromGraphQL(json: unknown): StructuredAttributes {
   const listing = (json as GraphQLResponse)?.data?.listing;
   if (!listing?.attributes) return {};
   const attrs = listing.attributes;
   const buyNowAttr = extractAttr(attrs, "BuyNowPrice");
   const deliveryAttr = extractAttr(attrs, "DeliveryOptions");
-  const buyNowPrice: number | null = buyNowAttr?.numValue ?? null;
   const deliveryOptions: { __typename: string; name: string }[] = deliveryAttr?.options ?? [];
-  const reserveStatus: string =
-    listing?.contentViews?.listingPurchaseContentCard?.auctionDetails?.reserveStatus ?? "UNKNOWN";
-  if (deliveryOptions.length === 0) return { buyNowPrice, reserveStatus };
+  const reserveStatus =
+    (listing?.contentViews?.listingPurchaseContentCard?.auctionDetails
+      ?.reserveStatus as ReserveStatus) ?? "UNKNOWN";
+
+  const attributes: StructuredAttributes = { reserveStatus };
+  if (buyNowAttr?.numValue != null) attributes.buyNowPrice = buyNowAttr.numValue;
+  if (deliveryOptions.length === 0) return attributes;
+
   const hasShipping = deliveryOptions.some((o) => o.__typename !== "PickupOption");
   const pickupOption = deliveryOptions.find((o) => o.__typename === "PickupOption");
   const pickupLocation = pickupOption?.name?.replace(/^Pick up from\s*/i, "") ?? "";
-  const pickupAvailable = pickupOption !== undefined;
-  return {
-    buyNowPrice,
-    reserveStatus,
-    shippingAvailable: hasShipping,
-    pickupAvailable,
-    pickupLocation,
-  };
+  attributes.shippingAvailable = hasShipping;
+  attributes.pickupAvailable = pickupOption !== undefined;
+  if (pickupLocation) attributes.pickupLocation = pickupLocation;
+  return attributes;
 }
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
@@ -439,8 +423,8 @@ function waitForSearchApiResponseAsync(
 export async function fetchSingleListingDetailAsync(
   page: Page,
   url: string,
-): Promise<ListingDetail> {
-  let graphqlResult: Partial<ListingDetail> = {};
+): Promise<DeepSearchDetail> {
+  let graphqlResult: StructuredAttributes = {};
 
   const handler = async (response: Response) => {
     if (!response.url().includes("api.trademe.co.nz/graphql") || response.status() !== 200) return;
@@ -473,18 +457,23 @@ export async function fetchSingleListingDetailAsync(
   const dom = extractStructuredFromText(bodyText);
   const questionsAndAnswers = extractQuestionsAndAnswers(bodyText);
 
+  const scrapedAttributes: Record<string, string> = {};
+  for (const { key, value } of details) scrapedAttributes[key] = value;
+
+  const structured: StructuredAttributes = { ...dom, ...graphqlResult };
+  // GraphQL only overrides the DOM-parsed reserve status when it actually knows one.
+  if (graphqlResult.reserveStatus === "UNKNOWN" && dom.reserveStatus)
+    structured.reserveStatus = dom.reserveStatus;
+
   return {
-    details,
     description,
-    buyNowPrice: graphqlResult.buyNowPrice ?? dom.buyNowPrice ?? null,
-    reserveStatus:
-      graphqlResult.reserveStatus && graphqlResult.reserveStatus !== "UNKNOWN"
-        ? graphqlResult.reserveStatus
-        : (dom.reserveStatus ?? "UNKNOWN"),
-    shippingAvailable: graphqlResult.shippingAvailable ?? dom.shippingAvailable ?? null,
-    pickupAvailable: graphqlResult.pickupAvailable ?? dom.pickupAvailable ?? null,
-    pickupLocation: graphqlResult.pickupLocation || dom.pickupLocation || "",
+    scrapedAttributes,
     questionsAndAnswers,
+    buyNowPrice: structured.buyNowPrice ?? null,
+    reserveStatus: structured.reserveStatus ?? "UNKNOWN",
+    pickupAvailable: structured.pickupAvailable ?? null,
+    shippingAvailable: structured.shippingAvailable ?? null,
+    pickupLocation: structured.pickupLocation ?? null,
   };
 }
 

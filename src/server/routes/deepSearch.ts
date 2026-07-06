@@ -1,7 +1,7 @@
 // Server-side only — POST /api/deep-search route handler.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Listing, ListingDetail } from "../../lib/recipes/base";
+import type { DeepSearchDetail, Listing } from "../../lib/recipes/base";
 import { requireArray, requireListingUrl } from "../../lib/validate";
 import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from "../cancellation";
 import { MAX_DEEP_SEARCH_ITEMS } from "../constants";
@@ -50,14 +50,14 @@ export async function handleDeepSearch(
   }
 
   const database = getDb();
-  const fromCache: { url: string; detail: ListingDetail }[] = [];
+  const fromCache: { url: string; detail: DeepSearchDetail }[] = [];
   const toScrapeByRecipe = new Map<string, Listing[]>();
   for (const listing of listings) {
     const recipe = getRecipeForUrl(listing.url);
     if (!recipe) continue;
     const row = stmtGetDetail(database).get(listing.url);
     if (row && isFresh(row.cached_at))
-      fromCache.push({ url: listing.url, detail: JSON.parse(row.data) as ListingDetail });
+      fromCache.push({ url: listing.url, detail: JSON.parse(row.data) as DeepSearchDetail });
     else {
       const group = toScrapeByRecipe.get(recipe.name) ?? [];
       group.push(listing);

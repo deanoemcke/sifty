@@ -3,7 +3,7 @@
 // modal, bulk over visible results) are co-located: both fetch and display
 // listing detail, and each renders into the other's surface.
 
-import type { ListingDetail } from "../lib/recipes/base";
+import type { DeepSearchDetail } from "../lib/recipes/base";
 import { requestAiFilterRun } from "./aiFilter";
 import { decideModalDeepSearchAction } from "./deepSearchTrigger";
 import { getElement } from "./domUtils";
@@ -70,7 +70,7 @@ export function setDeepSearchBusy(busy: boolean): void {
 
 export function listingModalExtrasHtml(item: ListingItem, errorMessage: string | null): string {
   if (errorMessage) return `<p class="deep-empty">Couldn't load details — ${esc(errorMessage)}</p>`;
-  if (item.detail) return buildExtrasHtml(item.detail);
+  if (item.hasBeenDeepSearched) return buildExtrasHtml(item.data);
   return `<div class="modal-loading"><span class="spinner"></span><span>Fetching details…</span></div>`;
 }
 
@@ -86,11 +86,11 @@ export function renderListingModalContent(
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-modal-thumb" src="${esc(listing.thumbnailUrl)}" alt="">`
     : `<div class="listing-modal-thumb-placeholder"></div>`;
-  const metaHtml = item.detail
-    ? buildDetailMetaHtml(listing, item.detail)
+  const metaHtml = item.hasBeenDeepSearched
+    ? buildDetailMetaHtml(listing)
     : buildCardMetaHtml(listing);
-  const priceHtml = item.detail
-    ? buildDetailPriceHtml(listing, item.detail)
+  const priceHtml = item.hasBeenDeepSearched
+    ? buildDetailPriceHtml(listing)
     : buildCardPriceHtml(listing);
 
   getElement("listingModalBody").innerHTML = `
@@ -107,9 +107,9 @@ export function renderListingModalContent(
   `;
 }
 
-export function applyDeepSearchDetail(item: ListingItem, detail: ListingDetail): void {
+export function applyDeepSearchDetail(item: ListingItem, detail: DeepSearchDetail): void {
   item.hasBeenDeepSearched = true;
-  item.detail = detail;
+  Object.assign(item.data, detail);
   item.aiCheckedHash = null;
   if (openModalListingUrl === item.data.url) renderListingModalContent(item);
 }
@@ -123,7 +123,7 @@ export async function deepSearchListingAsync(item: ListingItem): Promise<void> {
       { listings: [item.data], deepSearchId: crypto.randomUUID() },
       (ev) => {
         if (ev.type === "detail") {
-          applyDeepSearchDetail(item, ev.detail as ListingDetail);
+          applyDeepSearchDetail(item, ev.detail as DeepSearchDetail);
           renderDerived();
         } else if (ev.type === "error") {
           renderListingModalContent(item, ev.message as string);
@@ -193,7 +193,7 @@ export async function runDeepSearchAsync(): Promise<void> {
       } else if (ev.type === "detail") {
         detailsReceived++;
         const item = listingsByUrl.get(ev.url as string);
-        if (item) applyDeepSearchDetail(item, ev.detail as ListingDetail);
+        if (item) applyDeepSearchDetail(item, ev.detail as DeepSearchDetail);
         renderDerived();
       } else if (ev.type === "complete") {
         setStatus("Deep search complete", "success");

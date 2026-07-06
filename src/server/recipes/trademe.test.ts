@@ -13,7 +13,6 @@ import {
   extractImplicitFilters,
   extractQuestionsAndAnswers,
   extractStructuredFromText,
-  mapFulfillment,
   parseFrendState,
   parseSearchApiResponse,
   STEP2_SYSTEM_PROMPT,
@@ -81,46 +80,15 @@ function _makeListing(overrides: Partial<Listing> = {}): Listing {
     source,
     title: 'MacBook Pro 14" 2021 M1 Pro 16GB',
     price: 1500,
-    priceDisplay: "$1,500",
     location: "Auckland City, Auckland",
     url: "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/12345",
+    isAuction: true,
     ...restOverrides,
   };
 }
 
 // Keep the listing helper available for future use
 _makeListing;
-
-// ── mapFulfillment ────────────────────────────────────────────────────────────
-
-describe("mapFulfillment", () => {
-  it("value 0 returns undefined (no fulfillment data)", () => {
-    expect(mapFulfillment(0)).toBeUndefined();
-  });
-
-  it("value 1 returns ships NZ (pickup + shipping available)", () => {
-    expect(mapFulfillment(1)).toEqual({ pickupAvailable: true, shippingAvailable: true });
-  });
-
-  it("value 2 returns pickup only (no shipping)", () => {
-    expect(mapFulfillment(2)).toEqual({ pickupAvailable: true, shippingAvailable: false });
-  });
-
-  it("value 3 returns ships NZ paid (pickup + shipping available)", () => {
-    expect(mapFulfillment(3)).toEqual({ pickupAvailable: true, shippingAvailable: true });
-  });
-
-  it("undefined returns undefined", () => {
-    expect(mapFulfillment(undefined)).toBeUndefined();
-  });
-
-  it("unknown value warns and returns undefined", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(mapFulfillment(99)).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledWith("[trademe] unknown allowsPickups value: 99");
-    warnSpy.mockRestore();
-  });
-});
 
 // ── buildListing ──────────────────────────────────────────────────────────────
 
@@ -132,7 +100,6 @@ describe("buildListing", () => {
     region: "Auckland",
     canonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
     pictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-    allowsPickups: 3,
   };
 
   it("builds a Listing from a valid RawApiItem", () => {
@@ -140,13 +107,11 @@ describe("buildListing", () => {
     expect(listing).not.toBeNull();
     expect(listing?.title).toBe('MacBook Pro 14"');
     expect(listing?.price).toBe(1500);
-    expect(listing?.priceDisplay).toBe("$1,500");
     expect(listing?.location).toBe("Auckland City, Auckland");
     expect(listing?.url).toBe(
       "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",
     );
     expect(listing?.thumbnailUrl).toBe("https://trademe.tmcdn.co.nz/photoserver/full/123.jpg");
-    expect(listing?.fulfillment).toEqual({ pickupAvailable: true, shippingAvailable: true });
     expect(listing?.isAuction).toBe(true);
   });
 
@@ -158,9 +123,8 @@ describe("buildListing", () => {
     expect(buildListing({ ...baseRaw, canonicalPath: "" })).toBeNull();
   });
 
-  it('falls back to "Price on request" when priceDisplay is empty', () => {
+  it("returns null price when priceDisplay is empty", () => {
     const listing = buildListing({ ...baseRaw, priceDisplay: "" });
-    expect(listing?.priceDisplay).toBe("Price on request");
     expect(listing?.price).toBeNull();
   });
 
@@ -195,7 +159,6 @@ describe("parseFrendState", () => {
     suburb: "Auckland City",
     canonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
     pictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-    allowsPickups: 3,
   };
 
   it("extracts listings from the nested frend-state structure", () => {
@@ -233,7 +196,6 @@ describe("parseFrendState", () => {
           Suburb: baseItem.suburb,
           CanonicalPath: baseItem.canonicalPath,
           PictureHref: baseItem.pictureHref,
-          AllowsPickups: baseItem.allowsPickups,
         },
       ],
       TotalCount: 1,
@@ -257,7 +219,6 @@ describe("parseSearchApiResponse", () => {
     Suburb: "Auckland City",
     CanonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
     PictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-    AllowsPickups: 3,
   };
 
   it("maps fields correctly", () => {
@@ -265,13 +226,11 @@ describe("parseSearchApiResponse", () => {
     expect(listings).toHaveLength(1);
     expect(listings[0].title).toBe('MacBook Pro 14"');
     expect(listings[0].price).toBe(1500);
-    expect(listings[0].priceDisplay).toBe("$1,500");
     expect(listings[0].location).toBe("Auckland City, Auckland");
     expect(listings[0].url).toBe(
       "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",
     );
     expect(listings[0].thumbnailUrl).toBe("https://trademe.tmcdn.co.nz/photoserver/full/123.jpg");
-    expect(listings[0].fulfillment).toEqual({ pickupAvailable: true, shippingAvailable: true });
   });
 
   it("reads TotalCount and PageSize", () => {
@@ -377,8 +336,8 @@ describe("extractStructuredFromText", () => {
     it("extracts buy now price without comma", () => {
       expect(extractStructuredFromText("Buy Now\n$999\nBuy Now").buyNowPrice).toBe(999);
     });
-    it("returns null when no buy now price", () => {
-      expect(extractStructuredFromText("Starting price\n$500").buyNowPrice).toBeNull();
+    it("omits buyNowPrice when none is found", () => {
+      expect(extractStructuredFromText("Starting price\n$500").buyNowPrice).toBeUndefined();
     });
   });
 
@@ -388,8 +347,8 @@ describe("extractStructuredFromText", () => {
         "Auckland City",
       );
     });
-    it("returns empty string when no pickup location", () => {
-      expect(extractStructuredFromText("Shipping available").pickupLocation).toBe("");
+    it("omits pickupLocation when none is found", () => {
+      expect(extractStructuredFromText("Shipping available").pickupLocation).toBeUndefined();
     });
   });
 });

@@ -1,28 +1,42 @@
 import type { RecipeSource } from "./metadata";
 
+export type ReserveStatus = "NONE" | "MET" | "NOT_MET" | "UNKNOWN";
+
 export interface Listing {
+  // Always known from quick search.
   source: RecipeSource;
   title: string;
   price: number | null;
-  priceDisplay: string;
   location: string;
   url: string;
+  isAuction: boolean;
   thumbnailUrl?: string;
-  fulfillment?: { pickupAvailable: boolean; shippingAvailable: boolean };
+
+  // Only known once deep search completes — absent until then.
   description?: string;
-  isAuction?: boolean;
+  scrapedAttributes?: Record<string, string>;
+  questionsAndAnswers?: Array<{ question: string; answer: string }>;
+  buyNowPrice?: number | null;
+  reserveStatus?: ReserveStatus;
+  pickupAvailable?: boolean | null;
+  shippingAvailable?: boolean | null;
+  pickupLocation?: string | null;
 }
 
-export interface ListingDetail {
-  details: Array<{ key: string; value: string }>;
-  description: string;
-  buyNowPrice: number | null;
-  reserveStatus: string;
-  pickupAvailable: boolean | null;
-  shippingAvailable: boolean | null;
-  pickupLocation: string;
-  questionsAndAnswers: Array<{ question: string; answer: string }>;
-}
+// Patch produced by deepSearchAsync — merged onto a Listing once received.
+export type DeepSearchDetail = Required<
+  Pick<
+    Listing,
+    | "description"
+    | "scrapedAttributes"
+    | "questionsAndAnswers"
+    | "buyNowPrice"
+    | "reserveStatus"
+    | "pickupAvailable"
+    | "shippingAvailable"
+    | "pickupLocation"
+  >
+>;
 
 // Structured search progress — display wording is composed on the frontend.
 export type QuickSearchProgress =
@@ -40,7 +54,7 @@ export type QuickSearchEvent =
 
 export type DeepSearchEvent =
   | { type: "progress"; index: number; total: number; title: string }
-  | { type: "detail"; url: string; detail: ListingDetail }
+  | { type: "detail"; url: string; detail: DeepSearchDetail }
   | { type: "complete" }
   | { type: "error"; message: string };
 
