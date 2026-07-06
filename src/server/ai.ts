@@ -25,9 +25,16 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
 // provider key -> epoch ms when its cooldown ends
 const providerCooldowns = new Map<string, number>();
 
+// Ceiling on how long a single cooldown can sideline a provider — longer than
+// any real per-minute/hour rate limit, but short enough that a malformed or
+// extreme retry-after value can't blacklist a provider indefinitely with no
+// operator recourse short of a restart.
+export const MAX_PROVIDER_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
 function markProviderExhausted(providerKey: string, cooldownUntilMs: number): void {
+  const cappedCooldownUntilMs = Math.min(cooldownUntilMs, Date.now() + MAX_PROVIDER_COOLDOWN_MS);
   const currentCooldownUntilMs = providerCooldowns.get(providerKey) ?? 0;
-  providerCooldowns.set(providerKey, Math.max(currentCooldownUntilMs, cooldownUntilMs));
+  providerCooldowns.set(providerKey, Math.max(currentCooldownUntilMs, cappedCooldownUntilMs));
 }
 
 export function resetProviderCooldowns(): void {

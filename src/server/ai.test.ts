@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiConfig } from "./ai";
-import { aiJSON, getAIConfig, MAX_RETRIES, resetProviderCooldowns, TOTAL_TIMEOUT_MS } from "./ai";
+import {
+  aiJSON,
+  getAIConfig,
+  MAX_PROVIDER_COOLDOWN_MS,
+  MAX_RETRIES,
+  resetProviderCooldowns,
+  TOTAL_TIMEOUT_MS,
+} from "./ai";
 
 const MOCK_CONFIG: AiConfig = {
   url: "https://api.example.com/chat",
@@ -264,6 +271,18 @@ describe("aiJSON", () => {
       await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow("AI rate limited");
 
       expect(() => getAIConfig()).toThrow(`recovers in ${Math.ceil(longDelaySecs)}s`);
+    });
+
+    it("caps an extreme retry-after delay to the cooldown ceiling instead of blacklisting the provider indefinitely", async () => {
+      vi.stubEnv("GROQ_API_KEY", "groq-key");
+      const groqConfig = getAIConfig();
+
+      const extremeDelaySecs = 999_999_999;
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(extremeDelaySecs));
+      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow("AI rate limited");
+
+      const cappedRecoversInSecs = Math.ceil(MAX_PROVIDER_COOLDOWN_MS / 1000);
+      expect(() => getAIConfig()).toThrow(`recovers in ${cappedRecoversInSecs}s`);
     });
 
     it("does not mark cooldown on non-429 errors", async () => {
