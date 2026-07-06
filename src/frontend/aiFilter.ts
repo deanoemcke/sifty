@@ -69,7 +69,7 @@ export async function runAiFilterAsync(): Promise<void> {
           title: item.data.title,
           price: formatListingPrice(item.data.price),
           location: item.data.location,
-          description: (item.detail?.description ?? item.data.description)?.slice(0, 300) ?? "",
+          description: (item.data.description ?? "").slice(0, 300),
         })),
       },
       (event) => {

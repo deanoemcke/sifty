@@ -64,7 +64,6 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = {
             data: listing,
-            detail: null,
             hasBeenDeepSearched: false,
             aiCheckedHash: null,
             aiFilterReason: null,

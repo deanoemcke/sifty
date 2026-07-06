@@ -2,7 +2,8 @@
 // Pure string builders shared by the results grid card and the detail modal.
 // All interpolated text goes through esc(); no DOM access here.
 
-import type { Listing, ListingDetail } from "../lib/recipes/base";
+import type { Listing } from "../lib/recipes/base";
+import { ListingAttributeKey } from "../lib/recipes/base";
 import { esc } from "./html";
 import { formatListingPrice } from "./priceFormat";
 import type { ListingItem } from "./state";
@@ -35,35 +36,45 @@ export function buildCardMetaHtml(listing: Listing): string {
   return `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span><span class="meta-right"></span>`;
 }
 
-export function buildDetailPriceHtml(listing: Listing, detail: ListingDetail): string {
+export function buildDetailPriceHtml(listing: Listing): string {
   let html = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
-  if (listing.isAuction && detail.buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
+  const buyNowPrice = listing.extendedAttributes?.[ListingAttributeKey.BuyNowPrice];
+  if (listing.isAuction && buyNowPrice != null) {
+    html += `<span class="price-buynow">Buy Now: <strong>$${Number(buyNowPrice).toLocaleString()}</strong></span>`;
   }
   return html;
 }
 
-export function buildDetailMetaHtml(listing: Listing, detail: ListingDetail): string {
+export function buildDetailMetaHtml(listing: Listing): string {
   const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
   let html = "";
   if (listing.isAuction) {
-    const reserve = formatReserveText(detail.reserveStatus);
+    const reserveStatus = listing.extendedAttributes?.[ListingAttributeKey.ReserveStatus] ?? "";
+    const reserve = formatReserveText(reserveStatus);
     if (reserve)
-      html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
+      html += `<span class="badge badge-${reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
   }
   return `${left}<span class="meta-right">${html}</span>`;
 }
 
-export function buildExtrasHtml(detail: ListingDetail): string {
+// Attribute keys already surfaced elsewhere (price/badge) or not yet wired to
+// any UI — excluded from the generic table so they don't appear twice or
+// resurface as raw rows.
+const RESERVED_ATTRIBUTE_KEYS: Set<string> = new Set(Object.values(ListingAttributeKey));
+
+export function buildExtrasHtml(listing: Listing): string {
   let body = "";
 
   // ── Details ───────────────────────────────────────────────────────────────
-  if (detail.details.length > 0) {
+  const detailEntries = Object.entries(listing.extendedAttributes ?? {}).filter(
+    ([key]) => !RESERVED_ATTRIBUTE_KEYS.has(key),
+  );
+  if (detailEntries.length > 0) {
     body += `<div class="deep-section">
       <div class="deep-section-label">Details</div>
-      <div class="details-table">${detail.details
+      <div class="details-table">${detailEntries
         .map(
-          ({ key, value }) =>
+          ([key, value]) =>
             `<span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span>`,
         )
         .join("")}</div>
@@ -72,17 +83,18 @@ export function buildExtrasHtml(detail: ListingDetail): string {
 
   // ── Description ───────────────────────────────────────────────────────────
   body += `<div class="deep-section"><div class="deep-section-label">Description</div>`;
-  if (detail.description) {
-    body += `<div class="listing-description">${esc(cleanDescription(detail.description))}</div>`;
+  if (listing.description) {
+    body += `<div class="listing-description">${esc(cleanDescription(listing.description))}</div>`;
   } else {
     body += `<p class="deep-empty">No description provided.</p>`;
   }
   body += `</div>`;
 
   // ── Questions & Answers ───────────────────────────────────────────────────
-  if (detail.questionsAndAnswers.length > 0) {
+  const questionsAndAnswers = listing.questionsAndAnswers ?? [];
+  if (questionsAndAnswers.length > 0) {
     body += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
-    body += detail.questionsAndAnswers
+    body += questionsAndAnswers
       .map(
         ({ question, answer }) =>
           `<div class="qa-pair">` +

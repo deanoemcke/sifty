@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listing } from "../../lib/recipes/base";
+import { ListingAttributeKey } from "../../lib/recipes/base";
 import { aiJSON } from "../ai";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import {
@@ -353,39 +354,55 @@ describe("extractDescriptionFromText", () => {
 describe("extractStructuredFromText", () => {
   describe("reserveStatus", () => {
     it("detects no reserve", () => {
-      expect(extractStructuredFromText("No reserve\nPlace bid").reserveStatus).toBe("NONE");
+      expect(
+        extractStructuredFromText("No reserve\nPlace bid")[ListingAttributeKey.ReserveStatus],
+      ).toBe("NONE");
     });
     it("detects reserve met", () => {
-      expect(extractStructuredFromText("Reserve met\nPlace bid").reserveStatus).toBe("MET");
+      expect(
+        extractStructuredFromText("Reserve met\nPlace bid")[ListingAttributeKey.ReserveStatus],
+      ).toBe("MET");
     });
     it("detects reserve not met", () => {
-      expect(extractStructuredFromText("Reserve not met\nPlace bid").reserveStatus).toBe("NOT_MET");
+      expect(
+        extractStructuredFromText("Reserve not met\nPlace bid")[ListingAttributeKey.ReserveStatus],
+      ).toBe("NOT_MET");
     });
     it("returns UNKNOWN when no reserve info found", () => {
-      expect(extractStructuredFromText("Some other text").reserveStatus).toBe("UNKNOWN");
+      expect(extractStructuredFromText("Some other text")[ListingAttributeKey.ReserveStatus]).toBe(
+        "UNKNOWN",
+      );
     });
   });
 
   describe("buyNowPrice", () => {
     it("extracts buy now price", () => {
-      expect(extractStructuredFromText("Buy now\n$1,299\nBuy Now").buyNowPrice).toBe(1299);
+      expect(
+        extractStructuredFromText("Buy now\n$1,299\nBuy Now")[ListingAttributeKey.BuyNowPrice],
+      ).toBe("1299");
     });
     it("extracts buy now price without comma", () => {
-      expect(extractStructuredFromText("Buy Now\n$999\nBuy Now").buyNowPrice).toBe(999);
+      expect(
+        extractStructuredFromText("Buy Now\n$999\nBuy Now")[ListingAttributeKey.BuyNowPrice],
+      ).toBe("999");
     });
-    it("returns null when no buy now price", () => {
-      expect(extractStructuredFromText("Starting price\n$500").buyNowPrice).toBeNull();
+    it("omits buyNowPrice when none is found", () => {
+      expect(
+        extractStructuredFromText("Starting price\n$500")[ListingAttributeKey.BuyNowPrice],
+      ).toBeUndefined();
     });
   });
 
   describe("pickupLocation", () => {
     it("extracts pickup location", () => {
-      expect(extractStructuredFromText("Pick up from Auckland City").pickupLocation).toBe(
-        "Auckland City",
-      );
+      expect(
+        extractStructuredFromText("Pick up from Auckland City")[ListingAttributeKey.PickupLocation],
+      ).toBe("Auckland City");
     });
-    it("returns empty string when no pickup location", () => {
-      expect(extractStructuredFromText("Shipping available").pickupLocation).toBe("");
+    it("omits pickupLocation when none is found", () => {
+      expect(
+        extractStructuredFromText("Shipping available")[ListingAttributeKey.PickupLocation],
+      ).toBeUndefined();
     });
   });
 });
@@ -402,8 +419,8 @@ describe("extractFromGraphQL", () => {
       },
     };
     const result = extractFromGraphQL(json);
-    expect(result.pickupAvailable).toBeUndefined();
-    expect(result.shippingAvailable).toBeUndefined();
+    expect(result[ListingAttributeKey.PickupAvailable]).toBeUndefined();
+    expect(result[ListingAttributeKey.ShippingAvailable]).toBeUndefined();
   });
 
   it("returns fulfillment fields when DeliveryOptions is present", () => {
@@ -420,9 +437,9 @@ describe("extractFromGraphQL", () => {
       },
     };
     const result = extractFromGraphQL(json);
-    expect(result.pickupAvailable).toBe(true);
-    expect(result.shippingAvailable).toBe(false);
-    expect(result.pickupLocation).toBe("Rodney");
+    expect(result[ListingAttributeKey.PickupAvailable]).toBe("true");
+    expect(result[ListingAttributeKey.ShippingAvailable]).toBe("false");
+    expect(result[ListingAttributeKey.PickupLocation]).toBe("Rodney");
   });
 });
 

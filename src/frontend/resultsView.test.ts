@@ -20,7 +20,6 @@ function makeListingItem(url: string): ListingItem {
       location: "",
       url,
     } as Listing,
-    detail: null,
     hasBeenDeepSearched: false,
     aiCheckedHash: null,
     aiFilterReason: null,

@@ -2,14 +2,15 @@ import { type Browser, type BrowserContext, chromium, type Page } from "playwrig
 import { enqueue } from "../../lib/queue";
 import type {
   AiConfig,
+  DeepSearchDetail,
   DeepSearchEvent,
   DiscoverableRecipe,
   DiscoverContext,
   Fulfillment,
   Listing,
-  ListingDetail,
   QuickSearchEvent,
 } from "../../lib/recipes/base";
+import { ListingAttributeKey } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
 import { aiJSON } from "../ai";
 import { getRegions } from "../services/regions";
@@ -420,7 +421,7 @@ export function extractFacebookDetails(bodyText: string): Array<{ key: string; v
   return details;
 }
 
-async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise<ListingDetail> {
+async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise<DeepSearchDetail> {
   console.log(`[facebook] fetching: ${url}`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForTimeout(3000);
@@ -434,26 +435,18 @@ async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise
 
   const bodyText: string = await page.evaluate(() => document.body.innerText);
 
-  // First price in page = current price; strikethrough original appears second in DOM order
-  const priceMatch = bodyText.match(/(?:[A-Z]{0,3}\$)([\d,]+(?:\.\d{2})?)/);
-  const buyNowPrice = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, "")) : null;
+  const extendedAttributes: Record<string, string> = {};
+  for (const { key, value } of extractFacebookDetails(bodyText)) extendedAttributes[key] = value;
 
-  const details = extractFacebookDetails(bodyText);
+  // Facebook Marketplace has no auctions/reserves and no structured fulfillment
+  // data — only pickupLocation has a real signal here, so that's all we add.
+  const locationMatch = bodyText.match(/Listed in ([^\n·]+)/);
+  const pickupLocation = locationMatch?.[1]?.trim();
+  if (pickupLocation) extendedAttributes[ListingAttributeKey.PickupLocation] = pickupLocation;
+
   const description = extractFacebookDescription(bodyText);
 
-  const locationMatch = bodyText.match(/Listed in ([^\n·]+)/);
-  const pickupLocation = locationMatch?.[1]?.trim() ?? "";
-
-  return {
-    details,
-    description,
-    buyNowPrice,
-    reserveStatus: "NONE",
-    shippingAvailable: null,
-    pickupAvailable: null,
-    pickupLocation,
-    questionsAndAnswers: [],
-  };
+  return { description, extendedAttributes, questionsAndAnswers: [] };
 }
 
 // ── Deep search ───────────────────────────────────────────────────────────────

@@ -1,5 +1,16 @@
 import type { RecipeSource } from "./metadata";
 
+// Known/fixed extendedAttributes keys. Recipes may also write arbitrary
+// site-specific keys (e.g. TradeMe's scraped "RAM", "Condition") directly —
+// the map isn't limited to this enum, it just names the well-known ones.
+export enum ListingAttributeKey {
+  BuyNowPrice = "buyNowPrice",
+  ReserveStatus = "reserveStatus",
+  PickupAvailable = "pickupAvailable",
+  ShippingAvailable = "shippingAvailable",
+  PickupLocation = "pickupLocation",
+}
+
 export interface Listing {
   source: RecipeSource;
   title: string;
@@ -10,16 +21,14 @@ export interface Listing {
   fulfillment?: { pickupAvailable: boolean; shippingAvailable: boolean };
   description?: string;
   isAuction?: boolean;
+  extendedAttributes?: Record<string, string>;
+  questionsAndAnswers?: Array<{ question: string; answer: string }>;
 }
 
-export interface ListingDetail {
-  details: Array<{ key: string; value: string }>;
+// Patch produced by deepSearchAsync — merged onto a Listing once received.
+export interface DeepSearchDetail {
   description: string;
-  buyNowPrice: number | null;
-  reserveStatus: string;
-  pickupAvailable: boolean | null;
-  shippingAvailable: boolean | null;
-  pickupLocation: string;
+  extendedAttributes: Record<string, string>;
   questionsAndAnswers: Array<{ question: string; answer: string }>;
 }
 
@@ -39,7 +48,7 @@ export type QuickSearchEvent =
 
 export type DeepSearchEvent =
   | { type: "progress"; index: number; total: number; title: string }
-  | { type: "detail"; url: string; detail: ListingDetail }
+  | { type: "detail"; url: string; detail: DeepSearchDetail }
   | { type: "complete" }
   | { type: "error"; message: string };
 

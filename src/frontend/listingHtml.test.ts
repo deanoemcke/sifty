@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Listing, ListingDetail } from "../lib/recipes/base";
+import type { Listing } from "../lib/recipes/base";
+import { ListingAttributeKey } from "../lib/recipes/base";
 import {
   buildCardMetaHtml,
   buildCardPriceHtml,
@@ -23,24 +24,9 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
   };
 }
 
-function makeDetail(overrides: Partial<ListingDetail> = {}): ListingDetail {
-  return {
-    details: [],
-    description: "",
-    buyNowPrice: null,
-    reserveStatus: "NONE",
-    pickupAvailable: null,
-    shippingAvailable: null,
-    pickupLocation: "",
-    questionsAndAnswers: [],
-    ...overrides,
-  };
-}
-
 function makeListingItem(overrides: Partial<ListingItem> = {}): ListingItem {
   return {
     data: makeListing(),
-    detail: null,
     hasBeenDeepSearched: false,
     aiCheckedHash: null,
     aiFilterReason: null,
@@ -120,8 +106,7 @@ describe("buildCardMetaHtml", () => {
 describe("buildDetailPriceHtml", () => {
   it("shows the formatted price for non-auctions", () => {
     const html = buildDetailPriceHtml(
-      makeListing({ price: 500 }),
-      makeDetail({ buyNowPrice: 500 }),
+      makeListing({ price: 500, extendedAttributes: { [ListingAttributeKey.BuyNowPrice]: "500" } }),
     );
     expect(html).toContain("$500");
     expect(html).not.toContain("Buy Now");
@@ -129,19 +114,22 @@ describe("buildDetailPriceHtml", () => {
 
   it("adds a formatted buy-now price for auctions", () => {
     const html = buildDetailPriceHtml(
-      makeListing({ price: 1000, isAuction: true }),
-      makeDetail({ buyNowPrice: 1500 }),
+      makeListing({
+        price: 1000,
+        isAuction: true,
+        extendedAttributes: { [ListingAttributeKey.BuyNowPrice]: "1500" },
+      }),
     );
     expect(html).toContain(`Buy Now: <strong>$${(1500).toLocaleString()}</strong>`);
   });
 
   it("omits buy-now when the auction has none", () => {
-    const html = buildDetailPriceHtml(makeListing({ isAuction: true }), makeDetail());
+    const html = buildDetailPriceHtml(makeListing({ isAuction: true }));
     expect(html).not.toContain("Buy Now");
   });
 
   it("shows 'Price on request' when price is null", () => {
-    const html = buildDetailPriceHtml(makeListing({ price: null }), makeDetail());
+    const html = buildDetailPriceHtml(makeListing({ price: null }));
     expect(html).toContain("Price on request");
   });
 });
@@ -149,22 +137,28 @@ describe("buildDetailPriceHtml", () => {
 describe("buildDetailMetaHtml", () => {
   it("derives the reserve badge class from the status", () => {
     const html = buildDetailMetaHtml(
-      makeListing({ isAuction: true }),
-      makeDetail({ reserveStatus: "NOT_MET" }),
+      makeListing({
+        isAuction: true,
+        extendedAttributes: { [ListingAttributeKey.ReserveStatus]: "NOT_MET" },
+      }),
     );
     expect(html).toContain("badge-not-met");
     expect(html).toContain("Reserve not met");
   });
 
   it("shows no badge for non-auctions", () => {
-    const html = buildDetailMetaHtml(makeListing(), makeDetail({ reserveStatus: "MET" }));
+    const html = buildDetailMetaHtml(
+      makeListing({ extendedAttributes: { [ListingAttributeKey.ReserveStatus]: "MET" } }),
+    );
     expect(html).not.toContain("badge");
   });
 
   it("shows no badge for unknown reserve statuses", () => {
     const html = buildDetailMetaHtml(
-      makeListing({ isAuction: true }),
-      makeDetail({ reserveStatus: "UNKNOWN" }),
+      makeListing({
+        isAuction: true,
+        extendedAttributes: { [ListingAttributeKey.ReserveStatus]: "UNKNOWN" },
+      }),
     );
     expect(html).toContain(`<span class="meta-right"></span>`);
   });
@@ -172,30 +166,47 @@ describe("buildDetailMetaHtml", () => {
 
 describe("buildExtrasHtml", () => {
   it("renders a details table when details exist", () => {
-    const html = buildExtrasHtml(
-      makeDetail({ details: [{ key: "Condition", value: "Used <good>" }] }),
-    );
+    const html = buildExtrasHtml(makeListing({ extendedAttributes: { Condition: "Used <good>" } }));
     expect(html).toContain("details-table");
     expect(html).toContain("Condition");
     expect(html).toContain("Used &lt;good&gt;");
   });
 
   it("omits the details table when empty", () => {
-    expect(buildExtrasHtml(makeDetail())).not.toContain("details-table");
+    expect(buildExtrasHtml(makeListing())).not.toContain("details-table");
+  });
+
+  it("excludes reserved attribute keys from the generic details table", () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        extendedAttributes: {
+          [ListingAttributeKey.BuyNowPrice]: "500",
+          [ListingAttributeKey.ReserveStatus]: "MET",
+          [ListingAttributeKey.PickupAvailable]: "true",
+          [ListingAttributeKey.ShippingAvailable]: "false",
+          [ListingAttributeKey.PickupLocation]: "Auckland",
+          Condition: "Used",
+        },
+      }),
+    );
+    expect(html).toContain("details-table");
+    expect(html).toContain("Condition");
+    expect(html).not.toContain("Auckland");
+    expect(html).not.toContain("500");
   });
 
   it("renders the cleaned, escaped description", () => {
-    const html = buildExtrasHtml(makeDetail({ description: "nice & tidy\n\n\n\nend  " }));
+    const html = buildExtrasHtml(makeListing({ description: "nice & tidy\n\n\n\nend  " }));
     expect(html).toContain("nice &amp; tidy\n\nend");
   });
 
   it("falls back to an empty-description message", () => {
-    expect(buildExtrasHtml(makeDetail())).toContain("No description provided.");
+    expect(buildExtrasHtml(makeListing())).toContain("No description provided.");
   });
 
   it("renders question and answer pairs, omitting missing answers", () => {
     const html = buildExtrasHtml(
-      makeDetail({
+      makeListing({
         questionsAndAnswers: [
           { question: "Works?", answer: "Yes" },
           { question: "Ships?", answer: "" },
@@ -208,6 +219,6 @@ describe("buildExtrasHtml", () => {
   });
 
   it("omits the Q&A section when there are no questions", () => {
-    expect(buildExtrasHtml(makeDetail())).not.toContain("Questions");
+    expect(buildExtrasHtml(makeListing())).not.toContain("Questions");
   });
 });

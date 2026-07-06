@@ -2,7 +2,7 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
-import type { Fulfillment, Listing, ListingDetail, QuickSearchProgress } from "../lib/recipes/base";
+import type { Fulfillment, Listing, QuickSearchProgress } from "../lib/recipes/base";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,6 @@ export function isCardSearchActive(status: UrlCardSearchStatus): boolean {
 
 export interface ListingItem {
   data: Listing;
-  detail: ListingDetail | null;
   hasBeenDeepSearched: boolean;
   aiCheckedHash: number | null;
   aiFilterReason: string | null;

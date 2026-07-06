@@ -1,16 +1,17 @@
 import { chromium, type Page, type Response } from "playwright";
 import { enqueue } from "../../lib/queue";
 import type {
+  DeepSearchDetail,
   DeepSearchEvent,
   DiscoverableRecipe,
   DiscoverContext,
   Fulfillment,
   Listing,
-  ListingDetail,
   QuickSearchEvent,
   Recipe,
   RecipeDiscoverResult,
 } from "../../lib/recipes/base";
+import { ListingAttributeKey } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
 import { aiJSON } from "../ai";
 import { MAX_PAGES_PER_SEARCH } from "../constants";
@@ -335,27 +336,30 @@ export function extractDescriptionFromText(bodyText: string): string {
     .trim();
 }
 
-export function extractStructuredFromText(bodyText: string): Partial<ListingDetail> {
-  let buyNowPrice: number | null = null;
-  const bnMatch = bodyText.match(/Buy [Nn]ow\s*\n\s*\$([\d,]+(?:\.\d+)?)/);
-  if (bnMatch) buyNowPrice = parseFloat(bnMatch[1].replace(/,/g, ""));
+export function extractStructuredFromText(bodyText: string): Record<string, string> {
+  const attributes: Record<string, string> = { [ListingAttributeKey.ReserveStatus]: "UNKNOWN" };
+  if (/No reserve/.test(bodyText)) attributes[ListingAttributeKey.ReserveStatus] = "NONE";
+  else if (/Reserve met/.test(bodyText)) attributes[ListingAttributeKey.ReserveStatus] = "MET";
+  else if (/Reserve not met/.test(bodyText))
+    attributes[ListingAttributeKey.ReserveStatus] = "NOT_MET";
 
-  let reserveStatus = "UNKNOWN";
-  if (/No reserve/.test(bodyText)) reserveStatus = "NONE";
-  else if (/Reserve met/.test(bodyText)) reserveStatus = "MET";
-  else if (/Reserve not met/.test(bodyText)) reserveStatus = "NOT_MET";
+  const bnMatch = bodyText.match(/Buy [Nn]ow\s*\n\s*\$([\d,]+(?:\.\d+)?)/);
+  if (bnMatch)
+    attributes[ListingAttributeKey.BuyNowPrice] = String(parseFloat(bnMatch[1].replace(/,/g, "")));
 
   const pickupMatch = bodyText.match(/Pick up from ([^\n]+)/);
   const pickupLocation = pickupMatch ? pickupMatch[1].trim() : "";
+  if (pickupLocation) attributes[ListingAttributeKey.PickupLocation] = pickupLocation;
+
   const shippingIdx = bodyText.indexOf("Shipping & pick-up options");
   const shippingSection = shippingIdx >= 0 ? bodyText.slice(shippingIdx) : "";
   const isPickupOnly =
     /Pick-?up only|pickup only/i.test(bodyText) ||
     (pickupLocation !== "" && !/North Island|South Island|NZ Post|Courier/i.test(shippingSection));
-  const shippingAvailable = !isPickupOnly;
-  const pickupAvailable = pickupLocation !== "";
+  attributes[ListingAttributeKey.ShippingAvailable] = String(!isPickupOnly);
+  attributes[ListingAttributeKey.PickupAvailable] = String(pickupLocation !== "");
 
-  return { buyNowPrice, reserveStatus, shippingAvailable, pickupAvailable, pickupLocation };
+  return attributes;
 }
 
 // ── GraphQL extraction ────────────────────────────────────────────────────────
@@ -383,28 +387,28 @@ type GraphQLResponse = {
   };
 };
 
-export function extractFromGraphQL(json: unknown): Partial<ListingDetail> {
+export function extractFromGraphQL(json: unknown): Record<string, string> {
   const listing = (json as GraphQLResponse)?.data?.listing;
   if (!listing?.attributes) return {};
   const attrs = listing.attributes;
   const buyNowAttr = extractAttr(attrs, "BuyNowPrice");
   const deliveryAttr = extractAttr(attrs, "DeliveryOptions");
-  const buyNowPrice: number | null = buyNowAttr?.numValue ?? null;
   const deliveryOptions: { __typename: string; name: string }[] = deliveryAttr?.options ?? [];
   const reserveStatus: string =
     listing?.contentViews?.listingPurchaseContentCard?.auctionDetails?.reserveStatus ?? "UNKNOWN";
-  if (deliveryOptions.length === 0) return { buyNowPrice, reserveStatus };
+
+  const attributes: Record<string, string> = { [ListingAttributeKey.ReserveStatus]: reserveStatus };
+  if (buyNowAttr?.numValue != null)
+    attributes[ListingAttributeKey.BuyNowPrice] = String(buyNowAttr.numValue);
+  if (deliveryOptions.length === 0) return attributes;
+
   const hasShipping = deliveryOptions.some((o) => o.__typename !== "PickupOption");
   const pickupOption = deliveryOptions.find((o) => o.__typename === "PickupOption");
   const pickupLocation = pickupOption?.name?.replace(/^Pick up from\s*/i, "") ?? "";
-  const pickupAvailable = pickupOption !== undefined;
-  return {
-    buyNowPrice,
-    reserveStatus,
-    shippingAvailable: hasShipping,
-    pickupAvailable,
-    pickupLocation,
-  };
+  attributes[ListingAttributeKey.ShippingAvailable] = String(hasShipping);
+  attributes[ListingAttributeKey.PickupAvailable] = String(pickupOption !== undefined);
+  if (pickupLocation) attributes[ListingAttributeKey.PickupLocation] = pickupLocation;
+  return attributes;
 }
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
@@ -437,8 +441,8 @@ function waitForSearchApiResponseAsync(
 export async function fetchSingleListingDetailAsync(
   page: Page,
   url: string,
-): Promise<ListingDetail> {
-  let graphqlResult: Partial<ListingDetail> = {};
+): Promise<DeepSearchDetail> {
+  let graphqlResult: Record<string, string> = {};
 
   const handler = async (response: Response) => {
     if (!response.url().includes("api.trademe.co.nz/graphql") || response.status() !== 200) return;
@@ -471,19 +475,17 @@ export async function fetchSingleListingDetailAsync(
   const dom = extractStructuredFromText(bodyText);
   const questionsAndAnswers = extractQuestionsAndAnswers(bodyText);
 
-  return {
-    details,
-    description,
-    buyNowPrice: graphqlResult.buyNowPrice ?? dom.buyNowPrice ?? null,
-    reserveStatus:
-      graphqlResult.reserveStatus && graphqlResult.reserveStatus !== "UNKNOWN"
-        ? graphqlResult.reserveStatus
-        : (dom.reserveStatus ?? "UNKNOWN"),
-    shippingAvailable: graphqlResult.shippingAvailable ?? dom.shippingAvailable ?? null,
-    pickupAvailable: graphqlResult.pickupAvailable ?? dom.pickupAvailable ?? null,
-    pickupLocation: graphqlResult.pickupLocation || dom.pickupLocation || "",
-    questionsAndAnswers,
-  };
+  const extendedAttributes: Record<string, string> = {};
+  for (const { key, value } of details) extendedAttributes[key] = value;
+  Object.assign(extendedAttributes, dom, graphqlResult);
+  // GraphQL only overrides the DOM-parsed reserve status when it actually knows one.
+  if (
+    graphqlResult[ListingAttributeKey.ReserveStatus] === "UNKNOWN" &&
+    dom[ListingAttributeKey.ReserveStatus]
+  )
+    extendedAttributes[ListingAttributeKey.ReserveStatus] = dom[ListingAttributeKey.ReserveStatus];
+
+  return { description, extendedAttributes, questionsAndAnswers };
 }
 
 // ── Discover URL building ─────────────────────────────────────────────────────
