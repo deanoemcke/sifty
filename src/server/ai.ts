@@ -106,20 +106,29 @@ function extractRetryMessage(lastErrorData: Record<string, unknown>): string {
   return String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
 }
 
-function parseRetryDelaySeconds(response: Response, errorMessage: string): number {
+// A retry delay parsed from a provider-reported source (header or message match) is
+// confident — it reflects what the provider actually said. The untagged fallback guess
+// is not: it's a hardcoded default for when the provider gave us nothing to parse, and
+// must never be trusted the same way a provider-reported value is (see below).
+type ParsedRetryDelay = { delaySecs: number; isConfident: boolean };
+
+function parseRetryDelaySeconds(response: Response, errorMessage: string): ParsedRetryDelay {
   const header = response.headers.get("retry-after");
   if (header) {
     const parsed = Number.parseFloat(header);
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return { delaySecs: parsed, isConfident: true };
   }
   const match = errorMessage.match(/try again in (\d+\.?\d*)s/i);
-  if (match) return Number.parseFloat(match[1]);
+  if (match) return { delaySecs: Number.parseFloat(match[1]), isConfident: true };
   // Verified accurate for Groq (its reported delay matches its real daily-quota
   // reset). NOT verified for OpenRouter or Gemini — confirm their actual 429
   // response shape (header vs. body message; per-minute vs. per-day/quota
   // wording) against the live APIs before trusting this default to
   // distinguish a short rate limit from a full quota exhaustion for those two.
-  return 10;
+  // Because it's unverified for two of three providers, callers must not treat
+  // it as confident: it must not justify a fail-fast decision or a recorded
+  // provider cooldown, only a single in-process retry sleep.
+  return { delaySecs: 10, isConfident: false };
 }
 
 export const MAX_RETRIES = 2;
@@ -171,9 +180,9 @@ export async function aiJSON(
       if (parsed !== null) lastErrorData = parsed;
       if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
         const errorMessage = extractRetryMessage(lastErrorData);
-        const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
+        const { delaySecs, isConfident } = parseRetryDelaySeconds(apiResponse, errorMessage);
         const remainingMs = deadline - Date.now();
-        if (delaySecs * 1000 > remainingMs) {
+        if (isConfident && delaySecs * 1000 > remainingMs) {
           markProviderExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
           throw new Error(
             `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
@@ -191,8 +200,13 @@ export async function aiJSON(
     throw new Error(`AI request failed: no response received (${label})`);
   if (!apiResponse.ok) {
     if (apiResponse.status === 429) {
-      const delaySecs = parseRetryDelaySeconds(apiResponse, extractRetryMessage(lastErrorData));
-      markProviderExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
+      const { delaySecs, isConfident } = parseRetryDelaySeconds(
+        apiResponse,
+        extractRetryMessage(lastErrorData),
+      );
+      if (isConfident) {
+        markProviderExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
+      }
     }
     const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<
       string,

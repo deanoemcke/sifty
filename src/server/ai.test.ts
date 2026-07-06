@@ -285,6 +285,45 @@ describe("aiJSON", () => {
       expect(() => getAIConfig()).toThrow(`recovers in ${cappedRecoversInSecs}s`);
     });
 
+    it("does not fail fast on an unconfident guessed delay even when it would exceed the remaining budget", async () => {
+      vi.stubEnv("GROQ_API_KEY", "groq-key");
+      const groqConfig = getAIConfig();
+
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        // Attempt 0: confident (header-reported) delay of 40s, within the 45s budget — sleeps as normal.
+        .mockResolvedValueOnce(make429Response(40))
+        // Attempt 1: no retry-after header and no matching body message, so the parsed delay is the
+        // untagged 10s fallback guess. Only ~5s of budget remains at this point, so a confident delay
+        // would fail fast here — but a guess must not be trusted to make that call.
+        .mockResolvedValueOnce(makeResponse(429, {}));
+
+      const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
+      const assertion = expect(promise).rejects.toThrow("exceeded total budget");
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // The guess must not have sidelined the provider with a cooldown.
+      const recheckedConfig = getAIConfig();
+      expect(recheckedConfig.url).toBe(GROQ_URL);
+    });
+
+    it("does not mark cooldown from an unconfident guessed delay once retries are exhausted on persistent 429s", async () => {
+      vi.stubEnv("GROQ_API_KEY", "groq-key");
+      const groqConfig = getAIConfig();
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse(429, {}));
+
+      const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
+      const assertion = expect(promise).rejects.toThrow("429");
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      const config = getAIConfig();
+      expect(config.url).toBe(GROQ_URL);
+    });
+
     it("does not mark cooldown on non-429 errors", async () => {
       vi.stubEnv("GROQ_API_KEY", "groq-key");
       const groqConfig = getAIConfig();
