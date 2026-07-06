@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handleDiscoverySubmitAsync } from "./searchSession";
+import { handleDiscoverySubmitAsync, loadSavedSearchAsync } from "./searchSession";
 import { resetState } from "./state";
 import { createUrlCard } from "./urlCardRow";
 import { resetUrlCardStore, urlCards } from "./urlCardStore";
@@ -36,6 +36,12 @@ beforeEach(() => {
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="applyAiFilterBtn"></button>
+
+    <button id="searchTabBtn" class="active"></button>
+    <button id="favouritesTabBtn"></button>
+    <div id="searchTabPanel"></div>
+    <div id="savedSearchesPanel" class="hidden"></div>
+    <button id="saveCurrentBtn" class="hidden"></button>
   `;
   // The app always seeds one blank URL card on init (see app.ts) — every
   // caller of handleDiscoverySubmitAsync relies on urlCards[0] existing.
@@ -119,4 +125,49 @@ it("clears any existing URL card value immediately when a new discovery is submi
     json: async () => ({ urls: ["https://www.trademe.co.nz/x"], name: "lamp" }),
   });
   await submitPromise;
+});
+
+it("does not let a stale discovery response overwrite a saved search loaded while it was in flight", async () => {
+  let resolveFetch!: (value: unknown) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    ),
+  );
+
+  const submitPromise = handleDiscoverySubmitAsync();
+
+  // Discovery is still in flight — placeholder showing, container hidden.
+  expect(
+    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
+  ).toBe(true);
+
+  // User loads a saved search before the discovery request resolves.
+  await loadSavedSearchAsync({
+    id: "saved-1",
+    name: "saved search",
+    urls: ["https://example.com/saved"],
+    aiFilter: null,
+    createdAt: 0,
+  });
+
+  // The saved search must be visible immediately, not stuck behind the placeholder.
+  expect(
+    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
+  ).toBe(false);
+  expect(urlCards[0].dom.input.value).toBe("https://example.com/saved");
+
+  // The stale discovery now resolves successfully.
+  resolveFetch({
+    ok: true,
+    json: async () => ({ urls: ["https://www.trademe.co.nz/stale"], name: "lamp" }),
+  });
+  await submitPromise;
+
+  // It must not clobber the saved search the user is now looking at.
+  expect(urlCards[0].dom.input.value).toBe("https://example.com/saved");
 });

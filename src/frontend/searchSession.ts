@@ -135,7 +135,13 @@ export function loadDiscoveryResults(
   fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
+// Invalidates any in-flight handleDiscoverySubmitAsync request so its
+// eventual response can't overwrite URL cards loaded by a newer request.
+let discoveryRequestId = 0;
+
 export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
+  discoveryRequestId++;
+  hideDiscoveringPlaceholder();
   revealUrlsSection();
   trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
@@ -155,6 +161,7 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
 // ── Discovery submit ──────────────────────────────────────────────────────────
 
 export async function handleDiscoverySubmitAsync(): Promise<void> {
+  const requestId = ++discoveryRequestId;
   const prompt = getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
   if (!prompt) return;
   const maxPrice = parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value);
@@ -183,6 +190,9 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
       name?: string;
       error?: string;
     };
+    // A saved search was loaded while this request was in flight — its
+    // result is stale and must not overwrite what the user is now looking at.
+    if (requestId !== discoveryRequestId) return;
     if (!response.ok || !data.urls?.length) {
       discoveryErrorElement.textContent = data.error ?? "Discovery failed";
       discoveryErrorElement.style.display = "block";
@@ -190,8 +200,10 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
     }
     loadDiscoveryResults(data as { urls: string[]; name: string }, prompt);
   } catch {
-    discoveryErrorElement.textContent = "Discovery failed";
-    discoveryErrorElement.style.display = "block";
+    if (requestId === discoveryRequestId) {
+      discoveryErrorElement.textContent = "Discovery failed";
+      discoveryErrorElement.style.display = "block";
+    }
   } finally {
     discoveryButton.textContent = DISCOVERY_BUTTON_LABEL;
     updateDiscoveryBtn();
