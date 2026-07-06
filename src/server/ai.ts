@@ -26,7 +26,8 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
 const providerCooldowns = new Map<string, number>();
 
 function markProviderExhausted(providerKey: string, cooldownUntilMs: number): void {
-  providerCooldowns.set(providerKey, cooldownUntilMs);
+  const currentCooldownUntilMs = providerCooldowns.get(providerKey) ?? 0;
+  providerCooldowns.set(providerKey, Math.max(currentCooldownUntilMs, cooldownUntilMs));
 }
 
 export function resetProviderCooldowns(): void {

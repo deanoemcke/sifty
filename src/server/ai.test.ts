@@ -249,6 +249,23 @@ describe("aiJSON", () => {
       expect(config.url).toBe(GROQ_URL);
     });
 
+    it("keeps the longer cooldown when a later call reports a shorter delay for the same provider", async () => {
+      vi.stubEnv("GROQ_API_KEY", "groq-key");
+      const groqConfig = getAIConfig();
+
+      const longDelaySecs = TOTAL_TIMEOUT_MS / 1000 + 100;
+      const shortDelaySecs = TOTAL_TIMEOUT_MS / 1000 + 5;
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+
+      fetchMock.mockResolvedValueOnce(make429Response(longDelaySecs));
+      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow("AI rate limited");
+
+      fetchMock.mockResolvedValueOnce(make429Response(shortDelaySecs));
+      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow("AI rate limited");
+
+      expect(() => getAIConfig()).toThrow(`recovers in ${Math.ceil(longDelaySecs)}s`);
+    });
+
     it("does not mark cooldown on non-429 errors", async () => {
       vi.stubEnv("GROQ_API_KEY", "groq-key");
       const groqConfig = getAIConfig();
