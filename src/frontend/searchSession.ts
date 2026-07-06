@@ -93,19 +93,31 @@ export async function deleteSavedSearchAsync(id: string): Promise<void> {
   await fetchSavedSearchesAsync();
 }
 
-// The URL cards and AI filter stay hidden until the first search of the
-// session — either a discovery run or loading a favourite.
-export function revealSearchConfig(): void {
-  getElement("searchConfigSection").classList.remove("hidden");
+type UrlsSectionState = "idle" | "discovering" | "ready";
+
+// The URL cards section stays hidden ("idle") until the first search of the
+// session — either a discovery run or loading a favourite. Every caller that
+// changes what the section shows goes through this so visibility ownership
+// isn't implicit in call order.
+export function setUrlsSectionState(state: UrlsSectionState): void {
+  getElement("urlsSection").classList.toggle("hidden", state === "idle");
+  getElement("urlPlaceholder").classList.toggle("hidden", state !== "discovering");
+  getElement("urlCardsContainer").classList.toggle("hidden", state === "discovering");
+  getElement("addUrlBtn").classList.toggle("hidden", state === "discovering");
+}
+
+// loadDiscoveryResults, loadSavedSearchAsync, and handleDiscoverySubmitAsync
+// all start a new session by dropping down to a single, blank URL card.
+function trimUrlCardsToOne(): void {
+  resetAllResults();
+  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
 }
 
 export function loadDiscoveryResults(
   data: { urls: string[]; name: string },
   aiPrompt: string,
 ): void {
-  revealSearchConfig();
-  resetAllResults();
-  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+  trimUrlCardsToOne();
   urlCards[0].dom.input.value = data.urls[0];
   for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
     createUrlCard(searchUrlCardAsync).dom.input.value = data.urls[urlIndex];
@@ -118,10 +130,14 @@ export function loadDiscoveryResults(
   fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
+// Invalidates any in-flight handleDiscoverySubmitAsync request so its
+// eventual response can't overwrite URL cards loaded by a newer request.
+let discoveryRequestId = 0;
+
 export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
-  revealSearchConfig();
-  resetAllResults();
-  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+  discoveryRequestId++;
+  setUrlsSectionState("ready");
+  trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
   if (search.urls.length === 0) return;
   urlCards[0].dom.input.value = search.urls[0];
@@ -139,6 +155,7 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
 // ── Discovery submit ──────────────────────────────────────────────────────────
 
 export async function handleDiscoverySubmitAsync(): Promise<void> {
+  const requestId = ++discoveryRequestId;
   const prompt = getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
   if (!prompt) return;
   const maxPrice = parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value);
@@ -151,6 +168,10 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   discoveryErrorElement.style.display = "none";
   discoveryButton.disabled = true;
   discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
+  setUrlsSectionState("discovering");
+  trimUrlCardsToOne();
+  urlCards[0].dom.input.value = "";
+  handleUrlInputChanged(urlCards[0]);
   try {
     const response = await fetch("/api/discover", {
       method: "POST",
@@ -162,6 +183,9 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
       name?: string;
       error?: string;
     };
+    // A saved search was loaded while this request was in flight — its
+    // result is stale and must not overwrite what the user is now looking at.
+    if (requestId !== discoveryRequestId) return;
     if (!response.ok || !data.urls?.length) {
       discoveryErrorElement.textContent = data.error ?? "Discovery failed";
       discoveryErrorElement.style.display = "block";
@@ -169,11 +193,14 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
     }
     loadDiscoveryResults(data as { urls: string[]; name: string }, prompt);
   } catch {
-    discoveryErrorElement.textContent = "Discovery failed";
-    discoveryErrorElement.style.display = "block";
+    if (requestId === discoveryRequestId) {
+      discoveryErrorElement.textContent = "Discovery failed";
+      discoveryErrorElement.style.display = "block";
+    }
   } finally {
     discoveryButton.textContent = DISCOVERY_BUTTON_LABEL;
     updateDiscoveryBtn();
+    setUrlsSectionState("ready");
   }
 }
 

@@ -126,6 +126,7 @@ export function renderCard(item: ListingItem): void {
       <div class="listing-thumb-wrap">
         ${thumb}
         ${sourceBadgeHtml(listing.source, 28)}
+        <div class="filter-banner hidden"></div>
       </div>
       <div class="listing-body">
         <div class="listing-meta">
@@ -137,7 +138,6 @@ export function renderCard(item: ListingItem): void {
         </div>
       </div>
     </div>
-    <div class="filter-banner hidden"></div>
   `;
 
   if (!existing) getElement("listingsContainer").appendChild(card);
