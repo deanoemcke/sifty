@@ -159,14 +159,12 @@ export type RawApiItem = {
 };
 
 export function buildListing(raw: RawApiItem): Listing | null {
-  const display = raw.priceDisplay || "Price on request";
   const url = raw.canonicalPath ? `${TRADEME_BASE}${raw.canonicalPath}` : "";
   if (!raw.title || !url) return null;
   return {
     source: TRADEME_PATTERN.name,
     title: raw.title,
-    price: parsePriceValue(display),
-    priceDisplay: display,
+    price: parsePriceValue(raw.priceDisplay),
     location: [raw.suburb, raw.region].filter(Boolean).join(", ") || "Unknown",
     url,
     thumbnailUrl: raw.pictureHref?.replace("/photoserver/thumb/", "/photoserver/full/"),

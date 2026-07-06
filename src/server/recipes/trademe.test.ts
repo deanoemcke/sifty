@@ -81,7 +81,6 @@ function _makeListing(overrides: Partial<Listing> = {}): Listing {
     source,
     title: 'MacBook Pro 14" 2021 M1 Pro 16GB',
     price: 1500,
-    priceDisplay: "$1,500",
     location: "Auckland City, Auckland",
     url: "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/12345",
     ...restOverrides,
@@ -140,7 +139,6 @@ describe("buildListing", () => {
     expect(listing).not.toBeNull();
     expect(listing?.title).toBe('MacBook Pro 14"');
     expect(listing?.price).toBe(1500);
-    expect(listing?.priceDisplay).toBe("$1,500");
     expect(listing?.location).toBe("Auckland City, Auckland");
     expect(listing?.url).toBe(
       "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",
@@ -158,9 +156,8 @@ describe("buildListing", () => {
     expect(buildListing({ ...baseRaw, canonicalPath: "" })).toBeNull();
   });
 
-  it('falls back to "Price on request" when priceDisplay is empty', () => {
+  it("returns null price when priceDisplay is empty", () => {
     const listing = buildListing({ ...baseRaw, priceDisplay: "" });
-    expect(listing?.priceDisplay).toBe("Price on request");
     expect(listing?.price).toBeNull();
   });
 
@@ -265,7 +262,6 @@ describe("parseSearchApiResponse", () => {
     expect(listings).toHaveLength(1);
     expect(listings[0].title).toBe('MacBook Pro 14"');
     expect(listings[0].price).toBe(1500);
-    expect(listings[0].priceDisplay).toBe("$1,500");
     expect(listings[0].location).toBe("Auckland City, Auckland");
     expect(listings[0].url).toBe(
       "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",

@@ -4,7 +4,6 @@ export interface Listing {
   source: RecipeSource;
   title: string;
   price: number | null;
-  priceDisplay: string;
   location: string;
   url: string;
   thumbnailUrl?: string;

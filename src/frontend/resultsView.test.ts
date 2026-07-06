@@ -17,7 +17,6 @@ function makeListingItem(url: string): ListingItem {
       source: "trademe",
       title: url,
       price: null,
-      priceDisplay: "$1",
       location: "",
       url,
     } as Listing,

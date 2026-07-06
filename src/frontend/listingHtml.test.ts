@@ -17,7 +17,6 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
     source: "trademe",
     title: "Test listing",
     price: 100,
-    priceDisplay: "$100",
     location: "Wellington",
     url: "https://example.com/listing/1",
     ...overrides,
@@ -88,9 +87,24 @@ describe("filterBannerText", () => {
 });
 
 describe("buildCardPriceHtml", () => {
-  it("wraps the escaped display price", () => {
-    const html = buildCardPriceHtml(makeListing({ priceDisplay: "<$1>" }));
-    expect(html).toBe(`<span class="price">&lt;$1&gt;</span>`);
+  it("formats a normal price with $ and thousands separator", () => {
+    const html = buildCardPriceHtml(makeListing({ price: 1500 }));
+    expect(html).toContain(`$1,500`);
+  });
+
+  it("shows 'Free' for zero price", () => {
+    const html = buildCardPriceHtml(makeListing({ price: 0 }));
+    expect(html).toContain("Free");
+  });
+
+  it("shows 'Price on request' for null price", () => {
+    const html = buildCardPriceHtml(makeListing({ price: null }));
+    expect(html).toContain("Price on request");
+  });
+
+  it("escapes special characters in formatted output", () => {
+    const html = buildCardPriceHtml(makeListing({ price: 100 }));
+    expect(html).toContain(`<span class="price">$100</span>`);
   });
 });
 
@@ -104,14 +118,18 @@ describe("buildCardMetaHtml", () => {
 });
 
 describe("buildDetailPriceHtml", () => {
-  it("shows only the price for non-auctions", () => {
-    const html = buildDetailPriceHtml(makeListing(), makeDetail({ buyNowPrice: 500 }));
+  it("shows the formatted price for non-auctions", () => {
+    const html = buildDetailPriceHtml(
+      makeListing({ price: 500 }),
+      makeDetail({ buyNowPrice: 500 }),
+    );
+    expect(html).toContain("$500");
     expect(html).not.toContain("Buy Now");
   });
 
   it("adds a formatted buy-now price for auctions", () => {
     const html = buildDetailPriceHtml(
-      makeListing({ isAuction: true }),
+      makeListing({ price: 1000, isAuction: true }),
       makeDetail({ buyNowPrice: 1500 }),
     );
     expect(html).toContain(`Buy Now: <strong>$${(1500).toLocaleString()}</strong>`);
@@ -120,6 +138,11 @@ describe("buildDetailPriceHtml", () => {
   it("omits buy-now when the auction has none", () => {
     const html = buildDetailPriceHtml(makeListing({ isAuction: true }), makeDetail());
     expect(html).not.toContain("Buy Now");
+  });
+
+  it("shows 'Price on request' when price is null", () => {
+    const html = buildDetailPriceHtml(makeListing({ price: null }), makeDetail());
+    expect(html).toContain("Price on request");
   });
 });
 

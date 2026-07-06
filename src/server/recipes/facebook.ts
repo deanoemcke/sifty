@@ -9,7 +9,6 @@ import type {
   Listing,
   ListingDetail,
   QuickSearchEvent,
-  Recipe,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
 import { aiJSON } from "../ai";
@@ -103,9 +102,17 @@ async function maskHeadless(page: Page): Promise<void> {
 
 export const PRICE_REGEX = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
 
+export function parseFacebookPriceValue(priceLine: string | undefined): number | null {
+  if (priceLine === undefined) return null;
+  if (priceLine === "Free") return 0;
+  const match = priceLine.replace(/,/g, "").match(/[\d.]+/);
+  if (!match) return null;
+  const parsed = parseFloat(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function parseFacebookPriceLines(innerText: string): {
   price: number | null;
-  priceDisplay: string;
   lines: string[];
 } {
   const lines = innerText
@@ -113,11 +120,8 @@ export function parseFacebookPriceLines(innerText: string): {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const priceLines = lines.filter((line) => PRICE_REGEX.test(line));
-  const priceDisplay = priceLines.length === 0 ? "Price on request" : priceLines[0];
-  const priceMatch = priceLines[0]?.replace(/,/g, "").match(/[\d.]+/);
-  const parsed = priceMatch ? parseFloat(priceMatch[0]) : NaN;
-  const price = Number.isFinite(parsed) ? parsed : null;
-  return { price, priceDisplay, lines };
+  const price = parseFacebookPriceValue(priceLines[0]);
+  return { price, lines };
 }
 
 export function buildFacebookListing(
@@ -125,14 +129,12 @@ export function buildFacebookListing(
   thumbnailUrl: string | undefined,
   title: string,
   price: number | null,
-  priceDisplay: string,
   location: string,
 ): Listing {
   return {
     source: FACEBOOK_PATTERN.name,
     title,
     price,
-    priceDisplay,
     location,
     url,
     thumbnailUrl,
@@ -159,7 +161,7 @@ function processRawListing(
   if (seen.has(raw.id)) return;
   seen.add(raw.id);
 
-  const { price, priceDisplay, lines: innerLines } = parseFacebookPriceLines(raw.innerText);
+  const { price, lines: innerLines } = parseFacebookPriceLines(raw.innerText);
 
   let title = "",
     location = "Unknown";
@@ -178,14 +180,7 @@ function processRawListing(
   counter.total++;
   onEvent({
     type: "listing",
-    data: buildFacebookListing(
-      raw.url,
-      raw.thumbnailUrl || undefined,
-      title,
-      price,
-      priceDisplay,
-      location,
-    ),
+    data: buildFacebookListing(raw.url, raw.thumbnailUrl || undefined, title, price, location),
   });
 }
 

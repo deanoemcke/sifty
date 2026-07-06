@@ -4,6 +4,7 @@
 
 import type { Listing, ListingDetail } from "../lib/recipes/base";
 import { esc } from "./html";
+import { formatListingPrice } from "./priceFormat";
 import type { ListingItem } from "./state";
 
 export function filterBannerText(item: ListingItem): string {
@@ -27,7 +28,7 @@ export function cleanDescription(text: string): string {
 }
 
 export function buildCardPriceHtml(listing: Listing): string {
-  return `<span class="price">${esc(listing.priceDisplay)}</span>`;
+  return `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
 }
 
 export function buildCardMetaHtml(listing: Listing): string {
@@ -35,7 +36,7 @@ export function buildCardMetaHtml(listing: Listing): string {
 }
 
 export function buildDetailPriceHtml(listing: Listing, detail: ListingDetail): string {
-  let html = `<span class="price">${esc(listing.priceDisplay)}</span>`;
+  let html = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
   if (listing.isAuction && detail.buyNowPrice != null) {
     html += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
   }

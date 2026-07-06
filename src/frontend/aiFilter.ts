@@ -1,4 +1,5 @@
 import { getElement } from "./domUtils";
+import { formatListingPrice } from "./priceFormat";
 import { promptHash } from "./renderUtils";
 import { applyClientFilters, getOrderedListings, renderDerived } from "./resultsView";
 import {
@@ -66,7 +67,7 @@ export async function runAiFilterAsync(): Promise<void> {
         listings: toCheck.map((item) => ({
           url: item.data.url,
           title: item.data.title,
-          price: item.data.priceDisplay,
+          price: formatListingPrice(item.data.price),
           location: item.data.location,
           description: (item.detail?.description ?? item.data.description)?.slice(0, 300) ?? "",
         })),
