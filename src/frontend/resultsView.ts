@@ -123,10 +123,10 @@ export function renderCard(item: ListingItem): void {
   // only, so this template deliberately never references item.detail.
   card.innerHTML = `
     <div class="listing-card-content">
-      <div class="filter-banner hidden"></div>
       <div class="listing-thumb-wrap">
         ${thumb}
         ${sourceBadgeHtml(listing.source, 28)}
+        <div class="filter-banner hidden"></div>
       </div>
       <div class="listing-body">
         <div class="listing-meta">
