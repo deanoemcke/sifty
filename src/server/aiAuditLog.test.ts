@@ -7,6 +7,9 @@ import type { AiAuditEntry } from "./aiAuditLog";
 import {
   appendAuditLogLineAsync,
   formatAuditEntryLine,
+  MAX_AUDIT_FIELD_LENGTH,
+  rotateAuditLogIfOversizedAsync,
+  truncateAuditField,
   writeAuditLogHeaderAsync,
 } from "./aiAuditLog";
 
@@ -32,6 +35,70 @@ describe("formatAuditEntryLine", () => {
   it("round-trips every field through JSON.parse", () => {
     const line = formatAuditEntryLine(SAMPLE_ENTRY);
     expect(JSON.parse(line)).toEqual(SAMPLE_ENTRY);
+  });
+});
+
+describe("truncateAuditField", () => {
+  it("returns a value at or under the cap unchanged", () => {
+    const value = "a".repeat(MAX_AUDIT_FIELD_LENGTH);
+    expect(truncateAuditField(value)).toBe(value);
+  });
+
+  it("truncates a value over the cap and appends a marker naming the omitted byte count", () => {
+    const value = "a".repeat(MAX_AUDIT_FIELD_LENGTH + 500);
+    const truncated = truncateAuditField(value);
+    expect(truncated.startsWith("a".repeat(MAX_AUDIT_FIELD_LENGTH))).toBe(true);
+    expect(truncated).toBe(
+      `${"a".repeat(MAX_AUDIT_FIELD_LENGTH)}...[truncated, 500 bytes omitted]`,
+    );
+  });
+
+  it("counts multi-byte UTF-8 characters in the omitted byte count, not just omitted characters", () => {
+    // Every "é" is 2 bytes in UTF-8, so 10 omitted characters is 20 omitted bytes.
+    const value = "a".repeat(MAX_AUDIT_FIELD_LENGTH) + "é".repeat(10);
+    const truncated = truncateAuditField(value);
+    expect(truncated).toContain("...[truncated, 20 bytes omitted]");
+  });
+});
+
+describe("formatAuditEntryLine field size caps", () => {
+  it("truncates an oversized rawContent field with a visible marker", () => {
+    const oversizedRawContent = "x".repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+    const entry: AiAuditEntry = {
+      ...SAMPLE_ENTRY,
+      response: undefined,
+      rawContent: oversizedRawContent,
+    };
+
+    const parsed = JSON.parse(formatAuditEntryLine(entry));
+
+    expect(parsed.rawContent).toContain("...[truncated, 5000 bytes omitted]");
+    expect(parsed.rawContent.length).toBeLessThan(oversizedRawContent.length);
+  });
+
+  it("leaves a rawContent field under the cap untouched", () => {
+    const entry: AiAuditEntry = { ...SAMPLE_ENTRY, response: undefined, rawContent: "short content" };
+
+    const parsed = JSON.parse(formatAuditEntryLine(entry));
+
+    expect(parsed.rawContent).toBe("short content");
+  });
+
+  it("truncates an oversized response field (by its serialized size) into a marked string", () => {
+    const entry: AiAuditEntry = {
+      ...SAMPLE_ENTRY,
+      response: { data: "x".repeat(MAX_AUDIT_FIELD_LENGTH + 10) },
+    };
+
+    const parsed = JSON.parse(formatAuditEntryLine(entry));
+
+    expect(typeof parsed.response).toBe("string");
+    expect(parsed.response).toContain("...[truncated,");
+  });
+
+  it("leaves a response field under the cap as the original structured value", () => {
+    const line = formatAuditEntryLine(SAMPLE_ENTRY);
+    expect(JSON.parse(line).response).toEqual(SAMPLE_ENTRY.response);
   });
 });
 
@@ -69,6 +136,69 @@ describe("writeAuditLogHeaderAsync / appendAuditLogLineAsync", () => {
     expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0])).toEqual(SAMPLE_ENTRY);
     expect(JSON.parse(lines[1])).toMatchObject({ attempt: 2, label: "second" });
+  });
+
+  describe("rotateAuditLogIfOversizedAsync", () => {
+    it("treats a missing file as size zero and does not throw or rotate", async () => {
+      await expect(rotateAuditLogIfOversizedAsync(auditLogPath, 10)).resolves.toBeUndefined();
+      expect(fs.existsSync(`${auditLogPath}.1`)).toBe(false);
+    });
+
+    it("does not rotate a file under the size threshold", async () => {
+      await writeAuditLogHeaderAsync(auditLogPath);
+      fs.writeFileSync(auditLogPath, "x".repeat(50));
+
+      await rotateAuditLogIfOversizedAsync(auditLogPath, 1_000);
+
+      expect(fs.existsSync(`${auditLogPath}.1`)).toBe(false);
+      expect(fs.readFileSync(auditLogPath, "utf-8")).toBe("x".repeat(50));
+    });
+
+    it("rotates a file at or over the size threshold to a .1 suffix", async () => {
+      await writeAuditLogHeaderAsync(auditLogPath);
+      fs.writeFileSync(auditLogPath, "x".repeat(100));
+
+      await rotateAuditLogIfOversizedAsync(auditLogPath, 50);
+
+      const rotatedPath = `${auditLogPath}.1`;
+      expect(fs.existsSync(rotatedPath)).toBe(true);
+      expect(fs.readFileSync(rotatedPath, "utf-8")).toBe("x".repeat(100));
+      expect(fs.existsSync(auditLogPath)).toBe(false);
+    });
+
+    it("overwrites a previous .1 rotation rather than accumulating generations", async () => {
+      const rotatedPath = `${auditLogPath}.1`;
+      fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
+      fs.writeFileSync(rotatedPath, "stale rotation\n");
+      fs.writeFileSync(auditLogPath, "x".repeat(100));
+
+      await rotateAuditLogIfOversizedAsync(auditLogPath, 50);
+
+      expect(fs.readFileSync(rotatedPath, "utf-8")).toBe("x".repeat(100));
+    });
+  });
+
+  describe("appendAuditLogLineAsync file-size guard", () => {
+    it("rotates the log file to a .1 suffix once it exceeds the threshold, then starts a fresh file", async () => {
+      await writeAuditLogHeaderAsync(auditLogPath);
+      fs.writeFileSync(auditLogPath, "x".repeat(100));
+
+      await appendAuditLogLineAsync(auditLogPath, SAMPLE_ENTRY, 50);
+
+      const rotatedPath = `${auditLogPath}.1`;
+      expect(fs.readFileSync(rotatedPath, "utf-8")).toBe("x".repeat(100));
+
+      const currentLines = fs.readFileSync(auditLogPath, "utf-8").split("\n").filter(Boolean);
+      expect(currentLines).toHaveLength(1);
+      expect(JSON.parse(currentLines[0])).toEqual(SAMPLE_ENTRY);
+    });
+
+    it("does not rotate when the file is under the size threshold", async () => {
+      await writeAuditLogHeaderAsync(auditLogPath);
+      await appendAuditLogLineAsync(auditLogPath, SAMPLE_ENTRY, 1_000_000);
+
+      expect(fs.existsSync(`${auditLogPath}.1`)).toBe(false);
+    });
   });
 });
 
