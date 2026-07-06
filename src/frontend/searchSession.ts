@@ -95,15 +95,26 @@ export async function deleteSavedSearchAsync(id: string): Promise<void> {
 
 // The URL cards and AI filter stay hidden until the first search of the
 // session — either a discovery run or loading a favourite.
-export function revealSearchConfig(): void {
-  getElement("searchConfigSection").classList.remove("hidden");
+export function revealUrlsSection(): void {
+  getElement("urlsSection").classList.remove("hidden");
+}
+
+export function showDiscoveringPlaceholder(): void {
+  getElement("urlCardsContainer").classList.add("hidden");
+  getElement("addUrlBtn").classList.add("hidden");
+  getElement("urlPlaceholder").classList.remove("hidden");
+}
+
+export function hideDiscoveringPlaceholder(): void {
+  getElement("urlPlaceholder").classList.add("hidden");
+  getElement("urlCardsContainer").classList.remove("hidden");
+  getElement("addUrlBtn").classList.remove("hidden");
 }
 
 export function loadDiscoveryResults(
   data: { urls: string[]; name: string },
   aiPrompt: string,
 ): void {
-  revealSearchConfig();
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   urlCards[0].dom.input.value = data.urls[0];
@@ -119,7 +130,7 @@ export function loadDiscoveryResults(
 }
 
 export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
-  revealSearchConfig();
+  revealUrlsSection();
   resetAllResults();
   while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
@@ -151,6 +162,8 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   discoveryErrorElement.style.display = "none";
   discoveryButton.disabled = true;
   discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
+  showDiscoveringPlaceholder();
+  revealUrlsSection();
   try {
     const response = await fetch("/api/discover", {
       method: "POST",
@@ -174,6 +187,7 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   } finally {
     discoveryButton.textContent = DISCOVERY_BUTTON_LABEL;
     updateDiscoveryBtn();
+    hideDiscoveringPlaceholder();
   }
 }
 
