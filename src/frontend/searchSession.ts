@@ -93,22 +93,17 @@ export async function deleteSavedSearchAsync(id: string): Promise<void> {
   await fetchSavedSearchesAsync();
 }
 
-// The URL cards and AI filter stay hidden until the first search of the
-// session — either a discovery run or loading a favourite.
-export function revealUrlsSection(): void {
-  getElement("urlsSection").classList.remove("hidden");
-}
+type UrlsSectionState = "idle" | "discovering" | "ready";
 
-export function showDiscoveringPlaceholder(): void {
-  getElement("urlCardsContainer").classList.add("hidden");
-  getElement("addUrlBtn").classList.add("hidden");
-  getElement("urlPlaceholder").classList.remove("hidden");
-}
-
-export function hideDiscoveringPlaceholder(): void {
-  getElement("urlPlaceholder").classList.add("hidden");
-  getElement("urlCardsContainer").classList.remove("hidden");
-  getElement("addUrlBtn").classList.remove("hidden");
+// The URL cards section stays hidden ("idle") until the first search of the
+// session — either a discovery run or loading a favourite. Every caller that
+// changes what the section shows goes through this so visibility ownership
+// isn't implicit in call order.
+export function setUrlsSectionState(state: UrlsSectionState): void {
+  getElement("urlsSection").classList.toggle("hidden", state === "idle");
+  getElement("urlPlaceholder").classList.toggle("hidden", state !== "discovering");
+  getElement("urlCardsContainer").classList.toggle("hidden", state === "discovering");
+  getElement("addUrlBtn").classList.toggle("hidden", state === "discovering");
 }
 
 // loadDiscoveryResults, loadSavedSearchAsync, and handleDiscoverySubmitAsync
@@ -141,8 +136,7 @@ let discoveryRequestId = 0;
 
 export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   discoveryRequestId++;
-  hideDiscoveringPlaceholder();
-  revealUrlsSection();
+  setUrlsSectionState("ready");
   trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
   if (search.urls.length === 0) return;
@@ -174,8 +168,7 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   discoveryErrorElement.style.display = "none";
   discoveryButton.disabled = true;
   discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
-  showDiscoveringPlaceholder();
-  revealUrlsSection();
+  setUrlsSectionState("discovering");
   trimUrlCardsToOne();
   urlCards[0].dom.input.value = "";
   handleUrlInputChanged(urlCards[0]);
@@ -207,7 +200,7 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   } finally {
     discoveryButton.textContent = DISCOVERY_BUTTON_LABEL;
     updateDiscoveryBtn();
-    hideDiscoveringPlaceholder();
+    setUrlsSectionState("ready");
   }
 }
 
