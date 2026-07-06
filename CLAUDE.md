@@ -7,6 +7,8 @@ ln -sf /Users/deanoemcke/Projects/sifty-webapp/node_modules \
        /Users/deanoemcke/Projects/sifty-webapp.worktrees/<worktree-name>/node_modules
 ```
 
+Each worktree's dev server (`npm run dev`) binds to a fixed, deterministic port derived from the worktree's directory name: `5173 + <trailing digit in the directory name>` (main `sifty-webapp` = 5173, `sifty-webapp1` = 5174, `sifty-webapp2` = 5175, `sifty-webapp3` = 5176, etc.). `vite.config.ts` sets `strictPort: true`, so if `npm run dev` fails to start, the port is genuinely already in use by *this same worktree's* prior server — check via `lsof -i :<port>` and either reuse it or kill it, rather than assuming a code bug. Never assume port 5173 is "the" dev server when working in a non-main worktree.
+
 **Always run `vitest` and `tsc` from the worktree's own directory** — never `cd` to the parent project first. Running from the parent will silently test the parent's source files instead of the worktree's, giving false results.
 
 ---

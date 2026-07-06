@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { getWorktreePort } from './vite.config.helpers';
 import { handleCancelSearch } from './src/server/routes/cancelSearch';
 import { handleQuickSearch } from './src/server/routes/quickSearch';
 import { handleDeepSearch } from './src/server/routes/deepSearch';
@@ -14,6 +15,10 @@ Object.assign(process.env, loadEnv('development', process.cwd(), ''));
 type Next = (err?: unknown) => void;
 
 export default defineConfig({
+  server: {
+    port: getWorktreePort(process.cwd()),
+    strictPort: true,
+  },
   plugins: [{
     name: 'sifty-api',
     configureServer(server) {
