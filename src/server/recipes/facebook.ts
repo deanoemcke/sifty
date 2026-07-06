@@ -12,7 +12,7 @@ import type {
   Recipe,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
-import { aiJSON } from "../ai";
+import { aiJSON, applyAiJsonResult } from "../ai";
 import { getRegions } from "../services/regions";
 
 const USER_AGENT =
@@ -518,13 +518,10 @@ export async function buildFacebookSearchQueryAsync(
   prompt: string,
   aiConfig: AiConfig,
 ): Promise<string> {
-  const result = (await aiJSON(
-    aiConfig,
-    "facebook:query",
-    FACEBOOK_QUERY_SYSTEM_PROMPT,
-    prompt.trim(),
-    64,
-  )) as Record<string, unknown> | null;
+  const result = applyAiJsonResult(
+    aiConfig.cooldownStore,
+    await aiJSON(aiConfig, "facebook:query", FACEBOOK_QUERY_SYSTEM_PROMPT, prompt.trim(), 64),
+  ) as Record<string, unknown> | null;
   if (typeof result?.query !== "string" || !result.query.trim()) {
     throw new Error("facebook:query AI returned invalid query");
   }

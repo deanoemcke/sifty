@@ -169,13 +169,40 @@ function truncate(text: string, limit = 200): string {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
+// The result of one aiJSON call. `aiJSON` is a pure HTTP/retry executor — it never
+// touches the cooldown store itself. When a 429 response confidently reports a
+// rate limit (see `ParsedRetryDelay.isConfident`), it hands back everything an
+// orchestration layer needs to update cooldown policy (`providerKey`,
+// `cooldownUntilMs`) instead of mutating that state as a side effect. Every other
+// failure (non-429 errors, network errors, parse errors, an unconfident guess, or
+// exceeding the total time budget) is still a thrown `Error` — those aren't a
+// cooldown-policy decision, just outright failures.
+export type AiJsonResult =
+  | { kind: "ok"; value: unknown }
+  | { kind: "rate-limited"; providerKey: string; cooldownUntilMs: number; message: string };
+
+// Thin orchestration layer above `aiJSON`: applies a rate-limited outcome to the
+// cooldown store and re-throws it as a plain `Error`, or unwraps a successful
+// value. Callers that only care about "did this succeed" can keep treating AI
+// calls as throw-on-failure while still being the ones responsible for deciding
+// what a rate-limited outcome means for provider cooldown — `aiJSON` itself no
+// longer makes that decision.
+export function applyAiJsonResult(
+  cooldownStore: ProviderCooldownStore,
+  result: AiJsonResult,
+): unknown {
+  if (result.kind === "ok") return result.value;
+  cooldownStore.markExhausted(result.providerKey, result.cooldownUntilMs);
+  throw new Error(result.message);
+}
+
 export async function aiJSON(
   aiConfig: AiConfig,
   label: string,
   systemMessage: string,
   userMessage: string,
   maxTokens: number,
-): Promise<unknown> {
+): Promise<AiJsonResult> {
   console.log(
     `[AI] ${label} → model: ${aiConfig.model}\n[system] ${truncate(systemMessage)}\n[user] ${truncate(userMessage)}`,
   );
@@ -214,10 +241,12 @@ export async function aiJSON(
         const { delaySecs, isConfident } = parseRetryDelaySeconds(apiResponse, errorMessage);
         const remainingMs = deadline - Date.now();
         if (isConfident && delaySecs * 1000 > remainingMs) {
-          aiConfig.cooldownStore.markExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
-          throw new Error(
-            `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
-          );
+          return {
+            kind: "rate-limited",
+            providerKey: aiConfig.providerKey,
+            cooldownUntilMs: Date.now() + delaySecs * 1000,
+            message: `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
+          };
         }
         console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
         await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
@@ -230,15 +259,6 @@ export async function aiJSON(
   if (apiResponse === undefined)
     throw new Error(`AI request failed: no response received (${label})`);
   if (!apiResponse.ok) {
-    if (apiResponse.status === 429) {
-      const { delaySecs, isConfident } = parseRetryDelaySeconds(
-        apiResponse,
-        extractRetryMessage(lastErrorData),
-      );
-      if (isConfident) {
-        aiConfig.cooldownStore.markExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
-      }
-    }
     const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<
       string,
       unknown
@@ -247,9 +267,22 @@ export async function aiJSON(
       (errorBody?.error as Record<string, unknown>)?.message ??
       errorBody?.message ??
       JSON.stringify(lastErrorData);
-    throw new Error(
-      `AI error (${label}) [${apiResponse.status}]: ${errorMessage || apiResponse.statusText}`,
-    );
+    const message = `AI error (${label}) [${apiResponse.status}]: ${errorMessage || apiResponse.statusText}`;
+    if (apiResponse.status === 429) {
+      const { delaySecs, isConfident } = parseRetryDelaySeconds(
+        apiResponse,
+        extractRetryMessage(lastErrorData),
+      );
+      if (isConfident) {
+        return {
+          kind: "rate-limited",
+          providerKey: aiConfig.providerKey,
+          cooldownUntilMs: Date.now() + delaySecs * 1000,
+          message,
+        };
+      }
+    }
+    throw new Error(message);
   }
   const responseData = (await apiResponse.json()) as OpenAIResponseShape;
   const raw: string = responseData.choices?.[0]?.message?.content ?? "{}";
@@ -264,7 +297,7 @@ export async function aiJSON(
     stripped = jsonMatch ? jsonMatch[0].trim() : raw.trim();
   }
   try {
-    return JSON.parse(stripped);
+    return { kind: "ok", value: JSON.parse(stripped) };
   } catch {
     throw new Error(`AI parse error (${label}): ${stripped.slice(0, 200)}`);
   }

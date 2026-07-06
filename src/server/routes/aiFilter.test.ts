@@ -5,7 +5,14 @@ import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON, getAIConfig } from "../ai";
 import { handleAiFilter } from "./aiFilter";
 
-vi.mock("../ai", () => ({ aiJSON: vi.fn(), getAIConfig: vi.fn() }));
+// `applyAiJsonResult` is left as the real implementation (not mocked) so these tests
+// exercise the actual orchestration logic — unwrapping an ok result, or marking the
+// cooldown store and throwing for a rate-limited one — with only `aiJSON` and
+// `getAIConfig` faked.
+vi.mock("../ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ai")>();
+  return { ...actual, aiJSON: vi.fn(), getAIConfig: vi.fn() };
+});
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -85,8 +92,14 @@ describe("handleAiFilter", () => {
       .mockReturnValueOnce(CONFIG_A) // batch 1
       .mockReturnValueOnce(CONFIG_B); // batch 2 — rotated mid-run
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({ results: [{ index: 1, pass: true, reason: null }] })
-      .mockResolvedValueOnce({ results: [{ index: 1, pass: true, reason: null }] });
+      .mockResolvedValueOnce({
+        kind: "ok",
+        value: { results: [{ index: 1, pass: true, reason: null }] },
+      })
+      .mockResolvedValueOnce({
+        kind: "ok",
+        value: { results: [{ index: 1, pass: true, reason: null }] },
+      });
 
     // BATCH_SIZE is 50 — 51 listings forces a second batch.
     const listings = Array.from({ length: 51 }, (_, i) => makeListing(`https://example.com/${i}`));
@@ -120,5 +133,38 @@ describe("handleAiFilter", () => {
     await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
 
     expect(response.events).toContainEqual({ type: "error", message: "AI rate limited" });
+  });
+
+  it("marks the resolved config's cooldown store exhausted and reports the error over SSE when a batch is rate-limited", async () => {
+    const markExhausted = vi.fn();
+    const CONFIG_A = {
+      url: "a",
+      model: "m",
+      apiKey: "k",
+      providerKey: "a",
+      cooldownStore: { markExhausted, getCooldownUntil: () => undefined },
+    };
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    const cooldownUntilMs = Date.now() + 60_000;
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: "rate-limited",
+      providerKey: "a",
+      cooldownUntilMs,
+      message: "AI rate limited (ai-filter): provider asks to retry",
+    });
+
+    const request = makeRequest({
+      listings: [makeListing("https://example.com/1")],
+      prompt: "laptop",
+    });
+    const response = makeResponse();
+
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
+
+    expect(response.events).toContainEqual({
+      type: "error",
+      message: "AI rate limited (ai-filter): provider asks to retry",
+    });
+    expect(markExhausted).toHaveBeenCalledWith("a", cooldownUntilMs);
   });
 });

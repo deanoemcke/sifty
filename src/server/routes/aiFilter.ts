@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { ConcurrencyQueue } from "../../lib/queue";
 import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { requireArray, requireListingUrl, requireString } from "../../lib/validate";
-import { aiJSON, getAIConfig } from "../ai";
+import { aiJSON, applyAiJsonResult, getAIConfig } from "../ai";
 import { readBody, sendJSON, sse, startSSE } from "../helpers";
 
 const AI_FILTER_SYSTEM_MESSAGE =
@@ -68,12 +68,16 @@ export async function handleAiFilter(
           // Re-resolved fresh per batch (not hoisted) so a 429 on an earlier
           // batch actually rotates the remaining queued batches to the next
           // live provider instead of repeating the same doomed one.
-          const result = await aiJSON(
-            getAIConfig(cooldownStore),
-            "ai-filter",
-            AI_FILTER_SYSTEM_MESSAGE,
-            `Criteria: ${prompt}\n\nListings:\n${numbered}`,
-            4096,
+          const aiConfig = getAIConfig(cooldownStore);
+          const result = applyAiJsonResult(
+            aiConfig.cooldownStore,
+            await aiJSON(
+              aiConfig,
+              "ai-filter",
+              AI_FILTER_SYSTEM_MESSAGE,
+              `Criteria: ${prompt}\n\nListings:\n${numbered}`,
+              4096,
+            ),
           );
           if (typeof result !== "object" || result === null)
             throw new Error("AI filter: expected object response");

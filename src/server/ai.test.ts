@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiConfig, ProviderCooldownStore } from "./ai";
 import {
   aiJSON,
+  applyAiJsonResult,
   createProviderCooldownStore,
   getAIConfig,
   MAX_PROVIDER_COOLDOWN_MS,
@@ -68,19 +69,57 @@ describe("aiJSON", () => {
     await vi.runAllTimersAsync();
     const result = await promise;
 
-    expect(result).toEqual({ answer: 42 });
+    expect(applyAiJsonResult(cooldownStore, result)).toEqual({ answer: 42 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("exhausts retries and throws on persistent 429", async () => {
+  it("exhausts retries and returns a rate-limited result on persistent 429, which the orchestration layer throws", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(0.01));
 
     const promise = aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100);
-    const assertion = expect(promise).rejects.toThrow("429");
     await vi.runAllTimersAsync();
-    await assertion;
+    const result = await promise;
 
+    expect(result.kind).toBe("rate-limited");
+    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
     expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_RETRIES);
+  });
+
+  it("does not touch the cooldown store itself — a rate-limited result carries the provider key and cooldown time without mutating state", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(0.01));
+
+    const promise = aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toMatchObject({
+      kind: "rate-limited",
+      providerKey: "mock-provider",
+    });
+    // aiJSON returning the result must not itself have called markExhausted.
+    expect(cooldownStore.getCooldownUntil("mock-provider")).toBeUndefined();
+  });
+
+  describe("applyAiJsonResult", () => {
+    it("returns the value unchanged for an ok result", () => {
+      expect(applyAiJsonResult(cooldownStore, { kind: "ok", value: { answer: 1 } })).toEqual({
+        answer: 1,
+      });
+    });
+
+    it("marks the cooldown store exhausted and throws for a rate-limited result", () => {
+      const cooldownUntilMs = Date.now() + 60_000;
+      expect(() =>
+        applyAiJsonResult(cooldownStore, {
+          kind: "rate-limited",
+          providerKey: "mock-provider",
+          cooldownUntilMs,
+          message: "AI rate limited (test): provider asks to retry",
+        }),
+      ).toThrow("AI rate limited (test): provider asks to retry");
+
+      expect(cooldownStore.getCooldownUntil("mock-provider")).toBe(cooldownUntilMs);
+    });
   });
 
   it("exhausts retries and includes the error body message on persistent 429", async () => {
@@ -89,9 +128,10 @@ describe("aiJSON", () => {
     );
 
     const promise = aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100);
-    const assertion = expect(promise).rejects.toThrow("you hit the rate limit");
     await vi.runAllTimersAsync();
-    await assertion;
+    const result = await promise;
+
+    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("you hit the rate limit");
   });
 
   it("propagates the original error when fetch rejects rather than a cryptic TypeError", async () => {
@@ -111,7 +151,7 @@ describe("aiJSON", () => {
     await vi.runAllTimersAsync();
     const result = await promise;
 
-    expect(result).toEqual({ answer: 1 });
+    expect(applyAiJsonResult(cooldownStore, result)).toEqual({ answer: 1 });
   });
 
   it("treats OpenRouter's documented 429 shape (retry-after header, generic metadata-only message) as a confident delay", async () => {
@@ -132,7 +172,8 @@ describe("aiJSON", () => {
       ),
     );
 
-    await expect(aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100)).rejects.toThrow(
+    const result = await aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100);
+    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow(
       `AI rate limited (test): provider asks to retry in ${overBudgetSecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
     );
 
@@ -148,7 +189,7 @@ describe("aiJSON", () => {
     await vi.runAllTimersAsync();
     const result = await promise;
 
-    expect(result).toEqual({ answer: 2 });
+    expect(applyAiJsonResult(cooldownStore, result)).toEqual({ answer: 2 });
   });
 
   it("throws immediately without sleeping when the provider's retry delay exceeds the total budget", async () => {
@@ -157,7 +198,8 @@ describe("aiJSON", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(make429Response(overBudgetSecs));
 
-    await expect(aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100)).rejects.toThrow(
+    const result = await aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100);
+    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow(
       `AI rate limited (test): provider asks to retry in ${overBudgetSecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
     );
 
@@ -227,9 +269,8 @@ describe("aiJSON", () => {
 
       const overBudgetSecs = TOTAL_TIMEOUT_MS / 1000 + 5;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(overBudgetSecs));
-      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow(
-        "AI rate limited",
-      );
+      const result = await aiJSON(groqConfig, "test", "sys", "usr", 100);
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       const nextConfig = getAIConfig(cooldownStore);
       expect(nextConfig.url).toBe(OPENROUTER_URL);
@@ -242,9 +283,9 @@ describe("aiJSON", () => {
 
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(0.01));
       const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
-      const assertion = expect(promise).rejects.toThrow("429");
       await vi.runAllTimersAsync();
-      await assertion;
+      const result = await promise;
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
 
       const nextConfig = getAIConfig(cooldownStore);
       expect(nextConfig.url).toBe(OPENROUTER_URL);
@@ -256,9 +297,8 @@ describe("aiJSON", () => {
 
       const overBudgetSecs = TOTAL_TIMEOUT_MS / 1000 + 5;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(overBudgetSecs));
-      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow(
-        "AI rate limited",
-      );
+      const result = await aiJSON(groqConfig, "test", "sys", "usr", 100);
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       expect(() => getAIConfig(cooldownStore)).toThrow(
         /groq: recovers in \d+s.*openrouter: no OPENROUTER_API_KEY configured.*gemini: no GEMINI_API_KEY configured/s,
@@ -271,9 +311,9 @@ describe("aiJSON", () => {
 
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(1));
       const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
-      const assertion = expect(promise).rejects.toThrow("429");
       await vi.runAllTimersAsync();
-      await assertion;
+      const result = await promise;
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
 
       expect(() => getAIConfig(cooldownStore)).toThrow("groq: recovers in");
 
@@ -285,9 +325,8 @@ describe("aiJSON", () => {
     it("marks cooldown against the config's own providerKey, so an unrelated config's exhaustion doesn't affect a real provider", async () => {
       const overBudgetSecs = TOTAL_TIMEOUT_MS / 1000 + 5;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(overBudgetSecs));
-      await expect(
-        aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100),
-      ).rejects.toThrow("AI rate limited");
+      const result = await aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100);
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       vi.stubEnv("GROQ_API_KEY", "groq-key");
       const config = getAIConfig(cooldownStore);
@@ -303,14 +342,12 @@ describe("aiJSON", () => {
       const fetchMock = vi.spyOn(globalThis, "fetch");
 
       fetchMock.mockResolvedValueOnce(make429Response(longDelaySecs));
-      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow(
-        "AI rate limited",
-      );
+      const firstResult = await aiJSON(groqConfig, "test", "sys", "usr", 100);
+      expect(() => applyAiJsonResult(cooldownStore, firstResult)).toThrow("AI rate limited");
 
       fetchMock.mockResolvedValueOnce(make429Response(shortDelaySecs));
-      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow(
-        "AI rate limited",
-      );
+      const secondResult = await aiJSON(groqConfig, "test", "sys", "usr", 100);
+      expect(() => applyAiJsonResult(cooldownStore, secondResult)).toThrow("AI rate limited");
 
       expect(() => getAIConfig(cooldownStore)).toThrow(`recovers in ${Math.ceil(longDelaySecs)}s`);
     });
@@ -321,9 +358,8 @@ describe("aiJSON", () => {
 
       const extremeDelaySecs = 999_999_999;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(extremeDelaySecs));
-      await expect(aiJSON(groqConfig, "test", "sys", "usr", 100)).rejects.toThrow(
-        "AI rate limited",
-      );
+      const result = await aiJSON(groqConfig, "test", "sys", "usr", 100);
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       const cappedRecoversInSecs = Math.ceil(MAX_PROVIDER_COOLDOWN_MS / 1000);
       expect(() => getAIConfig(cooldownStore)).toThrow(`recovers in ${cappedRecoversInSecs}s`);
@@ -389,9 +425,8 @@ describe("aiJSON", () => {
 
       const overBudgetSecs = TOTAL_TIMEOUT_MS / 1000 + 5;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(make429Response(overBudgetSecs));
-      await expect(aiJSON(configFromStoreA, "test", "sys", "usr", 100)).rejects.toThrow(
-        "AI rate limited",
-      );
+      const result = await aiJSON(configFromStoreA, "test", "sys", "usr", 100);
+      expect(() => applyAiJsonResult(storeA, result)).toThrow("AI rate limited");
 
       // storeA now has groq in cooldown...
       expect(() => getAIConfig(storeA)).toThrow("groq: recovers in");

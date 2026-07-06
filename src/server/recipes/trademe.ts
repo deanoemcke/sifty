@@ -12,7 +12,7 @@ import type {
   RecipeDiscoverResult,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
-import { aiJSON } from "../ai";
+import { aiJSON, applyAiJsonResult } from "../ai";
 import { MAX_PAGES_PER_SEARCH } from "../constants";
 import type { CategoryRow } from "../db";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
@@ -563,13 +563,17 @@ async function buildDiscoverUrlsAsync(
   const broadDisplayList = broad.map((category) => category.display).join("\n");
 
   // 512 output tokens: step-1 returns a tiny JSON object (3 string fields) — input size (~3 k tokens for 392 categories) is unlimited by this parameter.
-  const broadCategoryPick = (await aiJSON(
-    context.getAiConfig(),
-    "step1",
-    STEP1_SYSTEM_PROMPT,
-    `I'm looking for: ${prompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
-    512,
-  )) as Record<string, unknown> | null;
+  const step1AiConfig = context.getAiConfig();
+  const broadCategoryPick = applyAiJsonResult(
+    step1AiConfig.cooldownStore,
+    await aiJSON(
+      step1AiConfig,
+      "step1",
+      STEP1_SYSTEM_PROMPT,
+      `I'm looking for: ${prompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
+      512,
+    ),
+  ) as Record<string, unknown> | null;
   if (typeof broadCategoryPick !== "object" || broadCategoryPick === null)
     throw new Error("discover step1: expected object response");
   const rawCategories = (
@@ -603,12 +607,16 @@ async function buildDiscoverUrlsAsync(
     // 1024 output tokens: step-2 returns a JSON array of slug+searchString pairs; a broad category can have dozens of subcategories, so 1024 gives headroom over step-1's 512.
     // Re-resolved fresh per iteration (not hoisted) so a 429 on an earlier slug
     // actually rotates to the next live provider for the remaining slugs.
-    const result = await aiJSON(
-      context.getAiConfig(),
-      `step2:${top2Slug}`,
-      STEP2_SYSTEM_PROMPT,
-      `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
-      1024,
+    const step2AiConfig = context.getAiConfig();
+    const result = applyAiJsonResult(
+      step2AiConfig.cooldownStore,
+      await aiJSON(
+        step2AiConfig,
+        `step2:${top2Slug}`,
+        STEP2_SYSTEM_PROMPT,
+        `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
+        1024,
+      ),
     );
     subcategoryPickResults.push({
       top2Slug,

@@ -20,7 +20,13 @@ import {
   trademeRecipe,
 } from "./trademe";
 
-vi.mock("../ai", () => ({ aiJSON: vi.fn() }));
+// `applyAiJsonResult` is left as the real implementation (not mocked) so these tests
+// exercise the actual orchestration logic — unwrapping an ok result, or marking the
+// cooldown store and throwing for a rate-limited one — with only `aiJSON` faked.
+vi.mock("../ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ai")>();
+  return { ...actual, aiJSON: vi.fn() };
+});
 vi.mock("../db", () => ({
   getDb: vi.fn(),
   stmtGetCategoriesAtDepth2: vi.fn(),
@@ -786,6 +792,15 @@ describe("buildDiscoverUrlsAsync", () => {
     cooldownStore: STUB_COOLDOWN_STORE,
   };
 
+  // aiJSON is mocked wholesale in this file, so its calls must resolve with the
+  // `AiJsonResult` shape (`{ kind: "ok", value }`) that the real function now
+  // returns — see src/server/ai.ts. `applyAiJsonResult` itself is NOT mocked
+  // (see the `vi.mock("../ai", ...)` above), so these tests exercise the real
+  // unwrap/mark/throw orchestration logic against a faked aiJSON.
+  function aiJsonOk(value: unknown) {
+    return { kind: "ok" as const, value };
+  }
+
   beforeEach(() => {
     vi.mocked(getDb).mockReturnValue({} as any);
     vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD } as any);
@@ -803,12 +818,16 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("returns Trade Me search URLs for AI-selected categories", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics"],
-        searchLabel: "laptops",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics"],
+          searchLabel: "laptops",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: "electronics/laptops", searchString: null }] }),
+      );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
@@ -822,12 +841,16 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("applies maxPrice to the generated URL", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics"],
-        searchLabel: "l",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics"],
+          searchLabel: "l",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: "electronics/laptops", searchString: null }] }),
+      );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 800,
@@ -839,12 +862,16 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("returns an empty warnings array on full success", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics"],
-        searchLabel: "l",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics"],
+          searchLabel: "l",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: "electronics/laptops", searchString: null }] }),
+      );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
@@ -856,12 +883,14 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("accumulates a warning for a step-2 null response and throws only when no URLs result", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics"],
-        searchLabel: "l",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics"],
+          searchLabel: "l",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(aiJsonOk(null));
 
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync("laptop", {
@@ -886,13 +915,17 @@ describe("buildDiscoverUrlsAsync", () => {
       },
     } as any);
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics", "Computers"],
-        searchLabel: "laptops",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ categories: [{ slug: "computers/laptops", searchString: null }] });
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics", "Computers"],
+          searchLabel: "laptops",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(aiJsonOk(null))
+      .mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: "computers/laptops", searchString: null }] }),
+      );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
@@ -907,12 +940,14 @@ describe("buildDiscoverUrlsAsync", () => {
 
   it("accumulates a warning for a step-2 malformed response and throws only when no URLs result", async () => {
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics"],
-        searchLabel: "l",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce({ notCategories: [] });
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics"],
+          searchLabel: "l",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(aiJsonOk({ notCategories: [] }));
 
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync("laptop", {
@@ -938,12 +973,16 @@ describe("buildDiscoverUrlsAsync", () => {
     } as any);
     // AI returns one valid category and one hallucinated one that doesn't exist in MOCK_TWO_BROAD
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics", "Hallucinated Category"],
-        searchLabel: "laptops",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics", "Hallucinated Category"],
+          searchLabel: "laptops",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: "electronics/laptops", searchString: null }] }),
+      );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync("laptop", {
       maxPrice: 0,
@@ -957,11 +996,13 @@ describe("buildDiscoverUrlsAsync", () => {
   });
 
   it("throws when all step-1 categories are unrecognised (zero valid slugs)", async () => {
-    vi.mocked(aiJSON).mockResolvedValueOnce({
-      categories: ["Hallucinated Category A", "Hallucinated Category B"],
-      searchLabel: "laptops",
-      searchQuery: "laptop",
-    });
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({
+        categories: ["Hallucinated Category A", "Hallucinated Category B"],
+        searchLabel: "laptops",
+        searchQuery: "laptop",
+      }),
+    );
 
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync("laptop", {
@@ -981,13 +1022,19 @@ describe("buildDiscoverUrlsAsync", () => {
     vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
     vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_TWO_SUBS } as any);
     vi.mocked(aiJSON)
-      .mockResolvedValueOnce({
-        categories: ["Electronics", "Computers"],
-        searchLabel: "laptops",
-        searchQuery: "laptop",
-      })
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] })
-      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] });
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics", "Computers"],
+          searchLabel: "laptops",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: "electronics/laptops", searchString: null }] }),
+      )
+      .mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: "electronics/laptops", searchString: null }] }),
+      );
 
     const ROTATED_AI = { ...MOCK_AI, providerKey: "rotated" };
     const getAiConfig = vi
@@ -1005,6 +1052,64 @@ describe("buildDiscoverUrlsAsync", () => {
     expect(getAiConfig).toHaveBeenCalledTimes(3);
     expect(vi.mocked(aiJSON).mock.calls[1][0]).toBe(MOCK_AI);
     expect(vi.mocked(aiJSON).mock.calls[2][0]).toBe(ROTATED_AI);
+  });
+
+  it("marks the resolved config's cooldown store exhausted and propagates the error when step1 is rate-limited", async () => {
+    const markExhausted = vi.fn();
+    const rateLimitedAiConfig = {
+      ...MOCK_AI,
+      cooldownStore: { markExhausted, getCooldownUntil: () => undefined },
+    };
+    const cooldownUntilMs = Date.now() + 60_000;
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: "rate-limited",
+      providerKey: "mock",
+      cooldownUntilMs,
+      message: "AI rate limited (step1): provider asks to retry",
+    });
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+        maxPrice: 0,
+        fulfillment: "any",
+        getAiConfig: () => rateLimitedAiConfig,
+      }),
+    ).rejects.toThrow("AI rate limited (step1)");
+
+    expect(markExhausted).toHaveBeenCalledWith("mock", cooldownUntilMs);
+  });
+
+  it("marks the resolved config's cooldown store exhausted and propagates the error when a step2 call is rate-limited", async () => {
+    const markExhausted = vi.fn();
+    const rateLimitedAiConfig = {
+      ...MOCK_AI,
+      cooldownStore: { markExhausted, getCooldownUntil: () => undefined },
+    };
+    const cooldownUntilMs = Date.now() + 60_000;
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce(
+        aiJsonOk({
+          categories: ["Electronics"],
+          searchLabel: "laptops",
+          searchQuery: "laptop",
+        }),
+      )
+      .mockResolvedValueOnce({
+        kind: "rate-limited",
+        providerKey: "mock",
+        cooldownUntilMs,
+        message: "AI rate limited (step2:electronics/electronics): provider asks to retry",
+      });
+
+    await expect(
+      trademeRecipe.buildDiscoverUrlsAsync("laptop", {
+        maxPrice: 0,
+        fulfillment: "any",
+        getAiConfig: () => rateLimitedAiConfig,
+      }),
+    ).rejects.toThrow("AI rate limited (step2:electronics/electronics)");
+
+    expect(markExhausted).toHaveBeenCalledWith("mock", cooldownUntilMs);
   });
 });
 
