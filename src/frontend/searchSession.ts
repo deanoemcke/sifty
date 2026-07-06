@@ -111,12 +111,18 @@ export function hideDiscoveringPlaceholder(): void {
   getElement("addUrlBtn").classList.remove("hidden");
 }
 
+// loadDiscoveryResults, loadSavedSearchAsync, and handleDiscoverySubmitAsync
+// all start a new session by dropping down to a single, blank URL card.
+function trimUrlCardsToOne(): void {
+  resetAllResults();
+  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+}
+
 export function loadDiscoveryResults(
   data: { urls: string[]; name: string },
   aiPrompt: string,
 ): void {
-  resetAllResults();
-  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+  trimUrlCardsToOne();
   urlCards[0].dom.input.value = data.urls[0];
   for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
     createUrlCard(searchUrlCardAsync).dom.input.value = data.urls[urlIndex];
@@ -131,8 +137,7 @@ export function loadDiscoveryResults(
 
 export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   revealUrlsSection();
-  resetAllResults();
-  while (urlCards.length > 1) removeUrlCard(urlCards[urlCards.length - 1]);
+  trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
   if (search.urls.length === 0) return;
   urlCards[0].dom.input.value = search.urls[0];
@@ -164,6 +169,9 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
   showDiscoveringPlaceholder();
   revealUrlsSection();
+  trimUrlCardsToOne();
+  urlCards[0].dom.input.value = "";
+  handleUrlInputChanged(urlCards[0]);
   try {
     const response = await fetch("/api/discover", {
       method: "POST",
