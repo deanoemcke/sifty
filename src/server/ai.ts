@@ -1,6 +1,8 @@
 // Server-side only — AI provider configuration and JSON completion helper.
 
 import type { AiConfig } from "../lib/recipes/base";
+import type { AiAuditEntry } from "./aiAuditLog";
+import { recordAiAuditEntry } from "./aiAuditLog";
 
 export type { AiConfig };
 
@@ -45,11 +47,37 @@ function parseRetryDelaySeconds(response: Response, errorMessage: string): numbe
   return 10;
 }
 
+function extractErrorBodyMessage(errorData: Record<string, unknown>): string | undefined {
+  const errorBody = (Array.isArray(errorData) ? errorData[0] : errorData) as Record<
+    string,
+    unknown
+  >;
+  const message = (errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message;
+  return typeof message === "string" ? message : undefined;
+}
+
+function extractJsonContent(raw: string): string {
+  // Extract JSON from a markdown code fence if the model wrapped it in prose
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch) return fenceMatch[1].trim();
+  // Fallback: grab from first { to last }
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  return jsonMatch ? jsonMatch[0].trim() : raw.trim();
+}
+
 export const MAX_RETRIES = 2;
 export const TOTAL_TIMEOUT_MS = 45_000;
 
-function truncate(text: string, limit = 200): string {
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+type AuditEntryOverrides = Omit<
+  AiAuditEntry,
+  "timestamp" | "label" | "model" | "systemMessage" | "userMessage"
+>;
+
+function buildAuditEntry(
+  context: { label: string; model: string; systemMessage: string; userMessage: string },
+  overrides: AuditEntryOverrides,
+): AiAuditEntry {
+  return { timestamp: new Date().toISOString(), ...context, ...overrides };
 }
 
 export async function aiJSON(
@@ -59,9 +87,12 @@ export async function aiJSON(
   userMessage: string,
   maxTokens: number,
 ): Promise<unknown> {
-  console.log(
-    `[AI] ${label} → model: ${aiConfig.model}\n[system] ${truncate(systemMessage)}\n[user] ${truncate(userMessage)}`,
-  );
+  console.log(`[AI] ${label} → calling model: ${aiConfig.model}`);
+
+  const auditContext = { label, model: aiConfig.model, systemMessage, userMessage };
+  const recordAttempt = (overrides: AuditEntryOverrides) =>
+    recordAiAuditEntry(buildAuditEntry(auditContext, overrides));
+
   const requestBody = JSON.stringify({
     model: aiConfig.model,
     max_tokens: maxTokens,
@@ -71,73 +102,107 @@ export async function aiJSON(
       { role: "user", content: userMessage },
     ],
   });
-  let apiResponse: Response | undefined;
-  let lastErrorData: Record<string, unknown> = {};
   const deadline = Date.now() + TOTAL_TIMEOUT_MS;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(`AI request failed: exceeded total budget (${label})`);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(30_000, remaining));
-    try {
-      apiResponse = await fetch(aiConfig.url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
-        body: requestBody,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    if (!apiResponse.ok) {
-      const parsed = (await apiResponse.json().catch(() => null)) as Record<string, unknown> | null;
-      if (parsed !== null) lastErrorData = parsed;
-      if (apiResponse.status === 429 && attempt < MAX_RETRIES) {
-        const errorBody = (
-          Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData
-        ) as Record<string, unknown>;
-        const errorMessage = String(
-          (errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "",
-        );
-        const delaySecs = parseRetryDelaySeconds(apiResponse, errorMessage);
-        console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
-        await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
-        continue;
-      }
-      break;
-    }
-    break;
-  }
-  if (apiResponse === undefined)
-    throw new Error(`AI request failed: no response received (${label})`);
-  if (!apiResponse.ok) {
-    const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<
-      string,
-      unknown
-    >;
-    const errorMessage =
-      (errorBody?.error as Record<string, unknown>)?.message ??
-      errorBody?.message ??
-      JSON.stringify(lastErrorData);
-    throw new Error(
-      `AI error (${label}) [${apiResponse.status}]: ${errorMessage || apiResponse.statusText}`,
-    );
-  }
-  const responseData = (await apiResponse.json()) as OpenAIResponseShape;
-  const raw: string = responseData.choices?.[0]?.message?.content ?? "{}";
-  // Extract JSON from a markdown code fence if the model wrapped it in prose
-  let stripped: string;
-  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch) {
-    stripped = fenceMatch[1].trim();
-  } else {
-    // Fallback: grab from first { to last }
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    stripped = jsonMatch ? jsonMatch[0].trim() : raw.trim();
-  }
+  let lastErrorData: Record<string, unknown> = {};
+
   try {
-    return JSON.parse(stripped);
-  } catch {
-    throw new Error(`AI parse error (${label}): ${stripped.slice(0, 200)}`);
+    for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+      const attemptStartedAt = Date.now();
+      const remaining = deadline - attemptStartedAt;
+      if (remaining <= 0) {
+        const errorMessage = `AI request failed: exceeded total budget (${label})`;
+        recordAttempt({ attempt, status: "budget_exceeded", errorMessage, durationMs: 0 });
+        throw new Error(errorMessage);
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(30_000, remaining));
+      let apiResponse: Response;
+      try {
+        apiResponse = await fetch(aiConfig.url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${aiConfig.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: requestBody,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        recordAttempt({
+          attempt,
+          status: "network_error",
+          errorMessage,
+          durationMs: Date.now() - attemptStartedAt,
+        });
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (!apiResponse.ok) {
+        const parsed = (await apiResponse.json().catch(() => null)) as Record<
+          string,
+          unknown
+        > | null;
+        if (parsed !== null) lastErrorData = parsed;
+        const bodyMessage = extractErrorBodyMessage(lastErrorData);
+
+        if (apiResponse.status === 429 && attempt <= MAX_RETRIES) {
+          const delaySecs = parseRetryDelaySeconds(apiResponse, bodyMessage ?? "");
+          recordAttempt({
+            attempt,
+            status: "rate_limited",
+            httpStatus: 429,
+            errorMessage: bodyMessage ?? "",
+            durationMs: Date.now() - attemptStartedAt,
+          });
+          console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
+          continue;
+        }
+
+        const errorMessage = bodyMessage || apiResponse.statusText || JSON.stringify(lastErrorData);
+        recordAttempt({
+          attempt,
+          status: "http_error",
+          httpStatus: apiResponse.status,
+          errorMessage,
+          durationMs: Date.now() - attemptStartedAt,
+        });
+        throw new Error(`AI error (${label}) [${apiResponse.status}]: ${errorMessage}`);
+      }
+
+      const responseData = (await apiResponse.json()) as OpenAIResponseShape;
+      const raw: string = responseData.choices?.[0]?.message?.content ?? "{}";
+      const stripped = extractJsonContent(raw);
+      try {
+        const result: unknown = JSON.parse(stripped);
+        recordAttempt({
+          attempt,
+          status: "success",
+          response: result,
+          durationMs: Date.now() - attemptStartedAt,
+        });
+        console.log(`[AI] ${label} → success`);
+        return result;
+      } catch {
+        const errorMessage = `AI parse error (${label}): ${stripped.slice(0, 200)}`;
+        recordAttempt({
+          attempt,
+          status: "parse_error",
+          rawContent: raw,
+          errorMessage,
+          durationMs: Date.now() - attemptStartedAt,
+        });
+        throw new Error(errorMessage);
+      }
+    }
+    throw new Error(`AI request failed: no response received (${label})`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`[AI] ${label} → failed: ${errorMessage}`);
+    throw error;
   }
 }
