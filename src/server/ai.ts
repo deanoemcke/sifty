@@ -121,13 +121,14 @@ function parseRetryDelaySeconds(response: Response, errorMessage: string): Parse
   const match = errorMessage.match(/try again in (\d+\.?\d*)s/i);
   if (match) return { delaySecs: Number.parseFloat(match[1]), isConfident: true };
   // Verified accurate for Groq (its reported delay matches its real daily-quota
-  // reset). NOT verified for OpenRouter or Gemini — confirm their actual 429
-  // response shape (header vs. body message; per-minute vs. per-day/quota
-  // wording) against the live APIs before trusting this default to
-  // distinguish a short rate limit from a full quota exhaustion for those two.
-  // Because it's unverified for two of three providers, callers must not treat
-  // it as confident: it must not justify a fail-fast decision or a recorded
-  // provider cooldown, only a single in-process retry sleep.
+  // reset) and for OpenRouter (its docs confirm a standard retry-after header on
+  // 429s, which the branch above already handles). NOT verified for Gemini —
+  // Google's docs don't publish the OpenAI-compatible endpoint's 429 error shape,
+  // so confirm it against a live captured response before trusting this default
+  // to distinguish a short rate limit from a full quota exhaustion for Gemini.
+  // Because it's unverified for Gemini, callers must not treat it as confident:
+  // it must not justify a fail-fast decision or a recorded provider cooldown,
+  // only a single in-process retry sleep.
   return { delaySecs: 10, isConfident: false };
 }
 

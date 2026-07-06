@@ -107,6 +107,31 @@ describe("aiJSON", () => {
     expect(result).toEqual({ answer: 1 });
   });
 
+  it("treats OpenRouter's documented 429 shape (retry-after header, generic metadata-only message) as a confident delay", async () => {
+    const overBudgetSecs = TOTAL_TIMEOUT_MS / 1000 + 5;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeResponse(
+        429,
+        {
+          error: {
+            code: 429,
+            message: "Rate limit exceeded",
+            metadata: {
+              headers: { "X-RateLimit-Limit": "80", "X-RateLimit-Remaining": "0" },
+            },
+          },
+        },
+        { "retry-after": String(overBudgetSecs) },
+      ),
+    );
+
+    await expect(aiJSON(MOCK_CONFIG, "test", "sys", "usr", 100)).rejects.toThrow(
+      `AI rate limited (test): provider asks to retry in ${overBudgetSecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("defaults to 10 s delay when neither retry-after header nor body message is present", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(makeResponse(429, {}))
