@@ -1,10 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON, getAIConfig } from "../ai";
 import { handleAiFilter } from "./aiFilter";
 
 vi.mock("../ai", () => ({ aiJSON: vi.fn(), getAIConfig: vi.fn() }));
+
+const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
+  markExhausted: () => {},
+  getCooldownUntil: () => undefined,
+};
 
 function makeRequest(body: unknown): IncomingMessage {
   const stream = new PassThrough();
@@ -52,7 +58,7 @@ describe("handleAiFilter", () => {
     });
     const response = makeResponse();
 
-    await handleAiFilter(request, response);
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
 
     expect(response.statusCode).toBe(500);
     expect(response.body).toContain("GROQ_API_KEY is not set");
@@ -60,8 +66,20 @@ describe("handleAiFilter", () => {
   });
 
   it("re-resolves getAIConfig() fresh for each batch, so a mid-run provider rotation reaches later batches", async () => {
-    const CONFIG_A = { url: "a", model: "m", apiKey: "k", providerKey: "a" };
-    const CONFIG_B = { url: "b", model: "m", apiKey: "k", providerKey: "b" };
+    const CONFIG_A = {
+      url: "a",
+      model: "m",
+      apiKey: "k",
+      providerKey: "a",
+      cooldownStore: STUB_COOLDOWN_STORE,
+    };
+    const CONFIG_B = {
+      url: "b",
+      model: "m",
+      apiKey: "k",
+      providerKey: "b",
+      cooldownStore: STUB_COOLDOWN_STORE,
+    };
     vi.mocked(getAIConfig)
       .mockReturnValueOnce(CONFIG_A) // upfront fail-fast check
       .mockReturnValueOnce(CONFIG_A) // batch 1
@@ -75,7 +93,7 @@ describe("handleAiFilter", () => {
     const request = makeRequest({ listings, prompt: "laptop" });
     const response = makeResponse();
 
-    await handleAiFilter(request, response);
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(aiJSON).mock.calls).toHaveLength(2);
     expect(vi.mocked(aiJSON).mock.calls[0][0]).toBe(CONFIG_A);
@@ -83,7 +101,13 @@ describe("handleAiFilter", () => {
   });
 
   it("reports a per-batch error over SSE when a batch's AI call fails, without aborting the whole request", async () => {
-    const CONFIG_A = { url: "a", model: "m", apiKey: "k", providerKey: "a" };
+    const CONFIG_A = {
+      url: "a",
+      model: "m",
+      apiKey: "k",
+      providerKey: "a",
+      cooldownStore: STUB_COOLDOWN_STORE,
+    };
     vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
     vi.mocked(aiJSON).mockRejectedValueOnce(new Error("AI rate limited"));
 
@@ -93,7 +117,7 @@ describe("handleAiFilter", () => {
     });
     const response = makeResponse();
 
-    await handleAiFilter(request, response);
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
 
     expect(response.events).toContainEqual({ type: "error", message: "AI rate limited" });
   });

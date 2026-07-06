@@ -1,8 +1,8 @@
 // Server-side only — AI provider configuration and JSON completion helper.
 
-import type { AiConfig } from "../lib/recipes/base";
+import type { AiConfig, ProviderCooldownStore } from "../lib/recipes/base";
 
-export type { AiConfig };
+export type { AiConfig, ProviderCooldownStore };
 
 const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string }> = {
   groq: {
@@ -22,23 +22,44 @@ const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string 
   },
 };
 
-// provider key -> epoch ms when its cooldown ends
-const providerCooldowns = new Map<string, number>();
-
 // Ceiling on how long a single cooldown can sideline a provider — longer than
 // any real per-minute/hour rate limit, but short enough that a malformed or
 // extreme retry-after value can't blacklist a provider indefinitely with no
 // operator recourse short of a restart.
 export const MAX_PROVIDER_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
-function markProviderExhausted(providerKey: string, cooldownUntilMs: number): void {
-  const cappedCooldownUntilMs = Math.min(cooldownUntilMs, Date.now() + MAX_PROVIDER_COOLDOWN_MS);
-  const currentCooldownUntilMs = providerCooldowns.get(providerKey) ?? 0;
-  providerCooldowns.set(providerKey, Math.max(currentCooldownUntilMs, cappedCooldownUntilMs));
+// Constructs an isolated store for tracking per-provider rate-limit cooldowns.
+// There is no module-scope singleton here — the composition root (vite.config.ts)
+// constructs one instance for the life of the server process and threads it into
+// every route handler; tests construct their own instance per test instead of
+// resetting shared global state.
+export function createProviderCooldownStore(): ProviderCooldownStore {
+  const cooldownUntilMsByProviderKey = new Map<string, number>();
+
+  function markExhausted(providerKey: string, cooldownUntilMs: number): void {
+    const cappedCooldownUntilMs = Math.min(cooldownUntilMs, Date.now() + MAX_PROVIDER_COOLDOWN_MS);
+    const currentCooldownUntilMs = cooldownUntilMsByProviderKey.get(providerKey) ?? 0;
+    cooldownUntilMsByProviderKey.set(
+      providerKey,
+      Math.max(currentCooldownUntilMs, cappedCooldownUntilMs),
+    );
+  }
+
+  function getCooldownUntil(providerKey: string): number | undefined {
+    return cooldownUntilMsByProviderKey.get(providerKey);
+  }
+
+  return { markExhausted, getCooldownUntil };
 }
 
-export function resetProviderCooldowns(): void {
-  providerCooldowns.clear();
+// Binds a cooldown store to a callable `() => AiConfig` resolver — the shape
+// `DiscoverContext.getAiConfig` expects. Named and exported so it stays a
+// callable unit in its own right rather than an inline closure at each call site.
+export function bindAIConfigResolver(cooldownStore: ProviderCooldownStore): () => AiConfig {
+  function resolveAIConfig(): AiConfig {
+    return getAIConfig(cooldownStore);
+  }
+  return resolveAIConfig;
 }
 
 type ProviderCandidate =
@@ -56,27 +77,35 @@ function resolveProviderPriorityOrder(): string[] {
   return [preferred, ...allKeys.filter((key) => key !== preferred)];
 }
 
-function evaluateProviderCandidates(): ProviderCandidate[] {
+function evaluateProviderCandidates(cooldownStore: ProviderCooldownStore): ProviderCandidate[] {
   const now = Date.now();
   return resolveProviderPriorityOrder().map((key): ProviderCandidate => {
     const providerConfig = AI_PROVIDERS[key];
     const apiKey = process.env[providerConfig.keyVar];
     if (!apiKey) return { key, status: "no-key" };
-    const cooldownUntil = providerCooldowns.get(key);
+    const cooldownUntil = cooldownStore.getCooldownUntil(key);
     if (cooldownUntil !== undefined && cooldownUntil > now) {
       return { key, status: "cooldown", recoversInSecs: Math.ceil((cooldownUntil - now) / 1000) };
     }
     return {
       key,
       status: "available",
-      config: { url: providerConfig.url, model: providerConfig.model, apiKey, providerKey: key },
+      config: {
+        url: providerConfig.url,
+        model: providerConfig.model,
+        apiKey,
+        providerKey: key,
+        cooldownStore,
+      },
     };
   });
 }
 
 function formatUnavailableProvidersError(candidates: ProviderCandidate[]): string {
   const details = candidates
-    .filter((c): c is Exclude<ProviderCandidate, { status: "available" }> => c.status !== "available")
+    .filter(
+      (c): c is Exclude<ProviderCandidate, { status: "available" }> => c.status !== "available",
+    )
     .map((c) =>
       c.status === "no-key"
         ? `${c.key}: no ${AI_PROVIDERS[c.key].keyVar} configured`
@@ -85,8 +114,8 @@ function formatUnavailableProvidersError(candidates: ProviderCandidate[]): strin
   return `All AI providers unavailable — ${details.join("; ")}`;
 }
 
-export function getAIConfig(): AiConfig {
-  const candidates = evaluateProviderCandidates();
+export function getAIConfig(cooldownStore: ProviderCooldownStore): AiConfig {
+  const candidates = evaluateProviderCandidates(cooldownStore);
   const available = candidates.find(
     (c): c is Extract<ProviderCandidate, { status: "available" }> => c.status === "available",
   );
@@ -100,9 +129,10 @@ export function getAIConfig(): AiConfig {
 type OpenAIResponseShape = { choices?: Array<{ message?: { content?: string } }> };
 
 function extractRetryMessage(lastErrorData: Record<string, unknown>): string {
-  const errorBody = (
-    Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData
-  ) as Record<string, unknown>;
+  const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<
+    string,
+    unknown
+  >;
   return String((errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message ?? "");
 }
 
@@ -184,7 +214,7 @@ export async function aiJSON(
         const { delaySecs, isConfident } = parseRetryDelaySeconds(apiResponse, errorMessage);
         const remainingMs = deadline - Date.now();
         if (isConfident && delaySecs * 1000 > remainingMs) {
-          markProviderExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
+          aiConfig.cooldownStore.markExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
           throw new Error(
             `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
           );
@@ -206,7 +236,7 @@ export async function aiJSON(
         extractRetryMessage(lastErrorData),
       );
       if (isConfident) {
-        markProviderExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
+        aiConfig.cooldownStore.markExhausted(aiConfig.providerKey, Date.now() + delaySecs * 1000);
       }
     }
     const errorBody = (Array.isArray(lastErrorData) ? lastErrorData[0] : lastErrorData) as Record<

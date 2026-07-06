@@ -2,6 +2,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ConcurrencyQueue } from "../../lib/queue";
+import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { requireArray, requireListingUrl, requireString } from "../../lib/validate";
 import { aiJSON, getAIConfig } from "../ai";
 import { readBody, sendJSON, sse, startSSE } from "../helpers";
@@ -13,6 +14,7 @@ const BATCH_SIZE = 50;
 export async function handleAiFilter(
   request: IncomingMessage,
   response: ServerResponse,
+  cooldownStore: ProviderCooldownStore,
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
@@ -38,7 +40,7 @@ export async function handleAiFilter(
   }
 
   try {
-    getAIConfig(); // fail fast before opening the SSE stream if no provider is configured at all
+    getAIConfig(cooldownStore); // fail fast before opening the SSE stream if no provider is configured at all
   } catch (err) {
     sendJSON(response, 500, { error: (err as Error).message });
     return;
@@ -67,7 +69,7 @@ export async function handleAiFilter(
           // batch actually rotates the remaining queued batches to the next
           // live provider instead of repeating the same doomed one.
           const result = await aiJSON(
-            getAIConfig(),
+            getAIConfig(cooldownStore),
             "ai-filter",
             AI_FILTER_SYSTEM_MESSAGE,
             `Criteria: ${prompt}\n\nListings:\n${numbered}`,

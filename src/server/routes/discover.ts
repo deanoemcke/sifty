@@ -1,10 +1,10 @@
 // Server-side only — POST /api/discover route handler.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { DiscoverContext, Fulfillment } from "../../lib/recipes/base";
+import type { DiscoverContext, Fulfillment, ProviderCooldownStore } from "../../lib/recipes/base";
 import { isDiscoverableRecipe } from "../../lib/recipes/base";
 import { requirePositiveNumber, requireString } from "../../lib/validate";
-import { getAIConfig } from "../ai";
+import { bindAIConfigResolver, getAIConfig } from "../ai";
 import { readBody, sendJSON } from "../helpers";
 import { getAllRecipes } from "../recipes/registry";
 
@@ -29,13 +29,14 @@ export async function discoverCategoriesAsync(
   discoveryMaxPrice: number,
   discoveryFulfillment: Fulfillment,
   discoveryRegion: string | undefined,
+  cooldownStore: ProviderCooldownStore,
 ): Promise<DiscoverResult> {
-  getAIConfig(); // fail fast before running any recipe if no provider is configured at all
+  getAIConfig(cooldownStore); // fail fast before running any recipe if no provider is configured at all
   const context: DiscoverContext = {
     maxPrice: discoveryMaxPrice,
     fulfillment: discoveryFulfillment,
     regionValue: discoveryRegion,
-    getAiConfig: getAIConfig,
+    getAiConfig: bindAIConfigResolver(cooldownStore),
   };
   const allRecipes = getAllRecipes();
   const recipes = allRecipes.filter(isDiscoverableRecipe);
@@ -61,6 +62,7 @@ export async function discoverCategoriesAsync(
 export async function handleDiscover(
   request: IncomingMessage,
   response: ServerResponse,
+  cooldownStore: ProviderCooldownStore,
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
@@ -90,6 +92,7 @@ export async function handleDiscover(
       discoveryMaxPrice,
       discoveryFulfillment,
       discoveryRegion,
+      cooldownStore,
     );
     sendJSON(response, 200, result);
   } catch (err) {

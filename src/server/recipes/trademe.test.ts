@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "../../lib/recipes/base";
+import type { Listing, ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON } from "../ai";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import {
@@ -774,7 +774,17 @@ describe("buildTrademeUrl", () => {
 describe("buildDiscoverUrlsAsync", () => {
   const MOCK_BROAD = [{ display: "Electronics", slug: "electronics/electronics" }];
   const MOCK_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
-  const MOCK_AI = { url: "http://example.com", model: "llama", apiKey: "key", providerKey: "mock" };
+  const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
+    markExhausted: () => {},
+    getCooldownUntil: () => undefined,
+  };
+  const MOCK_AI = {
+    url: "http://example.com",
+    model: "llama",
+    apiKey: "key",
+    providerKey: "mock",
+    cooldownStore: STUB_COOLDOWN_STORE,
+  };
 
   beforeEach(() => {
     vi.mocked(getDb).mockReturnValue({} as any);

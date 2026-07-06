@@ -51,11 +51,22 @@ export type RecipeDiscoverResult = {
   warnings: string[];
 };
 
+// An explicit, constructable dependency for tracking per-provider rate-limit cooldowns —
+// see `createProviderCooldownStore` in `server/ai.ts`. Threading this on `AiConfig` (rather
+// than as a hidden module-scope singleton `aiJSON` reaches into) means every caller that
+// holds an `AiConfig` already has what it needs to report exhaustion, and tests can
+// construct their own isolated store instead of resetting shared global state.
+export type ProviderCooldownStore = {
+  markExhausted: (providerKey: string, cooldownUntilMs: number) => void;
+  getCooldownUntil: (providerKey: string) => number | undefined;
+};
+
 export type AiConfig = {
   url: string;
   model: string;
   apiKey: string;
   providerKey: string;
+  cooldownStore: ProviderCooldownStore;
 };
 
 // `fulfillment` and `regionValue` represent user search intent (delivery preference

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON } from "../ai";
 import {
   buildFacebookListing,
@@ -19,11 +20,17 @@ const TEST_REGIONS = [
 vi.mock("../services/regions", () => ({ getRegions: () => TEST_REGIONS }));
 vi.mock("../ai", () => ({ aiJSON: vi.fn() }));
 
+const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
+  markExhausted: () => {},
+  getCooldownUntil: () => undefined,
+};
+
 const MOCK_AI_CONFIG = {
   url: "http://example.com",
   model: "llama",
   apiKey: "key",
   providerKey: "mock",
+  cooldownStore: STUB_COOLDOWN_STORE,
 };
 
 beforeEach(() => {

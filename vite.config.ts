@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { createProviderCooldownStore } from './src/server/ai';
 import { handleCancelSearch } from './src/server/routes/cancelSearch';
 import { handleQuickSearch } from './src/server/routes/quickSearch';
 import { handleDeepSearch } from './src/server/routes/deepSearch';
@@ -10,6 +11,11 @@ import { handleRegions } from './src/server/routes/regions';
 import { handleCacheClear } from './src/server/routes/cacheRoutes';
 
 Object.assign(process.env, loadEnv('development', process.cwd(), ''));
+
+// Composition root: one cooldown store for the life of the dev server process,
+// threaded explicitly into every route handler that needs AI provider rotation —
+// see `createProviderCooldownStore` in `src/server/ai.ts`.
+const providerCooldownStore = createProviderCooldownStore();
 
 type Next = (err?: unknown) => void;
 
@@ -45,8 +51,8 @@ export default defineConfig({
         if (urlPath === '/api/quick-search')  { await handleQuickSearch(req, res);  return; }
         if (urlPath === '/api/deep-search')   { await handleDeepSearch(req, res);   return; }
         if (urlPath === '/api/cache/clear')   { await handleCacheClear(req, res);   return; }
-        if (urlPath === '/api/ai-filter')     { await handleAiFilter(req, res);     return; }
-        if (urlPath === '/api/discover')      { await handleDiscover(req, res);     return; }
+        if (urlPath === '/api/ai-filter')     { await handleAiFilter(req, res, providerCooldownStore);     return; }
+        if (urlPath === '/api/discover')      { await handleDiscover(req, res, providerCooldownStore);     return; }
         if (urlPath === '/api/saved-searches') { await handleCreateSavedSearch(req, res); return; }
 
         next();
