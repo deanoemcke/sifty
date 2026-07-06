@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { Listing } from "../lib/recipes/base";
-import { ListingAttributeKey } from "../lib/recipes/base";
 import {
   buildCardMetaHtml,
   buildCardPriceHtml,
@@ -20,6 +19,7 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
     price: 100,
     location: "Wellington",
     url: "https://example.com/listing/1",
+    isAuction: false,
     ...overrides,
   };
 }
@@ -105,20 +105,14 @@ describe("buildCardMetaHtml", () => {
 
 describe("buildDetailPriceHtml", () => {
   it("shows the formatted price for non-auctions", () => {
-    const html = buildDetailPriceHtml(
-      makeListing({ price: 500, extendedAttributes: { [ListingAttributeKey.BuyNowPrice]: "500" } }),
-    );
+    const html = buildDetailPriceHtml(makeListing({ price: 500, buyNowPrice: 500 }));
     expect(html).toContain("$500");
     expect(html).not.toContain("Buy Now");
   });
 
   it("adds a formatted buy-now price for auctions", () => {
     const html = buildDetailPriceHtml(
-      makeListing({
-        price: 1000,
-        isAuction: true,
-        extendedAttributes: { [ListingAttributeKey.BuyNowPrice]: "1500" },
-      }),
+      makeListing({ price: 1000, isAuction: true, buyNowPrice: 1500 }),
     );
     expect(html).toContain(`Buy Now: <strong>$${(1500).toLocaleString()}</strong>`);
   });
@@ -136,37 +130,25 @@ describe("buildDetailPriceHtml", () => {
 
 describe("buildDetailMetaHtml", () => {
   it("derives the reserve badge class from the status", () => {
-    const html = buildDetailMetaHtml(
-      makeListing({
-        isAuction: true,
-        extendedAttributes: { [ListingAttributeKey.ReserveStatus]: "NOT_MET" },
-      }),
-    );
+    const html = buildDetailMetaHtml(makeListing({ isAuction: true, reserveStatus: "NOT_MET" }));
     expect(html).toContain("badge-not-met");
     expect(html).toContain("Reserve not met");
   });
 
   it("shows no badge for non-auctions", () => {
-    const html = buildDetailMetaHtml(
-      makeListing({ extendedAttributes: { [ListingAttributeKey.ReserveStatus]: "MET" } }),
-    );
+    const html = buildDetailMetaHtml(makeListing({ reserveStatus: "MET" }));
     expect(html).not.toContain("badge");
   });
 
   it("shows no badge for unknown reserve statuses", () => {
-    const html = buildDetailMetaHtml(
-      makeListing({
-        isAuction: true,
-        extendedAttributes: { [ListingAttributeKey.ReserveStatus]: "UNKNOWN" },
-      }),
-    );
+    const html = buildDetailMetaHtml(makeListing({ isAuction: true, reserveStatus: "UNKNOWN" }));
     expect(html).toContain(`<span class="meta-right"></span>`);
   });
 });
 
 describe("buildExtrasHtml", () => {
   it("renders a details table when details exist", () => {
-    const html = buildExtrasHtml(makeListing({ extendedAttributes: { Condition: "Used <good>" } }));
+    const html = buildExtrasHtml(makeListing({ scrapedAttributes: { Condition: "Used <good>" } }));
     expect(html).toContain("details-table");
     expect(html).toContain("Condition");
     expect(html).toContain("Used &lt;good&gt;");
@@ -176,23 +158,28 @@ describe("buildExtrasHtml", () => {
     expect(buildExtrasHtml(makeListing())).not.toContain("details-table");
   });
 
-  it("excludes reserved attribute keys from the generic details table", () => {
+  it("does not read structured fields (buyNowPrice, reserveStatus, etc.) from scrapedAttributes", () => {
     const html = buildExtrasHtml(
       makeListing({
-        extendedAttributes: {
-          [ListingAttributeKey.BuyNowPrice]: "500",
-          [ListingAttributeKey.ReserveStatus]: "MET",
-          [ListingAttributeKey.PickupAvailable]: "true",
-          [ListingAttributeKey.ShippingAvailable]: "false",
-          [ListingAttributeKey.PickupLocation]: "Auckland",
-          Condition: "Used",
-        },
+        buyNowPrice: 500,
+        reserveStatus: "MET",
+        pickupAvailable: true,
+        shippingAvailable: false,
+        pickupLocation: "Auckland",
+        scrapedAttributes: { Condition: "Used" },
       }),
     );
     expect(html).toContain("details-table");
     expect(html).toContain("Condition");
     expect(html).not.toContain("Auckland");
     expect(html).not.toContain("500");
+  });
+
+  it("renders a scraped attribute even if its key happens to match a known field name", () => {
+    const html = buildExtrasHtml(
+      makeListing({ reserveStatus: "MET", scrapedAttributes: { reserveStatus: "As scraped" } }),
+    );
+    expect(html).toContain("As scraped");
   });
 
   it("renders the cleaned, escaped description", () => {

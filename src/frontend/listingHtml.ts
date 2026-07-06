@@ -3,7 +3,6 @@
 // All interpolated text goes through esc(); no DOM access here.
 
 import type { Listing } from "../lib/recipes/base";
-import { ListingAttributeKey } from "../lib/recipes/base";
 import { esc } from "./html";
 import { formatListingPrice } from "./priceFormat";
 import type { ListingItem } from "./state";
@@ -38,9 +37,9 @@ export function buildCardMetaHtml(listing: Listing): string {
 
 export function buildDetailPriceHtml(listing: Listing): string {
   let html = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
-  const buyNowPrice = listing.extendedAttributes?.[ListingAttributeKey.BuyNowPrice];
+  const buyNowPrice = listing.buyNowPrice;
   if (listing.isAuction && buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${Number(buyNowPrice).toLocaleString()}</strong></span>`;
+    html += `<span class="price-buynow">Buy Now: <strong>$${buyNowPrice.toLocaleString()}</strong></span>`;
   }
   return html;
 }
@@ -49,7 +48,7 @@ export function buildDetailMetaHtml(listing: Listing): string {
   const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
   let html = "";
   if (listing.isAuction) {
-    const reserveStatus = listing.extendedAttributes?.[ListingAttributeKey.ReserveStatus] ?? "";
+    const reserveStatus = listing.reserveStatus ?? "";
     const reserve = formatReserveText(reserveStatus);
     if (reserve)
       html += `<span class="badge badge-${reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
@@ -57,18 +56,11 @@ export function buildDetailMetaHtml(listing: Listing): string {
   return `${left}<span class="meta-right">${html}</span>`;
 }
 
-// Attribute keys already surfaced elsewhere (price/badge) or not yet wired to
-// any UI — excluded from the generic table so they don't appear twice or
-// resurface as raw rows.
-const RESERVED_ATTRIBUTE_KEYS: Set<string> = new Set(Object.values(ListingAttributeKey));
-
 export function buildExtrasHtml(listing: Listing): string {
   let body = "";
 
   // ── Details ───────────────────────────────────────────────────────────────
-  const detailEntries = Object.entries(listing.extendedAttributes ?? {}).filter(
-    ([key]) => !RESERVED_ATTRIBUTE_KEYS.has(key),
-  );
+  const detailEntries = Object.entries(listing.scrapedAttributes ?? {});
   if (detailEntries.length > 0) {
     body += `<div class="deep-section">
       <div class="deep-section-label">Details</div>

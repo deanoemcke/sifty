@@ -1,36 +1,42 @@
 import type { RecipeSource } from "./metadata";
 
-// Known/fixed extendedAttributes keys. Recipes may also write arbitrary
-// site-specific keys (e.g. TradeMe's scraped "RAM", "Condition") directly —
-// the map isn't limited to this enum, it just names the well-known ones.
-export enum ListingAttributeKey {
-  BuyNowPrice = "buyNowPrice",
-  ReserveStatus = "reserveStatus",
-  PickupAvailable = "pickupAvailable",
-  ShippingAvailable = "shippingAvailable",
-  PickupLocation = "pickupLocation",
-}
+export type ReserveStatus = "NONE" | "MET" | "NOT_MET" | "UNKNOWN";
 
 export interface Listing {
+  // Always known from quick search.
   source: RecipeSource;
   title: string;
   price: number | null;
   location: string;
   url: string;
+  isAuction: boolean;
   thumbnailUrl?: string;
-  fulfillment?: { pickupAvailable: boolean; shippingAvailable: boolean };
+
+  // Only known once deep search completes — absent until then.
   description?: string;
-  isAuction?: boolean;
-  extendedAttributes?: Record<string, string>;
+  scrapedAttributes?: Record<string, string>;
   questionsAndAnswers?: Array<{ question: string; answer: string }>;
+  buyNowPrice?: number | null;
+  reserveStatus?: ReserveStatus;
+  pickupAvailable?: boolean | null;
+  shippingAvailable?: boolean | null;
+  pickupLocation?: string | null;
 }
 
 // Patch produced by deepSearchAsync — merged onto a Listing once received.
-export interface DeepSearchDetail {
-  description: string;
-  extendedAttributes: Record<string, string>;
-  questionsAndAnswers: Array<{ question: string; answer: string }>;
-}
+export type DeepSearchDetail = Required<
+  Pick<
+    Listing,
+    | "description"
+    | "scrapedAttributes"
+    | "questionsAndAnswers"
+    | "buyNowPrice"
+    | "reserveStatus"
+    | "pickupAvailable"
+    | "shippingAvailable"
+    | "pickupLocation"
+  >
+>;
 
 // Structured search progress — display wording is composed on the frontend.
 export type QuickSearchProgress =

@@ -10,7 +10,6 @@ import type {
   Listing,
   QuickSearchEvent,
 } from "../../lib/recipes/base";
-import { ListingAttributeKey } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
 import { aiJSON } from "../ai";
 import { getRegions } from "../services/regions";
@@ -435,18 +434,26 @@ async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise
 
   const bodyText: string = await page.evaluate(() => document.body.innerText);
 
-  const extendedAttributes: Record<string, string> = {};
-  for (const { key, value } of extractFacebookDetails(bodyText)) extendedAttributes[key] = value;
+  const scrapedAttributes: Record<string, string> = {};
+  for (const { key, value } of extractFacebookDetails(bodyText)) scrapedAttributes[key] = value;
 
   // Facebook Marketplace has no auctions/reserves and no structured fulfillment
   // data — only pickupLocation has a real signal here, so that's all we add.
   const locationMatch = bodyText.match(/Listed in ([^\n·]+)/);
-  const pickupLocation = locationMatch?.[1]?.trim();
-  if (pickupLocation) extendedAttributes[ListingAttributeKey.PickupLocation] = pickupLocation;
+  const pickupLocation = locationMatch?.[1]?.trim() ?? null;
 
   const description = extractFacebookDescription(bodyText);
 
-  return { description, extendedAttributes, questionsAndAnswers: [] };
+  return {
+    description,
+    scrapedAttributes,
+    questionsAndAnswers: [],
+    buyNowPrice: null,
+    reserveStatus: "UNKNOWN",
+    pickupAvailable: null,
+    shippingAvailable: null,
+    pickupLocation,
+  };
 }
 
 // ── Deep search ───────────────────────────────────────────────────────────────

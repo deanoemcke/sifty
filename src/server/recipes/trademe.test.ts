@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listing } from "../../lib/recipes/base";
-import { ListingAttributeKey } from "../../lib/recipes/base";
 import { aiJSON } from "../ai";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import {
@@ -14,7 +13,6 @@ import {
   extractImplicitFilters,
   extractQuestionsAndAnswers,
   extractStructuredFromText,
-  mapFulfillment,
   parseFrendState,
   parseSearchApiResponse,
   STEP2_SYSTEM_PROMPT,
@@ -84,43 +82,13 @@ function _makeListing(overrides: Partial<Listing> = {}): Listing {
     price: 1500,
     location: "Auckland City, Auckland",
     url: "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/12345",
+    isAuction: true,
     ...restOverrides,
   };
 }
 
 // Keep the listing helper available for future use
 _makeListing;
-
-// ── mapFulfillment ────────────────────────────────────────────────────────────
-
-describe("mapFulfillment", () => {
-  it("value 0 returns undefined (no fulfillment data)", () => {
-    expect(mapFulfillment(0)).toBeUndefined();
-  });
-
-  it("value 1 returns ships NZ (pickup + shipping available)", () => {
-    expect(mapFulfillment(1)).toEqual({ pickupAvailable: true, shippingAvailable: true });
-  });
-
-  it("value 2 returns pickup only (no shipping)", () => {
-    expect(mapFulfillment(2)).toEqual({ pickupAvailable: true, shippingAvailable: false });
-  });
-
-  it("value 3 returns ships NZ paid (pickup + shipping available)", () => {
-    expect(mapFulfillment(3)).toEqual({ pickupAvailable: true, shippingAvailable: true });
-  });
-
-  it("undefined returns undefined", () => {
-    expect(mapFulfillment(undefined)).toBeUndefined();
-  });
-
-  it("unknown value warns and returns undefined", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(mapFulfillment(99)).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledWith("[trademe] unknown allowsPickups value: 99");
-    warnSpy.mockRestore();
-  });
-});
 
 // ── buildListing ──────────────────────────────────────────────────────────────
 
@@ -132,7 +100,6 @@ describe("buildListing", () => {
     region: "Auckland",
     canonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
     pictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-    allowsPickups: 3,
   };
 
   it("builds a Listing from a valid RawApiItem", () => {
@@ -145,7 +112,6 @@ describe("buildListing", () => {
       "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",
     );
     expect(listing?.thumbnailUrl).toBe("https://trademe.tmcdn.co.nz/photoserver/full/123.jpg");
-    expect(listing?.fulfillment).toEqual({ pickupAvailable: true, shippingAvailable: true });
     expect(listing?.isAuction).toBe(true);
   });
 
@@ -193,7 +159,6 @@ describe("parseFrendState", () => {
     suburb: "Auckland City",
     canonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
     pictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-    allowsPickups: 3,
   };
 
   it("extracts listings from the nested frend-state structure", () => {
@@ -231,7 +196,6 @@ describe("parseFrendState", () => {
           Suburb: baseItem.suburb,
           CanonicalPath: baseItem.canonicalPath,
           PictureHref: baseItem.pictureHref,
-          AllowsPickups: baseItem.allowsPickups,
         },
       ],
       TotalCount: 1,
@@ -255,7 +219,6 @@ describe("parseSearchApiResponse", () => {
     Suburb: "Auckland City",
     CanonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
     PictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-    AllowsPickups: 3,
   };
 
   it("maps fields correctly", () => {
@@ -268,7 +231,6 @@ describe("parseSearchApiResponse", () => {
       "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",
     );
     expect(listings[0].thumbnailUrl).toBe("https://trademe.tmcdn.co.nz/photoserver/full/123.jpg");
-    expect(listings[0].fulfillment).toEqual({ pickupAvailable: true, shippingAvailable: true });
   });
 
   it("reads TotalCount and PageSize", () => {
@@ -354,55 +316,39 @@ describe("extractDescriptionFromText", () => {
 describe("extractStructuredFromText", () => {
   describe("reserveStatus", () => {
     it("detects no reserve", () => {
-      expect(
-        extractStructuredFromText("No reserve\nPlace bid")[ListingAttributeKey.ReserveStatus],
-      ).toBe("NONE");
+      expect(extractStructuredFromText("No reserve\nPlace bid").reserveStatus).toBe("NONE");
     });
     it("detects reserve met", () => {
-      expect(
-        extractStructuredFromText("Reserve met\nPlace bid")[ListingAttributeKey.ReserveStatus],
-      ).toBe("MET");
+      expect(extractStructuredFromText("Reserve met\nPlace bid").reserveStatus).toBe("MET");
     });
     it("detects reserve not met", () => {
-      expect(
-        extractStructuredFromText("Reserve not met\nPlace bid")[ListingAttributeKey.ReserveStatus],
-      ).toBe("NOT_MET");
+      expect(extractStructuredFromText("Reserve not met\nPlace bid").reserveStatus).toBe("NOT_MET");
     });
     it("returns UNKNOWN when no reserve info found", () => {
-      expect(extractStructuredFromText("Some other text")[ListingAttributeKey.ReserveStatus]).toBe(
-        "UNKNOWN",
-      );
+      expect(extractStructuredFromText("Some other text").reserveStatus).toBe("UNKNOWN");
     });
   });
 
   describe("buyNowPrice", () => {
     it("extracts buy now price", () => {
-      expect(
-        extractStructuredFromText("Buy now\n$1,299\nBuy Now")[ListingAttributeKey.BuyNowPrice],
-      ).toBe("1299");
+      expect(extractStructuredFromText("Buy now\n$1,299\nBuy Now").buyNowPrice).toBe(1299);
     });
     it("extracts buy now price without comma", () => {
-      expect(
-        extractStructuredFromText("Buy Now\n$999\nBuy Now")[ListingAttributeKey.BuyNowPrice],
-      ).toBe("999");
+      expect(extractStructuredFromText("Buy Now\n$999\nBuy Now").buyNowPrice).toBe(999);
     });
     it("omits buyNowPrice when none is found", () => {
-      expect(
-        extractStructuredFromText("Starting price\n$500")[ListingAttributeKey.BuyNowPrice],
-      ).toBeUndefined();
+      expect(extractStructuredFromText("Starting price\n$500").buyNowPrice).toBeUndefined();
     });
   });
 
   describe("pickupLocation", () => {
     it("extracts pickup location", () => {
-      expect(
-        extractStructuredFromText("Pick up from Auckland City")[ListingAttributeKey.PickupLocation],
-      ).toBe("Auckland City");
+      expect(extractStructuredFromText("Pick up from Auckland City").pickupLocation).toBe(
+        "Auckland City",
+      );
     });
     it("omits pickupLocation when none is found", () => {
-      expect(
-        extractStructuredFromText("Shipping available")[ListingAttributeKey.PickupLocation],
-      ).toBeUndefined();
+      expect(extractStructuredFromText("Shipping available").pickupLocation).toBeUndefined();
     });
   });
 });
@@ -419,8 +365,8 @@ describe("extractFromGraphQL", () => {
       },
     };
     const result = extractFromGraphQL(json);
-    expect(result[ListingAttributeKey.PickupAvailable]).toBeUndefined();
-    expect(result[ListingAttributeKey.ShippingAvailable]).toBeUndefined();
+    expect(result.pickupAvailable).toBeUndefined();
+    expect(result.shippingAvailable).toBeUndefined();
   });
 
   it("returns fulfillment fields when DeliveryOptions is present", () => {
@@ -437,9 +383,9 @@ describe("extractFromGraphQL", () => {
       },
     };
     const result = extractFromGraphQL(json);
-    expect(result[ListingAttributeKey.PickupAvailable]).toBe("true");
-    expect(result[ListingAttributeKey.ShippingAvailable]).toBe("false");
-    expect(result[ListingAttributeKey.PickupLocation]).toBe("Rodney");
+    expect(result.pickupAvailable).toBe(true);
+    expect(result.shippingAvailable).toBe(false);
+    expect(result.pickupLocation).toBe("Rodney");
   });
 });
 
