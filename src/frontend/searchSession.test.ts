@@ -53,6 +53,8 @@ afterEach(() => {
 });
 
 it("shows a discovering placeholder immediately, before the discover request resolves. then hides discovering placeholder, after the discover request resolves", async () => {
+  urlCards[0].dom.input.value = "https://www.trademe.co.nz/stale";
+
   let resolveFetch!: (value: unknown) => void;
   vi.stubGlobal(
     "fetch",
@@ -95,6 +97,47 @@ it("shows a discovering placeholder immediately, before the discover request res
   ).toBe(false);
   expect(
     document.getElementById("addUrlBtn")?.classList.contains("hidden"),
+  ).toBe(false);
+  expect(
+    document.getElementById("urlPlaceholder")?.classList.contains("hidden"),
+  ).toBe(true);
+  expect(
+    document.getElementById("urlsSection")?.classList.contains("hidden"),
+  ).toBe(false);
+  expect(urlCards[0].dom.input.value).toBe("https://www.trademe.co.nz/x");
+});
+
+it("shows the discovery error and leaves the URL input blank when the discover request fails", async () => {
+  urlCards[0].dom.input.value = "https://www.trademe.co.nz/stale";
+
+  let resolveFetch!: (value: unknown) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    ),
+  );
+
+  const submitPromise = handleDiscoverySubmitAsync();
+
+  resolveFetch({
+    ok: false,
+    json: async () => ({ error: "No listings found" }),
+  });
+  await submitPromise;
+
+  expect(document.getElementById("discoveryError")?.textContent).toBe(
+    "No listings found",
+  );
+  expect(
+    (document.getElementById("discoveryError") as HTMLDivElement).style.display,
+  ).toBe("block");
+  expect(urlCards[0].dom.input.value).toBe("");
+  expect(
+    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
   ).toBe(false);
   expect(
     document.getElementById("urlPlaceholder")?.classList.contains("hidden"),
