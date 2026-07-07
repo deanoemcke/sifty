@@ -4,6 +4,7 @@ import {
   aiJSON,
   applyAiJsonResult,
   createProviderCooldownStore,
+  decideRateLimitOutcome,
   getAIConfig,
   MAX_PROVIDER_COOLDOWN_MS,
   MAX_RETRIES,
@@ -588,5 +589,80 @@ describe("aiJSON", () => {
       // ...but storeB, constructed independently, was never told about that exhaustion.
       expect(getAIConfig(storeB).url).toBe(GROQ_URL);
     });
+  });
+});
+
+describe("decideRateLimitOutcome", () => {
+  it("fails fast when a confident delay exceeds the remaining budget, regardless of retries left", () => {
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      50,
+      true,
+      10_000,
+      false,
+      1_000,
+    );
+
+    expect(decision).toEqual({
+      action: "return",
+      result: {
+        kind: "rate-limited",
+        providerKey: "groq",
+        cooldownUntilMs: 51_000,
+        message: `AI rate limited (test): provider asks to retry in 50s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
+      },
+    });
+  });
+
+  it("retries with a delay capped to the remaining budget when a confident delay fits and retries remain", () => {
+    const decision = decideRateLimitOutcome("groq", "test", "rate limited msg", 5, true, 10_000, false, 1_000);
+
+    expect(decision).toEqual({ action: "retry", sleepMs: 5_000 });
+  });
+
+  it("caps an unconfident guess's retry sleep to what remains of the budget", () => {
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      10,
+      false,
+      3_000,
+      false,
+      1_000,
+    );
+
+    expect(decision).toEqual({ action: "retry", sleepMs: 2_999 });
+  });
+
+  it("gives up but still reports a confident delay for cooldown once retries are exhausted", () => {
+    const decision = decideRateLimitOutcome("groq", "test", "rate limited msg", 5, true, 10_000, true, 1_000);
+
+    expect(decision).toEqual({
+      action: "return",
+      result: {
+        kind: "rate-limited",
+        providerKey: "groq",
+        cooldownUntilMs: 6_000,
+        message: "AI rate limited (test): retries exhausted, provider still reports rate limiting — rate limited msg",
+      },
+    });
+  });
+
+  it("falls through to the generic error path when an unconfident guess runs out of retries", () => {
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      10,
+      false,
+      10_000,
+      true,
+      1_000,
+    );
+
+    expect(decision).toEqual({ action: "fall-through" });
   });
 });

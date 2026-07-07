@@ -227,6 +227,49 @@ function buildRateLimitedMessage(
     : `AI rate limited (${label}): retries exhausted, provider still reports rate limiting — ${errorMessage}`;
 }
 
+// Pure classification of what a 429 response means for the retry loop, isolated from the
+// transport/audit side effects around it — this is the part of `aiJSON` that keeps colliding
+// with itself across independent rewrites (see the merge-conflict review for fix/groq-rate-limiting).
+// `nowMs` is passed in rather than read via `Date.now()` so this stays fully deterministic and
+// testable without mocking `fetch` or timers.
+export type RateLimitDecision =
+  | { action: "return"; result: AiJsonResult }
+  | { action: "retry"; sleepMs: number }
+  | { action: "fall-through" };
+
+export function decideRateLimitOutcome(
+  providerKey: string,
+  label: string,
+  errorMessage: string,
+  delaySecs: number,
+  isConfident: boolean,
+  remainingMs: number,
+  outOfRetries: boolean,
+  nowMs: number,
+): RateLimitDecision {
+  const rateLimitedResult = (exceedsBudget: boolean): AiJsonResult => ({
+    kind: "rate-limited",
+    providerKey,
+    cooldownUntilMs: nowMs + delaySecs * 1000,
+    message: buildRateLimitedMessage(label, delaySecs, exceedsBudget, errorMessage),
+  });
+
+  if (isConfident && delaySecs * 1000 > remainingMs) {
+    return { action: "return", result: rateLimitedResult(true) };
+  }
+  if (!outOfRetries) {
+    const sleepMs = Math.min(delaySecs * 1000, Math.max(remainingMs - 1, 0));
+    return { action: "retry", sleepMs };
+  }
+  // Out of retries. A confident signal is still worth reporting up for cooldown/rotation
+  // even on the final attempt; an unconfident guess must not be trusted to make that call,
+  // so it falls through to the generic http_error path instead.
+  if (isConfident) {
+    return { action: "return", result: rateLimitedResult(false) };
+  }
+  return { action: "fall-through" };
+}
+
 export async function aiJSON(
   aiConfig: AiConfig,
   label: string,
@@ -314,37 +357,27 @@ export async function aiJSON(
           const { delaySecs, isConfident } = parseRetryDelaySeconds(apiResponse, bodyMessage ?? "");
           const remainingMs = deadline - Date.now();
           const outOfRetries = attempt > MAX_RETRIES;
+          const decision = decideRateLimitOutcome(
+            aiConfig.providerKey,
+            label,
+            errorMessage,
+            delaySecs,
+            isConfident,
+            remainingMs,
+            outOfRetries,
+            Date.now(),
+          );
 
-          if (isConfident && delaySecs * 1000 > remainingMs) {
+          if (decision.action !== "fall-through") {
             recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
-            return {
-              kind: "rate-limited",
-              providerKey: aiConfig.providerKey,
-              cooldownUntilMs: Date.now() + delaySecs * 1000,
-              message: buildRateLimitedMessage(label, delaySecs, true, errorMessage),
-            };
           }
-
-          if (!outOfRetries) {
-            const sleepMs = Math.min(delaySecs * 1000, Math.max(remainingMs - 1, 0));
-            recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
-            console.warn(`[AI] ${label} → rate limited, retrying in ${sleepMs / 1000}s`);
-            await new Promise<void>((resolve) => setTimeout(resolve, sleepMs));
+          if (decision.action === "return") return decision.result;
+          if (decision.action === "retry") {
+            console.warn(`[AI] ${label} → rate limited, retrying in ${decision.sleepMs / 1000}s`);
+            await new Promise<void>((resolve) => setTimeout(resolve, decision.sleepMs));
             continue;
           }
-
-          // Out of retries. A confident signal is still worth reporting up for cooldown/rotation
-          // even on the final attempt; an unconfident guess must not be trusted to make that call,
-          // so it falls through to the generic http_error below instead.
-          if (isConfident) {
-            recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
-            return {
-              kind: "rate-limited",
-              providerKey: aiConfig.providerKey,
-              cooldownUntilMs: Date.now() + delaySecs * 1000,
-              message: buildRateLimitedMessage(label, delaySecs, false, errorMessage),
-            };
-          }
+          // fall-through: an unconfident guess out of retries drops to the generic http_error path below.
         }
 
         recordAttempt({
