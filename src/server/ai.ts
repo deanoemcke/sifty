@@ -326,9 +326,10 @@ export async function aiJSON(
           }
 
           if (!outOfRetries) {
+            const sleepMs = Math.min(delaySecs * 1000, Math.max(remainingMs - 1, 0));
             recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
-            console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
-            await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
+            console.warn(`[AI] ${label} → rate limited, retrying in ${sleepMs / 1000}s`);
+            await new Promise<void>((resolve) => setTimeout(resolve, sleepMs));
             continue;
           }
 
@@ -356,7 +357,20 @@ export async function aiJSON(
         throw new Error(`AI error (${label}) [${apiResponse.status}]: ${errorMessage}`);
       }
 
-      const responseData = (await apiResponse.json()) as OpenAIResponseShape;
+      let responseData: OpenAIResponseShape;
+      try {
+        responseData = (await apiResponse.json()) as OpenAIResponseShape;
+      } catch {
+        const errorMessage = `AI error (${label}): malformed 200 response body`;
+        recordAttempt({
+          attempt,
+          status: "http_error",
+          httpStatus: apiResponse.status,
+          errorMessage,
+          durationMs: Date.now() - attemptStartedAt,
+        });
+        throw new Error(errorMessage);
+      }
       const raw: string = responseData.choices?.[0]?.message?.content ?? "{}";
       const stripped = extractJsonContent(raw);
       try {
