@@ -10,9 +10,10 @@
 // than swallowed silently.
 //
 // Two independent resource limits keep this diagnostic log bounded on disk:
-//   - Per-field caps (MAX_AUDIT_FIELD_LENGTH) truncate `rawContent` and the serialized
-//     `response` before they're written, so one huge AI payload can't bloat a single line.
-//     Truncation always leaves a visible marker rather than silently dropping data.
+//   - Per-field caps (MAX_AUDIT_FIELD_LENGTH) truncate `systemMessage`, `userMessage`,
+//     `rawContent`, `errorMessage`, and the serialized `response` before they're written,
+//     so one huge AI payload can't bloat a single line. Truncation always leaves a visible
+//     marker rather than silently dropping data.
 //   - A whole-file cap (MAX_AUDIT_LOG_FILE_SIZE_BYTES) rotates the file to a `.1` suffix
 //     (overwriting any previous rotation) once it grows past the threshold, so the file
 //     can't grow without bound across a long-running process.
@@ -43,9 +44,10 @@ export type AiAuditEntry = {
   errorMessage?: string;
 };
 
-// Character cap applied to `rawContent` and to the JSON-serialized `response` before
-// either is written to the log. Chosen to keep a single log line readable while still
-// bounding worst-case size — an AI response is external/untrusted-size data.
+// Character cap applied to `systemMessage`, `userMessage`, `rawContent`, `errorMessage`,
+// and to the JSON-serialized `response` before any of them is written to the log. Chosen
+// to keep a single log line readable while still bounding worst-case size — all of these
+// are (or are built from) external/untrusted-size data.
 export const MAX_AUDIT_FIELD_LENGTH = 2_000;
 
 // Whole-file cap: once ai-audit.jsonl reaches this size, it is rotated to a `.1` suffix
@@ -87,11 +89,16 @@ function truncateResponseForAudit(
 
 function buildLoggableAuditEntry(entry: AiAuditEntry): AiAuditEntry {
   const loggableEntry: AiAuditEntry = { ...entry };
+  loggableEntry.systemMessage = truncateAuditField(loggableEntry.systemMessage);
+  loggableEntry.userMessage = truncateAuditField(loggableEntry.userMessage);
   if (loggableEntry.rawContent !== undefined) {
     loggableEntry.rawContent = truncateAuditField(loggableEntry.rawContent);
   }
   if (loggableEntry.response !== undefined) {
     loggableEntry.response = truncateResponseForAudit(loggableEntry.response);
+  }
+  if (loggableEntry.errorMessage !== undefined) {
+    loggableEntry.errorMessage = truncateAuditField(loggableEntry.errorMessage);
   }
   return loggableEntry;
 }

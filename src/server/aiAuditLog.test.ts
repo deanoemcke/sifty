@@ -101,6 +101,64 @@ describe("formatAuditEntryLine field size caps", () => {
     const line = formatAuditEntryLine(SAMPLE_ENTRY);
     expect(JSON.parse(line).response).toEqual(SAMPLE_ENTRY.response);
   });
+
+  it("truncates an oversized systemMessage field with a visible marker", () => {
+    const oversizedSystemMessage = "x".repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+    const entry: AiAuditEntry = {
+      ...SAMPLE_ENTRY,
+      response: undefined,
+      systemMessage: oversizedSystemMessage,
+    };
+
+    const parsed = JSON.parse(formatAuditEntryLine(entry));
+
+    expect(parsed.systemMessage).toContain("...[truncated, 5000 bytes omitted]");
+    expect(parsed.systemMessage.length).toBeLessThan(oversizedSystemMessage.length);
+  });
+
+  it("truncates an oversized userMessage field with a visible marker", () => {
+    const oversizedUserMessage = "x".repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+    const entry: AiAuditEntry = {
+      ...SAMPLE_ENTRY,
+      response: undefined,
+      userMessage: oversizedUserMessage,
+    };
+
+    const parsed = JSON.parse(formatAuditEntryLine(entry));
+
+    expect(parsed.userMessage).toContain("...[truncated, 5000 bytes omitted]");
+    expect(parsed.userMessage.length).toBeLessThan(oversizedUserMessage.length);
+  });
+
+  it("truncates an oversized errorMessage field with a visible marker", () => {
+    const oversizedErrorMessage = "x".repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+    const entry: AiAuditEntry = {
+      ...SAMPLE_ENTRY,
+      response: undefined,
+      errorMessage: oversizedErrorMessage,
+    };
+
+    const parsed = JSON.parse(formatAuditEntryLine(entry));
+
+    expect(parsed.errorMessage).toContain("...[truncated, 5000 bytes omitted]");
+    expect(parsed.errorMessage.length).toBeLessThan(oversizedErrorMessage.length);
+  });
+
+  it("leaves systemMessage, userMessage, and errorMessage under the cap untouched", () => {
+    const entry: AiAuditEntry = {
+      ...SAMPLE_ENTRY,
+      response: undefined,
+      systemMessage: "short system",
+      userMessage: "short user",
+      errorMessage: "short error",
+    };
+
+    const parsed = JSON.parse(formatAuditEntryLine(entry));
+
+    expect(parsed.systemMessage).toBe("short system");
+    expect(parsed.userMessage).toBe("short user");
+    expect(parsed.errorMessage).toBe("short error");
+  });
 });
 
 describe("writeAuditLogHeaderAsync / appendAuditLogLineAsync", () => {
