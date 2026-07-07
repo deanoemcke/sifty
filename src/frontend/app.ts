@@ -5,6 +5,7 @@ import { requestAiFilterRun } from "./aiFilter";
 import {
   DEFAULT_REGION_DISPLAY,
   DISCOVERY_BUTTON_LABEL,
+  handleDiscoveryKeydown,
   populateRegionSelect,
   type RegionOption,
   updateDiscoveryBtn,
@@ -85,6 +86,16 @@ function initApp(): void {
   getElement<HTMLInputElement>("discoveryMaxPrice").addEventListener("input", updateDiscoveryBtn);
   getElement<HTMLButtonElement>("discoveryBtn").addEventListener("click", () =>
     handleDiscoverySubmitAsync(),
+  );
+
+  const submitDiscoveryForm = (): void => getElement<HTMLButtonElement>("discoveryBtn").click();
+  getElement<HTMLTextAreaElement>("discoveryPrompt").addEventListener(
+    "keydown",
+    (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitDiscoveryForm),
+  );
+  getElement<HTMLInputElement>("discoveryMaxPrice").addEventListener(
+    "keydown",
+    (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitDiscoveryForm),
   );
 
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", renderDerived);

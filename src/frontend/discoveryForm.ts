@@ -61,6 +61,14 @@ export function updateDiscoveryBtn(): void {
     !hasPrompt || !hasValidPrice || !hasRegion;
 }
 
+// Shift+Enter still inserts a newline in the multi-line prompt textarea;
+// plain Enter in either input runs the search instead.
+export function handleDiscoveryKeydown(keyboardEvent: KeyboardEvent, submit: () => void): void {
+  if (keyboardEvent.key !== "Enter" || keyboardEvent.shiftKey) return;
+  keyboardEvent.preventDefault();
+  submit();
+}
+
 export function allowShippingFromFulfillment(fulfillment: Fulfillment | undefined): boolean {
   return (fulfillment ?? "any") !== "pickup";
 }
