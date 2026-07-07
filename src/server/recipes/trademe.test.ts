@@ -53,7 +53,13 @@ const { getNextPage, resetPageQueue, makeDetailPage } = vi.hoisted(() => {
   // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
   // per test so the same factory covers the happy path, non-200, and no-response cases.
   function makeDetailPage(
-    options: { data?: unknown; url?: string; status?: number; respond?: boolean } = {},
+    options: {
+      data?: unknown;
+      url?: string;
+      status?: number;
+      respond?: boolean;
+      jsonError?: boolean;
+    } = {},
   ) {
     const handlers: Array<(r: unknown) => void> = [];
     return {
@@ -66,7 +72,10 @@ const { getNextPage, resetPageQueue, makeDetailPage } = vi.hoisted(() => {
         const response = {
           url: () => options.url ?? "https://api.trademe.co.nz/v1/listings/12345.json",
           status: () => options.status ?? 200,
-          json: async () => options.data ?? {},
+          json: async () => {
+            if (options.jsonError) throw new SyntaxError("Unexpected end of JSON input");
+            return options.data ?? {};
+          },
         };
         for (const h of [...handlers]) h(response);
       },
@@ -699,7 +708,7 @@ describe("fetchSingleListingDetailAsync", () => {
     expect(detail).toEqual(parseListingDetailResponse(rawData));
   });
 
-  it("resolves to {} without hanging when no matching response arrives before the timeout", async () => {
+  it("rejects instead of hanging when no matching response arrives before the timeout", async () => {
     const page = makeDetailPage({ respond: false }) as unknown as Parameters<
       typeof fetchSingleListingDetailAsync
     >[0];
@@ -707,21 +716,28 @@ describe("fetchSingleListingDetailAsync", () => {
       page,
       "https://www.trademe.co.nz/a/listing/12345",
     );
+    const assertion = expect(detailPromise).rejects.toThrow();
     await vi.advanceTimersByTimeAsync(12000);
-    expect(await detailPromise).toEqual({});
+    await assertion;
   });
 
-  it("ignores a non-200 response and falls through to timeout behaviour", async () => {
+  it("rejects immediately on a non-200 response, without waiting for the timeout", async () => {
     const page = makeDetailPage({
       status: 404,
       data: { Body: "ignored" },
     }) as unknown as Parameters<typeof fetchSingleListingDetailAsync>[0];
-    const detailPromise = fetchSingleListingDetailAsync(
-      page,
-      "https://www.trademe.co.nz/a/listing/12345",
-    );
-    await vi.advanceTimersByTimeAsync(12000);
-    expect(await detailPromise).toEqual({});
+    await expect(
+      fetchSingleListingDetailAsync(page, "https://www.trademe.co.nz/a/listing/12345"),
+    ).rejects.toThrow();
+  });
+
+  it("rejects when the response body is not valid JSON", async () => {
+    const page = makeDetailPage({ jsonError: true }) as unknown as Parameters<
+      typeof fetchSingleListingDetailAsync
+    >[0];
+    await expect(
+      fetchSingleListingDetailAsync(page, "https://www.trademe.co.nz/a/listing/12345"),
+    ).rejects.toThrow();
   });
 });
 

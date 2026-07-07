@@ -385,20 +385,28 @@ function waitForListingDetailResponseAsync(page: Page): Promise<DeepSearchDetail
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout>;
     const handler = async (response: Response) => {
-      if (LISTING_DETAIL_API_PATTERN.test(response.url()) && response.status() === 200) {
-        page.off("response", handler);
-        clearTimeout(timer);
-        try {
-          const data = (await response.json()) as Record<string, unknown>;
-          resolve(parseListingDetailResponse(data));
-        } catch {
-          resolve(null);
-        }
+      if (!LISTING_DETAIL_API_PATTERN.test(response.url())) return;
+      page.off("response", handler);
+      clearTimeout(timer);
+      if (response.status() !== 200) {
+        console.warn(
+          `[trademe] detail fetch got status ${response.status()} for ${response.url()}`,
+        );
+        resolve(null);
+        return;
+      }
+      try {
+        const data = (await response.json()) as Record<string, unknown>;
+        resolve(parseListingDetailResponse(data));
+      } catch (error) {
+        console.error(`[trademe] failed to parse detail response for ${response.url()}`, error);
+        resolve(null);
       }
     };
     page.on("response", handler);
     timer = setTimeout(() => {
       page.off("response", handler);
+      console.warn(`[trademe] detail fetch timed out`);
       resolve(null);
     }, 12000);
   });
@@ -410,7 +418,9 @@ export async function fetchSingleListingDetailAsync(
 ): Promise<DeepSearchDetail> {
   const detailPromise = waitForListingDetailResponseAsync(page);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-  return (await detailPromise) ?? {};
+  const detail = await detailPromise;
+  if (detail === null) throw new Error(`failed to fetch listing detail for ${url}`);
+  return detail;
 }
 
 // ── Discover URL building ─────────────────────────────────────────────────────
@@ -659,8 +669,16 @@ async function deepSearchAsync(
               total: listings.length,
               title: listing.title,
             });
-            const detail = await fetchSingleListingDetailAsync(currentPage, listing.url);
-            onEvent({ type: "detail", url: listing.url, detail });
+            try {
+              const detail = await fetchSingleListingDetailAsync(currentPage, listing.url);
+              onEvent({ type: "detail", url: listing.url, detail });
+            } catch (error) {
+              onEvent({
+                type: "detail-error",
+                url: listing.url,
+                message: (error as Error).message,
+              });
+            }
           } finally {
             await currentPage.close();
           }

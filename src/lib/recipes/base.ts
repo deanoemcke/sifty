@@ -92,6 +92,7 @@ export type QuickSearchEvent =
 export type DeepSearchEvent =
   | { type: "progress"; index: number; total: number; title: string }
   | { type: "detail"; url: string; detail: DeepSearchDetail }
+  | { type: "detail-error"; url: string; message: string }
   | { type: "complete" }
   | { type: "error"; message: string };
 
