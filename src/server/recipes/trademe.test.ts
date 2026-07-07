@@ -648,6 +648,23 @@ describe("parseListingDetailResponse", () => {
     expect(detail.shippingCost).toBe(5);
   });
 
+  it("sets shippingAvailable=true and shippingCost=null when ShippingOptions all lack a Price", () => {
+    const detail = parseListingDetailResponse({
+      ...fullListing,
+      ShippingOptions: [{}, {}],
+    });
+    expect(detail.shippingAvailable).toBe(true);
+    expect(detail.shippingCost).toBeNull();
+  });
+
+  it("ignores shipping options without a numeric Price when computing the minimum", () => {
+    const detail = parseListingDetailResponse({
+      ...fullListing,
+      ShippingOptions: [{ Price: 20 }, {}, { Price: 12 }],
+    });
+    expect(detail.shippingCost).toBe(12);
+  });
+
   it("omits seller when Member is absent", () => {
     const { Member: _drop, ...rest } = fullListing;
     const detail = parseListingDetailResponse(rest);

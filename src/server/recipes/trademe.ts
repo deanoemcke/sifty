@@ -302,6 +302,9 @@ function extractQuestionsAndAnswersFromApi(
 
 export function parseListingDetailResponse(data: Record<string, unknown>): DeepSearchDetail {
   const shippingOptions = (data.ShippingOptions ?? []) as RawShippingOption[];
+  const shippingPrices = shippingOptions
+    .map((option) => option.Price)
+    .filter((price): price is number => typeof price === "number");
   const hasBuyNow = Boolean(data.HasBuyNow);
 
   // TODO(pickup-mapping): AllowsPickups mapping is deferred — resolve empirically
@@ -314,11 +317,11 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
     ),
     buyNowPrice: hasBuyNow ? Number(data.BuyNowPrice) : null,
     reserveStatus: mapReserveState(data.ReserveState as number | undefined),
+    // shippingAvailable reflects raw option presence, not shippingPrices: options
+    // that exist but omit a numeric Price still mean shipping is available, just
+    // with an unknown cost.
     shippingAvailable: shippingOptions.length > 0,
-    shippingCost:
-      shippingOptions.length > 0
-        ? Math.min(...shippingOptions.map((option) => option.Price ?? Infinity))
-        : null,
+    shippingCost: shippingPrices.length > 0 ? Math.min(...shippingPrices) : null,
   };
 
   const startDate = parseTradeMeDate(data.StartDate as string | undefined);
