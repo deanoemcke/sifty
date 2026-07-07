@@ -216,6 +216,17 @@ export function applyAiJsonResult(
   throw new Error(result.message);
 }
 
+function buildRateLimitedMessage(
+  label: string,
+  delaySecs: number,
+  exceedsBudget: boolean,
+  errorMessage: string,
+): string {
+  return exceedsBudget
+    ? `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`
+    : `AI rate limited (${label}): retries exhausted, provider still reports rate limiting — ${errorMessage}`;
+}
+
 export async function aiJSON(
   aiConfig: AiConfig,
   label: string,
@@ -310,7 +321,7 @@ export async function aiJSON(
               kind: "rate-limited",
               providerKey: aiConfig.providerKey,
               cooldownUntilMs: Date.now() + delaySecs * 1000,
-              message: `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
+              message: buildRateLimitedMessage(label, delaySecs, true, errorMessage),
             };
           }
 
@@ -330,7 +341,7 @@ export async function aiJSON(
               kind: "rate-limited",
               providerKey: aiConfig.providerKey,
               cooldownUntilMs: Date.now() + delaySecs * 1000,
-              message: `AI error (${label}) [429]: ${errorMessage}`,
+              message: buildRateLimitedMessage(label, delaySecs, false, errorMessage),
             };
           }
         }

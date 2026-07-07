@@ -114,7 +114,7 @@ describe("aiJSON", () => {
     const result = await promise;
 
     expect(result.kind).toBe("rate-limited");
-    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
+    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
     expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_RETRIES);
     expect(recordAiAuditEntryMock).toHaveBeenCalledTimes(1 + MAX_RETRIES);
     expect(recordAiAuditEntryMock.mock.calls.map((call) => call[0].status)).toEqual(
@@ -409,7 +409,7 @@ describe("aiJSON", () => {
       const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
       await vi.runAllTimersAsync();
       const result = await promise;
-      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       const nextConfig = getAIConfig(cooldownStore);
       expect(nextConfig.url).toBe(OPENROUTER_URL);
@@ -437,7 +437,7 @@ describe("aiJSON", () => {
       const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
       await vi.runAllTimersAsync();
       const result = await promise;
-      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       expect(() => getAIConfig(cooldownStore)).toThrow("groq: recovers in");
 
