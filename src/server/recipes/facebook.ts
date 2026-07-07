@@ -420,6 +420,14 @@ export function extractFacebookDetails(bodyText: string): Array<{ key: string; v
   return details;
 }
 
+export function buildFacebookDeepSearchDetail(
+  description: string,
+  extraAttributes: Record<string, string>,
+  pickupLocation: string | null,
+): DeepSearchDetail {
+  return { description, extraAttributes, questionsAndAnswers: [], pickupLocation };
+}
+
 async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise<DeepSearchDetail> {
   console.log(`[facebook] fetching: ${url}`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -434,8 +442,8 @@ async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise
 
   const bodyText: string = await page.evaluate(() => document.body.innerText);
 
-  const scrapedAttributes: Record<string, string> = {};
-  for (const { key, value } of extractFacebookDetails(bodyText)) scrapedAttributes[key] = value;
+  const extraAttributes: Record<string, string> = {};
+  for (const { key, value } of extractFacebookDetails(bodyText)) extraAttributes[key] = value;
 
   // Facebook Marketplace has no auctions/reserves and no structured fulfillment
   // data — only pickupLocation has a real signal here, so that's all we add.
@@ -444,16 +452,7 @@ async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise
 
   const description = extractFacebookDescription(bodyText);
 
-  return {
-    description,
-    scrapedAttributes,
-    questionsAndAnswers: [],
-    buyNowPrice: null,
-    reserveStatus: "UNKNOWN",
-    pickupAvailable: null,
-    shippingAvailable: null,
-    pickupLocation,
-  };
+  return buildFacebookDeepSearchDetail(description, extraAttributes, pickupLocation);
 }
 
 // ── Deep search ───────────────────────────────────────────────────────────────

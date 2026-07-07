@@ -7,8 +7,8 @@ import type {
   DiscoverContext,
   Fulfillment,
   Listing,
+  ListingPhoto,
   QuickSearchEvent,
-  Recipe,
   RecipeDiscoverResult,
   ReserveStatus,
 } from "../../lib/recipes/base";
@@ -128,6 +128,36 @@ function parsePriceValue(display: string): number | null {
   return match ? parseFloat(match[0]) : null;
 }
 
+// ── Field mapping helpers ──────────────────────────────────────────────────────
+
+// Empirically verified against real listings: absent → no reserve; 1 → met;
+// 2 → not met; 3 is not really a reserve state at all — it's always paired with
+// IsBuyNowOnly, i.e. the listing isn't an auction, so the frontend never renders it.
+export function mapReserveState(reserveState: number | undefined): ReserveStatus {
+  if (reserveState === undefined) return "NONE";
+  if (reserveState === 1) return "MET";
+  if (reserveState === 2) return "NOT_MET";
+  return "UNKNOWN";
+}
+
+const TRADEME_WIRE_DATE_PATTERN = /^\/Date\((\d+)\)\/$/;
+
+// Normalizes TradeMe's `/Date(ms)/` wire format to ISO 8601 at the parsing boundary.
+export function parseTradeMeDate(wireValue: string | undefined): string | undefined {
+  if (!wireValue) return undefined;
+  const match = wireValue.match(TRADEME_WIRE_DATE_PATTERN);
+  if (!match) return undefined;
+  return new Date(Number(match[1])).toISOString();
+}
+
+export function buildPhotosFromUrls(photoUrls: string[] | undefined): ListingPhoto[] | undefined {
+  if (!photoUrls || photoUrls.length === 0) return undefined;
+  return photoUrls.map((url) => ({
+    thumbnailUrl: url,
+    fullSizeUrl: url.replace("/photoserver/thumb/", "/photoserver/full/"),
+  }));
+}
+
 // ── API response parsing ──────────────────────────────────────────────────────
 
 export type RawApiItem = {
@@ -137,20 +167,59 @@ export type RawApiItem = {
   region?: string;
   canonicalPath: string;
   pictureHref?: string;
+  isBuyNowOnly: boolean;
+  hasBuyNow: boolean;
+  buyNowPrice?: number;
+  reserveState?: number;
+  startDate?: string;
+  endDate?: string;
+  categoryPath?: string;
+  photoUrls?: string[];
+  memberId?: number;
+  isSuperSeller?: boolean;
+  shippingCost?: number;
 };
 
 export function buildListing(raw: RawApiItem): Listing | null {
   const url = raw.canonicalPath ? `${TRADEME_BASE}${raw.canonicalPath}` : "";
   if (!raw.title || !url) return null;
-  return {
+
+  const listing: Listing = {
     source: TRADEME_PATTERN.name,
     title: raw.title,
     price: parsePriceValue(raw.priceDisplay),
     location: [raw.suburb, raw.region].filter(Boolean).join(", ") || "Unknown",
     url,
     thumbnailUrl: raw.pictureHref?.replace("/photoserver/thumb/", "/photoserver/full/"),
-    isAuction: true,
+    isAuction: !raw.isBuyNowOnly,
+    reserveStatus: mapReserveState(raw.reserveState),
   };
+
+  if (raw.hasBuyNow) listing.buyNowPrice = raw.buyNowPrice ?? null;
+
+  const startDate = parseTradeMeDate(raw.startDate);
+  if (startDate) listing.startDate = startDate;
+  const endDate = parseTradeMeDate(raw.endDate);
+  if (endDate) listing.endDate = endDate;
+
+  if (raw.categoryPath) listing.categoryPath = raw.categoryPath;
+
+  const photos = buildPhotosFromUrls(raw.photoUrls);
+  if (photos) listing.photos = photos;
+
+  if (raw.shippingCost !== undefined) listing.shippingCost = raw.shippingCost;
+
+  if (raw.memberId != null) {
+    listing.seller = { memberId: raw.memberId, isTopSeller: raw.isSuperSeller ?? false };
+  }
+
+  return listing;
+}
+
+function extractSuggestedShippingPrice(item: ApiItem): number | undefined {
+  const shippingDetails = item.ShippingDetails as ApiItem | undefined;
+  const suggestedShipping = shippingDetails?.SuggestedShipping as ApiItem | undefined;
+  return suggestedShipping?.Price as number | undefined;
 }
 
 export function parseSearchApiResponse(data: Record<string, unknown>): {
@@ -170,6 +239,17 @@ export function parseSearchApiResponse(data: Record<string, unknown>): {
         region: item.Region as string | undefined,
         canonicalPath: (item.CanonicalPath as string) ?? "",
         pictureHref: (item.PictureHref as string) || undefined,
+        isBuyNowOnly: Boolean(item.IsBuyNowOnly),
+        hasBuyNow: Boolean(item.HasBuyNow),
+        buyNowPrice: item.BuyNowPrice as number | undefined,
+        reserveState: item.ReserveState as number | undefined,
+        startDate: item.StartDate as string | undefined,
+        endDate: item.EndDate as string | undefined,
+        categoryPath: item.CategoryPath as string | undefined,
+        photoUrls: item.PhotoUrls as string[] | undefined,
+        memberId: item.MemberId as number | undefined,
+        isSuperSeller: item.IsSuperSeller as boolean | undefined,
+        shippingCost: extractSuggestedShippingPrice(item),
       }),
     )
     .map(buildListing)
@@ -177,144 +257,99 @@ export function parseSearchApiResponse(data: Record<string, unknown>): {
   return { listings, totalCount, pageSize };
 }
 
-// ── Detail extraction ─────────────────────────────────────────────────────────
+// ── Listing detail response parsing ───────────────────────────────────────────
+// Parses GET api.trademe.co.nz/v1/listings/{id}.json, the REST endpoint the
+// listing page itself calls — the sole source for deep search.
 
-export function extractQuestionsAndAnswers(
-  bodyText: string,
-): Array<{ question: string; answer: string }> {
-  const start = bodyText.toLowerCase().indexOf("questions & answers");
-  if (start === -1) return [];
-  const lineEnd = bodyText.indexOf("\n", start);
-  if (lineEnd === -1) return [];
-  let after = bodyText.slice(lineEnd + 1).trimStart();
-  if (after.startsWith("Ask a question\n"))
-    after = after.slice("Ask a question\n".length).trimStart();
-  const afterLower = after.toLowerCase();
-  const sectionEndMarkers = [
-    "ask a question",
-    "about the seller",
-    "about the store",
-    "seller's other listings",
-    "similar listings",
-    "you might also like",
-    "back to top",
-  ];
-  let end = after.length;
-  for (const sectionEndMarker of sectionEndMarkers) {
-    const idx = afterLower.indexOf(sectionEndMarker);
-    if (idx !== -1 && idx < end) end = idx;
+type RawAttribute = { Name?: string; Value?: string; DisplayValue?: string };
+type RawQuestion = {
+  Comment?: string;
+  Answer?: string;
+  AskingMember?: { Nickname?: string };
+  CommentDate?: string;
+  AnswerDate?: string;
+};
+type RawShippingOption = { Price?: number };
+type RawPhoto = { Value?: { Thumbnail?: string; FullSize?: string } };
+type RawMember = {
+  MemberId?: number;
+  Nickname?: string;
+  FeedbackCount?: number;
+  IsTopSeller?: boolean;
+  DateJoined?: string;
+};
+
+function extractExtraAttributes(rawAttributes: RawAttribute[] | undefined): Record<string, string> {
+  const extraAttributes: Record<string, string> = {};
+  for (const attribute of rawAttributes ?? []) {
+    if (!attribute.Name) continue;
+    extraAttributes[attribute.Name] = attribute.DisplayValue ?? attribute.Value ?? "";
   }
-  const content = after.slice(0, end).trim();
-  if (!content) return [];
+  return extraAttributes;
+}
 
-  const lines = content.split("\n");
-  const segments: string[] = [];
-  const current: string[] = [];
-  let lineIndex = 0;
-  let foundAnyUsernames = false;
-  while (lineIndex < lines.length) {
-    if (
-      lineIndex + 1 < lines.length &&
-      /\(\d+$/.test(lines[lineIndex].trim()) &&
-      lines[lineIndex + 1].trim().startsWith(") •")
-    ) {
-      foundAnyUsernames = true;
-      segments.push(current.splice(0).join("\n").trim());
-      lineIndex += 2;
-    } else {
-      current.push(lines[lineIndex]);
-      lineIndex++;
+function extractQuestionsAndAnswersFromApi(
+  rawQuestions: RawQuestion[] | undefined,
+): NonNullable<DeepSearchDetail["questionsAndAnswers"]> {
+  return (rawQuestions ?? []).map((question) => ({
+    question: question.Comment ?? "",
+    answer: question.Answer ?? "",
+    askedBy: question.AskingMember?.Nickname,
+    askedAt: parseTradeMeDate(question.CommentDate),
+    answeredAt: question.Answer ? parseTradeMeDate(question.AnswerDate) : undefined,
+  }));
+}
+
+export function parseListingDetailResponse(data: Record<string, unknown>): DeepSearchDetail {
+  const shippingOptions = (data.ShippingOptions ?? []) as RawShippingOption[];
+  const hasBuyNow = Boolean(data.HasBuyNow);
+
+  // TODO(pickup-mapping): AllowsPickups mapping is deferred — resolve empirically
+  // before adding pickupAvailable/pickupLocation to this result.
+  const detail: DeepSearchDetail = {
+    description: String(data.Body ?? ""),
+    extraAttributes: extractExtraAttributes(data.Attributes as RawAttribute[] | undefined),
+    questionsAndAnswers: extractQuestionsAndAnswersFromApi(
+      (data.Questions as { List?: RawQuestion[] } | undefined)?.List,
+    ),
+    buyNowPrice: hasBuyNow ? Number(data.BuyNowPrice) : null,
+    reserveStatus: mapReserveState(data.ReserveState as number | undefined),
+    shippingAvailable: shippingOptions.length > 0,
+    shippingCost:
+      shippingOptions.length > 0
+        ? Math.min(...shippingOptions.map((option) => option.Price ?? Infinity))
+        : null,
+  };
+
+  const startDate = parseTradeMeDate(data.StartDate as string | undefined);
+  if (startDate) detail.startDate = startDate;
+  const endDate = parseTradeMeDate(data.EndDate as string | undefined);
+  if (endDate) detail.endDate = endDate;
+
+  if (data.CategoryPath) detail.categoryPath = data.CategoryPath as string;
+
+  const rawPhotos = data.Photos as RawPhoto[] | undefined;
+  if (rawPhotos?.length) {
+    const photos: ListingPhoto[] = [];
+    for (const photo of rawPhotos) {
+      const { Thumbnail: thumbnailUrl, FullSize: fullSizeUrl } = photo.Value ?? {};
+      if (thumbnailUrl && fullSizeUrl) photos.push({ thumbnailUrl, fullSizeUrl });
     }
+    detail.photos = photos;
   }
-  if (current.length) segments.push(current.join("\n").trim());
 
-  if (!foundAnyUsernames) return [];
-
-  const pairs: Array<{ question: string; answer: string }> = [];
-  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 2) {
-    const question = segments[segmentIndex].trim();
-    const answer = segments[segmentIndex + 1]?.trim() ?? "";
-    if (question) pairs.push({ question, answer });
+  const rawMember = data.Member as RawMember | undefined;
+  if (rawMember?.MemberId != null) {
+    detail.seller = {
+      memberId: rawMember.MemberId,
+      nickname: rawMember.Nickname,
+      feedbackCount: rawMember.FeedbackCount,
+      isTopSeller: rawMember.IsTopSeller,
+      dateJoined: parseTradeMeDate(rawMember.DateJoined),
+    };
   }
-  return pairs;
-}
 
-export function extractDetails(bodyText: string): Array<{ key: string; value: string }> {
-  const detailsStart = bodyText.indexOf("Details\n");
-  if (detailsStart === -1) return [];
-  const after = bodyText.slice(detailsStart + "Details\n".length);
-  const sectionEndMarkers = ["Description\n", "Shipping & pick-up options"];
-  let end = after.length;
-  for (const sectionEndMarker of sectionEndMarkers) {
-    const idx = after.indexOf(sectionEndMarker);
-    if (idx !== -1 && idx < end) end = idx;
-  }
-  const lines = after
-    .slice(0, end)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const pairs: Array<{ key: string; value: string }> = [];
-  for (let lineIndex = 0; lineIndex + 1 < lines.length; lineIndex += 2) {
-    pairs.push({ key: lines[lineIndex].replace(/:$/, ""), value: lines[lineIndex + 1] });
-  }
-  return pairs;
-}
-
-export function extractDescriptionFromText(bodyText: string): string {
-  const marker = "Description\n";
-  const start = bodyText.indexOf(marker);
-  if (start === -1) return "";
-  const after = bodyText.slice(start + marker.length).trimStart();
-  const afterLower = after.toLowerCase();
-  const sectionEndMarkers = [
-    "\ndetails\n",
-    "shipping & pick-up options",
-    "questions & answers",
-    "seller's other listings",
-    "similar listings",
-    "you might also like",
-  ];
-  let end = after.length;
-  for (const sectionEndMarker of sectionEndMarkers) {
-    const idx = afterLower.indexOf(sectionEndMarker);
-    if (idx !== -1 && idx < end) end = idx;
-  }
-  return after
-    .slice(0, end)
-    .replace(/\s*\nShow more\s*$/, "")
-    .trim();
-}
-
-type StructuredAttributes = Pick<
-  Listing,
-  "reserveStatus" | "buyNowPrice" | "pickupLocation" | "shippingAvailable" | "pickupAvailable"
->;
-
-export function extractStructuredFromText(bodyText: string): StructuredAttributes {
-  let reserveStatus: ReserveStatus = "UNKNOWN";
-  if (/No reserve/.test(bodyText)) reserveStatus = "NONE";
-  else if (/Reserve met/.test(bodyText)) reserveStatus = "MET";
-  else if (/Reserve not met/.test(bodyText)) reserveStatus = "NOT_MET";
-
-  const attributes: StructuredAttributes = { reserveStatus };
-
-  const bnMatch = bodyText.match(/Buy [Nn]ow\s*\n\s*\$([\d,]+(?:\.\d+)?)/);
-  if (bnMatch) attributes.buyNowPrice = parseFloat(bnMatch[1].replace(/,/g, ""));
-
-  const pickupMatch = bodyText.match(/Pick up from ([^\n]+)/);
-  const pickupLocation = pickupMatch ? pickupMatch[1].trim() : "";
-  if (pickupLocation) attributes.pickupLocation = pickupLocation;
-
-  const shippingIdx = bodyText.indexOf("Shipping & pick-up options");
-  const shippingSection = shippingIdx >= 0 ? bodyText.slice(shippingIdx) : "";
-  const isPickupOnly =
-    /Pick-?up only|pickup only/i.test(bodyText) ||
-    (pickupLocation !== "" && !/North Island|South Island|NZ Post|Courier/i.test(shippingSection));
-  attributes.shippingAvailable = !isPickupOnly;
-  attributes.pickupAvailable = pickupLocation !== "";
-
-  return attributes;
+  return detail;
 }
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
@@ -344,38 +379,38 @@ function waitForSearchApiResponseAsync(
   });
 }
 
+const LISTING_DETAIL_API_PATTERN = /api\.trademe\.co\.nz\/v1\/listings\/.+\.json/;
+
+function waitForListingDetailResponseAsync(page: Page): Promise<DeepSearchDetail | null> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const handler = async (response: Response) => {
+      if (LISTING_DETAIL_API_PATTERN.test(response.url()) && response.status() === 200) {
+        page.off("response", handler);
+        clearTimeout(timer);
+        try {
+          const data = (await response.json()) as Record<string, unknown>;
+          resolve(parseListingDetailResponse(data));
+        } catch {
+          resolve(null);
+        }
+      }
+    };
+    page.on("response", handler);
+    timer = setTimeout(() => {
+      page.off("response", handler);
+      resolve(null);
+    }, 12000);
+  });
+}
+
 export async function fetchSingleListingDetailAsync(
   page: Page,
   url: string,
 ): Promise<DeepSearchDetail> {
+  const detailPromise = waitForListingDetailResponseAsync(page);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await page
-    .waitForFunction(() => document.body.innerText.includes("Shipping & pick-up options"), {
-      timeout: 10000,
-    })
-    .catch(() => {
-      /* page may lack a shipping section — proceed with whatever rendered */
-    });
-
-  const bodyText: string = await page.evaluate(() => document.body.innerText);
-  const details = extractDetails(bodyText);
-  const description = extractDescriptionFromText(bodyText);
-  const dom = extractStructuredFromText(bodyText);
-  const questionsAndAnswers = extractQuestionsAndAnswers(bodyText);
-
-  const scrapedAttributes: Record<string, string> = {};
-  for (const { key, value } of details) scrapedAttributes[key] = value;
-
-  return {
-    description,
-    scrapedAttributes,
-    questionsAndAnswers,
-    buyNowPrice: dom.buyNowPrice ?? null,
-    reserveStatus: dom.reserveStatus ?? "UNKNOWN",
-    pickupAvailable: dom.pickupAvailable ?? null,
-    shippingAvailable: dom.shippingAvailable ?? null,
-    pickupLocation: dom.pickupLocation ?? null,
-  };
+  return (await detailPromise) ?? {};
 }
 
 // ── Discover URL building ─────────────────────────────────────────────────────
