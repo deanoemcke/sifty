@@ -230,14 +230,14 @@ export async function aiJSON(
     recordAiAuditEntry(buildAuditEntry(auditContext, overrides));
   function recordRateLimitedAttempt(
     attempt: number,
-    bodyMessage: string | undefined,
+    errorMessage: string,
     attemptStartedAt: number,
   ): void {
     recordAttempt({
       attempt,
       status: "rate_limited",
       httpStatus: 429,
-      errorMessage: bodyMessage ?? "",
+      errorMessage,
       durationMs: Date.now() - attemptStartedAt,
     });
   }
@@ -305,7 +305,7 @@ export async function aiJSON(
           const outOfRetries = attempt > MAX_RETRIES;
 
           if (isConfident && delaySecs * 1000 > remainingMs) {
-            recordRateLimitedAttempt(attempt, bodyMessage, attemptStartedAt);
+            recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
             return {
               kind: "rate-limited",
               providerKey: aiConfig.providerKey,
@@ -315,7 +315,7 @@ export async function aiJSON(
           }
 
           if (!outOfRetries) {
-            recordRateLimitedAttempt(attempt, bodyMessage, attemptStartedAt);
+            recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
             console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
             await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
             continue;
@@ -325,7 +325,7 @@ export async function aiJSON(
           // even on the final attempt; an unconfident guess must not be trusted to make that call,
           // so it falls through to the generic http_error below instead.
           if (isConfident) {
-            recordRateLimitedAttempt(attempt, bodyMessage, attemptStartedAt);
+            recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
             return {
               kind: "rate-limited",
               providerKey: aiConfig.providerKey,
