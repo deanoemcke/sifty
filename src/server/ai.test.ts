@@ -4,6 +4,7 @@ import {
   aiJSON,
   applyAiJsonResult,
   createProviderCooldownStore,
+  decideRateLimitOutcome,
   getAIConfig,
   MAX_PROVIDER_COOLDOWN_MS,
   MAX_RETRIES,
@@ -114,7 +115,7 @@ describe("aiJSON", () => {
     const result = await promise;
 
     expect(result.kind).toBe("rate-limited");
-    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
+    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
     expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_RETRIES);
     expect(recordAiAuditEntryMock).toHaveBeenCalledTimes(1 + MAX_RETRIES);
     expect(recordAiAuditEntryMock.mock.calls.map((call) => call[0].status)).toEqual(
@@ -312,6 +313,26 @@ describe("aiJSON", () => {
     );
   });
 
+  it("records an http_error audit entry when a 200 response body isn't valid JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("not valid json{", { status: 200 }),
+    );
+
+    await expect(
+      aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100),
+    ).rejects.toThrow("AI error (test): malformed 200 response body");
+
+    expect(recordAiAuditEntryMock).toHaveBeenCalledTimes(1);
+    expect(recordAiAuditEntryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 1,
+        status: "http_error",
+        httpStatus: 200,
+        errorMessage: "AI error (test): malformed 200 response body",
+      }),
+    );
+  });
+
   it("logs only a short model-name line to the console, not the full prompts", async () => {
     const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(makeSuccessResponse({ answer: 1 }));
@@ -409,7 +430,7 @@ describe("aiJSON", () => {
       const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
       await vi.runAllTimersAsync();
       const result = await promise;
-      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       const nextConfig = getAIConfig(cooldownStore);
       expect(nextConfig.url).toBe(OPENROUTER_URL);
@@ -437,7 +458,7 @@ describe("aiJSON", () => {
       const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
       await vi.runAllTimersAsync();
       const result = await promise;
-      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("429");
+      expect(() => applyAiJsonResult(cooldownStore, result)).toThrow("AI rate limited");
 
       expect(() => getAIConfig(cooldownStore)).toThrow("groq: recovers in");
 
@@ -489,7 +510,7 @@ describe("aiJSON", () => {
       expect(() => getAIConfig(cooldownStore)).toThrow(`recovers in ${cappedRecoversInSecs}s`);
     });
 
-    it("does not fail fast on an unconfident guessed delay even when it would exceed the remaining budget", async () => {
+    it("caps an unconfident guessed delay's retry sleep to the remaining budget instead of sleeping the full guess", async () => {
       vi.stubEnv("GROQ_API_KEY", "groq-key");
       const groqConfig = getAIConfig(cooldownStore);
 
@@ -499,15 +520,26 @@ describe("aiJSON", () => {
         .mockResolvedValueOnce(make429Response(40))
         // Attempt 2: no retry-after header and no matching body message, so the parsed delay is the
         // untagged 10s fallback guess. Only ~5s of budget remains at this point, so a confident delay
-        // would fail fast here — but a guess must not be trusted to make that call.
+        // would fail fast here — but a guess must not be trusted to make that call. Its sleep must be
+        // capped to the ~5s left instead of sleeping the full guessed 10s.
+        .mockResolvedValueOnce(makeResponse(429, {}))
+        // The capped sleep only just exhausts the budget, so one more near-instant attempt is spent
+        // before the loop's top-of-iteration budget check finally throws.
         .mockResolvedValueOnce(makeResponse(429, {}));
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
 
       const promise = aiJSON(groqConfig, "test", "sys", "usr", 100);
-      const assertion = expect(promise).rejects.toThrow("exceeded total budget");
+      const assertion = expect(promise).rejects.toThrow("429");
       await vi.runAllTimersAsync();
       await assertion;
 
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // A third attempt happening at all (rather than the old behaviour of stopping at 2) is only
+      // possible because the guess's sleep was capped short of the full 10s.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const scheduledDelaysMs = setTimeoutSpy.mock.calls.map(([, delayMs]) => delayMs as number);
+      expect(scheduledDelaysMs).not.toContain(10_000);
+      expect(scheduledDelaysMs.some((delayMs) => delayMs > 0 && delayMs < 10_000)).toBe(true);
+
       // The guess must not have sidelined the provider with a cooldown.
       const recheckedConfig = getAIConfig(cooldownStore);
       expect(recheckedConfig.url).toBe(GROQ_URL);
@@ -557,5 +589,80 @@ describe("aiJSON", () => {
       // ...but storeB, constructed independently, was never told about that exhaustion.
       expect(getAIConfig(storeB).url).toBe(GROQ_URL);
     });
+  });
+});
+
+describe("decideRateLimitOutcome", () => {
+  it("fails fast when a confident delay exceeds the remaining budget, regardless of retries left", () => {
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      50,
+      true,
+      10_000,
+      false,
+      1_000,
+    );
+
+    expect(decision).toEqual({
+      action: "return",
+      result: {
+        kind: "rate-limited",
+        providerKey: "groq",
+        cooldownUntilMs: 51_000,
+        message: `AI rate limited (test): provider asks to retry in 50s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
+      },
+    });
+  });
+
+  it("retries with a delay capped to the remaining budget when a confident delay fits and retries remain", () => {
+    const decision = decideRateLimitOutcome("groq", "test", "rate limited msg", 5, true, 10_000, false, 1_000);
+
+    expect(decision).toEqual({ action: "retry", sleepMs: 5_000 });
+  });
+
+  it("caps an unconfident guess's retry sleep to what remains of the budget", () => {
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      10,
+      false,
+      3_000,
+      false,
+      1_000,
+    );
+
+    expect(decision).toEqual({ action: "retry", sleepMs: 2_999 });
+  });
+
+  it("gives up but still reports a confident delay for cooldown once retries are exhausted", () => {
+    const decision = decideRateLimitOutcome("groq", "test", "rate limited msg", 5, true, 10_000, true, 1_000);
+
+    expect(decision).toEqual({
+      action: "return",
+      result: {
+        kind: "rate-limited",
+        providerKey: "groq",
+        cooldownUntilMs: 6_000,
+        message: "AI rate limited (test): retries exhausted, provider still reports rate limiting — rate limited msg",
+      },
+    });
+  });
+
+  it("falls through to the generic error path when an unconfident guess runs out of retries", () => {
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      10,
+      false,
+      10_000,
+      true,
+      1_000,
+    );
+
+    expect(decision).toEqual({ action: "fall-through" });
   });
 });
