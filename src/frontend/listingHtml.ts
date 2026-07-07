@@ -27,6 +27,28 @@ export function cleanDescription(text: string): string {
     .trim();
 }
 
+const MONTH_ABBREVIATIONS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+// Formats in UTC (not local time) so the same ISO input renders identically
+// regardless of the machine running it.
+export function formatListingDate(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getUTCDate()} ${MONTH_ABBREVIATIONS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
 export function buildCardPriceHtml(listing: Listing): string {
   return `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
 }
@@ -56,8 +78,80 @@ export function buildDetailMetaHtml(listing: Listing): string {
   return `${left}<span class="meta-right">${html}</span>`;
 }
 
+function buildQaAttributionHtml(name: string | undefined, iso: string | undefined): string {
+  const parts: string[] = [];
+  if (name) parts.push(esc(name));
+  if (iso) parts.push(esc(formatListingDate(iso)));
+  return parts.length > 0 ? `<span class="qa-meta">${parts.join(", ")}</span>` : "";
+}
+
+function buildShippingRowHtml(
+  shippingAvailable: boolean | null | undefined,
+  shippingCost: number | null | undefined,
+): string {
+  if (shippingAvailable === undefined) return "";
+  const value = !shippingAvailable
+    ? "Not available"
+    : shippingCost != null
+      ? esc(formatListingPrice(shippingCost))
+      : "Available (cost unknown)";
+  return `<span class="details-key">Shipping</span><span class="details-val">${value}</span>`;
+}
+
+function buildPickupRowHtml(
+  pickupAvailable: boolean | null | undefined,
+  pickupLocation: string | null | undefined,
+): string {
+  if (pickupAvailable === undefined) return "";
+  const value = !pickupAvailable ? "Not available" : esc(pickupLocation ?? "Available");
+  return `<span class="details-key">Pickup</span><span class="details-val">${value}</span>`;
+}
+
 export function buildExtrasHtml(listing: Listing): string {
   let body = "";
+
+  // ── Photos ────────────────────────────────────────────────────────────────
+  const photos = listing.photos ?? [];
+  if (photos.length > 0) {
+    body += `<div class="deep-section">
+      <div class="deep-section-label">Photos</div>
+      <div class="photo-gallery">${photos
+        .map(
+          ({ thumbnailUrl, fullSizeUrl }) =>
+            `<a href="${esc(fullSizeUrl)}" target="_blank" rel="noopener"><img class="photo-gallery-thumb" src="${esc(thumbnailUrl)}" alt=""></a>`,
+        )
+        .join("")}</div>
+    </div>`;
+  }
+
+  // ── Listing info (dates, category) ──────────────────────────────────────
+  const listingInfoRows = [
+    listing.startDate
+      ? `<span class="details-key">Started</span><span class="details-val">${esc(formatListingDate(listing.startDate))}</span>`
+      : "",
+    listing.endDate
+      ? `<span class="details-key">Ends</span><span class="details-val">${esc(formatListingDate(listing.endDate))}</span>`
+      : "",
+    listing.categoryPath
+      ? `<span class="details-key">Category</span><span class="details-val">${esc(listing.categoryPath)}</span>`
+      : "",
+  ].filter(Boolean);
+  if (listingInfoRows.length > 0) {
+    body += `<div class="deep-section">
+      <div class="deep-section-label">Listing info</div>
+      <div class="details-table">${listingInfoRows.join("")}</div>
+    </div>`;
+  }
+
+  // ── Shipping & pickup ────────────────────────────────────────────────────
+  const shippingRow = buildShippingRowHtml(listing.shippingAvailable, listing.shippingCost);
+  const pickupRow = buildPickupRowHtml(listing.pickupAvailable, listing.pickupLocation);
+  if (shippingRow || pickupRow) {
+    body += `<div class="deep-section">
+      <div class="deep-section-label">Shipping &amp; pickup</div>
+      <div class="details-table">${shippingRow}${pickupRow}</div>
+    </div>`;
+  }
 
   // ── Details ───────────────────────────────────────────────────────────────
   const detailEntries = Object.entries(listing.extraAttributes ?? {});
@@ -88,11 +182,11 @@ export function buildExtrasHtml(listing: Listing): string {
     body += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
     body += questionsAndAnswers
       .map(
-        ({ question, answer }) =>
+        ({ question, answer, askedBy, askedAt, answeredAt }) =>
           `<div class="qa-pair">` +
-          `<div class="qa-item"><span class="qa-badge qa-q">Q</span><span class="qa-text">${esc(question)}</span></div>` +
+          `<div class="qa-item"><span class="qa-badge qa-q">Q</span><span class="qa-text">${esc(question)}</span>${buildQaAttributionHtml(askedBy, askedAt)}</div>` +
           (answer
-            ? `<div class="qa-item"><span class="qa-badge qa-a">A</span><span class="qa-text">${esc(answer)}</span></div>`
+            ? `<div class="qa-item"><span class="qa-badge qa-a">A</span><span class="qa-text">${esc(answer)}</span>${buildQaAttributionHtml(undefined, answeredAt)}</div>`
             : "") +
           `</div>`,
       )

@@ -791,6 +791,23 @@ label {
   line-height: 1.5;
   color: #334155;
 }
+.qa-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.4rem;
+}
+.photo-gallery-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
 .deep-empty {
   font-size: 0.82rem;
   color: var(--text-muted);
