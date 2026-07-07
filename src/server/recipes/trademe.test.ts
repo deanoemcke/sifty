@@ -718,11 +718,11 @@ describe("parseListingDetailResponse", () => {
       expect(detail.pickupLocation).toBeNull();
     });
 
-    it("maps an absent AllowsPickups to pickupAvailable=false with pickupLocation=null", () => {
+    it("omits pickupAvailable and pickupLocation when AllowsPickups is absent", () => {
       const { AllowsPickups: _drop, ...rest } = fullListing;
       const detail = parseListingDetailResponse(rest);
-      expect(detail.pickupAvailable).toBe(false);
-      expect(detail.pickupLocation).toBeNull();
+      expect(Object.hasOwn(detail, "pickupAvailable")).toBe(false);
+      expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
     });
 
     it("returns pickupLocation=null when pickup is available but Suburb/Region are absent", () => {
