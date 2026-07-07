@@ -228,6 +228,19 @@ export async function aiJSON(
   const auditContext = { label, model: aiConfig.model, systemMessage, userMessage };
   const recordAttempt = (overrides: AuditEntryOverrides) =>
     recordAiAuditEntry(buildAuditEntry(auditContext, overrides));
+  function recordRateLimitedAttempt(
+    attempt: number,
+    bodyMessage: string | undefined,
+    attemptStartedAt: number,
+  ): void {
+    recordAttempt({
+      attempt,
+      status: "rate_limited",
+      httpStatus: 429,
+      errorMessage: bodyMessage ?? "",
+      durationMs: Date.now() - attemptStartedAt,
+    });
+  }
 
   const requestBody = JSON.stringify({
     model: aiConfig.model,
@@ -292,13 +305,7 @@ export async function aiJSON(
           const outOfRetries = attempt > MAX_RETRIES;
 
           if (isConfident && delaySecs * 1000 > remainingMs) {
-            recordAttempt({
-              attempt,
-              status: "rate_limited",
-              httpStatus: 429,
-              errorMessage: bodyMessage ?? "",
-              durationMs: Date.now() - attemptStartedAt,
-            });
+            recordRateLimitedAttempt(attempt, bodyMessage, attemptStartedAt);
             return {
               kind: "rate-limited",
               providerKey: aiConfig.providerKey,
@@ -308,13 +315,7 @@ export async function aiJSON(
           }
 
           if (!outOfRetries) {
-            recordAttempt({
-              attempt,
-              status: "rate_limited",
-              httpStatus: 429,
-              errorMessage: bodyMessage ?? "",
-              durationMs: Date.now() - attemptStartedAt,
-            });
+            recordRateLimitedAttempt(attempt, bodyMessage, attemptStartedAt);
             console.warn(`[AI] ${label} → rate limited, retrying in ${delaySecs}s`);
             await new Promise<void>((resolve) => setTimeout(resolve, delaySecs * 1000));
             continue;
@@ -324,13 +325,7 @@ export async function aiJSON(
           // even on the final attempt; an unconfident guess must not be trusted to make that call,
           // so it falls through to the generic http_error below instead.
           if (isConfident) {
-            recordAttempt({
-              attempt,
-              status: "rate_limited",
-              httpStatus: 429,
-              errorMessage: bodyMessage ?? "",
-              durationMs: Date.now() - attemptStartedAt,
-            });
+            recordRateLimitedAttempt(attempt, bodyMessage, attemptStartedAt);
             return {
               kind: "rate-limited",
               providerKey: aiConfig.providerKey,
