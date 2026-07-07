@@ -118,14 +118,16 @@ export function renderCard(item: ListingItem): void {
          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
        </div>`;
 
-  // The card never re-renders once a deep search populates item.detail — all
-  // detail-derived content (badges, buy-now price, extras) lives in the modal
-  // only, so this template deliberately never references item.detail.
+  // The card never re-renders once a deep search populates item.data's
+  // extended fields — all detail-derived content (badges, buy-now price,
+  // extras) lives in the modal only, so this template deliberately never
+  // references those fields.
   card.innerHTML = `
     <div class="listing-card-content">
       <div class="listing-thumb-wrap">
         ${thumb}
         ${sourceBadgeHtml(listing.source, 28)}
+        <div class="filter-banner hidden"></div>
       </div>
       <div class="listing-body">
         <div class="listing-meta">
@@ -137,7 +139,6 @@ export function renderCard(item: ListingItem): void {
         </div>
       </div>
     </div>
-    <div class="filter-banner hidden"></div>
   `;
 
   if (!existing) getElement("listingsContainer").appendChild(card);

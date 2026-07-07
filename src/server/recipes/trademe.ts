@@ -1,15 +1,16 @@
 import { chromium, type Page, type Response } from "playwright";
 import { enqueue } from "../../lib/queue";
 import type {
+  DeepSearchDetail,
   DeepSearchEvent,
   DiscoverableRecipe,
   DiscoverContext,
   Fulfillment,
   Listing,
-  ListingDetail,
+  ListingPhoto,
   QuickSearchEvent,
-  Recipe,
   RecipeDiscoverResult,
+  ReserveStatus,
 } from "../../lib/recipes/base";
 import { requirePattern } from "../../lib/recipes/metadata";
 import { aiJSON, applyAiJsonResult } from "../ai";
@@ -118,7 +119,7 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
   }
 }
 
-// ── Price + fulfillment helpers ───────────────────────────────────────────────
+// ── Price helpers ──────────────────────────────────────────────────────────────
 
 function parsePriceValue(display: string): number | null {
   const match = String(display)
@@ -127,23 +128,34 @@ function parsePriceValue(display: string): number | null {
   return match ? parseFloat(match[0]) : null;
 }
 
-export function mapFulfillment(
-  raw: number | undefined,
-): { pickupAvailable: boolean; shippingAvailable: boolean } | undefined {
-  switch (raw) {
-    case 1:
-      return { pickupAvailable: true, shippingAvailable: true }; // ships NZ
-    case 2:
-      return { pickupAvailable: true, shippingAvailable: false }; // pickup only
-    case 3:
-      return { pickupAvailable: true, shippingAvailable: true }; // ships NZ (paid)
-    case 0:
-    case undefined:
-      return undefined;
-    default:
-      console.warn(`[trademe] unknown allowsPickups value: ${raw}`);
-      return undefined;
-  }
+// ── Field mapping helpers ──────────────────────────────────────────────────────
+
+// Empirically verified against real listings: absent → no reserve; 1 → met;
+// 2 → not met; 3 is not really a reserve state at all — it's always paired with
+// IsBuyNowOnly, i.e. the listing isn't an auction, so the frontend never renders it.
+export function mapReserveState(reserveState: number | undefined): ReserveStatus {
+  if (reserveState === undefined) return "NONE";
+  if (reserveState === 1) return "MET";
+  if (reserveState === 2) return "NOT_MET";
+  return "UNKNOWN";
+}
+
+const TRADEME_WIRE_DATE_PATTERN = /^\/Date\((\d+)\)\/$/;
+
+// Normalizes TradeMe's `/Date(ms)/` wire format to ISO 8601 at the parsing boundary.
+export function parseTradeMeDate(wireValue: string | undefined): string | undefined {
+  if (!wireValue) return undefined;
+  const match = wireValue.match(TRADEME_WIRE_DATE_PATTERN);
+  if (!match) return undefined;
+  return new Date(Number(match[1])).toISOString();
+}
+
+export function buildPhotosFromUrls(photoUrls: string[] | undefined): ListingPhoto[] | undefined {
+  if (!photoUrls || photoUrls.length === 0) return undefined;
+  return photoUrls.map((url) => ({
+    thumbnailUrl: url,
+    fullSizeUrl: url.replace("/photoserver/thumb/", "/photoserver/full/"),
+  }));
 }
 
 // ── API response parsing ──────────────────────────────────────────────────────
@@ -155,52 +167,59 @@ export type RawApiItem = {
   region?: string;
   canonicalPath: string;
   pictureHref?: string;
-  allowsPickups?: number;
+  isBuyNowOnly: boolean;
+  hasBuyNow: boolean;
+  buyNowPrice?: number;
+  reserveState?: number;
+  startDate?: string;
+  endDate?: string;
+  categoryPath?: string;
+  photoUrls?: string[];
+  memberId?: number;
+  isSuperSeller?: boolean;
+  shippingCost?: number;
 };
 
 export function buildListing(raw: RawApiItem): Listing | null {
-  const display = raw.priceDisplay || "Price on request";
   const url = raw.canonicalPath ? `${TRADEME_BASE}${raw.canonicalPath}` : "";
   if (!raw.title || !url) return null;
-  return {
+
+  const listing: Listing = {
     source: TRADEME_PATTERN.name,
     title: raw.title,
-    price: parsePriceValue(display),
-    priceDisplay: display,
+    price: parsePriceValue(raw.priceDisplay),
     location: [raw.suburb, raw.region].filter(Boolean).join(", ") || "Unknown",
     url,
     thumbnailUrl: raw.pictureHref?.replace("/photoserver/thumb/", "/photoserver/full/"),
-    fulfillment: mapFulfillment(raw.allowsPickups),
-    isAuction: true,
+    isAuction: !raw.isBuyNowOnly,
+    reserveStatus: mapReserveState(raw.reserveState),
   };
+
+  if (raw.hasBuyNow) listing.buyNowPrice = raw.buyNowPrice ?? null;
+
+  const startDate = parseTradeMeDate(raw.startDate);
+  if (startDate) listing.startDate = startDate;
+  const endDate = parseTradeMeDate(raw.endDate);
+  if (endDate) listing.endDate = endDate;
+
+  if (raw.categoryPath) listing.categoryPath = raw.categoryPath;
+
+  const photos = buildPhotosFromUrls(raw.photoUrls);
+  if (photos) listing.photos = photos;
+
+  if (raw.shippingCost !== undefined) listing.shippingCost = raw.shippingCost;
+
+  if (raw.memberId != null) {
+    listing.seller = { memberId: raw.memberId, isTopSeller: raw.isSuperSeller ?? false };
+  }
+
+  return listing;
 }
 
-export function parseFrendState(
-  state: Record<string, unknown>,
-): { listings: Listing[]; totalCount: number; pageSize: number } | null {
-  for (const value of Object.values(state)) {
-    const bundleData = (value as Record<string, unknown>)?.b as Record<string, unknown> | undefined;
-    if (!bundleData || !Array.isArray(bundleData.list)) continue;
-    const items = bundleData.list as ApiItem[];
-    const totalCount = (bundleData.totalCount as number) ?? 0;
-    const pageSize = (bundleData.pageSize as number) || items.length || 1;
-    const listings = items
-      .map(
-        (item): RawApiItem => ({
-          title: (item.title as string) ?? "",
-          priceDisplay: (item.priceDisplay as string) ?? "",
-          suburb: item.suburb as string | undefined,
-          region: item.region as string | undefined,
-          canonicalPath: (item.canonicalPath as string) ?? "",
-          pictureHref: (item.pictureHref as string) || undefined,
-          allowsPickups: item.allowsPickups as number | undefined,
-        }),
-      )
-      .map(buildListing)
-      .filter((listing): listing is Listing => listing !== null);
-    if (listings.length > 0) return { listings, totalCount, pageSize };
-  }
-  return null;
+function extractSuggestedShippingPrice(item: ApiItem): number | undefined {
+  const shippingDetails = item.ShippingDetails as ApiItem | undefined;
+  const suggestedShipping = shippingDetails?.SuggestedShipping as ApiItem | undefined;
+  return suggestedShipping?.Price as number | undefined;
 }
 
 export function parseSearchApiResponse(data: Record<string, unknown>): {
@@ -220,7 +239,17 @@ export function parseSearchApiResponse(data: Record<string, unknown>): {
         region: item.Region as string | undefined,
         canonicalPath: (item.CanonicalPath as string) ?? "",
         pictureHref: (item.PictureHref as string) || undefined,
-        allowsPickups: item.AllowsPickups as number | undefined,
+        isBuyNowOnly: Boolean(item.IsBuyNowOnly),
+        hasBuyNow: Boolean(item.HasBuyNow),
+        buyNowPrice: item.BuyNowPrice as number | undefined,
+        reserveState: item.ReserveState as number | undefined,
+        startDate: item.StartDate as string | undefined,
+        endDate: item.EndDate as string | undefined,
+        categoryPath: item.CategoryPath as string | undefined,
+        photoUrls: item.PhotoUrls as string[] | undefined,
+        memberId: item.MemberId as number | undefined,
+        isSuperSeller: item.IsSuperSeller as boolean | undefined,
+        shippingCost: extractSuggestedShippingPrice(item),
       }),
     )
     .map(buildListing)
@@ -228,185 +257,102 @@ export function parseSearchApiResponse(data: Record<string, unknown>): {
   return { listings, totalCount, pageSize };
 }
 
-// ── Detail extraction ─────────────────────────────────────────────────────────
+// ── Listing detail response parsing ───────────────────────────────────────────
+// Parses GET api.trademe.co.nz/v1/listings/{id}.json, the REST endpoint the
+// listing page itself calls — the sole source for deep search.
 
-export function extractQuestionsAndAnswers(
-  bodyText: string,
-): Array<{ question: string; answer: string }> {
-  const start = bodyText.toLowerCase().indexOf("questions & answers");
-  if (start === -1) return [];
-  const lineEnd = bodyText.indexOf("\n", start);
-  if (lineEnd === -1) return [];
-  let after = bodyText.slice(lineEnd + 1).trimStart();
-  if (after.startsWith("Ask a question\n"))
-    after = after.slice("Ask a question\n".length).trimStart();
-  const afterLower = after.toLowerCase();
-  const sectionEndMarkers = [
-    "ask a question",
-    "about the seller",
-    "about the store",
-    "seller's other listings",
-    "similar listings",
-    "you might also like",
-    "back to top",
-  ];
-  let end = after.length;
-  for (const sectionEndMarker of sectionEndMarkers) {
-    const idx = afterLower.indexOf(sectionEndMarker);
-    if (idx !== -1 && idx < end) end = idx;
+type RawAttribute = { Name?: string; Value?: string; DisplayValue?: string };
+type RawQuestion = {
+  Comment?: string;
+  Answer?: string;
+  AskingMember?: { Nickname?: string };
+  CommentDate?: string;
+  AnswerDate?: string;
+};
+type RawShippingOption = { Price?: number };
+type RawPhoto = { Value?: { Thumbnail?: string; FullSize?: string } };
+type RawMember = {
+  MemberId?: number;
+  Nickname?: string;
+  FeedbackCount?: number;
+  IsTopSeller?: boolean;
+  DateJoined?: string;
+};
+
+function extractExtraAttributes(rawAttributes: RawAttribute[] | undefined): Record<string, string> {
+  const extraAttributes: Record<string, string> = {};
+  for (const attribute of rawAttributes ?? []) {
+    if (!attribute.Name) continue;
+    extraAttributes[attribute.Name] = attribute.DisplayValue ?? attribute.Value ?? "";
   }
-  const content = after.slice(0, end).trim();
-  if (!content) return [];
+  return extraAttributes;
+}
 
-  const lines = content.split("\n");
-  const segments: string[] = [];
-  const current: string[] = [];
-  let lineIndex = 0;
-  let foundAnyUsernames = false;
-  while (lineIndex < lines.length) {
-    if (
-      lineIndex + 1 < lines.length &&
-      /\(\d+$/.test(lines[lineIndex].trim()) &&
-      lines[lineIndex + 1].trim().startsWith(") •")
-    ) {
-      foundAnyUsernames = true;
-      segments.push(current.splice(0).join("\n").trim());
-      lineIndex += 2;
-    } else {
-      current.push(lines[lineIndex]);
-      lineIndex++;
+function extractQuestionsAndAnswersFromApi(
+  rawQuestions: RawQuestion[] | undefined,
+): NonNullable<DeepSearchDetail["questionsAndAnswers"]> {
+  return (rawQuestions ?? []).map((question) => ({
+    question: question.Comment ?? "",
+    answer: question.Answer ?? "",
+    askedBy: question.AskingMember?.Nickname,
+    askedAt: parseTradeMeDate(question.CommentDate),
+    answeredAt: question.Answer ? parseTradeMeDate(question.AnswerDate) : undefined,
+  }));
+}
+
+export function parseListingDetailResponse(data: Record<string, unknown>): DeepSearchDetail {
+  const shippingOptions = (data.ShippingOptions ?? []) as RawShippingOption[];
+  const shippingPrices = shippingOptions
+    .map((option) => option.Price)
+    .filter((price): price is number => typeof price === "number");
+  const hasBuyNow = Boolean(data.HasBuyNow);
+
+  // TODO(pickup-mapping): AllowsPickups mapping is deferred — resolve empirically
+  // before adding pickupAvailable/pickupLocation to this result.
+  const detail: DeepSearchDetail = {
+    description: String(data.Body ?? ""),
+    extraAttributes: extractExtraAttributes(data.Attributes as RawAttribute[] | undefined),
+    questionsAndAnswers: extractQuestionsAndAnswersFromApi(
+      (data.Questions as { List?: RawQuestion[] } | undefined)?.List,
+    ),
+    buyNowPrice: hasBuyNow ? Number(data.BuyNowPrice) : null,
+    reserveStatus: mapReserveState(data.ReserveState as number | undefined),
+    // shippingAvailable reflects raw option presence, not shippingPrices: options
+    // that exist but omit a numeric Price still mean shipping is available, just
+    // with an unknown cost.
+    shippingAvailable: shippingOptions.length > 0,
+    shippingCost: shippingPrices.length > 0 ? Math.min(...shippingPrices) : null,
+  };
+
+  const startDate = parseTradeMeDate(data.StartDate as string | undefined);
+  if (startDate) detail.startDate = startDate;
+  const endDate = parseTradeMeDate(data.EndDate as string | undefined);
+  if (endDate) detail.endDate = endDate;
+
+  if (data.CategoryPath) detail.categoryPath = data.CategoryPath as string;
+
+  const rawPhotos = data.Photos as RawPhoto[] | undefined;
+  if (rawPhotos?.length) {
+    const photos: ListingPhoto[] = [];
+    for (const photo of rawPhotos) {
+      const { Thumbnail: thumbnailUrl, FullSize: fullSizeUrl } = photo.Value ?? {};
+      if (thumbnailUrl && fullSizeUrl) photos.push({ thumbnailUrl, fullSizeUrl });
     }
+    detail.photos = photos;
   }
-  if (current.length) segments.push(current.join("\n").trim());
 
-  if (!foundAnyUsernames) return [];
-
-  const pairs: Array<{ question: string; answer: string }> = [];
-  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 2) {
-    const question = segments[segmentIndex].trim();
-    const answer = segments[segmentIndex + 1]?.trim() ?? "";
-    if (question) pairs.push({ question, answer });
-  }
-  return pairs;
-}
-
-export function extractDetails(bodyText: string): Array<{ key: string; value: string }> {
-  const detailsStart = bodyText.indexOf("Details\n");
-  if (detailsStart === -1) return [];
-  const after = bodyText.slice(detailsStart + "Details\n".length);
-  const sectionEndMarkers = ["Description\n", "Shipping & pick-up options"];
-  let end = after.length;
-  for (const sectionEndMarker of sectionEndMarkers) {
-    const idx = after.indexOf(sectionEndMarker);
-    if (idx !== -1 && idx < end) end = idx;
-  }
-  const lines = after
-    .slice(0, end)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const pairs: Array<{ key: string; value: string }> = [];
-  for (let lineIndex = 0; lineIndex + 1 < lines.length; lineIndex += 2) {
-    pairs.push({ key: lines[lineIndex].replace(/:$/, ""), value: lines[lineIndex + 1] });
-  }
-  return pairs;
-}
-
-export function extractDescriptionFromText(bodyText: string): string {
-  const marker = "Description\n";
-  const start = bodyText.indexOf(marker);
-  if (start === -1) return "";
-  const after = bodyText.slice(start + marker.length).trimStart();
-  const afterLower = after.toLowerCase();
-  const sectionEndMarkers = [
-    "\ndetails\n",
-    "shipping & pick-up options",
-    "questions & answers",
-    "seller's other listings",
-    "similar listings",
-    "you might also like",
-  ];
-  let end = after.length;
-  for (const sectionEndMarker of sectionEndMarkers) {
-    const idx = afterLower.indexOf(sectionEndMarker);
-    if (idx !== -1 && idx < end) end = idx;
-  }
-  return after
-    .slice(0, end)
-    .replace(/\s*\nShow more\s*$/, "")
-    .trim();
-}
-
-export function extractStructuredFromText(bodyText: string): Partial<ListingDetail> {
-  let buyNowPrice: number | null = null;
-  const bnMatch = bodyText.match(/Buy [Nn]ow\s*\n\s*\$([\d,]+(?:\.\d+)?)/);
-  if (bnMatch) buyNowPrice = parseFloat(bnMatch[1].replace(/,/g, ""));
-
-  let reserveStatus = "UNKNOWN";
-  if (/No reserve/.test(bodyText)) reserveStatus = "NONE";
-  else if (/Reserve met/.test(bodyText)) reserveStatus = "MET";
-  else if (/Reserve not met/.test(bodyText)) reserveStatus = "NOT_MET";
-
-  const pickupMatch = bodyText.match(/Pick up from ([^\n]+)/);
-  const pickupLocation = pickupMatch ? pickupMatch[1].trim() : "";
-  const shippingIdx = bodyText.indexOf("Shipping & pick-up options");
-  const shippingSection = shippingIdx >= 0 ? bodyText.slice(shippingIdx) : "";
-  const isPickupOnly =
-    /Pick-?up only|pickup only/i.test(bodyText) ||
-    (pickupLocation !== "" && !/North Island|South Island|NZ Post|Courier/i.test(shippingSection));
-  const shippingAvailable = !isPickupOnly;
-  const pickupAvailable = pickupLocation !== "";
-
-  return { buyNowPrice, reserveStatus, shippingAvailable, pickupAvailable, pickupLocation };
-}
-
-// ── GraphQL extraction ────────────────────────────────────────────────────────
-
-type GraphQLAttr = {
-  key: string;
-  numValue?: number;
-  options?: Array<{ __typename: string; name: string }>;
-};
-
-function extractAttr(attrs: GraphQLAttr[], key: string): GraphQLAttr | undefined {
-  return attrs.find((a) => a.key === key);
-}
-
-type GraphQLResponse = {
-  data?: {
-    listing?: {
-      attributes?: GraphQLAttr[];
-      contentViews?: {
-        listingPurchaseContentCard?: {
-          auctionDetails?: { reserveStatus?: string };
-        };
-      };
+  const rawMember = data.Member as RawMember | undefined;
+  if (rawMember?.MemberId != null) {
+    detail.seller = {
+      memberId: rawMember.MemberId,
+      nickname: rawMember.Nickname,
+      feedbackCount: rawMember.FeedbackCount,
+      isTopSeller: rawMember.IsTopSeller,
+      dateJoined: parseTradeMeDate(rawMember.DateJoined),
     };
-  };
-};
+  }
 
-export function extractFromGraphQL(json: unknown): Partial<ListingDetail> {
-  const listing = (json as GraphQLResponse)?.data?.listing;
-  if (!listing?.attributes) return {};
-  const attrs = listing.attributes;
-  const buyNowAttr = extractAttr(attrs, "BuyNowPrice");
-  const deliveryAttr = extractAttr(attrs, "DeliveryOptions");
-  const buyNowPrice: number | null = buyNowAttr?.numValue ?? null;
-  const deliveryOptions: { __typename: string; name: string }[] = deliveryAttr?.options ?? [];
-  const reserveStatus: string =
-    listing?.contentViews?.listingPurchaseContentCard?.auctionDetails?.reserveStatus ?? "UNKNOWN";
-  if (deliveryOptions.length === 0) return { buyNowPrice, reserveStatus };
-  const hasShipping = deliveryOptions.some((o) => o.__typename !== "PickupOption");
-  const pickupOption = deliveryOptions.find((o) => o.__typename === "PickupOption");
-  const pickupLocation = pickupOption?.name?.replace(/^Pick up from\s*/i, "") ?? "";
-  const pickupAvailable = pickupOption !== undefined;
-  return {
-    buyNowPrice,
-    reserveStatus,
-    shippingAvailable: hasShipping,
-    pickupAvailable,
-    pickupLocation,
-  };
+  return detail;
 }
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
@@ -436,56 +382,48 @@ function waitForSearchApiResponseAsync(
   });
 }
 
+const LISTING_DETAIL_API_PATTERN = /api\.trademe\.co\.nz\/v1\/listings\/.+\.json/;
+
+function waitForListingDetailResponseAsync(page: Page): Promise<DeepSearchDetail | null> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const handler = async (response: Response) => {
+      if (!LISTING_DETAIL_API_PATTERN.test(response.url())) return;
+      page.off("response", handler);
+      clearTimeout(timer);
+      if (response.status() !== 200) {
+        console.warn(
+          `[trademe] detail fetch got status ${response.status()} for ${response.url()}`,
+        );
+        resolve(null);
+        return;
+      }
+      try {
+        const data = (await response.json()) as Record<string, unknown>;
+        resolve(parseListingDetailResponse(data));
+      } catch (error) {
+        console.error(`[trademe] failed to parse detail response for ${response.url()}`, error);
+        resolve(null);
+      }
+    };
+    page.on("response", handler);
+    timer = setTimeout(() => {
+      page.off("response", handler);
+      console.warn(`[trademe] detail fetch timed out`);
+      resolve(null);
+    }, 12000);
+  });
+}
+
 export async function fetchSingleListingDetailAsync(
   page: Page,
   url: string,
-): Promise<ListingDetail> {
-  let graphqlResult: Partial<ListingDetail> = {};
-
-  const handler = async (response: Response) => {
-    if (!response.url().includes("api.trademe.co.nz/graphql") || response.status() !== 200) return;
-    try {
-      const json = await response.json();
-      const extracted = extractFromGraphQL(json);
-      if (Object.keys(extracted).length > 0) {
-        page.off("response", handler);
-        graphqlResult = extracted;
-      }
-    } catch {
-      /* ignore */
-    }
-  };
-  page.on("response", handler);
-
+): Promise<DeepSearchDetail> {
+  const detailPromise = waitForListingDetailResponseAsync(page);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await page
-    .waitForFunction(() => document.body.innerText.includes("Shipping & pick-up options"), {
-      timeout: 10000,
-    })
-    .catch(() => {
-      /* page may lack a shipping section — proceed with whatever rendered */
-    });
-  page.off("response", handler);
-
-  const bodyText: string = await page.evaluate(() => document.body.innerText);
-  const details = extractDetails(bodyText);
-  const description = extractDescriptionFromText(bodyText);
-  const dom = extractStructuredFromText(bodyText);
-  const questionsAndAnswers = extractQuestionsAndAnswers(bodyText);
-
-  return {
-    details,
-    description,
-    buyNowPrice: graphqlResult.buyNowPrice ?? dom.buyNowPrice ?? null,
-    reserveStatus:
-      graphqlResult.reserveStatus && graphqlResult.reserveStatus !== "UNKNOWN"
-        ? graphqlResult.reserveStatus
-        : (dom.reserveStatus ?? "UNKNOWN"),
-    shippingAvailable: graphqlResult.shippingAvailable ?? dom.shippingAvailable ?? null,
-    pickupAvailable: graphqlResult.pickupAvailable ?? dom.pickupAvailable ?? null,
-    pickupLocation: graphqlResult.pickupLocation || dom.pickupLocation || "",
-    questionsAndAnswers,
-  };
+  const detail = await detailPromise;
+  if (detail === null) throw new Error(`failed to fetch listing detail for ${url}`);
+  return detail;
 }
 
 // ── Discover URL building ─────────────────────────────────────────────────────
@@ -666,28 +604,7 @@ async function quickSearchAsync(
     const p1Promise = waitForSearchApiResponseAsync(page);
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-    let p1Listings: Listing[] = [];
-    let totalCount = 0;
-    let pageSize = 1;
-
-    const p1FrendState = await page.evaluate(
-      () => document.getElementById("frend-state")?.textContent ?? null,
-    );
-    if (p1FrendState) {
-      try {
-        const parsed = parseFrendState(JSON.parse(p1FrendState));
-        if (parsed && parsed.listings.length > 0) {
-          p1Listings = parsed.listings;
-          totalCount = parsed.totalCount;
-          pageSize = parsed.pageSize;
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    if (p1Listings.length === 0) {
-      ({ listings: p1Listings, totalCount, pageSize } = await p1Promise);
-    }
+    const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
 
     const totalPages = Math.min(Math.ceil(totalCount / pageSize), MAX_PAGES_PER_SEARCH);
 
@@ -723,21 +640,7 @@ async function quickSearchAsync(
             const promise = waitForSearchApiResponseAsync(currentPage);
             await currentPage.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-            let listings: Listing[] = [];
-            const frendStateText = await currentPage.evaluate(
-              () => document.getElementById("frend-state")?.textContent ?? null,
-            );
-            if (frendStateText) {
-              try {
-                const parsed = parseFrendState(JSON.parse(frendStateText));
-                if (parsed && parsed.listings.length > 0) listings = parsed.listings;
-              } catch {
-                /* ignore */
-              }
-            }
-            if (listings.length === 0) {
-              ({ listings } = await promise);
-            }
+            const { listings } = await promise;
             emit(listings);
           } finally {
             await currentPage.close();
@@ -778,8 +681,16 @@ async function deepSearchAsync(
               total: listings.length,
               title: listing.title,
             });
-            const detail = await fetchSingleListingDetailAsync(currentPage, listing.url);
-            onEvent({ type: "detail", url: listing.url, detail });
+            try {
+              const detail = await fetchSingleListingDetailAsync(currentPage, listing.url);
+              onEvent({ type: "detail", url: listing.url, detail });
+            } catch (error) {
+              onEvent({
+                type: "detail-error",
+                url: listing.url,
+                message: (error as Error).message,
+              });
+            }
           } finally {
             await currentPage.close();
           }

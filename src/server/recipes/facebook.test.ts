@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON } from "../ai";
 import {
+  buildFacebookDeepSearchDetail,
   buildFacebookListing,
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
@@ -63,48 +64,39 @@ describe("extractImplicitFilters", () => {
 describe("parseFacebookPriceLines", () => {
   it("returns the single price when only one price line is present", () => {
     const result = parseFacebookPriceLines("Vintage lamp\nNZ$80\nAuckland");
-    expect(result.priceDisplay).toBe("NZ$80");
     expect(result.price).toBe(80);
   });
 
-  it("discards the original (crossed-out) price when two prices are present, using only the current price", () => {
+  it("uses only the current price when two prices are present, discarding the original", () => {
     // Facebook shows the sale price first and the original price second.
     // Product decision: we surface only the current price; the original is not stored or displayed.
     const result = parseFacebookPriceLines("Nice chair\nNZ$80\nNZ$120\nWellington");
-    expect(result.priceDisplay).toBe("NZ$80");
     expect(result.price).toBe(80);
-    expect(result.priceDisplay).not.toContain("120");
-    expect(result.priceDisplay).not.toContain("<s>");
   });
 
-  it("returns Price on request when no price is present", () => {
+  it("returns null price when no price is present", () => {
     const result = parseFacebookPriceLines("Mystery item\nAuckland");
-    expect(result.priceDisplay).toBe("Price on request");
     expect(result.price).toBeNull();
   });
 
-  it("handles Free correctly", () => {
+  it("returns 0 price for Free", () => {
     const result = parseFacebookPriceLines("Free sofa\nFree\nChristchurch");
-    expect(result.priceDisplay).toBe("Free");
-    expect(result.price).toBeNull();
+    expect(result.price).toBe(0);
   });
 
   it("parses prices with commas", () => {
     const result = parseFacebookPriceLines("Car\nNZ$1,200\nDunedin");
-    expect(result.priceDisplay).toBe("NZ$1,200");
     expect(result.price).toBe(1200);
   });
 
   it("handles empty innerText gracefully", () => {
     const result = parseFacebookPriceLines("");
     expect(result.price).toBeNull();
-    expect(result.priceDisplay).toBe("Price on request");
   });
 
   it("handles whitespace-only innerText gracefully", () => {
     const result = parseFacebookPriceLines("  \n  \n  ");
     expect(result.price).toBeNull();
-    expect(result.priceDisplay).toBe("Price on request");
   });
 
   it("returns normalised lines for caller reuse", () => {
@@ -336,6 +328,26 @@ describe("buildDiscoverUrlsAsync", () => {
   });
 });
 
+describe("buildFacebookDeepSearchDetail", () => {
+  it("returns exactly description, extraAttributes, questionsAndAnswers, and pickupLocation", () => {
+    const detail = buildFacebookDeepSearchDetail("Nice lamp", { Condition: "Used" }, "Auckland");
+    expect(detail).toEqual({
+      description: "Nice lamp",
+      extraAttributes: { Condition: "Used" },
+      questionsAndAnswers: [],
+      pickupLocation: "Auckland",
+    });
+  });
+
+  it("never includes buyNowPrice, reserveStatus, pickupAvailable, or shippingAvailable", () => {
+    const detail = buildFacebookDeepSearchDetail("desc", {}, null);
+    expect(detail).not.toHaveProperty("buyNowPrice");
+    expect(detail).not.toHaveProperty("reserveStatus");
+    expect(detail).not.toHaveProperty("pickupAvailable");
+    expect(detail).not.toHaveProperty("shippingAvailable");
+  });
+});
+
 describe("buildFacebookListing", () => {
   it("sets source to facebook", () => {
     const listing = buildFacebookListing(
@@ -343,7 +355,6 @@ describe("buildFacebookListing", () => {
       undefined,
       "Vintage lamp",
       80,
-      "NZ$80",
       "Auckland",
     );
     expect(listing.source).toBe("facebook");
@@ -355,7 +366,6 @@ describe("buildFacebookListing", () => {
       undefined,
       "Lamp",
       null,
-      "Price on request",
       "Wellington",
     );
     expect(listing.isAuction).toBe(false);
