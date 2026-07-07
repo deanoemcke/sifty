@@ -288,7 +288,7 @@ export async function aiJSON(
 
         if (apiResponse.status === 429) {
           const { delaySecs, isConfident } = parseRetryDelaySeconds(apiResponse, bodyMessage ?? "");
-          const remainingMs = deadline - attemptStartedAt;
+          const remainingMs = deadline - Date.now();
           const outOfRetries = attempt > MAX_RETRIES;
 
           if (isConfident && delaySecs * 1000 > remainingMs) {
