@@ -544,6 +544,9 @@ describe("parseListingDetailResponse", () => {
       IsTopSeller: true,
       DateJoined: dateJoinedWire,
     },
+    AllowsPickups: 1,
+    Suburb: "Invercargill",
+    Region: "Southland",
   };
 
   it("maps every field correctly for a fully-populated real listing", () => {
@@ -579,6 +582,8 @@ describe("parseListingDetailResponse", () => {
       isTopSeller: true,
       dateJoined: new Date(1600000000000).toISOString(),
     });
+    expect(detail.pickupAvailable).toBe(true);
+    expect(detail.pickupLocation).toBe("Invercargill, Southland");
   });
 
   describe("ReserveState mapping", () => {
@@ -695,16 +700,37 @@ describe("parseListingDetailResponse", () => {
     expect(Object.hasOwn(detail, "endDate")).toBe(false);
   });
 
-  it("never includes pickupAvailable or pickupLocation", () => {
-    const detail = parseListingDetailResponse(fullListing);
-    expect(Object.hasOwn(detail, "pickupAvailable")).toBe(false);
-    expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
-  });
+  // AllowsPickups is a small enum, same style as ReserveState — verified empirically
+  // against real listings: 1 → pickup offered (co-occurs with a Type:2 "I intend to
+  // pick-up" ShippingOptions entry); 3 → not offered (no such entry). There is no
+  // dedicated pickup-address field, so pickupLocation reuses the listing's own
+  // Suburb/Region, the same source `location` is built from elsewhere.
+  describe("AllowsPickups mapping", () => {
+    it("maps 1 to pickupAvailable=true with pickupLocation from Suburb/Region", () => {
+      const detail = parseListingDetailResponse({ ...fullListing, AllowsPickups: 1 });
+      expect(detail.pickupAvailable).toBe(true);
+      expect(detail.pickupLocation).toBe("Invercargill, Southland");
+    });
 
-  it("never includes pickupAvailable or pickupLocation even on a minimal document", () => {
-    const detail = parseListingDetailResponse({});
-    expect(Object.hasOwn(detail, "pickupAvailable")).toBe(false);
-    expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
+    it("maps 3 to pickupAvailable=false with pickupLocation=null", () => {
+      const detail = parseListingDetailResponse({ ...fullListing, AllowsPickups: 3 });
+      expect(detail.pickupAvailable).toBe(false);
+      expect(detail.pickupLocation).toBeNull();
+    });
+
+    it("maps an absent AllowsPickups to pickupAvailable=false with pickupLocation=null", () => {
+      const { AllowsPickups: _drop, ...rest } = fullListing;
+      const detail = parseListingDetailResponse(rest);
+      expect(detail.pickupAvailable).toBe(false);
+      expect(detail.pickupLocation).toBeNull();
+    });
+
+    it("returns pickupLocation=null when pickup is available but Suburb/Region are absent", () => {
+      const { Suburb: _s, Region: _r, ...rest } = fullListing;
+      const detail = parseListingDetailResponse({ ...rest, AllowsPickups: 1 });
+      expect(detail.pickupAvailable).toBe(true);
+      expect(detail.pickupLocation).toBeNull();
+    });
   });
 });
 

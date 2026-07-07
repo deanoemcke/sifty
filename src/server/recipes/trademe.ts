@@ -307,8 +307,15 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
     .filter((price): price is number => typeof price === "number");
   const hasBuyNow = Boolean(data.HasBuyNow);
 
-  // TODO(pickup-mapping): AllowsPickups mapping is deferred — resolve empirically
-  // before adding pickupAvailable/pickupLocation to this result.
+  // AllowsPickups is a small enum, same style as ReserveState — verified empirically
+  // against real listings: 1 means pickup is offered, 3 means it isn't. There's no
+  // dedicated pickup-address field, so pickupLocation reuses the listing's own
+  // Suburb/Region, the same source `location` is built from elsewhere.
+  const pickupAvailable = data.AllowsPickups === 1;
+  const pickupLocation = pickupAvailable
+    ? [data.Suburb, data.Region].filter(Boolean).join(", ") || null
+    : null;
+
   const detail: DeepSearchDetail = {
     description: String(data.Body ?? ""),
     extraAttributes: extractExtraAttributes(data.Attributes as RawAttribute[] | undefined),
@@ -322,6 +329,8 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
     // with an unknown cost.
     shippingAvailable: shippingOptions.length > 0,
     shippingCost: shippingPrices.length > 0 ? Math.min(...shippingPrices) : null,
+    pickupAvailable,
+    pickupLocation,
   };
 
   const startDate = parseTradeMeDate(data.StartDate as string | undefined);
