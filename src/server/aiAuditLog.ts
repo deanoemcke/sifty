@@ -165,11 +165,21 @@ function ensureAuditLogInitializedAsync(auditLogPath: string): Promise<void> {
   return auditLogInitializationPromise;
 }
 
+// Serializes every rotate-then-append sequence behind a single chained promise, the same
+// pattern used above for auditLogInitializationPromise. Without this, two concurrent
+// recordAiAuditEntry calls can both observe an oversized file in
+// rotateAuditLogIfOversizedAsync's stat check and both attempt to rename it; the second
+// rename throws ENOENT because the first already moved the file, silently dropping that
+// entire entry. Chaining onto this promise makes rotate+append run one at a time, in
+// order, while keeping recordAiAuditEntry itself fire-and-forget for its caller.
+let pendingAuditWriteChain: Promise<void> = Promise.resolve();
+
 export function recordAiAuditEntry(entry: AiAuditEntry): void {
   // Fire-and-forget: intentionally not awaited by the caller (aiJSON in ai.ts). Any
   // rejection is caught here so it can never become an unhandled promise rejection or
   // affect the outcome of the AI call being audited.
-  ensureAuditLogInitializedAsync(AUDIT_LOG_PATH)
+  pendingAuditWriteChain = pendingAuditWriteChain
+    .then(() => ensureAuditLogInitializedAsync(AUDIT_LOG_PATH))
     .then(() => appendAuditLogLineAsync(AUDIT_LOG_PATH, entry))
     .catch(logAuditWriteFailure);
 }

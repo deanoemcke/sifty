@@ -8,6 +8,7 @@ import {
   appendAuditLogLineAsync,
   formatAuditEntryLine,
   MAX_AUDIT_FIELD_LENGTH,
+  MAX_AUDIT_LOG_FILE_SIZE_BYTES,
   rotateAuditLogIfOversizedAsync,
   truncateAuditField,
   writeAuditLogHeaderAsync,
@@ -268,6 +269,42 @@ describe("recordAiAuditEntry (fire-and-forget async writes)", () => {
     await vi.waitFor(() => expect(appendFileSpy).toHaveBeenCalledTimes(3));
     expect(mkdirSpy).toHaveBeenCalledTimes(1);
     expect(writeFileSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not drop an entry when two concurrent calls both observe an oversized log (rotation race)", async () => {
+    // Models the real TOCTOU race: `hasRotated` stands in for the on-disk file state.
+    // Both concurrent calls' `stat` land before either has rotated (oversized), but the
+    // second call's `rename` must only be attempted if the file is still un-rotated by
+    // the time it actually runs — which is only guaranteed if the two calls are
+    // serialized. An unserialized second call sees `hasRotated` still false (from the
+    // race), attempts `rename` again, and gets ENOENT because the first rename already
+    // moved the source file.
+    let hasRotated = false;
+    vi.spyOn(fsPromises, "mkdir").mockResolvedValue(undefined);
+    vi.spyOn(fsPromises, "writeFile").mockResolvedValue(undefined);
+    vi.spyOn(fsPromises, "stat").mockImplementation(async () => {
+      return { size: hasRotated ? 0 : MAX_AUDIT_LOG_FILE_SIZE_BYTES } as fs.Stats;
+    });
+    vi.spyOn(fsPromises, "rename").mockImplementation(async () => {
+      if (hasRotated) {
+        const enoentError = new Error(
+          "ENOENT: no such file or directory, rename",
+        ) as NodeJS.ErrnoException;
+        enoentError.code = "ENOENT";
+        throw enoentError;
+      }
+      hasRotated = true;
+    });
+    const appendFileSpy = vi.spyOn(fsPromises, "appendFile").mockResolvedValue(undefined);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { recordAiAuditEntry } = await import("./aiAuditLog");
+
+    recordAiAuditEntry({ ...SAMPLE_ENTRY, attempt: 1 });
+    recordAiAuditEntry({ ...SAMPLE_ENTRY, attempt: 2 });
+
+    await vi.waitFor(() => expect(appendFileSpy).toHaveBeenCalledTimes(2));
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it("retries initialization on the next entry after a failed header write", async () => {
