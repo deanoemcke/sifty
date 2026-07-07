@@ -268,6 +268,31 @@ describe("aiJSON", () => {
     expect(recordAiAuditEntryMock.mock.calls.at(-1)?.[0]).toMatchObject({ status: "rate_limited" });
   });
 
+  it("fails fast on a confident retry delay that exceeds the budget remaining after this attempt's own latency, even though it fits within the budget remaining before the attempt started", async () => {
+    const attemptLatencyMs = 20_000;
+    const retryAfterSecs = 30;
+    // The mock fetch itself takes 20s to resolve — under real network latency, the time
+    // spent waiting on the round trip must count against the budget. Only ~25s of the 45s
+    // budget remains once this response arrives, so the 30s retry-after must fail fast.
+    // A regression that recomputes remainingMs from the pre-fetch attemptStartedAt instead
+    // of a fresh Date.now() would see the full ~45s as still remaining and sleep instead.
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(make429Response(retryAfterSecs)), attemptLatencyMs);
+        }),
+    );
+
+    const promise = aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.kind).toBe("rate-limited");
+    expect(() => applyAiJsonResult(cooldownStore, result)).toThrow(
+      `AI rate limited (test): provider asks to retry in ${retryAfterSecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`,
+    );
+  });
+
   it("records a parse_error audit entry with the raw content when the model response isn't valid JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       makeResponse(200, { choices: [{ message: { content: "not json at all" } }] }),
