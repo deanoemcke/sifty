@@ -2,8 +2,9 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ConcurrencyQueue } from "../../lib/queue";
+import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { requireArray, requireListingUrl, requireString } from "../../lib/validate";
-import { aiJSON, getAIConfig } from "../ai";
+import { aiJSON, applyAiJsonResult, getAIConfig } from "../ai";
 import { readBody, sendJSON, sse, startSSE } from "../helpers";
 
 const AI_FILTER_SYSTEM_MESSAGE =
@@ -13,6 +14,7 @@ const BATCH_SIZE = 50;
 export async function handleAiFilter(
   request: IncomingMessage,
   response: ServerResponse,
+  cooldownStore: ProviderCooldownStore,
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
@@ -37,9 +39,8 @@ export async function handleAiFilter(
     return;
   }
 
-  let aiConfig: ReturnType<typeof getAIConfig>;
   try {
-    aiConfig = getAIConfig();
+    getAIConfig(cooldownStore); // fail fast before opening the SSE stream if no provider is configured at all
   } catch (err) {
     sendJSON(response, 500, { error: (err as Error).message });
     return;
@@ -64,12 +65,19 @@ export async function handleAiFilter(
           )
           .join("\n");
         try {
-          const result = await aiJSON(
-            aiConfig,
-            "ai-filter",
-            AI_FILTER_SYSTEM_MESSAGE,
-            `Criteria: ${prompt}\n\nListings:\n${numbered}`,
-            4096,
+          // Re-resolved fresh per batch (not hoisted) so a 429 on an earlier
+          // batch actually rotates the remaining queued batches to the next
+          // live provider instead of repeating the same doomed one.
+          const aiConfig = getAIConfig(cooldownStore);
+          const result = applyAiJsonResult(
+            aiConfig.cooldownStore,
+            await aiJSON(
+              aiConfig,
+              "ai-filter",
+              AI_FILTER_SYSTEM_MESSAGE,
+              `Criteria: ${prompt}\n\nListings:\n${numbered}`,
+              4096,
+            ),
           );
           if (typeof result !== "object" || result === null)
             throw new Error("AI filter: expected object response");
