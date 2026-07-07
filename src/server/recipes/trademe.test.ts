@@ -9,11 +9,9 @@ import {
   type DiscoverEntry,
   extractDescriptionFromText,
   extractDetails,
-  extractFromGraphQL,
   extractImplicitFilters,
   extractQuestionsAndAnswers,
   extractStructuredFromText,
-  parseFrendState,
   parseSearchApiResponse,
   STEP2_SYSTEM_PROMPT,
   trademeRecipe,
@@ -38,7 +36,6 @@ const { getNextPage, resetPageQueue } = vi.hoisted(() => {
         handlers.push(h);
       },
       off: () => {},
-      evaluate: async () => null,
       goto: async () => {
         const response = {
           url: () => "https://api.trademe.co.nz/v1/search/general.json",
@@ -146,66 +143,6 @@ describe("buildListing", () => {
   it("sets source to trademe", () => {
     const listing = buildListing(baseRaw);
     expect(listing?.source).toBe("trademe");
-  });
-});
-
-// ── parseFrendState ───────────────────────────────────────────────────────────
-
-describe("parseFrendState", () => {
-  const baseItem = {
-    title: 'MacBook Pro 14"',
-    priceDisplay: "$1,500",
-    region: "Auckland",
-    suburb: "Auckland City",
-    canonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
-    pictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-  };
-
-  it("extracts listings from the nested frend-state structure", () => {
-    const state = { someKey: { b: { list: [baseItem], totalCount: 1, pageSize: 56 } } };
-    const result = parseFrendState(state);
-    expect(result).not.toBeNull();
-    expect(result?.listings).toHaveLength(1);
-    expect(result?.listings[0].title).toBe('MacBook Pro 14"');
-    expect(result?.listings[0].url).toBe(
-      "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",
-    );
-    expect(result?.totalCount).toBe(1);
-    expect(result?.pageSize).toBe(56);
-  });
-
-  it("returns null when no matching frend-state bucket is found", () => {
-    expect(parseFrendState({ someKey: { b: { notList: [] } } })).toBeNull();
-  });
-
-  it("filters out items missing title or canonicalPath", () => {
-    const items = [baseItem, { ...baseItem, title: "" }, { ...baseItem, canonicalPath: "" }];
-    const state = { key: { b: { list: items, totalCount: 3, pageSize: 56 } } };
-    const result = parseFrendState(state);
-    expect(result?.listings).toHaveLength(1);
-  });
-
-  it("produces listings with the same shape as parseSearchApiResponse", () => {
-    const frendState = { key: { b: { list: [baseItem], totalCount: 1, pageSize: 56 } } };
-    const apiData = {
-      List: [
-        {
-          Title: baseItem.title,
-          PriceDisplay: baseItem.priceDisplay,
-          Region: baseItem.region,
-          Suburb: baseItem.suburb,
-          CanonicalPath: baseItem.canonicalPath,
-          PictureHref: baseItem.pictureHref,
-        },
-      ],
-      TotalCount: 1,
-      PageSize: 56,
-    };
-
-    const frendResult = parseFrendState(frendState)?.listings[0];
-    const apiResult = parseSearchApiResponse(apiData).listings[0];
-
-    expect(frendResult).toEqual(apiResult);
   });
 });
 
@@ -350,42 +287,6 @@ describe("extractStructuredFromText", () => {
     it("omits pickupLocation when none is found", () => {
       expect(extractStructuredFromText("Shipping available").pickupLocation).toBeUndefined();
     });
-  });
-});
-
-// ── extractFromGraphQL ────────────────────────────────────────────────────────
-
-describe("extractFromGraphQL", () => {
-  it("omits pickupAvailable and shippingAvailable when DeliveryOptions is absent", () => {
-    const json = {
-      data: {
-        listing: {
-          attributes: [{ key: "BuyNowPrice", numValue: 5000 }],
-        },
-      },
-    };
-    const result = extractFromGraphQL(json);
-    expect(result.pickupAvailable).toBeUndefined();
-    expect(result.shippingAvailable).toBeUndefined();
-  });
-
-  it("returns fulfillment fields when DeliveryOptions is present", () => {
-    const json = {
-      data: {
-        listing: {
-          attributes: [
-            {
-              key: "DeliveryOptions",
-              options: [{ __typename: "PickupOption", name: "Pick up from Rodney" }],
-            },
-          ],
-        },
-      },
-    };
-    const result = extractFromGraphQL(json);
-    expect(result.pickupAvailable).toBe(true);
-    expect(result.shippingAvailable).toBe(false);
-    expect(result.pickupLocation).toBe("Rodney");
   });
 });
 

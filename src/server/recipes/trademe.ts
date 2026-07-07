@@ -153,33 +153,6 @@ export function buildListing(raw: RawApiItem): Listing | null {
   };
 }
 
-export function parseFrendState(
-  state: Record<string, unknown>,
-): { listings: Listing[]; totalCount: number; pageSize: number } | null {
-  for (const value of Object.values(state)) {
-    const bundleData = (value as Record<string, unknown>)?.b as Record<string, unknown> | undefined;
-    if (!bundleData || !Array.isArray(bundleData.list)) continue;
-    const items = bundleData.list as ApiItem[];
-    const totalCount = (bundleData.totalCount as number) ?? 0;
-    const pageSize = (bundleData.pageSize as number) || items.length || 1;
-    const listings = items
-      .map(
-        (item): RawApiItem => ({
-          title: (item.title as string) ?? "",
-          priceDisplay: (item.priceDisplay as string) ?? "",
-          suburb: item.suburb as string | undefined,
-          region: item.region as string | undefined,
-          canonicalPath: (item.canonicalPath as string) ?? "",
-          pictureHref: (item.pictureHref as string) || undefined,
-        }),
-      )
-      .map(buildListing)
-      .filter((listing): listing is Listing => listing !== null);
-    if (listings.length > 0) return { listings, totalCount, pageSize };
-  }
-  return null;
-}
-
 export function parseSearchApiResponse(data: Record<string, unknown>): {
   listings: Listing[];
   totalCount: number;
@@ -344,55 +317,6 @@ export function extractStructuredFromText(bodyText: string): StructuredAttribute
   return attributes;
 }
 
-// ── GraphQL extraction ────────────────────────────────────────────────────────
-
-type GraphQLAttr = {
-  key: string;
-  numValue?: number;
-  options?: Array<{ __typename: string; name: string }>;
-};
-
-function extractAttr(attrs: GraphQLAttr[], key: string): GraphQLAttr | undefined {
-  return attrs.find((a) => a.key === key);
-}
-
-type GraphQLResponse = {
-  data?: {
-    listing?: {
-      attributes?: GraphQLAttr[];
-      contentViews?: {
-        listingPurchaseContentCard?: {
-          auctionDetails?: { reserveStatus?: string };
-        };
-      };
-    };
-  };
-};
-
-export function extractFromGraphQL(json: unknown): StructuredAttributes {
-  const listing = (json as GraphQLResponse)?.data?.listing;
-  if (!listing?.attributes) return {};
-  const attrs = listing.attributes;
-  const buyNowAttr = extractAttr(attrs, "BuyNowPrice");
-  const deliveryAttr = extractAttr(attrs, "DeliveryOptions");
-  const deliveryOptions: { __typename: string; name: string }[] = deliveryAttr?.options ?? [];
-  const reserveStatus =
-    (listing?.contentViews?.listingPurchaseContentCard?.auctionDetails
-      ?.reserveStatus as ReserveStatus) ?? "UNKNOWN";
-
-  const attributes: StructuredAttributes = { reserveStatus };
-  if (buyNowAttr?.numValue != null) attributes.buyNowPrice = buyNowAttr.numValue;
-  if (deliveryOptions.length === 0) return attributes;
-
-  const hasShipping = deliveryOptions.some((o) => o.__typename !== "PickupOption");
-  const pickupOption = deliveryOptions.find((o) => o.__typename === "PickupOption");
-  const pickupLocation = pickupOption?.name?.replace(/^Pick up from\s*/i, "") ?? "";
-  attributes.shippingAvailable = hasShipping;
-  attributes.pickupAvailable = pickupOption !== undefined;
-  if (pickupLocation) attributes.pickupLocation = pickupLocation;
-  return attributes;
-}
-
 // ── Playwright helpers ────────────────────────────────────────────────────────
 
 function waitForSearchApiResponseAsync(
@@ -424,23 +348,6 @@ export async function fetchSingleListingDetailAsync(
   page: Page,
   url: string,
 ): Promise<DeepSearchDetail> {
-  let graphqlResult: StructuredAttributes = {};
-
-  const handler = async (response: Response) => {
-    if (!response.url().includes("api.trademe.co.nz/graphql") || response.status() !== 200) return;
-    try {
-      const json = await response.json();
-      const extracted = extractFromGraphQL(json);
-      if (Object.keys(extracted).length > 0) {
-        page.off("response", handler);
-        graphqlResult = extracted;
-      }
-    } catch {
-      /* ignore */
-    }
-  };
-  page.on("response", handler);
-
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page
     .waitForFunction(() => document.body.innerText.includes("Shipping & pick-up options"), {
@@ -449,7 +356,6 @@ export async function fetchSingleListingDetailAsync(
     .catch(() => {
       /* page may lack a shipping section — proceed with whatever rendered */
     });
-  page.off("response", handler);
 
   const bodyText: string = await page.evaluate(() => document.body.innerText);
   const details = extractDetails(bodyText);
@@ -460,20 +366,15 @@ export async function fetchSingleListingDetailAsync(
   const scrapedAttributes: Record<string, string> = {};
   for (const { key, value } of details) scrapedAttributes[key] = value;
 
-  const structured: StructuredAttributes = { ...dom, ...graphqlResult };
-  // GraphQL only overrides the DOM-parsed reserve status when it actually knows one.
-  if (graphqlResult.reserveStatus === "UNKNOWN" && dom.reserveStatus)
-    structured.reserveStatus = dom.reserveStatus;
-
   return {
     description,
     scrapedAttributes,
     questionsAndAnswers,
-    buyNowPrice: structured.buyNowPrice ?? null,
-    reserveStatus: structured.reserveStatus ?? "UNKNOWN",
-    pickupAvailable: structured.pickupAvailable ?? null,
-    shippingAvailable: structured.shippingAvailable ?? null,
-    pickupLocation: structured.pickupLocation ?? null,
+    buyNowPrice: dom.buyNowPrice ?? null,
+    reserveStatus: dom.reserveStatus ?? "UNKNOWN",
+    pickupAvailable: dom.pickupAvailable ?? null,
+    shippingAvailable: dom.shippingAvailable ?? null,
+    pickupLocation: dom.pickupLocation ?? null,
   };
 }
 
@@ -646,28 +547,7 @@ async function quickSearchAsync(
     const p1Promise = waitForSearchApiResponseAsync(page);
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-    let p1Listings: Listing[] = [];
-    let totalCount = 0;
-    let pageSize = 1;
-
-    const p1FrendState = await page.evaluate(
-      () => document.getElementById("frend-state")?.textContent ?? null,
-    );
-    if (p1FrendState) {
-      try {
-        const parsed = parseFrendState(JSON.parse(p1FrendState));
-        if (parsed && parsed.listings.length > 0) {
-          p1Listings = parsed.listings;
-          totalCount = parsed.totalCount;
-          pageSize = parsed.pageSize;
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    if (p1Listings.length === 0) {
-      ({ listings: p1Listings, totalCount, pageSize } = await p1Promise);
-    }
+    const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
 
     const totalPages = Math.min(Math.ceil(totalCount / pageSize), MAX_PAGES_PER_SEARCH);
 
@@ -703,21 +583,7 @@ async function quickSearchAsync(
             const promise = waitForSearchApiResponseAsync(currentPage);
             await currentPage.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-            let listings: Listing[] = [];
-            const frendStateText = await currentPage.evaluate(
-              () => document.getElementById("frend-state")?.textContent ?? null,
-            );
-            if (frendStateText) {
-              try {
-                const parsed = parseFrendState(JSON.parse(frendStateText));
-                if (parsed && parsed.listings.length > 0) listings = parsed.listings;
-              } catch {
-                /* ignore */
-              }
-            }
-            if (listings.length === 0) {
-              ({ listings } = await promise);
-            }
+            const { listings } = await promise;
             emit(listings);
           } finally {
             await currentPage.close();
