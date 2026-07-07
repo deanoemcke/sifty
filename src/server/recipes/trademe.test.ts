@@ -4,17 +4,16 @@ import { aiJSON } from "../ai";
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import {
   buildListing,
+  buildPhotosFromUrls,
   buildTrademeUrl,
   collapseEntries,
   type DiscoverEntry,
-  extractDescriptionFromText,
-  extractDetails,
-  extractFromGraphQL,
   extractImplicitFilters,
-  extractQuestionsAndAnswers,
-  extractStructuredFromText,
-  parseFrendState,
+  fetchSingleListingDetailAsync,
+  mapReserveState,
+  parseListingDetailResponse,
   parseSearchApiResponse,
+  parseTradeMeDate,
   STEP2_SYSTEM_PROMPT,
   trademeRecipe,
 } from "./trademe";
@@ -28,7 +27,7 @@ vi.mock("../db", () => ({
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
-const { getNextPage, resetPageQueue } = vi.hoisted(() => {
+const { getNextPage, resetPageQueue, makeDetailPage } = vi.hoisted(() => {
   const queue: unknown[] = [];
 
   function makePage(data: unknown) {
@@ -38,7 +37,6 @@ const { getNextPage, resetPageQueue } = vi.hoisted(() => {
         handlers.push(h);
       },
       off: () => {},
-      evaluate: async () => null,
       goto: async () => {
         const response = {
           url: () => "https://api.trademe.co.nz/v1/search/general.json",
@@ -51,11 +49,45 @@ const { getNextPage, resetPageQueue } = vi.hoisted(() => {
     };
   }
 
+  // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
+  // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
+  // per test so the same factory covers the happy path, non-200, and no-response cases.
+  function makeDetailPage(
+    options: {
+      data?: unknown;
+      url?: string;
+      status?: number;
+      respond?: boolean;
+      jsonError?: boolean;
+    } = {},
+  ) {
+    const handlers: Array<(r: unknown) => void> = [];
+    return {
+      on: (_: string, h: (r: unknown) => void) => {
+        handlers.push(h);
+      },
+      off: () => {},
+      goto: async () => {
+        if (options.respond === false) return;
+        const response = {
+          url: () => options.url ?? "https://api.trademe.co.nz/v1/listings/12345.json",
+          status: () => options.status ?? 200,
+          json: async () => {
+            if (options.jsonError) throw new SyntaxError("Unexpected end of JSON input");
+            return options.data ?? {};
+          },
+        };
+        for (const h of [...handlers]) h(response);
+      },
+    };
+  }
+
   return {
     getNextPage: () => makePage(queue.shift() ?? {}),
     resetPageQueue: (...items: unknown[]) => {
       queue.splice(0, queue.length, ...items);
     },
+    makeDetailPage,
   };
 });
 
@@ -100,6 +132,8 @@ describe("buildListing", () => {
     region: "Auckland",
     canonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
     pictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
+    isBuyNowOnly: false,
+    hasBuyNow: false,
   };
 
   it("builds a Listing from a valid RawApiItem", () => {
@@ -147,65 +181,104 @@ describe("buildListing", () => {
     const listing = buildListing(baseRaw);
     expect(listing?.source).toBe("trademe");
   });
-});
 
-// ── parseFrendState ───────────────────────────────────────────────────────────
-
-describe("parseFrendState", () => {
-  const baseItem = {
-    title: 'MacBook Pro 14"',
-    priceDisplay: "$1,500",
-    region: "Auckland",
-    suburb: "Auckland City",
-    canonicalPath: "/marketplace/computers/laptops/laptops/apple/listing/99999",
-    pictureHref: "https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg",
-  };
-
-  it("extracts listings from the nested frend-state structure", () => {
-    const state = { someKey: { b: { list: [baseItem], totalCount: 1, pageSize: 56 } } };
-    const result = parseFrendState(state);
-    expect(result).not.toBeNull();
-    expect(result?.listings).toHaveLength(1);
-    expect(result?.listings[0].title).toBe('MacBook Pro 14"');
-    expect(result?.listings[0].url).toBe(
-      "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999",
-    );
-    expect(result?.totalCount).toBe(1);
-    expect(result?.pageSize).toBe(56);
+  it("sets isAuction false when isBuyNowOnly is true", () => {
+    const listing = buildListing({ ...baseRaw, isBuyNowOnly: true, hasBuyNow: true });
+    expect(listing?.isAuction).toBe(false);
   });
 
-  it("returns null when no matching frend-state bucket is found", () => {
-    expect(parseFrendState({ someKey: { b: { notList: [] } } })).toBeNull();
+  it("sets isAuction true when isBuyNowOnly is false", () => {
+    const listing = buildListing({ ...baseRaw, isBuyNowOnly: false, hasBuyNow: false });
+    expect(listing?.isAuction).toBe(true);
   });
 
-  it("filters out items missing title or canonicalPath", () => {
-    const items = [baseItem, { ...baseItem, title: "" }, { ...baseItem, canonicalPath: "" }];
-    const state = { key: { b: { list: items, totalCount: 3, pageSize: 56 } } };
-    const result = parseFrendState(state);
-    expect(result?.listings).toHaveLength(1);
+  it("sets buyNowPrice when hasBuyNow is true", () => {
+    const listing = buildListing({ ...baseRaw, hasBuyNow: true, buyNowPrice: 2000 });
+    expect(listing?.buyNowPrice).toBe(2000);
   });
 
-  it("produces listings with the same shape as parseSearchApiResponse", () => {
-    const frendState = { key: { b: { list: [baseItem], totalCount: 1, pageSize: 56 } } };
-    const apiData = {
-      List: [
-        {
-          Title: baseItem.title,
-          PriceDisplay: baseItem.priceDisplay,
-          Region: baseItem.region,
-          Suburb: baseItem.suburb,
-          CanonicalPath: baseItem.canonicalPath,
-          PictureHref: baseItem.pictureHref,
-        },
-      ],
-      TotalCount: 1,
-      PageSize: 56,
-    };
+  it("omits buyNowPrice when hasBuyNow is false", () => {
+    const listing = buildListing({ ...baseRaw, hasBuyNow: false });
+    expect(listing).not.toHaveProperty("buyNowPrice");
+  });
 
-    const frendResult = parseFrendState(frendState)?.listings[0];
-    const apiResult = parseSearchApiResponse(apiData).listings[0];
+  it("maps reserveState via mapReserveState", () => {
+    const listing = buildListing({ ...baseRaw, reserveState: 1 });
+    expect(listing?.reserveStatus).toBe("MET");
+  });
 
-    expect(frendResult).toEqual(apiResult);
+  it("always sets reserveStatus even when reserveState is absent", () => {
+    const listing = buildListing(baseRaw);
+    expect(listing?.reserveStatus).toBe("NONE");
+  });
+
+  it("sets startDate/endDate when present on raw", () => {
+    const listing = buildListing({
+      ...baseRaw,
+      startDate: "/Date(1782954111747)/",
+      endDate: "/Date(1783954111747)/",
+    });
+    expect(listing?.startDate).toBe(new Date(1782954111747).toISOString());
+    expect(listing?.endDate).toBe(new Date(1783954111747).toISOString());
+  });
+
+  it("omits startDate/endDate when absent on raw", () => {
+    const listing = buildListing(baseRaw);
+    expect(listing).not.toHaveProperty("startDate");
+    expect(listing).not.toHaveProperty("endDate");
+  });
+
+  it("sets categoryPath when present", () => {
+    const listing = buildListing({ ...baseRaw, categoryPath: "Computers/Laptops" });
+    expect(listing?.categoryPath).toBe("Computers/Laptops");
+  });
+
+  it("omits categoryPath when absent", () => {
+    const listing = buildListing(baseRaw);
+    expect(listing).not.toHaveProperty("categoryPath");
+  });
+
+  it("sets photos via buildPhotosFromUrls when photoUrls present", () => {
+    const listing = buildListing({
+      ...baseRaw,
+      photoUrls: ["https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg"],
+    });
+    expect(listing?.photos).toEqual([
+      {
+        thumbnailUrl: "https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg",
+        fullSizeUrl: "https://trademe.tmcdn.co.nz/photoserver/full/1.jpg",
+      },
+    ]);
+  });
+
+  it("omits photos when photoUrls absent", () => {
+    const listing = buildListing(baseRaw);
+    expect(listing).not.toHaveProperty("photos");
+  });
+
+  it("sets shippingCost when present", () => {
+    const listing = buildListing({ ...baseRaw, shippingCost: 15 });
+    expect(listing?.shippingCost).toBe(15);
+  });
+
+  it("omits shippingCost when absent", () => {
+    const listing = buildListing(baseRaw);
+    expect(listing).not.toHaveProperty("shippingCost");
+  });
+
+  it("sets seller when memberId present", () => {
+    const listing = buildListing({ ...baseRaw, memberId: 42, isSuperSeller: true });
+    expect(listing?.seller).toEqual({ memberId: 42, isTopSeller: true });
+  });
+
+  it("defaults isTopSeller to false when isSuperSeller absent", () => {
+    const listing = buildListing({ ...baseRaw, memberId: 42 });
+    expect(listing?.seller).toEqual({ memberId: 42, isTopSeller: false });
+  });
+
+  it("omits seller when memberId absent", () => {
+    const listing = buildListing(baseRaw);
+    expect(listing).not.toHaveProperty("seller");
   });
 });
 
@@ -275,239 +348,413 @@ describe("parseSearchApiResponse", () => {
     const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
     expect(listings[0].location).toBe("Auckland");
   });
+
+  it("maps IsBuyNowOnly to isAuction=false", () => {
+    const item = { ...baseItem, IsBuyNowOnly: true, HasBuyNow: true };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].isAuction).toBe(false);
+  });
+
+  it("maps HasBuyNow + BuyNowPrice", () => {
+    const item = { ...baseItem, HasBuyNow: true, BuyNowPrice: 2000 };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].buyNowPrice).toBe(2000);
+  });
+
+  it("maps ReserveState via mapReserveState", () => {
+    const item = { ...baseItem, ReserveState: 2 };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].reserveStatus).toBe("NOT_MET");
+  });
+
+  it("maps StartDate/EndDate through parseTradeMeDate", () => {
+    const item = {
+      ...baseItem,
+      StartDate: "/Date(1782954111747)/",
+      EndDate: "/Date(1783954111747)/",
+    };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].startDate).toBe(new Date(1782954111747).toISOString());
+    expect(listings[0].endDate).toBe(new Date(1783954111747).toISOString());
+  });
+
+  it("maps CategoryPath", () => {
+    const item = { ...baseItem, CategoryPath: "Computers/Laptops" };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].categoryPath).toBe("Computers/Laptops");
+  });
+
+  it("maps PhotoUrls via buildPhotosFromUrls", () => {
+    const item = {
+      ...baseItem,
+      PhotoUrls: ["https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg"],
+    };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].photos).toEqual([
+      {
+        thumbnailUrl: "https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg",
+        fullSizeUrl: "https://trademe.tmcdn.co.nz/photoserver/full/1.jpg",
+      },
+    ]);
+  });
+
+  it("maps MemberId/IsSuperSeller to seller", () => {
+    const item = { ...baseItem, MemberId: 42, IsSuperSeller: true };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].seller).toEqual({ memberId: 42, isTopSeller: true });
+  });
+
+  it("maps ShippingDetails.SuggestedShipping.Price to shippingCost", () => {
+    const item = {
+      ...baseItem,
+      ShippingDetails: { SuggestedShipping: { Price: 12.5 } },
+    };
+    const { listings } = parseSearchApiResponse({ List: [item], TotalCount: 1, PageSize: 56 });
+    expect(listings[0].shippingCost).toBe(12.5);
+  });
+
+  it("omits shippingCost when ShippingDetails is absent", () => {
+    const { listings } = parseSearchApiResponse({ List: [baseItem], TotalCount: 1, PageSize: 56 });
+    expect(listings[0]).not.toHaveProperty("shippingCost");
+  });
 });
 
-// ── extractDescriptionFromText ────────────────────────────────────────────────
+// ── mapReserveState ───────────────────────────────────────────────────────────
 
-describe("extractDescriptionFromText", () => {
-  it("extracts description between marker and shipping section", () => {
-    const text =
-      "Some header\nDescription\nGreat laptop in good condition.\nShipping & pick-up options\nMore content";
-    expect(extractDescriptionFromText(text)).toBe("Great laptop in good condition.");
+describe("mapReserveState", () => {
+  it("maps undefined to NONE", () => {
+    expect(mapReserveState(undefined)).toBe("NONE");
   });
-
-  it("extracts description up to Questions & answers", () => {
-    const text = "Description\nLooks great.\nQuestions & answers\nQ: Is it working?";
-    expect(extractDescriptionFromText(text)).toBe("Looks great.");
+  it("maps 1 to MET", () => {
+    expect(mapReserveState(1)).toBe("MET");
   });
-
-  it("returns empty string when no description marker is found", () => {
-    expect(extractDescriptionFromText("No description here")).toBe("");
+  it("maps 2 to NOT_MET", () => {
+    expect(mapReserveState(2)).toBe("NOT_MET");
   });
-
-  it("trims leading and trailing whitespace", () => {
-    const text = "Description\n\n  Lots of space around.  \nShipping & pick-up options";
-    expect(extractDescriptionFromText(text)).toBe("Lots of space around.");
+  it("maps 3 (buy-now-only) to UNKNOWN", () => {
+    expect(mapReserveState(3)).toBe("UNKNOWN");
   });
-
-  it("uses the earliest end marker when multiple are present", () => {
-    const text = "Description\nGood stuff.\nQuestions & answers\nQ&A\nShipping & pick-up options";
-    expect(extractDescriptionFromText(text)).toBe("Good stuff.");
-  });
-
-  it("returns full text after marker when no end marker is found", () => {
-    const text = "Description\nThis is a long description with no end marker.";
-    expect(extractDescriptionFromText(text)).toBe("This is a long description with no end marker.");
+  it("maps an unrecognized number to UNKNOWN", () => {
+    expect(mapReserveState(99)).toBe("UNKNOWN");
   });
 });
 
-// ── extractStructuredFromText ─────────────────────────────────────────────────
+// ── parseTradeMeDate ──────────────────────────────────────────────────────────
 
-describe("extractStructuredFromText", () => {
-  describe("reserveStatus", () => {
-    it("detects no reserve", () => {
-      expect(extractStructuredFromText("No reserve\nPlace bid").reserveStatus).toBe("NONE");
-    });
-    it("detects reserve met", () => {
-      expect(extractStructuredFromText("Reserve met\nPlace bid").reserveStatus).toBe("MET");
-    });
-    it("detects reserve not met", () => {
-      expect(extractStructuredFromText("Reserve not met\nPlace bid").reserveStatus).toBe("NOT_MET");
-    });
-    it("returns UNKNOWN when no reserve info found", () => {
-      expect(extractStructuredFromText("Some other text").reserveStatus).toBe("UNKNOWN");
+describe("parseTradeMeDate", () => {
+  it("parses a valid wire string to a matching ISO string", () => {
+    expect(parseTradeMeDate("/Date(1782954111747)/")).toBe(new Date(1782954111747).toISOString());
+  });
+  it("returns undefined for a malformed string", () => {
+    expect(parseTradeMeDate("not a date")).toBeUndefined();
+  });
+  it("returns undefined for undefined input", () => {
+    expect(parseTradeMeDate(undefined)).toBeUndefined();
+  });
+  it("returns undefined for an empty string", () => {
+    expect(parseTradeMeDate("")).toBeUndefined();
+  });
+});
+
+// ── buildPhotosFromUrls ───────────────────────────────────────────────────────
+
+describe("buildPhotosFromUrls", () => {
+  it("returns undefined for undefined input", () => {
+    expect(buildPhotosFromUrls(undefined)).toBeUndefined();
+  });
+  it("returns undefined for an empty array", () => {
+    expect(buildPhotosFromUrls([])).toBeUndefined();
+  });
+  it("maps a single URL to thumbnail/full-size pair", () => {
+    const photos = buildPhotosFromUrls(["https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg"]);
+    expect(photos).toEqual([
+      {
+        thumbnailUrl: "https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg",
+        fullSizeUrl: "https://trademe.tmcdn.co.nz/photoserver/full/1.jpg",
+      },
+    ]);
+  });
+  it("maps multiple URLs, preserving order", () => {
+    const photos = buildPhotosFromUrls([
+      "https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg",
+      "https://trademe.tmcdn.co.nz/photoserver/thumb/2.jpg",
+    ]);
+    expect(photos?.map((p) => p.thumbnailUrl)).toEqual([
+      "https://trademe.tmcdn.co.nz/photoserver/thumb/1.jpg",
+      "https://trademe.tmcdn.co.nz/photoserver/thumb/2.jpg",
+    ]);
+    expect(photos?.map((p) => p.fullSizeUrl)).toEqual([
+      "https://trademe.tmcdn.co.nz/photoserver/full/1.jpg",
+      "https://trademe.tmcdn.co.nz/photoserver/full/2.jpg",
+    ]);
+  });
+});
+
+// ── parseListingDetailResponse ────────────────────────────────────────────────
+
+describe("parseListingDetailResponse", () => {
+  const startDateWire = "/Date(1782954111747)/";
+  const endDateWire = "/Date(1783954111747)/";
+  const askedAtWire = "/Date(1784000000000)/";
+  const answeredAtWire = "/Date(1784010000000)/";
+  const dateJoinedWire = "/Date(1600000000000)/";
+
+  const fullListing = {
+    Body: "This laptop is working but has a bit of wear and tear.",
+    Attributes: [
+      { Name: "Condition", Value: "Used", DisplayValue: "Used (good)" },
+      { Name: "Screen Size", Value: '15"' },
+    ],
+    Questions: {
+      List: [
+        {
+          Comment: "Is this available?",
+          Answer: "Yes it is",
+          AskingMember: { Nickname: "buyer1" },
+          CommentDate: askedAtWire,
+          AnswerDate: answeredAtWire,
+        },
+      ],
+    },
+    HasBuyNow: true,
+    BuyNowPrice: 1500,
+    ReserveState: 1,
+    ShippingOptions: [{ Price: 10 }, { Price: 5 }],
+    StartDate: startDateWire,
+    EndDate: endDateWire,
+    CategoryPath: "Computers/Laptops",
+    Photos: [
+      {
+        Value: {
+          Thumbnail: "https://example.com/thumb1.jpg",
+          FullSize: "https://example.com/full1.jpg",
+        },
+      },
+    ],
+    Member: {
+      MemberId: 42,
+      Nickname: "seaf73",
+      FeedbackCount: 27,
+      IsTopSeller: true,
+      DateJoined: dateJoinedWire,
+    },
+  };
+
+  it("maps every field correctly for a fully-populated real listing", () => {
+    const detail = parseListingDetailResponse(fullListing);
+    expect(detail.description).toBe("This laptop is working but has a bit of wear and tear.");
+    expect(detail.extraAttributes).toEqual({ Condition: "Used (good)", "Screen Size": '15"' });
+    expect(detail.questionsAndAnswers).toEqual([
+      {
+        question: "Is this available?",
+        answer: "Yes it is",
+        askedBy: "buyer1",
+        askedAt: new Date(1784000000000).toISOString(),
+        answeredAt: new Date(1784010000000).toISOString(),
+      },
+    ]);
+    expect(detail.buyNowPrice).toBe(1500);
+    expect(detail.reserveStatus).toBe("MET");
+    expect(detail.shippingAvailable).toBe(true);
+    expect(detail.shippingCost).toBe(5);
+    expect(detail.startDate).toBe(new Date(1782954111747).toISOString());
+    expect(detail.endDate).toBe(new Date(1783954111747).toISOString());
+    expect(detail.categoryPath).toBe("Computers/Laptops");
+    expect(detail.photos).toEqual([
+      {
+        thumbnailUrl: "https://example.com/thumb1.jpg",
+        fullSizeUrl: "https://example.com/full1.jpg",
+      },
+    ]);
+    expect(detail.seller).toEqual({
+      memberId: 42,
+      nickname: "seaf73",
+      feedbackCount: 27,
+      isTopSeller: true,
+      dateJoined: new Date(1600000000000).toISOString(),
     });
   });
 
-  describe("buyNowPrice", () => {
-    it("extracts buy now price", () => {
-      expect(extractStructuredFromText("Buy now\n$1,299\nBuy Now").buyNowPrice).toBe(1299);
+  describe("ReserveState mapping", () => {
+    it("maps absent to NONE", () => {
+      const { ReserveState: _drop, ...rest } = fullListing;
+      expect(parseListingDetailResponse(rest).reserveStatus).toBe("NONE");
     });
-    it("extracts buy now price without comma", () => {
-      expect(extractStructuredFromText("Buy Now\n$999\nBuy Now").buyNowPrice).toBe(999);
-    });
-    it("omits buyNowPrice when none is found", () => {
-      expect(extractStructuredFromText("Starting price\n$500").buyNowPrice).toBeUndefined();
-    });
-  });
-
-  describe("pickupLocation", () => {
-    it("extracts pickup location", () => {
-      expect(extractStructuredFromText("Pick up from Auckland City").pickupLocation).toBe(
-        "Auckland City",
+    it("maps 1 to MET", () => {
+      expect(parseListingDetailResponse({ ...fullListing, ReserveState: 1 }).reserveStatus).toBe(
+        "MET",
       );
     });
-    it("omits pickupLocation when none is found", () => {
-      expect(extractStructuredFromText("Shipping available").pickupLocation).toBeUndefined();
+    it("maps 2 to NOT_MET", () => {
+      expect(parseListingDetailResponse({ ...fullListing, ReserveState: 2 }).reserveStatus).toBe(
+        "NOT_MET",
+      );
+    });
+    it("maps 3 to UNKNOWN (buy-now-only)", () => {
+      expect(parseListingDetailResponse({ ...fullListing, ReserveState: 3 }).reserveStatus).toBe(
+        "UNKNOWN",
+      );
     });
   });
-});
 
-// ── extractFromGraphQL ────────────────────────────────────────────────────────
-
-describe("extractFromGraphQL", () => {
-  it("omits pickupAvailable and shippingAvailable when DeliveryOptions is absent", () => {
-    const json = {
-      data: {
-        listing: {
-          attributes: [{ key: "BuyNowPrice", numValue: 5000 }],
-        },
-      },
-    };
-    const result = extractFromGraphQL(json);
-    expect(result.pickupAvailable).toBeUndefined();
-    expect(result.shippingAvailable).toBeUndefined();
+  it("handles a buy-now-only listing (HasBuyNow true, no reserve)", () => {
+    const { ReserveState: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse({ ...rest, HasBuyNow: true, BuyNowPrice: 999 });
+    expect(detail.buyNowPrice).toBe(999);
+    expect(detail.reserveStatus).toBe("NONE");
   });
 
-  it("returns fulfillment fields when DeliveryOptions is present", () => {
-    const json = {
-      data: {
-        listing: {
-          attributes: [
-            {
-              key: "DeliveryOptions",
-              options: [{ __typename: "PickupOption", name: "Pick up from Rodney" }],
-            },
-          ],
-        },
-      },
-    };
-    const result = extractFromGraphQL(json);
-    expect(result.pickupAvailable).toBe(true);
-    expect(result.shippingAvailable).toBe(false);
-    expect(result.pickupLocation).toBe("Rodney");
-  });
-});
-
-// ── extractQuestionsAndAnswers ────────────────────────────────────────────────
-
-describe("extractQuestionsAndAnswers", () => {
-  it("returns empty array when section is absent", () => {
-    expect(
-      extractQuestionsAndAnswers("Description\nSome text.\nShipping & pick-up options"),
-    ).toEqual([]);
+  it("sets buyNowPrice to null when HasBuyNow is false", () => {
+    const detail = parseListingDetailResponse({ ...fullListing, HasBuyNow: false });
+    expect(detail.buyNowPrice).toBeNull();
   });
 
-  it("returns empty array when section has no content", () => {
-    expect(
-      extractQuestionsAndAnswers("Questions & answers\nAsk a question\nAbout the seller"),
-    ).toEqual([]);
+  it("returns an empty (but present) questionsAndAnswers array when Questions is absent", () => {
+    const { Questions: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse(rest);
+    expect(Object.hasOwn(detail, "questionsAndAnswers")).toBe(true);
+    expect(detail.questionsAndAnswers).toEqual([]);
   });
 
-  it("parses a single Q&A pair, stripping username and timestamp lines", () => {
-    const text =
-      "Questions & Answers (1)\nWill you ship?\nbuyer (3\n) • Mon\nNo sorry.\nseller (27\n) • Mon\nAsk a question\nAbout the seller";
-    expect(extractQuestionsAndAnswers(text)).toEqual([
-      { question: "Will you ship?", answer: "No sorry." },
-    ]);
+  it("returns an empty extraAttributes object when Attributes is absent", () => {
+    const { Attributes: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse(rest);
+    expect(detail.extraAttributes).toEqual({});
   });
 
-  it("parses multiple Q&A pairs", () => {
-    const text = [
-      "Questions & Answers (2)",
-      "Is the iCloud locked?",
-      "buyer (27",
-      ") • 10:53 am, Fri, 29 May",
-      "No, it is not.",
-      "seller (27",
-      ") • 11:12 am, Fri, 29 May",
-      "What is your best price?",
-      "buyer2 (5",
-      ") • 12:00 pm, Sat, 30 May",
-      "Will let the auction run.",
-      "seller (27",
-      ") • 1:00 pm, Sat, 30 May",
-      "Ask a question",
-      "About the seller",
-    ].join("\n");
-    expect(extractQuestionsAndAnswers(text)).toEqual([
-      { question: "Is the iCloud locked?", answer: "No, it is not." },
-      { question: "What is your best price?", answer: "Will let the auction run." },
-    ]);
+  it("returns an empty extraAttributes object when Attributes is an empty array", () => {
+    const detail = parseListingDetailResponse({ ...fullListing, Attributes: [] });
+    expect(detail.extraAttributes).toEqual({});
   });
 
-  it("handles capitalised heading with count and trailing whitespace", () => {
-    const text =
-      "Questions & Answers (5)   \nSome question?\nbuyer (1\n) • Mon\nSome answer.\nseller (2\n) • Tue\nAsk a question\nAbout the seller";
-    expect(extractQuestionsAndAnswers(text)).toEqual([
-      { question: "Some question?", answer: "Some answer." },
-    ]);
-  });
-});
-
-// ── extractDetails ────────────────────────────────────────────────────────────
-
-describe("extractDetails", () => {
-  it("extracts key:value pairs from Details section before Description", () => {
-    const text =
-      'Details\nCondition:\nUsed\nMemory:\n16 to 31 GB\nScreen Size:\n15"\nDescription\nGreat laptop.';
-    expect(extractDetails(text)).toEqual([
-      { key: "Condition", value: "Used" },
-      { key: "Memory", value: "16 to 31 GB" },
-      { key: "Screen Size", value: '15"' },
-    ]);
+  it("sets shippingAvailable=false and shippingCost=null when ShippingOptions is empty", () => {
+    const detail = parseListingDetailResponse({ ...fullListing, ShippingOptions: [] });
+    expect(detail.shippingAvailable).toBe(false);
+    expect(detail.shippingCost).toBeNull();
   });
 
-  it("strips trailing colon from keys", () => {
-    const text = "Details\nBrand:\nApple\nDescription\n";
-    expect(extractDetails(text)).toEqual([{ key: "Brand", value: "Apple" }]);
+  it("sets shippingAvailable=false and shippingCost=null when ShippingOptions is absent", () => {
+    const { ShippingOptions: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse(rest);
+    expect(detail.shippingAvailable).toBe(false);
+    expect(detail.shippingCost).toBeNull();
   });
 
-  it("returns empty array when Details section is absent", () => {
-    expect(extractDetails("Description\nGreat item.\nShipping & pick-up options")).toEqual([]);
+  it("sets shippingCost to the minimum Price across multiple shipping options", () => {
+    const detail = parseListingDetailResponse({
+      ...fullListing,
+      ShippingOptions: [{ Price: 20 }, { Price: 5 }, { Price: 12 }],
+    });
+    expect(detail.shippingCost).toBe(5);
+  });
+
+  it("sets shippingAvailable=true and shippingCost=null when ShippingOptions all lack a Price", () => {
+    const detail = parseListingDetailResponse({
+      ...fullListing,
+      ShippingOptions: [{}, {}],
+    });
+    expect(detail.shippingAvailable).toBe(true);
+    expect(detail.shippingCost).toBeNull();
+  });
+
+  it("ignores shipping options without a numeric Price when computing the minimum", () => {
+    const detail = parseListingDetailResponse({
+      ...fullListing,
+      ShippingOptions: [{ Price: 20 }, {}, { Price: 12 }],
+    });
+    expect(detail.shippingCost).toBe(12);
+  });
+
+  it("omits seller when Member is absent", () => {
+    const { Member: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse(rest);
+    expect(Object.hasOwn(detail, "seller")).toBe(false);
+  });
+
+  it("omits categoryPath when CategoryPath is absent", () => {
+    const { CategoryPath: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse(rest);
+    expect(Object.hasOwn(detail, "categoryPath")).toBe(false);
+  });
+
+  it("omits photos when Photos is absent", () => {
+    const { Photos: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse(rest);
+    expect(Object.hasOwn(detail, "photos")).toBe(false);
+  });
+
+  it("omits endDate when EndDate is absent", () => {
+    const { EndDate: _drop, ...rest } = fullListing;
+    const detail = parseListingDetailResponse(rest);
+    expect(Object.hasOwn(detail, "endDate")).toBe(false);
+  });
+
+  it("never includes pickupAvailable or pickupLocation", () => {
+    const detail = parseListingDetailResponse(fullListing);
+    expect(Object.hasOwn(detail, "pickupAvailable")).toBe(false);
+    expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
+  });
+
+  it("never includes pickupAvailable or pickupLocation even on a minimal document", () => {
+    const detail = parseListingDetailResponse({});
+    expect(Object.hasOwn(detail, "pickupAvailable")).toBe(false);
+    expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
   });
 });
 
-// ── extractDescriptionFromText (real-page patterns) ──────────────────────────
+// ── fetchSingleListingDetailAsync ─────────────────────────────────────────────
 
-describe("extractDescriptionFromText (real-page patterns)", () => {
-  it('strips trailing "Show more" UI text injected by TradeMe', () => {
-    const text = "Description\nGood laptop.\n\nShow more \nShipping & pick-up options";
-    expect(extractDescriptionFromText(text)).toBe("Good laptop.");
+describe("fetchSingleListingDetailAsync", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
   });
 
-  it('stops at "Questions & Answers (N)" with capital A and count', () => {
-    const text = "Description\nGreat condition.\nQuestions & Answers (5)\nQ: Working?\nA: Yes.";
-    expect(extractDescriptionFromText(text)).toBe("Great condition.");
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it('does not truncate description that starts with "Transmission Details:"', () => {
-    const text =
-      "Description\n\nTransmission Details: 4 Speed Auto\nCondition: Excellent\n\nGreat car.\nShipping & pick-up options\nTo be arranged";
-    expect(extractDescriptionFromText(text)).toBe(
-      "Transmission Details: 4 Speed Auto\nCondition: Excellent\n\nGreat car.",
+  it("returns the parsed detail when the listing detail endpoint responds", async () => {
+    const rawData = { Body: "Great laptop", HasBuyNow: false };
+    const page = makeDetailPage({ data: rawData }) as unknown as Parameters<
+      typeof fetchSingleListingDetailAsync
+    >[0];
+    const detail = await fetchSingleListingDetailAsync(
+      page,
+      "https://www.trademe.co.nz/a/listing/12345",
     );
+    expect(detail).toEqual(parseListingDetailResponse(rawData));
   });
 
-  it("stops at Details section header on its own line", () => {
-    const text = "Description\nGreat item.\nDetails\nCondition\nUsed\nShipping & pick-up options";
-    expect(extractDescriptionFromText(text)).toBe("Great item.");
+  it("rejects instead of hanging when no matching response arrives before the timeout", async () => {
+    const page = makeDetailPage({ respond: false }) as unknown as Parameters<
+      typeof fetchSingleListingDetailAsync
+    >[0];
+    const detailPromise = fetchSingleListingDetailAsync(
+      page,
+      "https://www.trademe.co.nz/a/listing/12345",
+    );
+    const assertion = expect(detailPromise).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(12000);
+    await assertion;
   });
 
-  it("extracts description from the MacBook Pro listing with exact innerText", () => {
-    const innerText = `Skip to main content\nSearch all of Trade Me\nNotifications\n18\nWatchlist\nMy Trade Me\nD\nmain content\nHome\nMarketplace\nComputers\nLaptops\nLaptops\nApple\nMacBook Pro\nCloses: 22 hours\nWed 3 Jun, 8:15 pm\n Add to Watchlist\n\n29 others watchlisted\n\nCurrent bid\n\n$5.00\n\nPlace bid\n\nReserve met\n\n2 bids so far - view history\n\n Service Fee may apply\nAm I covered by Buyer Protection?\n\nWhen you make a purchase using Ping payments like card or balance, or Afterpay we are able to protect your trade under our Buyer Protection policy, up to $5,000.\n\nLearn more about Trade Me's Buyer Protection.\n\nS\nseaf73 \n(\n27\n)\n100% positive feedback\nSeller located in Auckland City, Auckland\nDetails\nCondition:\nUsed\nMemory:\n16 to 31 GB\nHard Drive Size:\n240 to 499 GB\nScreen Size:\n15"\nCores:\n4\nDescription\n\nThis laptop is working but has a bit of wear and tear... \n\nSpeakers are blown (makes a terrible sound when volume is cranked).\nBattery life isn't great.\nCharger is showing wires (still works but reaching the end of its life).\nLittle corner circle thing is missing for one of the corners so when using the keyboard causes the laptop to move a little bit (please see picture).\nHas stickers and scratches from wear and tear but the screen is in good condition.\n\nOther than that the laptop works. Please don't hesitate to ask any questions. \n\nBuyer must pickup only because I haven't got anything suitable to ship it in.\n\nShow more \nShipping & pick-up options\nDestination & description\tPrice\nPick up from Rodney\tFree\nLearn more about shipping & delivery options.\nPayment Options\n\nPay instantly by card and Ping balance.\n\nWhat's Ping?\n\nOther options\n\nCash\n\nQuestions & Answers (5)\nHey, is the iCloud locked on this device\nkaelynclare (27\n) • 10:53 am, Fri, 29 May\nHi, the iCloud is available, just requires your apple id. Have added a picture of the menu option for you to see. Thanks\nseaf73 (27\n) • 11:12 am, Fri, 29 May\nWhat's your best price you would sell this at?\nkaelynclare (27\n) • 11:58 am, Fri, 29 May\nHi Will just let the auction run thanks\nseaf73 (27\n) • 8:43 pm, Fri, 29 May\nThe year version of this MacBook pro please?\npeterlynn2013 (69\n) • 4:24 pm, Sun, 31 May\nHi, MacBook Pro (Retina, 15 inch, Mid 2015)\nseaf73 (27\n) • 4:42 pm, Sun, 31 May\nwhich part of Rodney to pick up please?\nangelese (26\n) • 8:06 pm, Sun, 31 May\nManly, Whangaparaoa, 0930\nseaf73 (27\n) • 8:46 pm, Sun, 31 May\nWould shipping be an option?\nburritoblue22 (3\n) • 12:15 pm, Mon, 1 Jun\nHi, unfortunately not, I don't have anything suitable to ship it in. Cheers\nseaf73 (27\n) • 1:27 pm, Mon, 1 Jun\nAsk a question\nAbout the seller\nS\nseaf73\n100% positive feedback(27\n)\nLocation\nAuckland City\nMember since\nSunday, 1 May 2022\nView seller's other listings\nLoading...\nRead our safe buying advice\n Share this listing\nPage views: 431\nListing #5956077253\n Community Watch: Report this listing\nWe are upgrading some of our systems\n Learn more\n Tell us what you think\nDesktop site\nHelp\nContact Us\nTerms & conditions\nAbout Us\nNews\nCareers\nAdvertise\nPrivacy policy\nLog out\n© 2026 Trade Me Limited`;
-    const desc = extractDescriptionFromText(innerText);
-    expect(desc).not.toContain("About the seller");
-    expect(desc).toContain("This laptop is working but has a bit of wear and tear");
-    expect(desc).toContain("Buyer must pickup only");
+  it("rejects immediately on a non-200 response, without waiting for the timeout", async () => {
+    const page = makeDetailPage({
+      status: 404,
+      data: { Body: "ignored" },
+    }) as unknown as Parameters<typeof fetchSingleListingDetailAsync>[0];
+    await expect(
+      fetchSingleListingDetailAsync(page, "https://www.trademe.co.nz/a/listing/12345"),
+    ).rejects.toThrow();
   });
 
-  it("extracts Q&A from the MacBook Pro listing with exact innerText", () => {
-    const innerText = `Questions & Answers (5)\nHey, is the iCloud locked on this device\nkaelynclare (27\n) • 10:53 am, Fri, 29 May\nHi, the iCloud is available, just requires your apple id. Have added a picture of the menu option for you to see. Thanks\nseaf73 (27\n) • 11:12 am, Fri, 29 May\nWhat's your best price you would sell this at?\nkaelynclare (27\n) • 11:58 am, Fri, 29 May\nHi Will just let the auction run thanks\nseaf73 (27\n) • 8:43 pm, Fri, 29 May\nThe year version of this MacBook pro please?\npeterlynn2013 (69\n) • 4:24 pm, Sun, 31 May\nHi, MacBook Pro (Retina, 15 inch, Mid 2015)\nseaf73 (27\n) • 4:42 pm, Sun, 31 May\nwhich part of Rodney to pick up please?\nangelese (26\n) • 8:06 pm, Sun, 31 May\nManly, Whangaparaoa, 0930\nseaf73 (27\n) • 8:46 pm, Sun, 31 May\nWould shipping be an option?\nburritoblue22 (3\n) • 12:15 pm, Mon, 1 Jun\nHi, unfortunately not, I don't have anything suitable to ship it in. Cheers\nseaf73 (27\n) • 1:27 pm, Mon, 1 Jun\nAsk a question\nAbout the seller`;
-    const qa = extractQuestionsAndAnswers(innerText);
-    expect(qa.length).toBe(5);
-    expect(qa[0].question).toBe("Hey, is the iCloud locked on this device");
-    expect(qa[0].answer).toContain("iCloud is available");
+  it("rejects when the response body is not valid JSON", async () => {
+    const page = makeDetailPage({ jsonError: true }) as unknown as Parameters<
+      typeof fetchSingleListingDetailAsync
+    >[0];
+    await expect(
+      fetchSingleListingDetailAsync(page, "https://www.trademe.co.nz/a/listing/12345"),
+    ).rejects.toThrow();
   });
 });
 

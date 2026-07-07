@@ -148,7 +148,7 @@ describe("buildDetailMetaHtml", () => {
 
 describe("buildExtrasHtml", () => {
   it("renders a details table when details exist", () => {
-    const html = buildExtrasHtml(makeListing({ scrapedAttributes: { Condition: "Used <good>" } }));
+    const html = buildExtrasHtml(makeListing({ extraAttributes: { Condition: "Used <good>" } }));
     expect(html).toContain("details-table");
     expect(html).toContain("Condition");
     expect(html).toContain("Used &lt;good&gt;");
@@ -158,7 +158,7 @@ describe("buildExtrasHtml", () => {
     expect(buildExtrasHtml(makeListing())).not.toContain("details-table");
   });
 
-  it("does not read structured fields (buyNowPrice, reserveStatus, etc.) from scrapedAttributes", () => {
+  it("does not read structured fields (buyNowPrice, reserveStatus, etc.) from extraAttributes", () => {
     const html = buildExtrasHtml(
       makeListing({
         buyNowPrice: 500,
@@ -166,7 +166,7 @@ describe("buildExtrasHtml", () => {
         pickupAvailable: true,
         shippingAvailable: false,
         pickupLocation: "Auckland",
-        scrapedAttributes: { Condition: "Used" },
+        extraAttributes: { Condition: "Used" },
       }),
     );
     expect(html).toContain("details-table");
@@ -177,7 +177,7 @@ describe("buildExtrasHtml", () => {
 
   it("renders a scraped attribute even if its key happens to match a known field name", () => {
     const html = buildExtrasHtml(
-      makeListing({ reserveStatus: "MET", scrapedAttributes: { reserveStatus: "As scraped" } }),
+      makeListing({ reserveStatus: "MET", extraAttributes: { reserveStatus: "As scraped" } }),
     );
     expect(html).toContain("As scraped");
   });

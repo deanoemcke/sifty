@@ -2,6 +2,19 @@ import type { RecipeSource } from "./metadata";
 
 export type ReserveStatus = "NONE" | "MET" | "NOT_MET" | "UNKNOWN";
 
+export interface ListingPhoto {
+  thumbnailUrl: string;
+  fullSizeUrl: string;
+}
+
+export interface ListingSeller {
+  memberId: number;
+  nickname?: string;
+  feedbackCount?: number;
+  isTopSeller?: boolean;
+  dateJoined?: string; // ISO 8601
+}
+
 export interface Listing {
   // Always known from quick search.
   source: RecipeSource;
@@ -12,29 +25,53 @@ export interface Listing {
   isAuction: boolean;
   thumbnailUrl?: string;
 
-  // Only known once deep search completes — absent until then.
-  description?: string;
-  scrapedAttributes?: Record<string, string>;
-  questionsAndAnswers?: Array<{ question: string; answer: string }>;
+  // Best-effort from quick search's own per-item JSON; deep search overwrites
+  // with the authoritative value when it re-derives them.
   buyNowPrice?: number | null;
   reserveStatus?: ReserveStatus;
+  startDate?: string; // ISO 8601, normalized from TradeMe's /Date(ms)/ wire format
+  endDate?: string;
+  categoryPath?: string;
+  photos?: ListingPhoto[];
+  seller?: ListingSeller;
+
+  // Only known once deep search completes — absent until then.
+  description?: string;
+  extraAttributes?: Record<string, string>;
+  questionsAndAnswers?: Array<{
+    question: string;
+    answer: string;
+    askedBy?: string;
+    askedAt?: string; // ISO 8601
+    answeredAt?: string;
+  }>;
+  shippingCost?: number | null;
   pickupAvailable?: boolean | null;
   shippingAvailable?: boolean | null;
   pickupLocation?: string | null;
 }
 
 // Patch produced by deepSearchAsync — merged onto a Listing once received.
-export type DeepSearchDetail = Required<
+// Partial: a recipe includes only the keys it actually derived this round;
+// Object.assign in applyDeepSearchDetail skips absent keys, so omission means
+// "didn't check this round," not "found nothing."
+export type DeepSearchDetail = Partial<
   Pick<
     Listing,
     | "description"
-    | "scrapedAttributes"
+    | "extraAttributes"
     | "questionsAndAnswers"
     | "buyNowPrice"
     | "reserveStatus"
     | "pickupAvailable"
     | "shippingAvailable"
     | "pickupLocation"
+    | "shippingCost"
+    | "startDate"
+    | "endDate"
+    | "categoryPath"
+    | "photos"
+    | "seller"
   >
 >;
 
@@ -55,6 +92,7 @@ export type QuickSearchEvent =
 export type DeepSearchEvent =
   | { type: "progress"; index: number; total: number; title: string }
   | { type: "detail"; url: string; detail: DeepSearchDetail }
+  | { type: "detail-error"; url: string; message: string }
   | { type: "complete" }
   | { type: "error"; message: string };
 

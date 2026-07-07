@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { aiJSON } from "../ai";
 import {
+  buildFacebookDeepSearchDetail,
   buildFacebookListing,
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
@@ -276,6 +277,26 @@ describe("buildDiscoverUrlsAsync", () => {
         aiConfig: MOCK_AI_CONFIG,
       }),
     ).rejects.toThrow("AI unavailable");
+  });
+});
+
+describe("buildFacebookDeepSearchDetail", () => {
+  it("returns exactly description, extraAttributes, questionsAndAnswers, and pickupLocation", () => {
+    const detail = buildFacebookDeepSearchDetail("Nice lamp", { Condition: "Used" }, "Auckland");
+    expect(detail).toEqual({
+      description: "Nice lamp",
+      extraAttributes: { Condition: "Used" },
+      questionsAndAnswers: [],
+      pickupLocation: "Auckland",
+    });
+  });
+
+  it("never includes buyNowPrice, reserveStatus, pickupAvailable, or shippingAvailable", () => {
+    const detail = buildFacebookDeepSearchDetail("desc", {}, null);
+    expect(detail).not.toHaveProperty("buyNowPrice");
+    expect(detail).not.toHaveProperty("reserveStatus");
+    expect(detail).not.toHaveProperty("pickupAvailable");
+    expect(detail).not.toHaveProperty("shippingAvailable");
   });
 });
 

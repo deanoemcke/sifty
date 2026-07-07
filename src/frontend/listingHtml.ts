@@ -60,7 +60,7 @@ export function buildExtrasHtml(listing: Listing): string {
   let body = "";
 
   // ── Details ───────────────────────────────────────────────────────────────
-  const detailEntries = Object.entries(listing.scrapedAttributes ?? {});
+  const detailEntries = Object.entries(listing.extraAttributes ?? {});
   if (detailEntries.length > 0) {
     body += `<div class="deep-section">
       <div class="deep-section-label">Details</div>

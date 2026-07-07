@@ -125,7 +125,7 @@ export async function deepSearchListingAsync(item: ListingItem): Promise<void> {
         if (ev.type === "detail") {
           applyDeepSearchDetail(item, ev.detail as DeepSearchDetail);
           renderDerived();
-        } else if (ev.type === "error") {
+        } else if (ev.type === "detail-error" || ev.type === "error") {
           renderListingModalContent(item, ev.message as string);
         }
       },
@@ -195,6 +195,8 @@ export async function runDeepSearchAsync(): Promise<void> {
         const item = listingsByUrl.get(ev.url as string);
         if (item) applyDeepSearchDetail(item, ev.detail as DeepSearchDetail);
         renderDerived();
+      } else if (ev.type === "detail-error") {
+        console.warn(`[deep-search] failed for ${ev.url}: ${ev.message}`);
       } else if (ev.type === "complete") {
         setStatus("Deep search complete", "success");
         setTimeout(() => setStatus(null), 4000);

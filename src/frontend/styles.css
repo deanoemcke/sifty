@@ -632,6 +632,7 @@ label {
   padding: 0.65rem 0.8rem 0.75rem;
 }
 .listing-card.filtered-out .listing-body {
+  background: var(--yellow-bg);
   opacity: 0.6;
 }
 
