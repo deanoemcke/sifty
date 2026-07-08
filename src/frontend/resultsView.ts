@@ -43,13 +43,14 @@ export function getOrderedListings(): ListingItem[] {
 
 export function renderDerived(): void {
   const listings = getOrderedListings();
-  const visible = listings.filter((listingItem) => listingItem.aiFilterReason === null);
-  getElement("resultCount").textContent = String(visible.length);
+  const passing = listings.filter((listingItem) => listingItem.aiFilterReason === null);
+  const visibleCount = showFilteredListings ? listings.length : passing.length;
+  getElement("resultCount").textContent = String(visibleCount);
   getElement("totalCount").textContent = String(listings.length);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
     isCardSearchActive(data.searchStatus),
   );
-  const hasUnscraped = visible.some((listingItem) => !listingItem.hasBeenDeepSearched);
+  const hasUnscraped = passing.some((listingItem) => !listingItem.hasBeenDeepSearched);
   getElement("deepBtn").classList.toggle(
     "hidden",
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,

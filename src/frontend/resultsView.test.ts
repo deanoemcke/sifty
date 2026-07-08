@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Listing } from "../lib/recipes/base";
-import { getOrderedListings, renderFilteredToggle } from "./resultsView";
+import { getOrderedListings, renderDerived, renderFilteredToggle } from "./resultsView";
 import {
   type ListingItem,
   listingsByUrl,
@@ -36,7 +36,7 @@ function addCardWithListings(listingUrls: string[]): void {
     errorMessage: null,
     wasCancelled: false,
   };
-  addUrlCard({} as UrlCardDom, data);
+  addUrlCard({ input: document.createElement("input") } as UrlCardDom, data);
   for (const url of listingUrls) {
     if (!listingsByUrl.has(url)) listingsByUrl.set(url, makeListingItem(url));
   }
@@ -45,7 +45,12 @@ function addCardWithListings(listingUrls: string[]): void {
 beforeEach(() => {
   resetState();
   resetUrlCardStore();
-  document.body.innerHTML = `<button id="toggleFilteredBtn"></button>`;
+  document.body.innerHTML = `
+    <button id="toggleFilteredBtn"></button>
+    <span id="resultCount"></span>
+    <span id="totalCount"></span>
+    <button id="deepBtn"></button>
+  `;
 });
 
 describe("getOrderedListings", () => {
@@ -60,6 +65,26 @@ describe("getOrderedListings", () => {
     addCardWithListings(["https://l/1"]);
     listingsByUrl.delete("https://l/1");
     expect(getOrderedListings()).toEqual([]);
+  });
+});
+
+describe("renderDerived", () => {
+  it("counts only passing listings as visible when filtered listings are hidden", () => {
+    addCardWithListings(["https://l/1", "https://l/2"]);
+    listingsByUrl.get("https://l/2")!.aiFilterReason = "too old";
+    setShowFilteredListings(false);
+    renderDerived();
+    expect(document.getElementById("resultCount")!.textContent).toBe("1");
+    expect(document.getElementById("totalCount")!.textContent).toBe("2");
+  });
+
+  it("counts all listings as visible when filtered listings are shown", () => {
+    addCardWithListings(["https://l/1", "https://l/2"]);
+    listingsByUrl.get("https://l/2")!.aiFilterReason = "too old";
+    setShowFilteredListings(true);
+    renderDerived();
+    expect(document.getElementById("resultCount")!.textContent).toBe("2");
+    expect(document.getElementById("totalCount")!.textContent).toBe("2");
   });
 });
 

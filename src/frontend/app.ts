@@ -13,12 +13,7 @@ import { getElement } from "./domUtils";
 import { handleListingCardKeydown, resolveListingCardOpenArea } from "./listingCardActivation";
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from "./listingDetail";
 import { searchUrlCardAsync } from "./quickSearch";
-import {
-  getCardByUrl,
-  getOrderedListings,
-  renderDerived,
-  renderFilteredToggle,
-} from "./resultsView";
+import { applyClientFilters, renderDerived, renderFilteredToggle } from "./resultsView";
 import {
   closeSaveSearchModal,
   fetchSavedSearchesAsync,
@@ -52,12 +47,7 @@ function initApp(): void {
   getElement("toggleFilteredBtn").addEventListener("click", () => {
     setShowFilteredListings(!showFilteredListings);
     renderFilteredToggle();
-    for (const item of getOrderedListings()) {
-      if (item.aiFilterReason !== null) {
-        const card = getCardByUrl(item.data.url);
-        if (card) card.style.display = showFilteredListings ? "" : "none";
-      }
-    }
+    applyClientFilters();
   });
 
   // Populate region dropdown and wire the allow-shipping checkbox
