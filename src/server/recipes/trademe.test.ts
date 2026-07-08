@@ -587,6 +587,24 @@ describe("parseListingDetailResponse", () => {
     expect(detail.pickupLocation).toBe("Invercargill, Southland");
   });
 
+  it("returns a well-formed detail object for a completely empty response", () => {
+    const detail = parseListingDetailResponse({});
+    expect(detail.description).toBe("");
+    expect(detail.extraAttributes).toEqual({});
+    expect(detail.questionsAndAnswers).toEqual([]);
+    expect(detail.buyNowPrice).toBeNull();
+    expect(detail.reserveStatus).toBe("NONE");
+    expect(detail.shippingAvailable).toBe(false);
+    expect(detail.shippingCost).toBeNull();
+    expect(Object.hasOwn(detail, "pickupAvailable")).toBe(false);
+    expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
+    expect(Object.hasOwn(detail, "startDate")).toBe(false);
+    expect(Object.hasOwn(detail, "endDate")).toBe(false);
+    expect(Object.hasOwn(detail, "categoryPath")).toBe(false);
+    expect(Object.hasOwn(detail, "photos")).toBe(false);
+    expect(Object.hasOwn(detail, "seller")).toBe(false);
+  });
+
   describe("ReserveState mapping", () => {
     it("maps absent to NONE", () => {
       const { ReserveState: _drop, ...rest } = fullListing;
