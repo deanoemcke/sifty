@@ -82,11 +82,10 @@ beforeEach(() => {
     <div id="resultsSection" class="hidden"></div>
     <div id="urlCardsContainer"></div>
     <span id="resultCount"></span>
-    <span id="filteredCountNum"></span>
-    <span id="filteredCount"></span>
+    <span id="totalCount"></span>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
-    <button id="applyAiFilterBtn"></button>
+    <span id="aiFilterStatus"></span>
   `;
 });
 

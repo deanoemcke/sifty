@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   allowShippingFromFulfillment,
   applyLoadedDiscoverInputs,
   type DiscoveryFormElements,
   discoveryFormElements,
   fulfillmentFromAllowShipping,
+  handleDiscoveryKeydown,
   populateRegionSelect,
   readDiscoverInputs,
   updateDiscoveryBtn,
@@ -170,6 +171,34 @@ describe("discoveryFormElements", () => {
     const elements = discoveryFormElements();
     expect(elements.promptInput.id).toBe("discoveryPrompt");
     expect(elements.discoveryButton.id).toBe("discoveryBtn");
+  });
+});
+
+describe("handleDiscoveryKeydown", () => {
+  function enterEvent(shiftKey = false): KeyboardEvent {
+    return new KeyboardEvent("keydown", { key: "Enter", shiftKey, cancelable: true });
+  }
+
+  it("submits on Enter and prevents the default newline", () => {
+    const submit = vi.fn();
+    const event = enterEvent();
+    handleDiscoveryKeydown(event, submit);
+    expect(submit).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("does not submit on Shift+Enter, allowing a newline in the prompt", () => {
+    const submit = vi.fn();
+    const event = enterEvent(true);
+    handleDiscoveryKeydown(event, submit);
+    expect(submit).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("ignores non-Enter keys", () => {
+    const submit = vi.fn();
+    handleDiscoveryKeydown(new KeyboardEvent("keydown", { key: "a" }), submit);
+    expect(submit).not.toHaveBeenCalled();
   });
 });
 

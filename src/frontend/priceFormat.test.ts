@@ -18,8 +18,9 @@ describe("formatListingPrice", () => {
     expect(formatListingPrice(1500)).toBe("$1,500");
   });
 
-  it("preserves decimal places", () => {
-    expect(formatListingPrice(1500.5)).toBe("$1,500.5");
+  it("rounds to the nearest whole dollar", () => {
+    expect(formatListingPrice(1500.5)).toBe("$1,501");
+    expect(formatListingPrice(1500.49)).toBe("$1,500");
   });
 
   it("handles very large numbers with multiple separators", () => {

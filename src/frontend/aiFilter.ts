@@ -12,6 +12,16 @@ import {
 import { setStatus } from "./statusBar";
 import { streamPostAsync } from "./streamPost";
 
+// The "already checked" cache in `runAiFilterAsync` is keyed on a hash of the
+// full prompt, so every keystroke changes the hash and makes the entire
+// listing set look unchecked again. These two guards keep normal typing from
+// resubmitting the full listing set to the LLM on every keystroke gap:
+// a minimum prompt length (a couple of characters isn't a usable filter
+// criteria yet) and a debounce interval long enough to absorb a natural
+// pause between words/clauses, not just the gap between two keystrokes.
+export const MIN_AI_FILTER_PROMPT_LENGTH = 8;
+export const AI_FILTER_DEBOUNCE_MS = 1200;
+
 export interface ScheduleAiFilterRunDeps {
   isAiFilterRunning: boolean;
   runAiFilterAsync: () => void;
@@ -40,6 +50,50 @@ export function scheduleAiFilterRun(deps: ScheduleAiFilterRunDeps): void {
 // Named convenience wrapper so call sites don't repeat the deps object.
 export function requestAiFilterRun(): void {
   scheduleAiFilterRun({ isAiFilterRunning, runAiFilterAsync, setAiFilterPendingRun });
+}
+
+/**
+ * True once a prompt is long enough to be a usable filter criteria. Below
+ * `MIN_AI_FILTER_PROMPT_LENGTH` a run would kick off a full LLM sweep over
+ * every listing for what's still just a couple of typed characters.
+ */
+export function shouldAutoRunAiFilter(prompt: string): boolean {
+  return prompt.trim().length >= MIN_AI_FILTER_PROMPT_LENGTH;
+}
+
+/**
+ * Resets every listing's AI-filter result back to unchecked and re-applies
+ * client-side filtering. Clearing the prompt back to empty leaves no
+ * criteria to re-run against the LLM, but results from the last completed
+ * run must not keep hiding listings — this is the only place that resets
+ * `aiFilterReason` outside of a completed run.
+ */
+export function clearAiFilterResults(): void {
+  const hasFilteredResults = [...listingsByUrl.values()].some(
+    (item) => item.aiFilterReason !== null,
+  );
+  for (const item of listingsByUrl.values()) {
+    item.aiFilterReason = null;
+    item.aiCheckedHash = null;
+  }
+  if (hasFilteredResults) applyClientFilters();
+}
+
+/**
+ * Guarded entry point for the debounced auto-run wired to the AI filter
+ * textarea's `input` event. Must stay a zero-argument function: the debounce
+ * wrapper forwards whatever arguments it's invoked with, and `addEventListener`
+ * invokes listeners with the DOM `Event` — accepting a parameter here would
+ * receive that `Event` object instead of any caller-supplied value.
+ */
+export function requestAiFilterRunIfPromptLongEnough(): void {
+  const prompt = getElement<HTMLTextAreaElement>("aiFilter").value;
+  if (prompt.trim() === "") {
+    clearAiFilterResults();
+    return;
+  }
+  if (!shouldAutoRunAiFilter(prompt)) return;
+  requestAiFilterRun();
 }
 
 export async function runAiFilterAsync(): Promise<void> {

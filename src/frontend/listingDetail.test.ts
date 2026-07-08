@@ -63,11 +63,10 @@ beforeEach(() => {
     <div id="listingModalBody"></div>
     <div id="statusBar" class="hidden"></div>
     <span id="resultCount"></span>
-    <span id="filteredCountNum"></span>
-    <span id="filteredCount"></span>
+    <span id="totalCount"></span>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
-    <button id="applyAiFilterBtn"></button>
+    <span id="aiFilterStatus"></span>
     <div id="urlCardsContainer"></div>
   `;
 });
