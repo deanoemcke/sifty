@@ -13,7 +13,7 @@ import { getElement } from "./domUtils";
 import { handleListingCardKeydown, resolveListingCardOpenArea } from "./listingCardActivation";
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from "./listingDetail";
 import { searchUrlCardAsync } from "./quickSearch";
-import { applyClientFilters, renderDerived, renderFilteredToggle } from "./resultsView";
+import { applyClientFilters, renderFilteredToggle } from "./resultsView";
 import {
   closeSaveSearchModal,
   fetchSavedSearchesAsync,
@@ -88,9 +88,11 @@ function initApp(): void {
   );
 
   const debouncedRequestAiFilterRun = debounce(requestAiFilterRun, 500);
-  getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", renderDerived);
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", markDirty);
-  getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", debouncedRequestAiFilterRun);
+  getElement<HTMLTextAreaElement>("aiFilter").addEventListener(
+    "input",
+    debouncedRequestAiFilterRun,
+  );
 
   // Mark dirty on any URL input change or new URL card
   getElement("urlCardsContainer").addEventListener("input", markDirty);
