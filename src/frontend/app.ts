@@ -1,5 +1,5 @@
 import type { RecipeId } from "../lib/recipes/metadata";
-import { requestAiFilterRun } from "./aiFilter";
+import { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } from "./aiFilter";
 import { debounce } from "./debounce";
 import {
   DEFAULT_REGION_DISPLAY,
@@ -87,7 +87,10 @@ function initApp(): void {
     (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitDiscoveryForm),
   );
 
-  const debouncedRequestAiFilterRun = debounce(requestAiFilterRun, 500);
+  const debouncedRequestAiFilterRun = debounce(
+    requestAiFilterRunIfPromptLongEnough,
+    AI_FILTER_DEBOUNCE_MS,
+  );
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", markDirty);
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener(
     "input",
