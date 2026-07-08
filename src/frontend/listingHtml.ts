@@ -74,7 +74,7 @@ export function buildDetailPriceHtml(listing: Listing): string {
   let html = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
   const buyNowPrice = listing.buyNowPrice;
   if (listing.isAuction && buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${buyNowPrice.toLocaleString()}</strong></span>`;
+    html += `<span class="price-buynow">Buy Now: <strong>$${Math.round(buyNowPrice).toLocaleString()}</strong></span>`;
   }
   return html;
 }

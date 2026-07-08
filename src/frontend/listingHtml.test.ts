@@ -138,6 +138,13 @@ describe("buildDetailPriceHtml", () => {
     expect(html).toContain(`Buy Now: <strong>$${(1500).toLocaleString()}</strong>`);
   });
 
+  it("rounds the buy-now price to the nearest whole dollar", () => {
+    const html = buildDetailPriceHtml(
+      makeListing({ price: 1000, isAuction: true, buyNowPrice: 1500.5 }),
+    );
+    expect(html).toContain(`Buy Now: <strong>$${(1501).toLocaleString()}</strong>`);
+  });
+
   it("omits buy-now when the auction has none", () => {
     const html = buildDetailPriceHtml(makeListing({ isAuction: true }));
     expect(html).not.toContain("Buy Now");
