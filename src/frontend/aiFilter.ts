@@ -62,6 +62,24 @@ export function shouldAutoRunAiFilter(prompt: string): boolean {
 }
 
 /**
+ * Resets every listing's AI-filter result back to unchecked and re-applies
+ * client-side filtering. Clearing the prompt back to empty leaves no
+ * criteria to re-run against the LLM, but results from the last completed
+ * run must not keep hiding listings — this is the only place that resets
+ * `aiFilterReason` outside of a completed run.
+ */
+export function clearAiFilterResults(): void {
+  const hasFilteredResults = [...listingsByUrl.values()].some(
+    (item) => item.aiFilterReason !== null,
+  );
+  for (const item of listingsByUrl.values()) {
+    item.aiFilterReason = null;
+    item.aiCheckedHash = null;
+  }
+  if (hasFilteredResults) applyClientFilters();
+}
+
+/**
  * Guarded entry point for the debounced auto-run wired to the AI filter
  * textarea's `input` event. Must stay a zero-argument function: the debounce
  * wrapper forwards whatever arguments it's invoked with, and `addEventListener`
@@ -70,6 +88,10 @@ export function shouldAutoRunAiFilter(prompt: string): boolean {
  */
 export function requestAiFilterRunIfPromptLongEnough(): void {
   const prompt = getElement<HTMLTextAreaElement>("aiFilter").value;
+  if (prompt.trim() === "") {
+    clearAiFilterResults();
+    return;
+  }
   if (!shouldAutoRunAiFilter(prompt)) return;
   requestAiFilterRun();
 }
