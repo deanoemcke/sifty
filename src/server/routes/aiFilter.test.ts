@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON, getAIConfig } from "../ai";
-import { handleAiFilter } from "./aiFilter";
+import { clampRelevance, handleAiFilter } from "./aiFilter";
 
 // `applyAiJsonResult` is left as the real implementation (not mocked) so these tests
 // exercise the actual orchestration logic — unwrapping an ok result, or marking the
@@ -53,6 +53,32 @@ function makeResponse(): ServerResponse & {
 function makeListing(url: string) {
   return { url, title: "Item", price: "$10", location: "Auckland", description: "" };
 }
+
+describe("clampRelevance", () => {
+  it("passes through an in-range integer", () => {
+    expect(clampRelevance(7)).toBe(7);
+    expect(clampRelevance(0)).toBe(0);
+    expect(clampRelevance(9)).toBe(9);
+  });
+
+  it("clamps values above 9 down to 9", () => {
+    expect(clampRelevance(42)).toBe(9);
+  });
+
+  it("clamps negative values up to 0", () => {
+    expect(clampRelevance(-3)).toBe(0);
+  });
+
+  it("defaults non-integer values to 0", () => {
+    expect(clampRelevance(3.5)).toBe(0);
+  });
+
+  it("defaults missing/non-numeric values to 0", () => {
+    expect(clampRelevance(undefined)).toBe(0);
+    expect(clampRelevance(null)).toBe(0);
+    expect(clampRelevance("7")).toBe(0);
+  });
+});
 
 describe("handleAiFilter", () => {
   it("returns 500 without starting the SSE stream when no AI provider is configured at all", async () => {
@@ -166,5 +192,69 @@ describe("handleAiFilter", () => {
       message: "AI rate limited (ai-filter): provider asks to retry",
     });
     expect(markExhausted).toHaveBeenCalledWith("a", cooldownUntilMs);
+  });
+
+  it("includes the AI-assigned relevance score in the SSE result", async () => {
+    const CONFIG_A = {
+      url: "a",
+      model: "m",
+      apiKey: "k",
+      providerKey: "a",
+      cooldownStore: STUB_COOLDOWN_STORE,
+    };
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: "ok",
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+    });
+
+    const request = makeRequest({
+      listings: [makeListing("https://example.com/1")],
+      prompt: "laptop",
+    });
+    const response = makeResponse();
+
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
+
+    expect(response.events).toContainEqual({
+      type: "result",
+      results: [{ url: "https://example.com/1", pass: true, reason: null, relevance: 7 }],
+    });
+  });
+
+  it("clamps an out-of-range or missing relevance from the AI response rather than propagating it as-is", async () => {
+    const CONFIG_A = {
+      url: "a",
+      model: "m",
+      apiKey: "k",
+      providerKey: "a",
+      cooldownStore: STUB_COOLDOWN_STORE,
+    };
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: "ok",
+      value: {
+        results: [
+          { index: 1, pass: true, reason: null, relevance: 99 },
+          { index: 2, pass: false, reason: "wrong type", relevance: undefined },
+        ],
+      },
+    });
+
+    const request = makeRequest({
+      listings: [makeListing("https://example.com/1"), makeListing("https://example.com/2")],
+      prompt: "laptop",
+    });
+    const response = makeResponse();
+
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
+
+    expect(response.events).toContainEqual({
+      type: "result",
+      results: [
+        { url: "https://example.com/1", pass: true, reason: null, relevance: 9 },
+        { url: "https://example.com/2", pass: false, reason: "wrong type", relevance: 0 },
+      ],
+    });
   });
 });
