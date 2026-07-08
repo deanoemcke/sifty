@@ -299,9 +299,9 @@ describe("aiJSON", () => {
       makeResponse(200, { choices: [{ message: { content: "not json at all" } }] }),
     );
 
-    await expect(
-      aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100),
-    ).rejects.toThrow("AI parse error");
+    await expect(aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100)).rejects.toThrow(
+      "AI parse error",
+    );
 
     expect(recordAiAuditEntryMock).toHaveBeenCalledTimes(1);
     expect(recordAiAuditEntryMock).toHaveBeenCalledWith(
@@ -318,9 +318,9 @@ describe("aiJSON", () => {
       new Response("not valid json{", { status: 200 }),
     );
 
-    await expect(
-      aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100),
-    ).rejects.toThrow("AI error (test): malformed 200 response body");
+    await expect(aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100)).rejects.toThrow(
+      "AI error (test): malformed 200 response body",
+    );
 
     expect(recordAiAuditEntryMock).toHaveBeenCalledTimes(1);
     expect(recordAiAuditEntryMock).toHaveBeenCalledWith(
@@ -359,9 +359,9 @@ describe("aiJSON", () => {
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
 
-    await expect(
-      aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100),
-    ).rejects.toThrow("network failure");
+    await expect(aiJSON(makeMockConfig(cooldownStore), "test", "sys", "usr", 100)).rejects.toThrow(
+      "network failure",
+    );
 
     expect(consoleErrorSpy).toHaveBeenCalledWith("[AI] test → failed: network failure");
   });
@@ -617,7 +617,16 @@ describe("decideRateLimitOutcome", () => {
   });
 
   it("retries with a delay capped to the remaining budget when a confident delay fits and retries remain", () => {
-    const decision = decideRateLimitOutcome("groq", "test", "rate limited msg", 5, true, 10_000, false, 1_000);
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      5,
+      true,
+      10_000,
+      false,
+      1_000,
+    );
 
     expect(decision).toEqual({ action: "retry", sleepMs: 5_000 });
   });
@@ -638,7 +647,16 @@ describe("decideRateLimitOutcome", () => {
   });
 
   it("gives up but still reports a confident delay for cooldown once retries are exhausted", () => {
-    const decision = decideRateLimitOutcome("groq", "test", "rate limited msg", 5, true, 10_000, true, 1_000);
+    const decision = decideRateLimitOutcome(
+      "groq",
+      "test",
+      "rate limited msg",
+      5,
+      true,
+      10_000,
+      true,
+      1_000,
+    );
 
     expect(decision).toEqual({
       action: "return",
@@ -646,7 +664,8 @@ describe("decideRateLimitOutcome", () => {
         kind: "rate-limited",
         providerKey: "groq",
         cooldownUntilMs: 6_000,
-        message: "AI rate limited (test): retries exhausted, provider still reports rate limiting — rate limited msg",
+        message:
+          "AI rate limited (test): retries exhausted, provider still reports rate limiting — rate limited msg",
       },
     });
   });
