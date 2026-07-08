@@ -370,4 +370,15 @@ describe("buildFacebookListing", () => {
     );
     expect(listing.isAuction).toBe(false);
   });
+
+  it("defaults relevance to 0 — unscored until the AI filter runs", () => {
+    const listing = buildFacebookListing(
+      "https://facebook.com/marketplace/item/123",
+      undefined,
+      "Lamp",
+      null,
+      "Wellington",
+    );
+    expect(listing.relevance).toBe(0);
+  });
 });

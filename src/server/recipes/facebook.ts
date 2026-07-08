@@ -139,6 +139,7 @@ export function buildFacebookListing(
     url,
     thumbnailUrl,
     isAuction: false,
+    relevance: 0,
   };
 }
 

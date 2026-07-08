@@ -20,6 +20,7 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
     location: "Wellington",
     url: "https://example.com/listing/1",
     isAuction: false,
+    relevance: 0,
     ...overrides,
   };
 }

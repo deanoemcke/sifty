@@ -122,6 +122,7 @@ function _makeListing(overrides: Partial<Listing> = {}): Listing {
     location: "Auckland City, Auckland",
     url: "https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/12345",
     isAuction: true,
+    relevance: 0,
     ...restOverrides,
   };
 }
@@ -187,6 +188,11 @@ describe("buildListing", () => {
   it("sets source to trademe", () => {
     const listing = buildListing(baseRaw);
     expect(listing?.source).toBe("trademe");
+  });
+
+  it("defaults relevance to 0 — unscored until the AI filter runs", () => {
+    const listing = buildListing(baseRaw);
+    expect(listing?.relevance).toBe(0);
   });
 
   it("sets isAuction false when isBuyNowOnly is true", () => {

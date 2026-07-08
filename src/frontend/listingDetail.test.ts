@@ -19,6 +19,7 @@ function makeListing(url: string): Listing {
     location: "Auckland",
     url,
     isAuction: false,
+    relevance: 0,
   };
 }
 

@@ -49,6 +49,12 @@ export interface Listing {
   pickupAvailable?: boolean | null;
   shippingAvailable?: boolean | null;
   pickupLocation?: string | null;
+
+  // Assigned by the AI filter: 0 (unrelated) to 9 (perfect match) against
+  // the user's filter criteria. Defaults to 0 at creation, meaning both
+  // "not yet scored" and "scored as unrelated" — the AI filter is the only
+  // thing that ever raises it above 0.
+  relevance: number;
 }
 
 // Patch produced by deepSearchAsync — merged onto a Listing once received.
