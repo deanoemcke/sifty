@@ -330,10 +330,11 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
   if (data.AllowsPickups === 1) {
     detail.pickupAvailable = true;
     detail.pickupLocation = [data.Suburb, data.Region].filter(Boolean).join(", ") || null;
-  } else if (data.AllowsPickups !== undefined) {
+  } else if (data.AllowsPickups === 3) {
     detail.pickupAvailable = false;
     detail.pickupLocation = null;
   }
+  // any other/unrecognized value: leave both keys unset, same as "absent" — we don't know
 
   const startDate = parseTradeMeDate(data.StartDate as string | undefined);
   if (startDate) detail.startDate = startDate;

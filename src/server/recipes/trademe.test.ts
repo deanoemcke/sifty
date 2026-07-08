@@ -726,6 +726,12 @@ describe("parseListingDetailResponse", () => {
       expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
     });
 
+    it("omits pickupAvailable and pickupLocation when AllowsPickups is an unrecognized value", () => {
+      const detail = parseListingDetailResponse({ ...fullListing, AllowsPickups: 2 });
+      expect(Object.hasOwn(detail, "pickupAvailable")).toBe(false);
+      expect(Object.hasOwn(detail, "pickupLocation")).toBe(false);
+    });
+
     it("returns pickupLocation=null when pickup is available but Suburb/Region are absent", () => {
       const { Suburb: _s, Region: _r, ...rest } = fullListing;
       const detail = parseListingDetailResponse({ ...rest, AllowsPickups: 1 });
