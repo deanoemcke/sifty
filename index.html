@@ -4,13 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sifty</title>
+  <link rel="stylesheet" href="/src/frontend/styles.css">
 </head>
 <body>
 <div class="app-layout">
 <aside class="sidebar">
   <header>
     <div class="brand">
-      <img src="sifty-logo.png" alt="Sifty logo">
+      <img src="sifty-logo.png" alt="Sifty logo" width="128" height="128">
       <h1>Sifty</h1>
     </div>
   </header>
@@ -31,7 +32,7 @@
     <div class="prompt-box">
       <!-- assets/search.svg, inlined so it inherits currentColor -->
       <svg class="prompt-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><g fill-rule="evenodd" transform="translate(-448 -544)"><g fill-rule="nonzero"><path d="M10.743 2.257a6 6 0 1 1-8.485 8.486 6 6 0 0 1 8.485-8.486zm-1.06 1.06a4.5 4.5 0 1 0-6.365 6.364 4.5 4.5 0 0 0 6.364-6.363z" transform="translate(448 544)"></path><path d="M10.39 8.75a2.94 2.94 0 0 0-.199.432c-.155.417-.23.849-.172 1.284.055.415.232.794.54 1.103a.75.75 0 0 0 1.112-1.004l-.051-.057a.39.39 0 0 1-.114-.24c-.021-.155.014-.356.09-.563.031-.081.06-.145.08-.182l.012-.022a.75.75 0 1 0-1.299-.752z" transform="translate(448 544)"></path><path d="M9.557 11.659c.038-.018.09-.04.15-.064.207-.077.408-.112.562-.092.08.01.143.034.198.077l.041.036a.75.75 0 0 0 1.06-1.06 1.881 1.881 0 0 0-1.103-.54c-.435-.058-.867.018-1.284.175-.189.07-.336.143-.433.2a.75.75 0 0 0 .624 1.356l.066-.027.12-.061z" transform="translate(448 544)"></path><path d="m13.463 15.142-.04-.044-3.574-4.192c-.599-.703.355-1.656 1.058-1.057l4.191 3.574.044.04c.058.059.122.137.182.24.249.425.249.96-.154 1.41l-.057.057c-.45.403-.986.403-1.411.154a1.182 1.182 0 0 1-.24-.182zm.617-.616.444-.444a.31.31 0 0 0-.063-.052c-.093-.055-.263-.055-.35.024l.208.232.207-.206.006.007-.22.257-.026-.024.033-.034.025.027-.257.22-.007-.007zm-.027-.415c-.078.088-.078.257-.023.35a.31.31 0 0 0 .051.063l.205-.204-.233-.209z" transform="translate(448 544)"></path></g></g></svg>
-      <textarea id="discoveryPrompt" rows="3" placeholder="Whaddaya want?"></textarea>
+      <textarea id="discoveryPrompt" rows="3" placeholder="Whatcha want?"></textarea>
     </div>
     <div class="field-row">
       <label for="discoveryMaxPrice">Max price</label>
@@ -86,14 +87,14 @@
   <!-- Results header — sticky above the listings -->
   <div id="resultsSection" class="results-header hidden">
       <div class="results-header-row results-status-row">
-        <span>Matches: <strong id="resultCount">0</strong></span>
+        <span>Showing <strong id="resultCount">0</strong> / <strong id="totalCount">0</strong> results</span>
         <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
-        <span id="filteredCount" class="filtered-count hidden"><span class="header-sep">|</span> Filtered: <strong id="filteredCountNum">0</strong> <button id="toggleFilteredBtn" class="cache-clear-btn"></button></span>
       </div>
       <div class="results-header-row ai-filter-row">
-        <label for="aiFilter">Refine search:</label>
+        <button id="toggleFilteredBtn" class="icon-btn filter-toggle-btn" type="button" aria-pressed="true" title="Hide filtered listings" aria-label="Hide filtered listings">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        </button>
         <textarea id="aiFilter" rows="1" placeholder="e.g. good condition, no major damage, prefer aluminium frame"></textarea>
-        <button id="applyAiFilterBtn" class="btn btn-primary" disabled>Apply filter</button>
       </div>
   </div>
   <div id="listingsContainer"></div>

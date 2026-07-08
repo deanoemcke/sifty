@@ -6,12 +6,10 @@
 import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { applyListingCardAccessibility } from "./listingCardActivation";
-import { buildCardMetaHtml, buildCardPriceHtml, filterBannerText } from "./listingHtml";
+import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from "./listingHtml";
 import { sourceBadgeHtml } from "./recipeDisplay";
-import { promptHash, shouldDisableApplyFilterBtn } from "./renderUtils";
 import {
   cardIdByUrl,
-  isAiFilterRunning,
   isCardSearchActive,
   isDeepSearchRunning,
   type ListingItem,
@@ -21,11 +19,13 @@ import {
 } from "./state";
 import { updateUrlGroupHeaders } from "./urlGroupsView";
 
-// Sole writer of the filtered-results toggle label — derives it from state.
+// Sole writer of the filtered-results toggle button state — derives it from state.
 export function renderFilteredToggle(): void {
-  getElement<HTMLButtonElement>("toggleFilteredBtn").textContent = showFilteredListings
-    ? "hide"
-    : "show";
+  const toggleBtn = getElement<HTMLButtonElement>("toggleFilteredBtn");
+  const label = showFilteredListings ? "Hide filtered listings" : "Show filtered listings";
+  toggleBtn.setAttribute("aria-pressed", String(showFilteredListings));
+  toggleBtn.title = label;
+  toggleBtn.setAttribute("aria-label", label);
 }
 
 export function getOrderedListings(): ListingItem[] {
@@ -44,10 +44,8 @@ export function getOrderedListings(): ListingItem[] {
 export function renderDerived(): void {
   const listings = getOrderedListings();
   const visible = listings.filter((listingItem) => listingItem.aiFilterReason === null);
-  const filtered = listings.length - visible.length;
   getElement("resultCount").textContent = String(visible.length);
-  getElement("filteredCountNum").textContent = String(filtered);
-  getElement("filteredCount").classList.toggle("hidden", filtered === 0);
+  getElement("totalCount").textContent = String(listings.length);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
     isCardSearchActive(data.searchStatus),
   );
@@ -56,14 +54,6 @@ export function renderDerived(): void {
     "hidden",
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,
   );
-  const prompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
-  const hash = promptHash(prompt);
-  const isFilterCurrent =
-    !prompt ||
-    listings.length === 0 ||
-    listings.every((listingItem) => listingItem.aiCheckedHash === hash);
-  const applyFilterBtn = getElement<HTMLButtonElement>("applyAiFilterBtn");
-  applyFilterBtn.disabled = shouldDisableApplyFilterBtn({ isFilterCurrent, isAiFilterRunning });
   updateUrlGroupHeaders();
 }
 
@@ -110,7 +100,6 @@ export function renderCard(item: ListingItem): void {
   card.className = "listing-card";
   card.id = cardId;
   card.dataset.url = listing.url;
-  applyListingCardAccessibility(card, listing.title);
 
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
@@ -122,24 +111,33 @@ export function renderCard(item: ListingItem): void {
   // extended fields — all detail-derived content (badges, buy-now price,
   // extras) lives in the modal only, so this template deliberately never
   // references those fields.
+  // The image and title (inside .listing-open-area) open the modal. The
+  // external-link button sits in that same area for layout purposes, but
+  // resolveListingCardOpenArea() excludes it from the click handler so it
+  // navigates instead of also opening the modal. The footer row
+  // (location/price) sits outside .listing-open-area entirely.
   card.innerHTML = `
     <div class="listing-card-content">
-      <div class="listing-thumb-wrap">
-        ${thumb}
-        ${sourceBadgeHtml(listing.source, 28)}
-        <div class="filter-banner hidden"></div>
+      <div class="listing-open-area">
+        <div class="listing-thumb-wrap">
+          ${thumb}
+          ${sourceBadgeHtml(listing.source, 28)}
+          <div class="filter-banner hidden"></div>
+        </div>
+        <div class="listing-body">
+          <div class="listing-title-row">
+            <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>
+            ${buildExternalLinkButtonHtml(listing.url)}
+          </div>
+        </div>
       </div>
-      <div class="listing-body">
-        <div class="listing-meta">
-          ${buildCardMetaHtml(listing)}
-        </div>
-        <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>
-        <div class="listing-prices">
-          ${buildCardPriceHtml(listing)}
-        </div>
+      <div class="listing-card-footer">
+        ${buildCardFooterHtml(listing)}
       </div>
     </div>
   `;
+
+  applyListingCardAccessibility(requireChild(card, ".listing-open-area"), listing.title);
 
   if (!existing) getElement("listingsContainer").appendChild(card);
 }

@@ -13,8 +13,18 @@ export function handleListingCardKeydown(
   openCard: (card: HTMLElement) => void,
 ): void {
   if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") return;
-  const card = (keyboardEvent.target as HTMLElement).closest<HTMLElement>(".listing-card");
+  const target = keyboardEvent.target as HTMLElement;
+  if (target.closest(".listing-external-link-btn")) return;
+  const card = target.closest<HTMLElement>(".listing-card");
   if (!card) return;
   keyboardEvent.preventDefault();
   openCard(card);
+}
+
+// The external-link button lives inside .listing-open-area (next to the
+// title) so it stays reachable in the tab order, but a click on it must
+// navigate rather than also opening the modal underneath it.
+export function resolveListingCardOpenArea(target: HTMLElement): HTMLElement | null {
+  if (target.closest(".listing-external-link-btn")) return null;
+  return target.closest<HTMLElement>(".listing-open-area");
 }

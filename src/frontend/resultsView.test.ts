@@ -64,13 +64,16 @@ describe("getOrderedListings", () => {
 });
 
 describe("renderFilteredToggle", () => {
-  it("derives the label from showFilteredListings state", () => {
+  it("derives the pressed state and label from showFilteredListings state", () => {
     setShowFilteredListings(true);
     renderFilteredToggle();
-    expect(document.getElementById("toggleFilteredBtn")?.textContent).toBe("hide");
+    const toggleBtn = document.getElementById("toggleFilteredBtn") as HTMLButtonElement;
+    expect(toggleBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(toggleBtn.title).toBe("Hide filtered listings");
 
     setShowFilteredListings(false);
     renderFilteredToggle();
-    expect(document.getElementById("toggleFilteredBtn")?.textContent).toBe("show");
+    expect(toggleBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(toggleBtn.title).toBe("Show filtered listings");
   });
 });

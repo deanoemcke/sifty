@@ -1,7 +1,6 @@
-import "./styles.css";
-
 import type { RecipeId } from "../lib/recipes/metadata";
 import { requestAiFilterRun } from "./aiFilter";
+import { debounce } from "./debounce";
 import {
   DEFAULT_REGION_DISPLAY,
   DISCOVERY_BUTTON_LABEL,
@@ -11,7 +10,7 @@ import {
   updateDiscoveryBtn,
 } from "./discoveryForm";
 import { getElement } from "./domUtils";
-import { handleListingCardKeydown } from "./listingCardActivation";
+import { handleListingCardKeydown, resolveListingCardOpenArea } from "./listingCardActivation";
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from "./listingDetail";
 import { searchUrlCardAsync } from "./quickSearch";
 import {
@@ -98,11 +97,10 @@ function initApp(): void {
     (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitDiscoveryForm),
   );
 
+  const debouncedRequestAiFilterRun = debounce(requestAiFilterRun, 500);
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", renderDerived);
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", markDirty);
-  getElement<HTMLButtonElement>("applyAiFilterBtn").addEventListener("click", () =>
-    requestAiFilterRun(),
-  );
+  getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", debouncedRequestAiFilterRun);
 
   // Mark dirty on any URL input change or new URL card
   getElement("urlCardsContainer").addEventListener("input", markDirty);
@@ -124,7 +122,9 @@ function initApp(): void {
   });
 
   getElement("listingsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
-    const card = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".listing-card");
+    const openArea = resolveListingCardOpenArea(mouseEvent.target as HTMLElement);
+    if (!openArea) return;
+    const card = openArea.closest<HTMLElement>(".listing-card");
     if (!card) return;
     openListingCardModal(card);
   });

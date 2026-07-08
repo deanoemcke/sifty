@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Listing } from "../lib/recipes/base";
 import {
+  buildCardFooterHtml,
   buildCardMetaHtml,
   buildCardPriceHtml,
   buildDetailMetaHtml,
   buildDetailPriceHtml,
+  buildExternalLinkButtonHtml,
   buildExtrasHtml,
   cleanDescription,
   filterBannerText,
@@ -101,6 +103,24 @@ describe("buildCardMetaHtml", () => {
     expect(html).toContain("A &amp; B");
     expect(html).toContain("meta-left");
     expect(html).toContain("meta-right");
+  });
+});
+
+describe("buildExternalLinkButtonHtml", () => {
+  it("links to the escaped listing url", () => {
+    const html = buildExternalLinkButtonHtml('https://example.com/1?a=1&b="x"');
+    expect(html).toContain("listing-external-link-btn");
+    expect(html).toContain('target="_blank"');
+    expect(html).not.toContain('"x"');
+  });
+});
+
+describe("buildCardFooterHtml", () => {
+  it("contains only the location and price, not the external-link button", () => {
+    const html = buildCardFooterHtml(makeListing({ location: "Auckland", price: 250 }));
+    expect(html).toContain("Auckland");
+    expect(html).toContain("$250");
+    expect(html).not.toContain("listing-external-link-btn");
   });
 });
 

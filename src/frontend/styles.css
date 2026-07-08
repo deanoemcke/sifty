@@ -513,18 +513,11 @@ label {
   color: var(--text);
   font-weight: 600;
 }
-.header-sep {
-  color: var(--text-muted);
-}
-.ai-filter-row label {
-  flex-shrink: 0;
-  font-size: 0.875rem;
-  color: var(--text-muted);
-}
 .ai-filter-row textarea {
   flex: 1;
   min-width: 180px;
   resize: vertical;
+  background: var(--yellow-bg);
 }
 .results-count {
   background: var(--primary);
@@ -534,8 +527,23 @@ label {
   font-size: 0.72rem;
   font-weight: 700;
 }
-.filtered-count {
-  white-space: nowrap;
+.filter-toggle-btn {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+}
+/* Element-qualified to outrank .icon-btn's border:none/background:none of equal specificity */
+button.filter-toggle-btn {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+}
+button.filter-toggle-btn:hover {
+  border-color: #cbd5e1;
+}
+.filter-toggle-btn[aria-pressed="true"] {
+  color: var(--primary);
+  background: var(--primary-light);
+  border-color: var(--primary);
 }
 
 /* ── Listing cards ── */
@@ -557,15 +565,19 @@ label {
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  cursor: pointer;
 }
 .listing-card:hover {
   border-color: #cbd5e1;
   box-shadow: var(--shadow-md);
 }
-.listing-card:focus-visible {
+.listing-open-area {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+}
+.listing-open-area:focus-visible {
   outline: 2px solid var(--primary);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .listing-card-content {
   display: flex;
@@ -624,19 +636,25 @@ label {
   line-height: 0;
 }
 .listing-body {
-  flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.65rem 0.8rem 0.75rem;
+  padding: 0.65rem 0.8rem 0.35rem;
 }
-.listing-card.filtered-out .listing-body {
+.listing-card.filtered-out .listing-body,
+.listing-card.filtered-out .listing-card-footer {
   background: var(--yellow-bg);
   opacity: 0.6;
 }
 
+.listing-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
 .listing-title {
+  flex: 1;
+  min-width: 0;
   font-size: 0.82rem;
   font-weight: 600;
   line-height: 1.35;
@@ -646,6 +664,23 @@ label {
   color: var(--primary);
 }
 
+.listing-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: auto;
+  padding: 0 0.8rem 0.75rem;
+}
+.listing-external-link-btn {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.listing-external-link-btn:hover {
+  color: var(--primary);
+}
 .listing-prices {
   display: flex;
   align-items: baseline;

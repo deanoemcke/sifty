@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { applyListingCardAccessibility, handleListingCardKeydown } from "./listingCardActivation";
+import {
+  applyListingCardAccessibility,
+  handleListingCardKeydown,
+  resolveListingCardOpenArea,
+} from "./listingCardActivation";
 
 function buildListingCard(): { card: HTMLElement; inner: HTMLElement } {
   const card = document.createElement("div");
@@ -79,5 +83,33 @@ describe("handleListingCardKeydown", () => {
     );
     dispatchKeydown(outside, "Enter");
     expect(openCard).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveListingCardOpenArea", () => {
+  function buildOpenAreaWithExternalLink(): { openArea: HTMLElement; link: HTMLElement } {
+    const openArea = document.createElement("div");
+    openArea.className = "listing-open-area";
+    const link = document.createElement("a");
+    link.className = "listing-external-link-btn";
+    openArea.appendChild(link);
+    document.body.appendChild(openArea);
+    return { openArea, link };
+  }
+
+  it("returns the open area for a click inside it", () => {
+    const { openArea } = buildOpenAreaWithExternalLink();
+    expect(resolveListingCardOpenArea(openArea)).toBe(openArea);
+  });
+
+  it("returns null when the click originated on the external-link button", () => {
+    const { link } = buildOpenAreaWithExternalLink();
+    expect(resolveListingCardOpenArea(link)).toBeNull();
+  });
+
+  it("returns null when the click is outside any open area", () => {
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    expect(resolveListingCardOpenArea(outside)).toBeNull();
   });
 });
