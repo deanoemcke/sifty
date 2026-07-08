@@ -1,24 +1,19 @@
-import "./styles.css";
-
 import type { RecipeId } from "../lib/recipes/metadata";
-import { requestAiFilterRun } from "./aiFilter";
+import { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } from "./aiFilter";
+import { debounce } from "./debounce";
 import {
   DEFAULT_REGION_DISPLAY,
   DISCOVERY_BUTTON_LABEL,
+  handleDiscoveryKeydown,
   populateRegionSelect,
   type RegionOption,
   updateDiscoveryBtn,
 } from "./discoveryForm";
 import { getElement } from "./domUtils";
-import { handleListingCardKeydown } from "./listingCardActivation";
+import { handleListingCardKeydown, resolveListingCardOpenArea } from "./listingCardActivation";
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from "./listingDetail";
 import { searchUrlCardAsync } from "./quickSearch";
-import {
-  getCardByUrl,
-  getOrderedListings,
-  renderDerived,
-  renderFilteredToggle,
-} from "./resultsView";
+import { applyClientFilters, renderFilteredToggle } from "./resultsView";
 import {
   closeSaveSearchModal,
   fetchSavedSearchesAsync,
@@ -52,12 +47,7 @@ function initApp(): void {
   getElement("toggleFilteredBtn").addEventListener("click", () => {
     setShowFilteredListings(!showFilteredListings);
     renderFilteredToggle();
-    for (const item of getOrderedListings()) {
-      if (item.aiFilterReason !== null) {
-        const card = getCardByUrl(item.data.url);
-        if (card) card.style.display = showFilteredListings ? "" : "none";
-      }
-    }
+    applyClientFilters();
   });
 
   // Populate region dropdown and wire the allow-shipping checkbox
@@ -87,10 +77,24 @@ function initApp(): void {
     handleDiscoverySubmitAsync(),
   );
 
-  getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", renderDerived);
+  const submitDiscoveryForm = (): void => getElement<HTMLButtonElement>("discoveryBtn").click();
+  getElement<HTMLTextAreaElement>("discoveryPrompt").addEventListener(
+    "keydown",
+    (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitDiscoveryForm),
+  );
+  getElement<HTMLInputElement>("discoveryMaxPrice").addEventListener(
+    "keydown",
+    (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitDiscoveryForm),
+  );
+
+  const debouncedRequestAiFilterRun = debounce(
+    requestAiFilterRunIfPromptLongEnough,
+    AI_FILTER_DEBOUNCE_MS,
+  );
   getElement<HTMLTextAreaElement>("aiFilter").addEventListener("input", markDirty);
-  getElement<HTMLButtonElement>("applyAiFilterBtn").addEventListener("click", () =>
-    requestAiFilterRun(),
+  getElement<HTMLTextAreaElement>("aiFilter").addEventListener(
+    "input",
+    debouncedRequestAiFilterRun,
   );
 
   // Mark dirty on any URL input change or new URL card
@@ -113,7 +117,9 @@ function initApp(): void {
   });
 
   getElement("listingsContainer").addEventListener("click", (mouseEvent: MouseEvent) => {
-    const card = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".listing-card");
+    const openArea = resolveListingCardOpenArea(mouseEvent.target as HTMLElement);
+    if (!openArea) return;
+    const card = openArea.closest<HTMLElement>(".listing-card");
     if (!card) return;
     openListingCardModal(card);
   });

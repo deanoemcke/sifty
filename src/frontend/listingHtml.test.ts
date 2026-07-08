@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { Listing } from "../lib/recipes/base";
 import {
+  buildCardFooterHtml,
   buildCardMetaHtml,
   buildCardPriceHtml,
   buildDetailMetaHtml,
   buildDetailPriceHtml,
+  buildExternalLinkButtonHtml,
   buildExtrasHtml,
   cleanDescription,
   filterBannerText,
+  formatListingDate,
   formatReserveText,
 } from "./listingHtml";
 import type { ListingItem } from "./state";
@@ -104,6 +107,24 @@ describe("buildCardMetaHtml", () => {
   });
 });
 
+describe("buildExternalLinkButtonHtml", () => {
+  it("links to the escaped listing url", () => {
+    const html = buildExternalLinkButtonHtml('https://example.com/1?a=1&b="x"');
+    expect(html).toContain("listing-external-link-btn");
+    expect(html).toContain('target="_blank"');
+    expect(html).not.toContain('"x"');
+  });
+});
+
+describe("buildCardFooterHtml", () => {
+  it("contains only the location and price, not the external-link button", () => {
+    const html = buildCardFooterHtml(makeListing({ location: "Auckland", price: 250 }));
+    expect(html).toContain("Auckland");
+    expect(html).toContain("$250");
+    expect(html).not.toContain("listing-external-link-btn");
+  });
+});
+
 describe("buildDetailPriceHtml", () => {
   it("shows the formatted price for non-auctions", () => {
     const html = buildDetailPriceHtml(makeListing({ price: 500, buyNowPrice: 500 }));
@@ -116,6 +137,13 @@ describe("buildDetailPriceHtml", () => {
       makeListing({ price: 1000, isAuction: true, buyNowPrice: 1500 }),
     );
     expect(html).toContain(`Buy Now: <strong>$${(1500).toLocaleString()}</strong>`);
+  });
+
+  it("rounds the buy-now price to the nearest whole dollar", () => {
+    const html = buildDetailPriceHtml(
+      makeListing({ price: 1000, isAuction: true, buyNowPrice: 1500.5 }),
+    );
+    expect(html).toContain(`Buy Now: <strong>$${(1501).toLocaleString()}</strong>`);
   });
 
   it("omits buy-now when the auction has none", () => {
@@ -164,15 +192,11 @@ describe("buildExtrasHtml", () => {
       makeListing({
         buyNowPrice: 500,
         reserveStatus: "MET",
-        pickupAvailable: true,
-        shippingAvailable: false,
-        pickupLocation: "Auckland",
         extraAttributes: { Condition: "Used" },
       }),
     );
     expect(html).toContain("details-table");
     expect(html).toContain("Condition");
-    expect(html).not.toContain("Auckland");
     expect(html).not.toContain("500");
   });
 
@@ -208,5 +232,135 @@ describe("buildExtrasHtml", () => {
 
   it("omits the Q&A section when there are no questions", () => {
     expect(buildExtrasHtml(makeListing())).not.toContain("Questions");
+  });
+
+  it("renders asker and formatted dates alongside question/answer text", () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        questionsAndAnswers: [
+          {
+            question: "Backlit?",
+            answer: "Yes",
+            askedBy: "karlo",
+            askedAt: "2026-07-05T10:33:18.060Z",
+            answeredAt: "2026-07-05T10:45:53.627Z",
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("karlo");
+    expect(html).toContain("5 Jul 2026");
+  });
+
+  it("renders an unanswered, anonymous question without leaking 'undefined'", () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        questionsAndAnswers: [{ question: "Any warranty?", answer: "" }],
+      }),
+    );
+    expect(html).not.toContain("undefined");
+    expect((html.match(/qa-a/g) ?? []).length).toBe(0);
+  });
+
+  it("renders a photo gallery linking each thumbnail to its full-size image", () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        photos: [
+          {
+            thumbnailUrl: "https://example.com/thumb1.jpg",
+            fullSizeUrl: "https://example.com/full1.jpg",
+          },
+          {
+            thumbnailUrl: "https://example.com/thumb2.jpg",
+            fullSizeUrl: "https://example.com/full2.jpg",
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("photo-gallery");
+    expect((html.match(/<img/g) ?? []).length).toBe(2);
+    expect(html).toContain(`href="https://example.com/full1.jpg"`);
+    expect(html).toContain(`src="https://example.com/thumb2.jpg"`);
+    expect(html).toContain('target="_blank"');
+  });
+
+  it("escapes photo URLs", () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        photos: [
+          {
+            thumbnailUrl: 'https://example.com/a"b.jpg',
+            fullSizeUrl: "https://example.com/full.jpg",
+          },
+        ],
+      }),
+    );
+    expect(html).not.toContain('a"b.jpg');
+  });
+
+  it("omits the photo gallery when there are no photos", () => {
+    expect(buildExtrasHtml(makeListing())).not.toContain("photo-gallery");
+  });
+
+  it("renders listing dates and category path", () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        startDate: "2026-07-01T10:00:00.000Z",
+        endDate: "2026-07-08T10:00:00.000Z",
+        categoryPath: "/Computers/Laptops/Laptops/Lenovo",
+      }),
+    );
+    expect(html).toContain("1 Jul 2026");
+    expect(html).toContain("8 Jul 2026");
+    expect(html).toContain("/Computers/Laptops/Laptops/Lenovo");
+  });
+
+  it("renders only the dates that are present, without leaking 'undefined'", () => {
+    const html = buildExtrasHtml(makeListing({ startDate: "2026-07-01T10:00:00.000Z" }));
+    expect(html).toContain("1 Jul 2026");
+    expect(html).not.toContain("undefined");
+  });
+
+  it("omits the listing-info section when no dates or category are present", () => {
+    const html = buildExtrasHtml(makeListing());
+    expect(html).not.toContain("Listing info");
+  });
+
+  it("renders shipping and pickup availability with cost/location", () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        shippingAvailable: true,
+        shippingCost: 15,
+        pickupAvailable: true,
+        pickupLocation: "Invercargill, Southland",
+      }),
+    );
+    expect(html).toContain("$15");
+    expect(html).toContain("Invercargill, Southland");
+  });
+
+  it("shows shipping/pickup as explicitly not available rather than omitting the row", () => {
+    const html = buildExtrasHtml(makeListing({ shippingAvailable: false, pickupAvailable: false }));
+    expect(html).toContain("Not available");
+  });
+
+  it("shows an explicit 'cost unknown' when shipping is available but cost is null", () => {
+    const html = buildExtrasHtml(makeListing({ shippingAvailable: true, shippingCost: null }));
+    expect(html).toContain("cost unknown");
+    expect(html).not.toContain("$null");
+  });
+
+  it("omits the shipping & pickup section when deep search hasn't populated those fields", () => {
+    expect(buildExtrasHtml(makeListing())).not.toContain("Shipping");
+  });
+});
+
+describe("formatListingDate", () => {
+  it("formats an ISO date as 'D MMM YYYY' in UTC", () => {
+    expect(formatListingDate("2026-07-05T10:33:18.060Z")).toBe("5 Jul 2026");
+  });
+
+  it("is stable regardless of time-of-day component", () => {
+    expect(formatListingDate("2026-01-01T23:59:59.000Z")).toBe("1 Jan 2026");
   });
 });

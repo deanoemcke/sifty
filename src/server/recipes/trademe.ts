@@ -308,8 +308,6 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
     .filter((price): price is number => typeof price === "number");
   const hasBuyNow = Boolean(data.HasBuyNow);
 
-  // TODO(pickup-mapping): AllowsPickups mapping is deferred — resolve empirically
-  // before adding pickupAvailable/pickupLocation to this result.
   const detail: DeepSearchDetail = {
     description: String(data.Body ?? ""),
     extraAttributes: extractExtraAttributes(data.Attributes as RawAttribute[] | undefined),
@@ -324,6 +322,20 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
     shippingAvailable: shippingOptions.length > 0,
     shippingCost: shippingPrices.length > 0 ? Math.min(...shippingPrices) : null,
   };
+
+  // AllowsPickups is a small enum, same style as ReserveState — verified empirically
+  // against real listings: 1 means pickup is offered, 3 means the seller explicitly
+  // doesn't allow it. When the field is absent, TradeMe hasn't told us either way —
+  // that's different from an explicit refusal, so leave both keys unset (omission
+  // convention, see DeepSearchDetail) rather than defaulting to "not available".
+  if (data.AllowsPickups === 1) {
+    detail.pickupAvailable = true;
+    detail.pickupLocation = [data.Suburb, data.Region].filter(Boolean).join(", ") || null;
+  } else if (data.AllowsPickups === 3) {
+    detail.pickupAvailable = false;
+    detail.pickupLocation = null;
+  }
+  // any other/unrecognized value: leave both keys unset, same as "absent" — we don't know
 
   const startDate = parseTradeMeDate(data.StartDate as string | undefined);
   if (startDate) detail.startDate = startDate;

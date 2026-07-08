@@ -513,18 +513,19 @@ label {
   color: var(--text);
   font-weight: 600;
 }
-.header-sep {
-  color: var(--text-muted);
-}
-.ai-filter-row label {
-  flex-shrink: 0;
-  font-size: 0.875rem;
-  color: var(--text-muted);
-}
 .ai-filter-row textarea {
   flex: 1;
   min-width: 180px;
   resize: vertical;
+  background: var(--surface);
+}
+.ai-filter-status {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 .results-count {
   background: var(--primary);
@@ -534,8 +535,22 @@ label {
   font-size: 0.72rem;
   font-weight: 700;
 }
-.filtered-count {
-  white-space: nowrap;
+.filter-toggle-btn {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+}
+/* Element-qualified to outrank .icon-btn's border:none/background:none of equal specificity */
+button.filter-toggle-btn {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+}
+button.filter-toggle-btn:hover {
+  border-color: #cbd5e1;
+}
+.filter-toggle-btn[aria-pressed="true"] {
+  background: var(--yellow-bg);
+  border-color: #fde68a;
 }
 
 /* ── Listing cards ── */
@@ -557,15 +572,19 @@ label {
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  cursor: pointer;
 }
 .listing-card:hover {
   border-color: #cbd5e1;
   box-shadow: var(--shadow-md);
 }
-.listing-card:focus-visible {
+.listing-open-area {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+}
+.listing-open-area:focus-visible {
   outline: 2px solid var(--primary);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .listing-card-content {
   display: flex;
@@ -624,19 +643,13 @@ label {
   line-height: 0;
 }
 .listing-body {
-  flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.65rem 0.8rem 0.75rem;
-}
-.listing-card.filtered-out .listing-body {
-  background: var(--yellow-bg);
-  opacity: 0.6;
+  padding: 0.65rem 0.8rem 0.35rem;
 }
 
 .listing-title {
+  flex: 1;
+  min-width: 0;
   font-size: 0.82rem;
   font-weight: 600;
   line-height: 1.35;
@@ -646,6 +659,37 @@ label {
   color: var(--primary);
 }
 
+.listing-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: auto;
+  padding: 0 0.8rem 0.75rem;
+}
+.listing-card.filtered-out .listing-body,
+.listing-card.filtered-out .listing-card-footer {
+  background: var(--yellow-bg);
+  opacity: 0.6;
+}
+/* Sibling of .listing-open-area, overlaid on the thumbnail's top-right
+   corner (mirrors .listing-source-badge in the top-left) — kept outside
+   the card's role="button" area entirely, see listingCardActivation.ts. */
+.listing-external-link-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: inline-flex;
+  padding: 3px 3px 5px 5px;
+  border-radius: 0 0 0 var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+.listing-external-link-btn:hover {
+  color: var(--primary);
+}
 .listing-prices {
   display: flex;
   align-items: baseline;
@@ -790,6 +834,23 @@ label {
   font-size: 0.82rem;
   line-height: 1.5;
   color: #334155;
+}
+.qa-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.4rem;
+}
+.photo-gallery-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
 }
 .deep-empty {
   font-size: 0.82rem;
