@@ -34,6 +34,7 @@ beforeEach(() => {
     <button id="toggleFilteredBtn"></button>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
+    <span id="aiFilterStatus"></span>
 
     <button id="searchTabBtn" class="active"></button>
     <button id="favouritesTabBtn"></button>

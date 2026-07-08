@@ -6,6 +6,7 @@ import {
   type ListingItem,
   listingsByUrl,
   resetState,
+  setIsAiFilterRunning,
   setShowFilteredListings,
   type UrlCardData,
 } from "./state";
@@ -50,6 +51,7 @@ beforeEach(() => {
     <span id="resultCount"></span>
     <span id="totalCount"></span>
     <button id="deepBtn"></button>
+    <span id="aiFilterStatus"></span>
   `;
 });
 
@@ -85,6 +87,39 @@ describe("renderDerived", () => {
     renderDerived();
     expect(document.getElementById("resultCount")!.textContent).toBe("2");
     expect(document.getElementById("totalCount")!.textContent).toBe("2");
+  });
+
+  it("shows a zero count before any listing has been excluded", () => {
+    addCardWithListings(["https://l/1", "https://l/2"]);
+    renderDerived();
+    expect(document.getElementById("aiFilterStatus")!.textContent).toBe("Filtered 0 results");
+  });
+
+  it("counts excluded listings in the ai-filter status line", () => {
+    addCardWithListings(["https://l/1", "https://l/2", "https://l/3"]);
+    listingsByUrl.get("https://l/2")!.aiFilterReason = "too old";
+    listingsByUrl.get("https://l/3")!.aiFilterReason = "wrong colour";
+    renderDerived();
+    expect(document.getElementById("aiFilterStatus")!.textContent).toBe("Filtered 2 results");
+  });
+
+  it("shows a spinner and filtering message while the ai filter is running", () => {
+    addCardWithListings(["https://l/1"]);
+    setIsAiFilterRunning(true);
+    renderDerived();
+    const status = document.getElementById("aiFilterStatus")!;
+    expect(status.querySelector(".spinner")).not.toBeNull();
+    expect(status.textContent).toContain("Filtering results...");
+  });
+
+  it("reverts to the filtered count once the ai filter run finishes", () => {
+    addCardWithListings(["https://l/1", "https://l/2"]);
+    listingsByUrl.get("https://l/2")!.aiFilterReason = "too old";
+    setIsAiFilterRunning(true);
+    renderDerived();
+    setIsAiFilterRunning(false);
+    renderDerived();
+    expect(document.getElementById("aiFilterStatus")!.textContent).toBe("Filtered 1 results");
   });
 });
 

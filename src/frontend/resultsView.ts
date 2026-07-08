@@ -10,6 +10,7 @@ import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } fr
 import { sourceBadgeHtml } from "./recipeDisplay";
 import {
   cardIdByUrl,
+  isAiFilterRunning,
   isCardSearchActive,
   isDeepSearchRunning,
   type ListingItem,
@@ -55,7 +56,22 @@ export function renderDerived(): void {
     "hidden",
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,
   );
+  renderAiFilterStatus(listings);
   updateUrlGroupHeaders();
+}
+
+// Sole writer of the ai-filter status line — shows a spinner while a run is
+// in flight, otherwise the count of listings the filter has excluded.
+export function renderAiFilterStatus(listings: ListingItem[]): void {
+  const status = getElement("aiFilterStatus");
+  if (isAiFilterRunning) {
+    status.innerHTML = `<span class="spinner"></span><span>Filtering results...</span>`;
+    return;
+  }
+  const excludedCount = listings.filter(
+    (listingItem) => listingItem.aiFilterReason !== null,
+  ).length;
+  status.textContent = `Filtered ${excludedCount} results`;
 }
 
 export function applyClientFilters(): void {

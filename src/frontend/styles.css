@@ -519,6 +519,14 @@ label {
   resize: vertical;
   background: var(--surface);
 }
+.ai-filter-status {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
 .results-count {
   background: var(--primary);
   color: white;
