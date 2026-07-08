@@ -517,7 +517,7 @@ label {
   flex: 1;
   min-width: 180px;
   resize: vertical;
-  background: var(--yellow-bg);
+  background: var(--surface);
 }
 .results-count {
   background: var(--primary);
@@ -541,9 +541,8 @@ button.filter-toggle-btn:hover {
   border-color: #cbd5e1;
 }
 .filter-toggle-btn[aria-pressed="true"] {
-  color: var(--primary);
-  background: var(--primary-light);
-  border-color: var(--primary);
+  background: var(--yellow-bg);
+  border-color: #fde68a;
 }
 
 /* ── Listing cards ── */
