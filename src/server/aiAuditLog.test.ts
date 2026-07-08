@@ -78,7 +78,11 @@ describe("formatAuditEntryLine field size caps", () => {
   });
 
   it("leaves a rawContent field under the cap untouched", () => {
-    const entry: AiAuditEntry = { ...SAMPLE_ENTRY, response: undefined, rawContent: "short content" };
+    const entry: AiAuditEntry = {
+      ...SAMPLE_ENTRY,
+      response: undefined,
+      rawContent: "short content",
+    };
 
     const parsed = JSON.parse(formatAuditEntryLine(entry));
 

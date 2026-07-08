@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { handleDiscoverySubmitAsync, loadSavedSearchAsync } from "./searchSession";
 import { resetState } from "./state";
 import { createUrlCard } from "./urlCardRow";
@@ -68,18 +68,10 @@ it("shows a discovering placeholder immediately, before the discover request res
   const submitPromise = handleDiscoverySubmitAsync();
 
   // Fetch hasn't resolved yet — assert on the mid-flight state.
-  expect(
-    document.getElementById("urlsCard")?.classList.contains("hidden"),
-  ).toBe(false);
-  expect(
-    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
-  ).toBe(true);
-  expect(
-    document.getElementById("addUrlBtn")?.classList.contains("hidden"),
-  ).toBe(true);
-  expect(
-    document.getElementById("urlPlaceholder")?.classList.contains("hidden"),
-  ).toBe(false);
+  expect(document.getElementById("urlsCard")?.classList.contains("hidden")).toBe(false);
+  expect(document.getElementById("urlCardsContainer")?.classList.contains("hidden")).toBe(true);
+  expect(document.getElementById("addUrlBtn")?.classList.contains("hidden")).toBe(true);
+  expect(document.getElementById("urlPlaceholder")?.classList.contains("hidden")).toBe(false);
 
   resolveFetch({
     ok: true,
@@ -88,21 +80,11 @@ it("shows a discovering placeholder immediately, before the discover request res
   await submitPromise;
 
   // Assert on the post-flight state.
-  expect(
-    document.getElementById("urlsCard")?.classList.contains("hidden"),
-  ).toBe(false);
-  expect(
-    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
-  ).toBe(false);
-  expect(
-    document.getElementById("addUrlBtn")?.classList.contains("hidden"),
-  ).toBe(false);
-  expect(
-    document.getElementById("urlPlaceholder")?.classList.contains("hidden"),
-  ).toBe(true);
-  expect(
-    document.getElementById("urlsSection")?.classList.contains("hidden"),
-  ).toBe(false);
+  expect(document.getElementById("urlsCard")?.classList.contains("hidden")).toBe(false);
+  expect(document.getElementById("urlCardsContainer")?.classList.contains("hidden")).toBe(false);
+  expect(document.getElementById("addUrlBtn")?.classList.contains("hidden")).toBe(false);
+  expect(document.getElementById("urlPlaceholder")?.classList.contains("hidden")).toBe(true);
+  expect(document.getElementById("urlsSection")?.classList.contains("hidden")).toBe(false);
   expect(urlCards[0].dom.input.value).toBe("https://www.trademe.co.nz/x");
 });
 
@@ -128,19 +110,11 @@ it("shows the discovery error and leaves the URL input blank when the discover r
   });
   await submitPromise;
 
-  expect(document.getElementById("discoveryError")?.textContent).toBe(
-    "No listings found",
-  );
-  expect(
-    (document.getElementById("discoveryError") as HTMLDivElement).style.display,
-  ).toBe("block");
+  expect(document.getElementById("discoveryError")?.textContent).toBe("No listings found");
+  expect((document.getElementById("discoveryError") as HTMLDivElement).style.display).toBe("block");
   expect(urlCards[0].dom.input.value).toBe("");
-  expect(
-    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
-  ).toBe(false);
-  expect(
-    document.getElementById("urlPlaceholder")?.classList.contains("hidden"),
-  ).toBe(true);
+  expect(document.getElementById("urlCardsContainer")?.classList.contains("hidden")).toBe(false);
+  expect(document.getElementById("urlPlaceholder")?.classList.contains("hidden")).toBe(true);
 });
 
 it("clears any existing URL card value immediately when a new discovery is submitted, before the fetch resolves", async () => {
@@ -184,9 +158,7 @@ it("does not let a stale discovery response overwrite a saved search loaded whil
   const submitPromise = handleDiscoverySubmitAsync();
 
   // Discovery is still in flight — placeholder showing, container hidden.
-  expect(
-    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
-  ).toBe(true);
+  expect(document.getElementById("urlCardsContainer")?.classList.contains("hidden")).toBe(true);
 
   // User loads a saved search before the discovery request resolves.
   await loadSavedSearchAsync({
@@ -198,9 +170,7 @@ it("does not let a stale discovery response overwrite a saved search loaded whil
   });
 
   // The saved search must be visible immediately, not stuck behind the placeholder.
-  expect(
-    document.getElementById("urlCardsContainer")?.classList.contains("hidden"),
-  ).toBe(false);
+  expect(document.getElementById("urlCardsContainer")?.classList.contains("hidden")).toBe(false);
   expect(urlCards[0].dom.input.value).toBe("https://example.com/saved");
 
   // The stale discovery now resolves successfully.
