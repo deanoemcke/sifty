@@ -126,24 +126,21 @@ function buildPickupRowHtml(
   return `<span class="details-key">Pickup</span><span class="details-val">${value}</span>`;
 }
 
-export function buildExtrasHtml(listing: Listing): string {
-  let body = "";
-
-  // ── Photos ────────────────────────────────────────────────────────────────
-  const photos = listing.photos ?? [];
-  if (photos.length > 0) {
-    body += `<div class="deep-section">
+function buildPhotoGalleryHtml(photos: Listing["photos"]): string {
+  const photoList = photos ?? [];
+  if (photoList.length === 0) return "";
+  return `<div class="deep-section">
       <div class="deep-section-label">Photos</div>
-      <div class="photo-gallery">${photos
+      <div class="photo-gallery">${photoList
         .map(
           ({ thumbnailUrl, fullSizeUrl }) =>
             `<a href="${esc(fullSizeUrl)}" target="_blank" rel="noopener"><img class="photo-gallery-thumb" src="${esc(thumbnailUrl)}" alt=""></a>`,
         )
         .join("")}</div>
     </div>`;
-  }
+}
 
-  // ── Listing info (dates, category) ──────────────────────────────────────
+function buildListingInfoHtml(listing: Listing): string {
   const listingInfoRows = [
     listing.startDate
       ? `<span class="details-key">Started</span><span class="details-val">${esc(formatListingDate(listing.startDate))}</span>`
@@ -155,12 +152,21 @@ export function buildExtrasHtml(listing: Listing): string {
       ? `<span class="details-key">Category</span><span class="details-val">${esc(listing.categoryPath)}</span>`
       : "",
   ].filter(Boolean);
-  if (listingInfoRows.length > 0) {
-    body += `<div class="deep-section">
+  if (listingInfoRows.length === 0) return "";
+  return `<div class="deep-section">
       <div class="deep-section-label">Listing info</div>
       <div class="details-table">${listingInfoRows.join("")}</div>
     </div>`;
-  }
+}
+
+export function buildExtrasHtml(listing: Listing): string {
+  let body = "";
+
+  // ── Photos ────────────────────────────────────────────────────────────────
+  body += buildPhotoGalleryHtml(listing.photos);
+
+  // ── Listing info (dates, category) ──────────────────────────────────────
+  body += buildListingInfoHtml(listing);
 
   // ── Shipping & pickup ────────────────────────────────────────────────────
   const shippingRow = buildShippingRowHtml(listing.shippingAvailable, listing.shippingCost);
