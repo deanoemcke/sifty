@@ -128,11 +128,13 @@ export function renderCard(item: ListingItem): void {
   // extended fields — all detail-derived content (badges, buy-now price,
   // extras) lives in the modal only, so this template deliberately never
   // references those fields.
-  // The image and title (inside .listing-open-area) open the modal. The
-  // external-link button sits in that same area for layout purposes, but
-  // resolveListingCardOpenArea() excludes it from the click handler so it
-  // navigates instead of also opening the modal. The footer row
-  // (location/price) sits outside .listing-open-area entirely.
+  // The image and title (inside .listing-open-area) open the modal.
+  // The external-link button and the footer row (location/price) are both
+  // rendered as siblings of .listing-open-area — never nested inside it —
+  // so no focusable element sits inside the card's role="button" wrapper.
+  // isExternalLinkTarget() (listingCardActivation.ts) still guards the
+  // click/keydown paths so the link navigates instead of also opening the
+  // modal, since it remains inside .listing-card.
   card.innerHTML = `
     <div class="listing-card-content">
       <div class="listing-open-area">
@@ -142,12 +144,10 @@ export function renderCard(item: ListingItem): void {
           <div class="filter-banner hidden"></div>
         </div>
         <div class="listing-body">
-          <div class="listing-title-row">
-            <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>
-            ${buildExternalLinkButtonHtml(listing.url)}
-          </div>
+          <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>
         </div>
       </div>
+      ${buildExternalLinkButtonHtml(listing.url)}
       <div class="listing-card-footer">
         ${buildCardFooterHtml(listing)}
       </div>

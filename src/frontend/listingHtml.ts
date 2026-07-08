@@ -59,10 +59,16 @@ export function buildCardMetaHtml(listing: Listing): string {
 
 const EXTERNAL_LINK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
 
-// Sits beside the title, at the top of the card — kept as an <a> outside
-// any modal-opening handler so it navigates instead of also opening it.
+// Single source of truth for the external-link button's class name: used
+// here to build the markup and by listingCardActivation.ts to detect
+// clicks/keypresses on it so they navigate instead of also opening the
+// modal underneath.
+export const EXTERNAL_LINK_BUTTON_CLASS_NAME = "listing-external-link-btn";
+
+// Rendered as a sibling of .listing-open-area (not nested inside it) so a
+// focusable <a> never ends up inside the card's role="button" wrapper.
 export function buildExternalLinkButtonHtml(url: string): string {
-  return `<a class="listing-external-link-btn" href="${esc(url)}" target="_blank" rel="noopener" title="Open original listing" aria-label="Open original listing">${EXTERNAL_LINK_ICON}</a>`;
+  return `<a class="${EXTERNAL_LINK_BUTTON_CLASS_NAME}" href="${esc(url)}" target="_blank" rel="noopener" title="Open original listing" aria-label="Open original listing">${EXTERNAL_LINK_ICON}</a>`;
 }
 
 // Card footer row: the location on the left, the price on the right.

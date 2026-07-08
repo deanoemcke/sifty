@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Listing } from "../lib/recipes/base";
-import { getOrderedListings, renderDerived, renderFilteredToggle } from "./resultsView";
+import { requireChild } from "./domUtils";
+import { getOrderedListings, renderCard, renderDerived, renderFilteredToggle } from "./resultsView";
 import {
   type ListingItem,
   listingsByUrl,
@@ -52,6 +53,7 @@ beforeEach(() => {
     <span id="totalCount"></span>
     <button id="deepBtn"></button>
     <span id="aiFilterStatus"></span>
+    <div id="listingsContainer"></div>
   `;
 });
 
@@ -120,6 +122,20 @@ describe("renderDerived", () => {
     setIsAiFilterRunning(false);
     renderDerived();
     expect(document.getElementById("aiFilterStatus")!.textContent).toBe("Filtered 1 results");
+  });
+});
+
+describe("renderCard", () => {
+  // Regression coverage: the external-link button must not be a descendant
+  // of .listing-open-area (which gets role="button"/tabindex from
+  // applyListingCardAccessibility) — a focusable <a> nested inside another
+  // interactive control is an invalid ARIA content model.
+  it("renders the external-link button outside .listing-open-area", () => {
+    renderCard(makeListingItem("https://l/1"));
+    const card = requireChild<HTMLElement>(document.body, ".listing-card");
+    const openArea = requireChild<HTMLElement>(card, ".listing-open-area");
+    expect(openArea.querySelector(".listing-external-link-btn")).toBeNull();
+    expect(card.querySelector(".listing-external-link-btn")).not.toBeNull();
   });
 });
 

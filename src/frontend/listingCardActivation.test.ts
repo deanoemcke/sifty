@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyListingCardAccessibility,
   handleListingCardKeydown,
+  isExternalLinkTarget,
   resolveListingCardOpenArea,
 } from "./listingCardActivation";
 
@@ -86,24 +87,48 @@ describe("handleListingCardKeydown", () => {
   });
 });
 
+describe("isExternalLinkTarget", () => {
+  it("returns true for the external-link button and its descendants", () => {
+    const link = document.createElement("a");
+    link.className = "listing-external-link-btn";
+    const icon = document.createElement("span");
+    link.appendChild(icon);
+    document.body.appendChild(link);
+    expect(isExternalLinkTarget(link)).toBe(true);
+    expect(isExternalLinkTarget(icon)).toBe(true);
+  });
+
+  it("returns false for a target outside the external-link button", () => {
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    expect(isExternalLinkTarget(outside)).toBe(false);
+  });
+});
+
 describe("resolveListingCardOpenArea", () => {
-  function buildOpenAreaWithExternalLink(): { openArea: HTMLElement; link: HTMLElement } {
+  // The external-link button is rendered as a sibling of .listing-open-area
+  // in production (never nested inside it), but resolveListingCardOpenArea
+  // still guards against it explicitly via the shared isExternalLinkTarget
+  // predicate, so it stays correct regardless of where the button lives.
+  function buildOpenAreaWithSiblingExternalLink(): { openArea: HTMLElement; link: HTMLElement } {
+    const wrapper = document.createElement("div");
     const openArea = document.createElement("div");
     openArea.className = "listing-open-area";
     const link = document.createElement("a");
     link.className = "listing-external-link-btn";
-    openArea.appendChild(link);
-    document.body.appendChild(openArea);
+    wrapper.appendChild(openArea);
+    wrapper.appendChild(link);
+    document.body.appendChild(wrapper);
     return { openArea, link };
   }
 
   it("returns the open area for a click inside it", () => {
-    const { openArea } = buildOpenAreaWithExternalLink();
+    const { openArea } = buildOpenAreaWithSiblingExternalLink();
     expect(resolveListingCardOpenArea(openArea)).toBe(openArea);
   });
 
   it("returns null when the click originated on the external-link button", () => {
-    const { link } = buildOpenAreaWithExternalLink();
+    const { link } = buildOpenAreaWithSiblingExternalLink();
     expect(resolveListingCardOpenArea(link)).toBeNull();
   });
 
