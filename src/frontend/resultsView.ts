@@ -8,6 +8,7 @@ import { esc } from "./html";
 import { applyListingCardAccessibility } from "./listingCardActivation";
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from "./listingHtml";
 import { sourceBadgeHtml } from "./recipeDisplay";
+import { sortListings } from "./sortListings";
 import {
   cardIdByUrl,
   isAiFilterRunning,
@@ -16,6 +17,7 @@ import {
   type ListingItem,
   listingsByUrl,
   showFilteredListings,
+  sortBy,
   urlCardDataById,
 } from "./state";
 import { updateUrlGroupHeaders } from "./urlGroupsView";
@@ -42,6 +44,20 @@ export function getOrderedListings(): ListingItem[] {
     });
 }
 
+export function getSortedListings(): ListingItem[] {
+  return sortListings(getOrderedListings(), sortBy);
+}
+
+// Reorders rendered cards via the CSS `order` property (the grid respects it
+// like flexbox would) rather than moving DOM nodes, so resorting doesn't
+// disturb focus, hover, or scroll position.
+export function applySortOrder(): void {
+  getSortedListings().forEach((item, index) => {
+    const card = getCardByUrl(item.data.url);
+    if (card) card.style.order = String(index);
+  });
+}
+
 export function renderDerived(): void {
   const listings = getOrderedListings();
   const passing = listings.filter((listingItem) => listingItem.aiFilterReason === null);
@@ -57,6 +73,7 @@ export function renderDerived(): void {
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,
   );
   renderAiFilterStatus(listings);
+  applySortOrder();
   updateUrlGroupHeaders();
 }
 

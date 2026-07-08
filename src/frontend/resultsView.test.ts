@@ -2,13 +2,21 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Listing } from "../lib/recipes/base";
 import { requireChild } from "./domUtils";
-import { getOrderedListings, renderCard, renderDerived, renderFilteredToggle } from "./resultsView";
+import {
+  applySortOrder,
+  getCardByUrl,
+  getOrderedListings,
+  renderCard,
+  renderDerived,
+  renderFilteredToggle,
+} from "./resultsView";
 import {
   type ListingItem,
   listingsByUrl,
   resetState,
   setIsAiFilterRunning,
   setShowFilteredListings,
+  setSortBy,
   type UrlCardData,
 } from "./state";
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from "./urlCardStore";
@@ -126,6 +134,47 @@ describe("renderDerived", () => {
     setIsAiFilterRunning(false);
     renderDerived();
     expect(document.getElementById("aiFilterStatus")?.textContent).toBe("Filtered 1 results");
+  });
+});
+
+describe("applySortOrder", () => {
+  const urls = ["https://l/1", "https://l/2", "https://l/3"];
+
+  function renderAllCards(): void {
+    for (const url of urls) renderCard(listingsByUrl.get(url) as ListingItem);
+  }
+
+  it("orders cards by source-url order by default", () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    applySortOrder();
+    expect(urls.map((url) => getCardByUrl(url)?.style.order)).toEqual(["0", "1", "2"]);
+  });
+
+  it("orders cards by relevance descending for best-match", () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get("https://l/1") as ListingItem).data.relevance = 2;
+    (listingsByUrl.get("https://l/2") as ListingItem).data.relevance = 9;
+    (listingsByUrl.get("https://l/3") as ListingItem).data.relevance = 5;
+    setSortBy("best-match");
+    applySortOrder();
+    expect(getCardByUrl("https://l/2")?.style.order).toBe("0");
+    expect(getCardByUrl("https://l/3")?.style.order).toBe("1");
+    expect(getCardByUrl("https://l/1")?.style.order).toBe("2");
+  });
+
+  it("re-applies sort order as part of renderDerived", () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get("https://l/1") as ListingItem).data.price = 30;
+    (listingsByUrl.get("https://l/2") as ListingItem).data.price = 10;
+    (listingsByUrl.get("https://l/3") as ListingItem).data.price = 20;
+    setSortBy("lowest-price");
+    renderDerived();
+    expect(getCardByUrl("https://l/2")?.style.order).toBe("0");
+    expect(getCardByUrl("https://l/3")?.style.order).toBe("1");
+    expect(getCardByUrl("https://l/1")?.style.order).toBe("2");
   });
 });
 

@@ -234,6 +234,32 @@ describe("initApp() wiring", () => {
     });
   });
 
+  describe("Sort by control", () => {
+    it("populates the sort select with all options, defaulting to source-url", async () => {
+      await import("./app");
+      const sortSelect = document.getElementById("sortBy") as HTMLSelectElement;
+      expect(Array.from(sortSelect.options).map((option) => option.value)).toEqual([
+        "source-url",
+        "best-match",
+        "worst-match",
+        "lowest-price",
+        "highest-price",
+      ]);
+      expect(sortSelect.value).toBe("source-url");
+    });
+
+    it("updates state.sortBy when the select changes", async () => {
+      await import("./app");
+      const state = await import("./state");
+      const sortSelect = document.getElementById("sortBy") as HTMLSelectElement;
+
+      sortSelect.value = "best-match";
+      sortSelect.dispatchEvent(new Event("change"));
+
+      expect(state.sortBy).toBe("best-match");
+    });
+  });
+
   describe("listing card open-area vs. external-link click routing", () => {
     it("opens the listing modal for a click inside the open area", async () => {
       const { openListingCardModal } = await import("./listingDetail");

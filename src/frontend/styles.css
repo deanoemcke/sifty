@@ -552,6 +552,14 @@ button.filter-toggle-btn:hover {
   background: var(--yellow-bg);
   border-color: #fde68a;
 }
+.sort-row label {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+.sort-row select {
+  flex: 0 0 auto;
+  width: auto;
+}
 
 /* ── Listing cards ── */
 #listingsContainer {

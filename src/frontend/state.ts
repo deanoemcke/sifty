@@ -3,6 +3,7 @@
 // and so that tests can call resetState() for clean isolation.
 
 import type { Fulfillment, Listing, QuickSearchProgress } from "../lib/recipes/base";
+import { DEFAULT_SORT_OPTION, type SortOption } from "./sortListings";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,7 @@ export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
 export let isAiFilterRunning = false;
 export let aiFilterPendingRun = false;
+export let sortBy: SortOption = DEFAULT_SORT_OPTION;
 // Which listing's detail modal is open, if any — used to guard against a
 // stale deep-search response writing into a modal that has since closed or
 // switched to a different listing.
@@ -120,6 +122,10 @@ export function setAiFilterPendingRun(value: boolean): void {
   aiFilterPendingRun = value;
 }
 
+export function setSortBy(value: SortOption): void {
+  sortBy = value;
+}
+
 export function setOpenModalListingUrl(url: string | null): void {
   openModalListingUrl = url;
 }
@@ -138,6 +144,7 @@ export function resetState(): void {
   deepSearchCancellationRequested = false;
   isAiFilterRunning = false;
   aiFilterPendingRun = false;
+  sortBy = DEFAULT_SORT_OPTION;
   openModalListingUrl = null;
   bulkDeepSearchUrls = null;
   singleDeepSearchInFlightUrls.clear();
