@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let _testDb: Database.Database | null = null;
 
+function requireTestDb(): Database.Database {
+  if (!_testDb) throw new Error("test DB not initialised");
+  return _testDb;
+}
+
 vi.mock("../db", () => {
   function getDb(): Database.Database {
     if (!_testDb) throw new Error("test DB not initialised");
@@ -202,7 +207,7 @@ describe("handleCreateSavedSearch", () => {
 
 describe("handleListSavedSearches", () => {
   it("returns 500 when a row contains corrupt urls JSON", () => {
-    _testDb!
+    requireTestDb()
       .prepare(
         "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
@@ -240,7 +245,7 @@ describe("handleListSavedSearches", () => {
 
 describe("handleGetSavedSearch", () => {
   it("returns 500 when the stored row has corrupt urls JSON", () => {
-    _testDb!
+    requireTestDb()
       .prepare(
         "INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )

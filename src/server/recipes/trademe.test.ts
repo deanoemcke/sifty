@@ -1,7 +1,8 @@
+import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listing, ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON } from "../ai";
-import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
+import { type CategoryRow, getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import {
   buildListing,
   buildPhotosFromUrls,
@@ -998,6 +999,14 @@ describe("buildDiscoverUrlsAsync", () => {
     cooldownStore: STUB_COOLDOWN_STORE,
   };
 
+  function fakeCategoriesAtDepth2Statement(rows: CategoryRow[]) {
+    return { all: () => rows } as unknown as ReturnType<typeof stmtGetCategoriesAtDepth2>;
+  }
+
+  function fakeCategoriesByTop2Statement(all: (top2Slug: string) => CategoryRow[]) {
+    return { all } as unknown as ReturnType<typeof stmtGetCategoriesByTop2>;
+  }
+
   // aiJSON is mocked wholesale in this file, so its calls must resolve with the
   // `AiJsonResult` shape (`{ kind: "ok", value }`) that the real function now
   // returns — see src/server/ai.ts. `applyAiJsonResult` itself is NOT mocked
@@ -1008,14 +1017,16 @@ describe("buildDiscoverUrlsAsync", () => {
   }
 
   beforeEach(() => {
-    vi.mocked(getDb).mockReturnValue({} as any);
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
-      all: (top2Slug: string) => {
+    vi.mocked(getDb).mockReturnValue({} as unknown as Database.Database);
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
+      fakeCategoriesAtDepth2Statement(MOCK_BROAD),
+    );
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
+      fakeCategoriesByTop2Statement((top2Slug) => {
         expect(top2Slug).toBe("electronics/electronics");
         return MOCK_SUBS;
-      },
-    } as any);
+      }),
+    );
   });
 
   // resetAllMocks (not clearAllMocks): strips mock implementations between tests so any test
@@ -1113,13 +1124,15 @@ describe("buildDiscoverUrlsAsync", () => {
       { display: "Computers", slug: "computers/computers" },
     ];
     const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "computers/laptops" }];
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
-      all: (top2Slug: string) => {
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
+      fakeCategoriesAtDepth2Statement(MOCK_TWO_BROAD),
+    );
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
+      fakeCategoriesByTop2Statement((top2Slug) => {
         expect(["electronics/electronics", "computers/computers"]).toContain(top2Slug);
         return MOCK_TWO_SUBS;
-      },
-    } as any);
+      }),
+    );
     vi.mocked(aiJSON)
       .mockResolvedValueOnce(
         aiJsonOk({
@@ -1170,13 +1183,15 @@ describe("buildDiscoverUrlsAsync", () => {
       { display: "Computers", slug: "computers/computers" },
     ];
     const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({
-      all: (top2Slug: string) => {
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
+      fakeCategoriesAtDepth2Statement(MOCK_TWO_BROAD),
+    );
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
+      fakeCategoriesByTop2Statement((top2Slug) => {
         expect(top2Slug).toBe("electronics/electronics");
         return MOCK_TWO_SUBS;
-      },
-    } as any);
+      }),
+    );
     // AI returns one valid category and one hallucinated one that doesn't exist in MOCK_TWO_BROAD
     vi.mocked(aiJSON)
       .mockResolvedValueOnce(
@@ -1225,8 +1240,12 @@ describe("buildDiscoverUrlsAsync", () => {
       { display: "Computers", slug: "computers/computers" },
     ];
     const MOCK_TWO_SUBS = [{ display: "Laptops", slug: "electronics/laptops" }];
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_TWO_BROAD } as any);
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_TWO_SUBS } as any);
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
+      fakeCategoriesAtDepth2Statement(MOCK_TWO_BROAD),
+    );
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
+      fakeCategoriesByTop2Statement(() => MOCK_TWO_SUBS),
+    );
     vi.mocked(aiJSON)
       .mockResolvedValueOnce(
         aiJsonOk({

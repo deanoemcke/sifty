@@ -4,7 +4,13 @@ import { searchUrlCardAsync } from "./quickSearch";
 import { cardStatusText } from "./searchStatusText";
 import { resetState, type UrlCardData } from "./state";
 import { cancelSearch, cardStatusSnapshot } from "./urlCardRow";
-import { addUrlCard, resetUrlCardStore, type UrlCard, type UrlCardDom, urlCardData } from "./urlCardStore";
+import {
+  addUrlCard,
+  resetUrlCardStore,
+  type UrlCard,
+  type UrlCardDom,
+  urlCardData,
+} from "./urlCardStore";
 
 const TRADEME_URL = "https://www.trademe.co.nz/search/test";
 
