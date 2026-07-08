@@ -1,0 +1,1 @@
+npx biome check --staged --error-on-warnings --no-errors-on-unmatched src/
