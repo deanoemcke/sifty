@@ -78,11 +78,13 @@ export async function runAiFilterAsync(): Promise<void> {
             url: string;
             pass: boolean;
             reason: string | null;
+            relevance: number;
           }>) {
             const item = listingsByUrl.get(result.url);
             if (item) {
               item.aiCheckedHash = hash;
               item.aiFilterReason = result.pass ? null : (result.reason ?? "No reason given");
+              item.data.relevance = result.relevance;
             }
           }
           applyClientFilters();
