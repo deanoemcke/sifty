@@ -1,15 +1,15 @@
 // Server-side only — /api/saved-searches route handlers (GET list, GET one, POST, DELETE).
 
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { parseDiscoverInputs, requireArray, requireString } from "../../lib/validate";
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { parseDiscoverInputs, requireArray, requireString } from '../../lib/validate';
 import {
   getDb,
   stmtDeleteSavedSearch,
   stmtGetSavedSearch,
   stmtInsertSavedSearch,
   stmtListSavedSearches,
-} from "../db";
-import { readBody, sendJSON } from "../helpers";
+} from '../db';
+import { readBody, sendJSON } from '../helpers';
 
 export function handleListSavedSearches(_req: unknown, response: ServerResponse): void {
   const database = getDb();
@@ -33,7 +33,7 @@ export function handleGetSavedSearch(_req: unknown, response: ServerResponse, id
   const database = getDb();
   const row = stmtGetSavedSearch(database).get(id);
   if (!row) {
-    sendJSON(response, 404, { error: "Not found" });
+    sendJSON(response, 404, { error: 'Not found' });
     return;
   }
   try {
@@ -56,7 +56,7 @@ export function handleDeleteSavedSearch(_req: unknown, response: ServerResponse,
   const database = getDb();
   const row = stmtGetSavedSearch(database).get(id);
   if (!row) {
-    sendJSON(response, 404, { error: "Not found" });
+    sendJSON(response, 404, { error: 'Not found' });
     return;
   }
   stmtDeleteSavedSearch(database).run(id);
@@ -65,7 +65,7 @@ export function handleDeleteSavedSearch(_req: unknown, response: ServerResponse,
 
 export async function handleCreateSavedSearch(
   request: IncomingMessage,
-  response: ServerResponse,
+  response: ServerResponse
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
@@ -74,8 +74,8 @@ export async function handleCreateSavedSearch(
   let urls: unknown[];
   let discoverInputsSerialized: string | null;
   try {
-    name = requireString(rawBody.name, "name");
-    urls = requireArray(rawBody.urls, "urls");
+    name = requireString(rawBody.name, 'name');
+    urls = requireArray(rawBody.urls, 'urls');
     discoverInputsSerialized = parseDiscoverInputs(rawBody.discoverInputs);
   } catch (err) {
     sendJSON(response, 400, { error: (err as Error).message });
@@ -91,8 +91,8 @@ export async function handleCreateSavedSearch(
       name.trim(),
       JSON.stringify(urls),
       discoverInputsSerialized,
-      typeof aiFilter === "string" && aiFilter.trim() ? aiFilter.trim() : null,
-      Date.now(),
+      typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null,
+      Date.now()
     );
     sendJSON(response, 200, { ok: true, id });
   } catch (err) {

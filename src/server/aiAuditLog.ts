@@ -18,16 +18,16 @@
 //     (overwriting any previous rotation) once it grows past the threshold, so the file
 //     can't grow without bound across a long-running process.
 
-import fsPromises from "node:fs/promises";
-import path from "node:path";
+import fsPromises from 'node:fs/promises';
+import path from 'node:path';
 
 export type AiAuditStatus =
-  | "success"
-  | "rate_limited"
-  | "http_error"
-  | "network_error"
-  | "parse_error"
-  | "budget_exceeded";
+  | 'success'
+  | 'rate_limited'
+  | 'http_error'
+  | 'network_error'
+  | 'parse_error'
+  | 'budget_exceeded';
 
 export type AiAuditEntry = {
   timestamp: string;
@@ -63,10 +63,10 @@ export const MAX_AUDIT_LOG_FILE_SIZE_BYTES = 20 * 1024 * 1024;
  */
 export function truncateAuditField(
   value: string,
-  maxLength: number = MAX_AUDIT_FIELD_LENGTH,
+  maxLength: number = MAX_AUDIT_FIELD_LENGTH
 ): string {
   if (value.length <= maxLength) return value;
-  const omittedBytesCount = Buffer.byteLength(value.slice(maxLength), "utf-8");
+  const omittedBytesCount = Buffer.byteLength(value.slice(maxLength), 'utf-8');
   return `${value.slice(0, maxLength)}...[truncated, ${omittedBytesCount} bytes omitted]`;
 }
 
@@ -78,7 +78,7 @@ export function truncateAuditField(
  */
 function truncateResponseForAudit(
   response: unknown,
-  maxLength: number = MAX_AUDIT_FIELD_LENGTH,
+  maxLength: number = MAX_AUDIT_FIELD_LENGTH
 ): unknown {
   const serializedResponse = JSON.stringify(response);
   if (serializedResponse === undefined || serializedResponse.length <= maxLength) {
@@ -109,7 +109,7 @@ export function formatAuditEntryLine(entry: AiAuditEntry): string {
 
 export async function writeAuditLogHeaderAsync(auditLogPath: string): Promise<void> {
   await fsPromises.mkdir(path.dirname(auditLogPath), { recursive: true });
-  await fsPromises.writeFile(auditLogPath, "");
+  await fsPromises.writeFile(auditLogPath, '');
 }
 
 async function getAuditLogFileSizeBytes(auditLogPath: string): Promise<number> {
@@ -118,7 +118,7 @@ async function getAuditLogFileSizeBytes(auditLogPath: string): Promise<number> {
     return stats.size;
   } catch (error) {
     // A log file that hasn't been created yet is size zero, not a failure.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
     throw error;
   }
 }
@@ -131,7 +131,7 @@ async function getAuditLogFileSizeBytes(auditLogPath: string): Promise<number> {
  */
 export async function rotateAuditLogIfOversizedAsync(
   auditLogPath: string,
-  maxSizeBytes: number = MAX_AUDIT_LOG_FILE_SIZE_BYTES,
+  maxSizeBytes: number = MAX_AUDIT_LOG_FILE_SIZE_BYTES
 ): Promise<void> {
   const currentSizeBytes = await getAuditLogFileSizeBytes(auditLogPath);
   if (currentSizeBytes < maxSizeBytes) return;
@@ -141,7 +141,7 @@ export async function rotateAuditLogIfOversizedAsync(
 export async function appendAuditLogLineAsync(
   auditLogPath: string,
   entry: AiAuditEntry,
-  maxSizeBytes: number = MAX_AUDIT_LOG_FILE_SIZE_BYTES,
+  maxSizeBytes: number = MAX_AUDIT_LOG_FILE_SIZE_BYTES
 ): Promise<void> {
   await rotateAuditLogIfOversizedAsync(auditLogPath, maxSizeBytes);
   await fsPromises.appendFile(auditLogPath, formatAuditEntryLine(entry));
@@ -151,10 +151,10 @@ function logAuditWriteFailure(error: unknown): void {
   // The audit log is a diagnostic side channel: a failed write must never crash the
   // process (no unhandled rejection) and must never propagate to the AI call it is
   // observing — but it must not vanish without a trace either, so it goes to stderr.
-  console.error("[AiAuditLog] write failed", error);
+  console.error('[AiAuditLog] write failed', error);
 }
 
-const AUDIT_LOG_PATH = path.resolve(__dirname, "../../.cache/ai-audit.jsonl");
+const AUDIT_LOG_PATH = path.resolve(__dirname, '../../.cache/ai-audit.jsonl');
 
 // Shared across all calls in this process so concurrent entries never race the
 // truncate-once header write against each other. Reset to null on failure so the next

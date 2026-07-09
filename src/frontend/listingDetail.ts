@@ -3,20 +3,20 @@
 // modal, bulk over visible results) are co-located: both fetch and display
 // listing detail, and each renders into the other's surface.
 
-import type { DeepSearchDetail } from "../lib/recipes/base";
-import { requestAiFilterRun } from "./aiFilter";
-import { decideModalDeepSearchAction } from "./deepSearchTrigger";
-import { getElement } from "./domUtils";
-import { esc } from "./html";
+import type { DeepSearchDetail } from '../lib/recipes/base';
+import { requestAiFilterRun } from './aiFilter';
+import { decideModalDeepSearchAction } from './deepSearchTrigger';
+import { getElement } from './domUtils';
+import { esc } from './html';
 import {
   buildCardMetaHtml,
   buildCardPriceHtml,
   buildDetailMetaHtml,
   buildDetailPriceHtml,
   buildExtrasHtml,
-} from "./listingHtml";
-import { sourceBadgeHtml } from "./recipeDisplay";
-import { applyClientFilters, getOrderedListings, renderDerived } from "./resultsView";
+} from './listingHtml';
+import { sourceBadgeHtml } from './recipeDisplay';
+import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
 import {
   bulkDeepSearchUrls,
   deepSearchCancellationRequested,
@@ -31,32 +31,32 @@ import {
   setIsDeepSearchRunning,
   setOpenModalListingUrl,
   singleDeepSearchInFlightUrls,
-} from "./state";
-import { setStatus } from "./statusBar";
-import { streamPostAsync } from "./streamPost";
+} from './state';
+import { setStatus } from './statusBar';
+import { streamPostAsync } from './streamPost';
 
 export function setDeepSearchingStatus(statusMessage: string): void {
-  const statusBar = getElement("statusBar");
-  statusBar.className = "status-bar info";
+  const statusBar = getElement('statusBar');
+  statusBar.className = 'status-bar info';
   statusBar.innerHTML = `<span class="spinner"></span><span>${esc(statusMessage)}</span>`;
   if (!deepSearchCancellationRequested) {
-    const cancelButton = document.createElement("button");
-    cancelButton.className = "cache-clear-btn";
-    cancelButton.style.marginLeft = "0.5rem";
-    cancelButton.textContent = "cancel";
-    cancelButton.addEventListener("click", cancelDeepSearch);
+    const cancelButton = document.createElement('button');
+    cancelButton.className = 'cache-clear-btn';
+    cancelButton.style.marginLeft = '0.5rem';
+    cancelButton.textContent = 'cancel';
+    cancelButton.addEventListener('click', cancelDeepSearch);
     statusBar.appendChild(cancelButton);
   }
-  statusBar.classList.remove("hidden");
+  statusBar.classList.remove('hidden');
 }
 
 export function cancelDeepSearch(): void {
   if (!isDeepSearchRunning || deepSearchCancellationRequested) return;
   setDeepSearchCancellationRequested(true);
-  setDeepSearchingStatus("Cancelling…");
-  fetch("/api/cancel-search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+  setDeepSearchingStatus('Cancelling…');
+  fetch('/api/cancel-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ searchId: deepSearchId }),
   }).catch(() => null);
 }
@@ -76,7 +76,7 @@ export function listingModalExtrasHtml(item: ListingItem, errorMessage: string |
 
 export function renderListingModalContent(
   item: ListingItem,
-  errorMessage: string | null = null,
+  errorMessage: string | null = null
 ): void {
   // A previous single-listing fetch may resolve after the modal has closed
   // or moved on to a different listing — ignore stale writes.
@@ -93,7 +93,7 @@ export function renderListingModalContent(
     ? buildDetailPriceHtml(listing)
     : buildCardPriceHtml(listing);
 
-  getElement("listingModalBody").innerHTML = `
+  getElement('listingModalBody').innerHTML = `
     <div class="listing-modal-header">
       <div class="listing-modal-thumb-wrap">${thumb}${sourceBadgeHtml(listing.source, 32)}</div>
       <div class="listing-modal-heading">
@@ -119,16 +119,16 @@ export async function deepSearchListingAsync(item: ListingItem): Promise<void> {
   singleDeepSearchInFlightUrls.add(url);
   try {
     await streamPostAsync(
-      "/api/deep-search",
+      '/api/deep-search',
       { listings: [item.data], deepSearchId: crypto.randomUUID() },
       (ev) => {
-        if (ev.type === "detail") {
+        if (ev.type === 'detail') {
           applyDeepSearchDetail(item, ev.detail as DeepSearchDetail);
           renderDerived();
-        } else if (ev.type === "detail-error" || ev.type === "error") {
+        } else if (ev.type === 'detail-error' || ev.type === 'error') {
           renderListingModalContent(item, ev.message as string);
         }
-      },
+      }
     );
   } catch (error) {
     renderListingModalContent(item, (error as Error).message);
@@ -137,25 +137,25 @@ export async function deepSearchListingAsync(item: ListingItem): Promise<void> {
   }
   if (item.hasBeenDeepSearched) {
     applyClientFilters();
-    const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
+    const aiPrompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
     if (aiPrompt) requestAiFilterRun();
   }
 }
 
 export async function openListingModalAsync(item: ListingItem): Promise<void> {
   setOpenModalListingUrl(item.data.url);
-  getElement("listingModal").classList.remove("hidden");
+  getElement('listingModal').classList.remove('hidden');
   renderListingModalContent(item);
   const action = decideModalDeepSearchAction({
     hasBeenDeepSearched: item.hasBeenDeepSearched,
     isCoveredByBulkSearch: bulkDeepSearchUrls?.has(item.data.url) ?? false,
     isAlreadyFetchingSingle: singleDeepSearchInFlightUrls.has(item.data.url),
   });
-  if (action === "start") await deepSearchListingAsync(item);
+  if (action === 'start') await deepSearchListingAsync(item);
 }
 
 export function closeListingModal(): void {
-  getElement("listingModal").classList.add("hidden");
+  getElement('listingModal').classList.add('hidden');
   setOpenModalListingUrl(null);
 }
 
@@ -167,7 +167,7 @@ export async function runDeepSearchAsync(): Promise<void> {
       (item) =>
         !item.hasBeenDeepSearched &&
         item.aiFilterReason === null &&
-        !singleDeepSearchInFlightUrls.has(item.data.url),
+        !singleDeepSearchInFlightUrls.has(item.data.url)
     )
     .map((item) => item.data);
 
@@ -180,40 +180,40 @@ export async function runDeepSearchAsync(): Promise<void> {
   let detailsReceived = 0;
 
   setDeepSearchingStatus(
-    `Fetching details for ${toScrape.length} listing${toScrape.length !== 1 ? "s" : ""}…`,
+    `Fetching details for ${toScrape.length} listing${toScrape.length !== 1 ? 's' : ''}…`
   );
 
   try {
-    await streamPostAsync("/api/deep-search", { listings: toScrape, deepSearchId }, (ev) => {
-      if (ev.type === "progress") {
+    await streamPostAsync('/api/deep-search', { listings: toScrape, deepSearchId }, (ev) => {
+      if (ev.type === 'progress') {
         if (!deepSearchCancellationRequested)
           setDeepSearchingStatus(
-            `Fetching details ${ev.index}/${ev.total} — ${String(ev.title).slice(0, 55)}…`,
+            `Fetching details ${ev.index}/${ev.total} — ${String(ev.title).slice(0, 55)}…`
           );
-      } else if (ev.type === "detail") {
+      } else if (ev.type === 'detail') {
         detailsReceived++;
         const item = listingsByUrl.get(ev.url as string);
         if (item) applyDeepSearchDetail(item, ev.detail as DeepSearchDetail);
         renderDerived();
-      } else if (ev.type === "detail-error") {
+      } else if (ev.type === 'detail-error') {
         console.warn(`[deep-search] failed for ${ev.url}: ${ev.message}`);
-      } else if (ev.type === "complete") {
-        setStatus("Deep search complete", "success");
+      } else if (ev.type === 'complete') {
+        setStatus('Deep search complete', 'success');
         setTimeout(() => setStatus(null), 4000);
-      } else if (ev.type === "error") {
-        setStatus(ev.message as string, "error");
+      } else if (ev.type === 'error') {
+        setStatus(ev.message as string, 'error');
       }
     });
   } catch (error) {
-    setStatus((error as Error).message, "error");
+    setStatus((error as Error).message, 'error');
   }
 
   setBulkDeepSearchUrls(null);
 
   if (deepSearchCancellationRequested) {
     setStatus(
-      `Cancelled — ${detailsReceived}/${toScrape.length} detail${toScrape.length !== 1 ? "s" : ""} loaded`,
-      "error",
+      `Cancelled — ${detailsReceived}/${toScrape.length} detail${toScrape.length !== 1 ? 's' : ''} loaded`,
+      'error'
     );
   }
 
@@ -221,7 +221,7 @@ export async function runDeepSearchAsync(): Promise<void> {
   setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(false);
   applyClientFilters();
-  const aiPrompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
+  const aiPrompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
   if (aiPrompt) requestAiFilterRun();
 }
 
@@ -230,7 +230,7 @@ export async function runDeepSearchAsync(): Promise<void> {
 // hasn't been already.
 export function openListingCardModal(card: HTMLElement): void {
   const url = card.dataset.url;
-  if (!url) throw new Error("listing-card missing data-url attribute");
+  if (!url) throw new Error('listing-card missing data-url attribute');
   const item = listingsByUrl.get(url);
   if (!item) throw new Error(`listingsByUrl missing entry for ${url}`);
   void openListingModalAsync(item);

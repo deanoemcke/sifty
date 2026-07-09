@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { debounce } from "./debounce";
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { debounce } from './debounce';
 
-describe("debounce", () => {
+describe('debounce', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -10,7 +10,7 @@ describe("debounce", () => {
     vi.useRealTimers();
   });
 
-  it("delays invocation until after the wait time has elapsed", () => {
+  it('delays invocation until after the wait time has elapsed', () => {
     const fn = vi.fn();
     const debounced = debounce(fn, 500);
 
@@ -24,7 +24,7 @@ describe("debounce", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("resets the timer on each call, only firing once for a burst", () => {
+  it('resets the timer on each call, only firing once for a burst', () => {
     const fn = vi.fn();
     const debounced = debounce(fn, 500);
 
@@ -40,14 +40,14 @@ describe("debounce", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("passes through the arguments from the most recent call", () => {
+  it('passes through the arguments from the most recent call', () => {
     const fn = vi.fn();
     const debounced = debounce(fn, 500);
 
-    debounced("first");
-    debounced("second");
+    debounced('first');
+    debounced('second');
     vi.advanceTimersByTime(500);
 
-    expect(fn).toHaveBeenCalledExactlyOnceWith("second");
+    expect(fn).toHaveBeenCalledExactlyOnceWith('second');
   });
 });

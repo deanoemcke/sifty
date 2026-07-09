@@ -1,19 +1,19 @@
-import { RecipeId, type RecipeSource, requirePattern } from "../lib/recipes/metadata";
-import { esc } from "./html";
+import { RecipeId, type RecipeSource, requirePattern } from '../lib/recipes/metadata';
+import { esc } from './html';
 
 // brandColor is the dominant colour sampled from each favicon, used to tint
 // the badge behind it on listing cards.
 const SOURCE_META: Record<RecipeId, { label: string; faviconDomain: string; brandColor: string }> =
   {
     [RecipeId.Trademe]: {
-      label: "Trade Me",
-      faviconDomain: "trademe.co.nz",
-      brandColor: "#feeb33",
+      label: 'Trade Me',
+      faviconDomain: 'trademe.co.nz',
+      brandColor: '#feeb33',
     },
     [RecipeId.Facebook]: {
-      label: "Facebook",
-      faviconDomain: "facebook.com",
-      brandColor: "#0866ff",
+      label: 'Facebook',
+      faviconDomain: 'facebook.com',
+      brandColor: '#0866ff',
     },
   };
 

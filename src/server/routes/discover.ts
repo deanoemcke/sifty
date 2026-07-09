@@ -1,20 +1,20 @@
 // Server-side only — POST /api/discover route handler.
 
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type { DiscoverContext, Fulfillment, ProviderCooldownStore } from "../../lib/recipes/base";
-import { isDiscoverableRecipe } from "../../lib/recipes/base";
-import { requirePositiveNumber, requireString } from "../../lib/validate";
-import { bindAIConfigResolver, getAIConfig } from "../ai";
-import { readBody, sendJSON } from "../helpers";
-import { getAllRecipes } from "../recipes/registry";
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { DiscoverContext, Fulfillment, ProviderCooldownStore } from '../../lib/recipes/base';
+import { isDiscoverableRecipe } from '../../lib/recipes/base';
+import { requirePositiveNumber, requireString } from '../../lib/validate';
+import { bindAIConfigResolver, getAIConfig } from '../ai';
+import { readBody, sendJSON } from '../helpers';
+import { getAllRecipes } from '../recipes/registry';
 
 const SENSITIVE_TOKEN_PATTERNS = [/sk-[a-zA-Z0-9]+/g, /api[_-]?key[=:]\S+/gi, /bearer \S+/gi];
 
 export function sanitiseWarningMessage(reason: unknown): string {
-  const rawMessage = reason instanceof Error ? reason.message : "Recipe failed";
+  const rawMessage = reason instanceof Error ? reason.message : 'Recipe failed';
   return SENSITIVE_TOKEN_PATTERNS.reduce(
-    (message, pattern) => message.replace(pattern, "[redacted]"),
-    rawMessage,
+    (message, pattern) => message.replace(pattern, '[redacted]'),
+    rawMessage
   );
 }
 
@@ -29,7 +29,7 @@ export async function discoverCategoriesAsync(
   discoveryMaxPrice: number,
   discoveryFulfillment: Fulfillment,
   discoveryRegion: string | undefined,
-  cooldownStore: ProviderCooldownStore,
+  cooldownStore: ProviderCooldownStore
 ): Promise<DiscoverResult> {
   getAIConfig(cooldownStore); // fail fast before running any recipe if no provider is configured at all
   const context: DiscoverContext = {
@@ -41,28 +41,28 @@ export async function discoverCategoriesAsync(
   const allRecipes = getAllRecipes();
   const recipes = allRecipes.filter(isDiscoverableRecipe);
   const settled = await Promise.allSettled(
-    recipes.map((r) => r.buildDiscoverUrlsAsync(discoveryPrompt, context)),
+    recipes.map((r) => r.buildDiscoverUrlsAsync(discoveryPrompt, context))
   );
-  const urls = settled.flatMap((r) => (r.status === "fulfilled" ? r.value.urls : []));
+  const urls = settled.flatMap((r) => (r.status === 'fulfilled' ? r.value.urls : []));
   const warnings = [
-    ...settled.flatMap((r) => (r.status === "fulfilled" ? r.value.warnings : [])),
+    ...settled.flatMap((r) => (r.status === 'fulfilled' ? r.value.warnings : [])),
     ...settled
       .map((r, i) => ({ result: r, recipe: recipes[i] }))
       .filter(
         (entry): entry is { result: PromiseRejectedResult; recipe: (typeof recipes)[number] } =>
-          entry.result.status === "rejected",
+          entry.result.status === 'rejected'
       )
       .map(({ result, recipe }) => `${recipe.name}: ${sanitiseWarningMessage(result.reason)}`),
   ];
   if (urls.length === 0)
-    throw new Error(`No URLs returned from any recipe. Errors: ${warnings.join("; ")}`);
+    throw new Error(`No URLs returned from any recipe. Errors: ${warnings.join('; ')}`);
   return { urls, name: discoveryPrompt.trim(), warnings };
 }
 
 export async function handleDiscover(
   request: IncomingMessage,
   response: ServerResponse,
-  cooldownStore: ProviderCooldownStore,
+  cooldownStore: ProviderCooldownStore
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
@@ -70,19 +70,19 @@ export async function handleDiscover(
   let discoveryPrompt: string;
   let discoveryMaxPrice: number;
   try {
-    discoveryPrompt = requireString(rawBody.prompt, "prompt");
-    discoveryMaxPrice = requirePositiveNumber(rawBody.maxPrice, "maxPrice");
+    discoveryPrompt = requireString(rawBody.prompt, 'prompt');
+    discoveryMaxPrice = requirePositiveNumber(rawBody.maxPrice, 'maxPrice');
   } catch (err) {
     sendJSON(response, 400, { error: (err as Error).message });
     return;
   }
-  const VALID_FULFILLMENTS = new Set<Fulfillment>(["any", "pickup", "shipping"]);
-  const rawFulfillment = typeof rawBody.fulfillment === "string" ? rawBody.fulfillment : "any";
+  const VALID_FULFILLMENTS = new Set<Fulfillment>(['any', 'pickup', 'shipping']);
+  const rawFulfillment = typeof rawBody.fulfillment === 'string' ? rawBody.fulfillment : 'any';
   const discoveryFulfillment: Fulfillment = VALID_FULFILLMENTS.has(rawFulfillment as Fulfillment)
     ? (rawFulfillment as Fulfillment)
-    : "any";
+    : 'any';
   const discoveryRegion =
-    typeof rawBody.regionValue === "string" && rawBody.regionValue.trim()
+    typeof rawBody.regionValue === 'string' && rawBody.regionValue.trim()
       ? rawBody.regionValue
       : undefined;
 
@@ -92,7 +92,7 @@ export async function handleDiscover(
       discoveryMaxPrice,
       discoveryFulfillment,
       discoveryRegion,
-      cooldownStore,
+      cooldownStore
     );
     sendJSON(response, 200, result);
   } catch (err) {

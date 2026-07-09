@@ -1,26 +1,26 @@
 // Server-side only — POST /api/deep-search route handler.
 
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type { DeepSearchDetail, Listing } from "../../lib/recipes/base";
-import { requireArray, requireListingUrl } from "../../lib/validate";
-import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from "../cancellation";
-import { MAX_DEEP_SEARCH_ITEMS } from "../constants";
-import { getDb, isFresh, stmtGetDetail, stmtSetDetail } from "../db";
-import { readBody, sendJSON, sse, startSSE } from "../helpers";
-import { getRecipeForUrl } from "../recipes/registry";
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { DeepSearchDetail, Listing } from '../../lib/recipes/base';
+import { requireArray, requireListingUrl } from '../../lib/validate';
+import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from '../cancellation';
+import { MAX_DEEP_SEARCH_ITEMS } from '../constants';
+import { getDb, isFresh, stmtGetDetail, stmtSetDetail } from '../db';
+import { readBody, sendJSON, sse, startSSE } from '../helpers';
+import { getRecipeForUrl } from '../recipes/registry';
 
 export async function handleDeepSearch(
   request: IncomingMessage,
-  response: ServerResponse,
+  response: ServerResponse
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
 
   let validatedListings: Array<{ url: string } & Record<string, unknown>>;
   try {
-    const rawListings = requireArray(rawBody.listings, "listings");
+    const rawListings = requireArray(rawBody.listings, 'listings');
     validatedListings = rawListings.map((item, listingIndex) =>
-      requireListingUrl(item, listingIndex),
+      requireListingUrl(item, listingIndex)
     );
   } catch (err) {
     sendJSON(response, 400, { error: (err as Error).message });
@@ -29,7 +29,7 @@ export async function handleDeepSearch(
 
   const deepSearchIdRaw = rawBody.deepSearchId;
   const deepSearchId =
-    typeof deepSearchIdRaw === "string" && deepSearchIdRaw.trim() ? deepSearchIdRaw : undefined;
+    typeof deepSearchIdRaw === 'string' && deepSearchIdRaw.trim() ? deepSearchIdRaw : undefined;
 
   // Cast to Listing[] — url has been validated; remaining fields are trusted from our own frontend
   // Cap before page allocation to prevent unbounded resource use
@@ -45,7 +45,7 @@ export async function handleDeepSearch(
     listingsByRecipe.set(recipe.name, group);
   }
   if (listingsByRecipe.size === 0) {
-    sendJSON(response, 400, { error: "No recipe found for these listings" });
+    sendJSON(response, 400, { error: 'No recipe found for these listings' });
     return;
   }
 
@@ -67,13 +67,13 @@ export async function handleDeepSearch(
 
   const totalToScrape = [...toScrapeByRecipe.values()].reduce(
     (total, group) => total + group.length,
-    0,
+    0
   );
   if (totalToScrape === 0) {
     console.log(`[cache] detail hit for all ${listings.length} listings`);
     startSSE(response);
-    for (const { url, detail } of fromCache) sse(response, { type: "detail", url, detail });
-    sse(response, { type: "complete" });
+    for (const { url, detail } of fromCache) sse(response, { type: 'detail', url, detail });
+    sse(response, { type: 'complete' });
     response.end();
     return;
   }
@@ -84,17 +84,17 @@ export async function handleDeepSearch(
   startSSE(response);
   if (deepSearchId) {
     registerSearch(deepSearchId);
-    request.on("close", () => cancelSearch(deepSearchId));
+    request.on('close', () => cancelSearch(deepSearchId));
   }
   const isDeepCancelled = () => (deepSearchId ? isSearchCancelled(deepSearchId) : false);
   const deepHeartbeat = setInterval(() => {
     try {
-      response.write(": heartbeat\n\n");
+      response.write(': heartbeat\n\n');
     } catch {
       /* ignore */
     }
   }, 15000);
-  for (const { url, detail } of fromCache) sse(response, { type: "detail", url, detail });
+  for (const { url, detail } of fromCache) sse(response, { type: 'detail', url, detail });
 
   try {
     await Promise.all(
@@ -104,8 +104,8 @@ export async function handleDeepSearch(
         return recipe.deepSearchAsync(
           recipeListings,
           (event) => {
-            if (event.type === "complete") return; // route handler owns termination
-            if (event.type === "detail") {
+            if (event.type === 'complete') return; // route handler owns termination
+            if (event.type === 'detail') {
               stmtSetDetail(database).run(event.url, JSON.stringify(event.detail), Date.now());
               console.log(`[cache][${recipeName}] stored detail for ${event.url}`);
             }
@@ -115,20 +115,20 @@ export async function handleDeepSearch(
               /* client disconnected */
             }
           },
-          isDeepCancelled,
+          isDeepCancelled
         );
-      }),
+      })
     );
     if (!isDeepCancelled())
       try {
-        sse(response, { type: "complete" });
+        sse(response, { type: 'complete' });
       } catch {
         /* ignore */
       }
   } catch (err) {
     if (!isDeepCancelled())
       try {
-        sse(response, { type: "error", message: (err as Error).message });
+        sse(response, { type: 'error', message: (err as Error).message });
       } catch {
         /* ignore */
       }

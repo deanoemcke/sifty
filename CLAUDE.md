@@ -10,6 +10,12 @@ Each worktree's dev server (`npm run dev`) binds to a fixed, deterministic port 
 
 ---
 
+# Formatting & Linting
+
+Formatting and linting are enforced by [Biome](biome.json), not Prettier/ESLint. Run `npm run format` (write) or `npm run check` (verify) before committing — don't hand-tune whitespace, since any formatter run will collapse it back to Biome's rules.
+
+---
+
 # Code Principles
 
 **Named, callable functions only.** Write logic as named, exported functions.

@@ -10,16 +10,16 @@ export enum RecipeId {
 }
 
 export const RECIPE_PATTERNS = [
-  { name: "trademe", recipeId: RecipeId.Trademe, hostname: "trademe.co.nz", pathPrefix: "" },
+  { name: 'trademe', recipeId: RecipeId.Trademe, hostname: 'trademe.co.nz', pathPrefix: '' },
   {
-    name: "facebook",
+    name: 'facebook',
     recipeId: RecipeId.Facebook,
-    hostname: "facebook.com",
-    pathPrefix: "/marketplace/",
+    hostname: 'facebook.com',
+    pathPrefix: '/marketplace/',
   },
 ] as const;
 
-export type RecipeSource = (typeof RECIPE_PATTERNS)[number]["name"];
+export type RecipeSource = (typeof RECIPE_PATTERNS)[number]['name'];
 
 export function requirePattern(name: RecipeSource) {
   const pattern = RECIPE_PATTERNS.find((p) => p.name === name);

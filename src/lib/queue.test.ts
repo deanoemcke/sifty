@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { ConcurrencyQueue, createRegistry } from "./queue";
+import { beforeEach, describe, expect, it } from 'vitest';
+import { ConcurrencyQueue, createRegistry } from './queue';
 
 // A deferred task: doesn't resolve until you call finish().
 function makeTask<T = void>(value: T) {
@@ -11,8 +11,8 @@ function makeTask<T = void>(value: T) {
   return { fn, finish };
 }
 
-describe("ConcurrencyQueue", () => {
-  it("runs tasks up to the concurrency limit", async () => {
+describe('ConcurrencyQueue', () => {
+  it('runs tasks up to the concurrency limit', async () => {
     const queue = new ConcurrencyQueue(2);
     let active = 0;
     let maxActive = 0;
@@ -44,19 +44,19 @@ describe("ConcurrencyQueue", () => {
     expect(active).toBe(0);
   });
 
-  it("returns the resolved value of each task", async () => {
+  it('returns the resolved value of each task', async () => {
     const queue = new ConcurrencyQueue(2);
-    const t1 = makeTask("a");
-    const t2 = makeTask("b");
+    const t1 = makeTask('a');
+    const t2 = makeTask('b');
 
     const results = Promise.all([queue.add(t1.fn), queue.add(t2.fn)]);
     t1.finish();
     t2.finish();
 
-    expect(await results).toEqual(["a", "b"]);
+    expect(await results).toEqual(['a', 'b']);
   });
 
-  it("drains remaining tasks after a slot frees up", async () => {
+  it('drains remaining tasks after a slot frees up', async () => {
     const queue = new ConcurrencyQueue(1);
     const order: number[] = [];
 
@@ -87,7 +87,7 @@ describe("ConcurrencyQueue", () => {
     expect(order).toEqual([1, 2, 3]);
   });
 
-  it("two queues with different limits run simultaneously without blocking each other", async () => {
+  it('two queues with different limits run simultaneously without blocking each other', async () => {
     const tradeMe = new ConcurrencyQueue(3); // trademe.co.nz
     const facebook = new ConcurrencyQueue(2); // facebook.com
 
@@ -165,14 +165,14 @@ function makeBlocker(counter: { v: number; max: number }, combinedRef?: { v: num
   return { fn, finish };
 }
 
-describe("enqueue — pagination concurrency", () => {
+describe('enqueue — pagination concurrency', () => {
   let enqueue: ReturnType<typeof createRegistry>;
   beforeEach(() => {
     enqueue = createRegistry();
   });
 
-  it("paginated TradeMe URLs (same hostname, different ?page=N) share one queue and start concurrently", async () => {
-    const searchUrl = "https://www.trademe.co.nz/a/marketplace/search?search_string=macbook";
+  it('paginated TradeMe URLs (same hostname, different ?page=N) share one queue and start concurrently', async () => {
+    const searchUrl = 'https://www.trademe.co.nz/a/marketplace/search?search_string=macbook';
     const totalPages = 5;
     let active = 0;
     let maxActive = 0;
@@ -184,7 +184,7 @@ describe("enqueue — pagination concurrency", () => {
         finish = r;
       });
       const u = new URL(searchUrl);
-      u.searchParams.set("page", String(p));
+      u.searchParams.set('page', String(p));
       const pageUrl = u.toString();
       const fn = async () => {
         active++;
@@ -210,20 +210,20 @@ describe("enqueue — pagination concurrency", () => {
   });
 });
 
-describe("enqueue (domain registry)", () => {
+describe('enqueue (domain registry)', () => {
   let enqueue: ReturnType<typeof createRegistry>;
   beforeEach(() => {
     enqueue = createRegistry();
   });
 
-  it("two searches for the same domain share a single concurrency limit", async () => {
+  it('two searches for the same domain share a single concurrency limit', async () => {
     const active = { v: 0, max: 0 };
 
     // 6 tasks for trademe.co.nz (domain limit = 3)
     const tasks = Array.from({ length: 6 }, () => makeBlocker(active));
 
     const all = Promise.all(
-      tasks.map((t) => enqueue("https://www.trademe.co.nz/a/listing/123", t.fn)),
+      tasks.map((t) => enqueue('https://www.trademe.co.nz/a/listing/123', t.fn))
     );
     await Promise.resolve();
 
@@ -236,7 +236,7 @@ describe("enqueue (domain registry)", () => {
     expect(active.v).toBe(0);
   });
 
-  it("different domains run concurrently each respecting their own limit", async () => {
+  it('different domains run concurrently each respecting their own limit', async () => {
     const tmActive = { v: 0, max: 0 };
     const fbActive = { v: 0, max: 0 };
     let combinedMax = 0;
@@ -272,8 +272,8 @@ describe("enqueue (domain registry)", () => {
     });
 
     const all = Promise.all([
-      ...tmTasks.map((t) => enqueue("https://www.trademe.co.nz/a/listing/1", t.fn)),
-      ...fbTasks.map((t) => enqueue("https://www.facebook.com/marketplace/item/1/", t.fn)),
+      ...tmTasks.map((t) => enqueue('https://www.trademe.co.nz/a/listing/1', t.fn)),
+      ...fbTasks.map((t) => enqueue('https://www.facebook.com/marketplace/item/1/', t.fn)),
     ]);
     await Promise.resolve();
 

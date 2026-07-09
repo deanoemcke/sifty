@@ -2,12 +2,12 @@
 // keyboard/screen-reader access has to be restored explicitly: button
 // semantics on each card, and Enter/Space activation on the container.
 
-import { EXTERNAL_LINK_BUTTON_CLASS_NAME } from "./listingHtml";
+import { EXTERNAL_LINK_BUTTON_CLASS_NAME } from './listingHtml';
 
 export function applyListingCardAccessibility(card: HTMLElement, listingTitle: string): void {
   card.tabIndex = 0;
-  card.setAttribute("role", "button");
-  card.setAttribute("aria-label", listingTitle);
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', listingTitle);
 }
 
 // Shared by the click and keydown paths below: the external-link button is
@@ -21,12 +21,12 @@ export function isExternalLinkTarget(target: HTMLElement): boolean {
 
 export function handleListingCardKeydown(
   keyboardEvent: KeyboardEvent,
-  openCard: (card: HTMLElement) => void,
+  openCard: (card: HTMLElement) => void
 ): void {
-  if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") return;
+  if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
   const target = keyboardEvent.target as HTMLElement;
   if (isExternalLinkTarget(target)) return;
-  const card = target.closest<HTMLElement>(".listing-card");
+  const card = target.closest<HTMLElement>('.listing-card');
   if (!card) return;
   keyboardEvent.preventDefault();
   openCard(card);
@@ -34,5 +34,5 @@ export function handleListingCardKeydown(
 
 export function resolveListingCardOpenArea(target: HTMLElement): HTMLElement | null {
   if (isExternalLinkTarget(target)) return null;
-  return target.closest<HTMLElement>(".listing-open-area");
+  return target.closest<HTMLElement>('.listing-open-area');
 }

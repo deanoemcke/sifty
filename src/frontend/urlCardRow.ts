@@ -4,18 +4,18 @@
 // action itself is injected into createUrlCard so this module never depends
 // on the quick-search implementation.
 
-import { isValidRecipeUrl, recipeIdForUrl } from "../lib/recipes/matcher";
-import type { RecipeId } from "../lib/recipes/metadata";
-import { getElement, requireChild } from "./domUtils";
-import { esc } from "./html";
+import { isValidRecipeUrl, recipeIdForUrl } from '../lib/recipes/matcher';
+import type { RecipeId } from '../lib/recipes/metadata';
+import { getElement, requireChild } from './domUtils';
+import { esc } from './html';
 import {
   applyClientFilters,
   getCardByUrl,
   getOrderedListings,
   renderDerived,
   renderFilteredToggle,
-} from "./resultsView";
-import { type CardStatusSnapshot, cardStatusText } from "./searchStatusText";
+} from './resultsView';
+import { type CardStatusSnapshot, cardStatusText } from './searchStatusText';
 import {
   canCancelSearch,
   cardIdByUrl,
@@ -25,7 +25,7 @@ import {
   setAiFilterPendingRun,
   setIsAiFilterRunning,
   type UrlCardData,
-} from "./state";
+} from './state';
 import {
   addUrlCard,
   removeUrlCardEntry,
@@ -33,8 +33,8 @@ import {
   type UrlCardDom,
   urlCardData,
   urlCards,
-} from "./urlCardStore";
-import { expandUrlGroup, syncUrlGroups, updateUrlGroupHeaders } from "./urlGroupsView";
+} from './urlCardStore';
+import { expandUrlGroup, syncUrlGroups, updateUrlGroupHeaders } from './urlGroupsView';
 
 export function cardStatusSnapshot(card: UrlCard): CardStatusSnapshot {
   const data = urlCardData(card);
@@ -54,34 +54,34 @@ export function renderCardStatus(card: UrlCard): void {
   const status = cardStatusText(cardStatusSnapshot(card));
   const statusBar = card.dom.statusElement;
   if (!status) {
-    statusBar.classList.add("hidden");
+    statusBar.classList.add('hidden');
     return;
   }
   statusBar.className = `url-card-status ${status.kind}`;
   statusBar.innerHTML =
-    status.kind === "info"
+    status.kind === 'info'
       ? `<span class="spinner"></span><span>${esc(status.text)}</span>`
       : `<span>${esc(status.text)}</span>`;
   if (canCancelSearch(urlCardData(card).searchStatus)) {
-    const cancelButton = document.createElement("button");
-    cancelButton.className = "cache-clear-btn";
-    cancelButton.style.marginLeft = "0.5rem";
-    cancelButton.textContent = "cancel";
-    cancelButton.addEventListener("click", () => cancelSearch(card));
+    const cancelButton = document.createElement('button');
+    cancelButton.className = 'cache-clear-btn';
+    cancelButton.style.marginLeft = '0.5rem';
+    cancelButton.textContent = 'cancel';
+    cancelButton.addEventListener('click', () => cancelSearch(card));
     statusBar.appendChild(cancelButton);
   }
-  statusBar.classList.remove("hidden");
+  statusBar.classList.remove('hidden');
   updateUrlGroupHeaders();
 }
 
 export function cancelSearch(card: UrlCard): void {
   const data = urlCardData(card);
   if (!canCancelSearch(data.searchStatus)) return;
-  data.searchStatus = "cancelling";
+  data.searchStatus = 'cancelling';
   renderCardStatus(card);
-  fetch("/api/cancel-search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+  fetch('/api/cancel-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ searchId: data.searchId }),
   }).catch(() => null);
 }
@@ -108,12 +108,12 @@ export function handleUrlInputChanged(card: UrlCard): void {
 export function renderUrlRowMode(card: UrlCard): void {
   const data = urlCardData(card);
   const url = card.dom.input.value.trim();
-  const showLink = data.searchStatus !== "idle" || data.wasCancelled || data.searchedUrl !== "";
+  const showLink = data.searchStatus !== 'idle' || data.wasCancelled || data.searchedUrl !== '';
   card.dom.linkElement.href = url;
   card.dom.linkElement.textContent = url;
-  card.dom.linkElement.classList.toggle("hidden", !showLink);
-  card.dom.input.classList.toggle("hidden", showLink);
-  card.dom.searchButton.classList.toggle("hidden", showLink);
+  card.dom.linkElement.classList.toggle('hidden', !showLink);
+  card.dom.input.classList.toggle('hidden', showLink);
+  card.dom.searchButton.classList.toggle('hidden', showLink);
 }
 
 export function canSearchCard(card: UrlCard): boolean {
@@ -132,8 +132,8 @@ export const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="non
 export const SEARCH_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
 
 export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>): UrlCard {
-  const cardEl = document.createElement("div");
-  cardEl.className = "source-url-row";
+  const cardEl = document.createElement('div');
+  cardEl.className = 'source-url-row';
   cardEl.innerHTML = `
     <div class="url-row">
       <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
@@ -144,19 +144,19 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     <div class="url-card-status hidden"></div>
     <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
   `;
-  getElement("urlCardsContainer").appendChild(cardEl);
+  getElement('urlCardsContainer').appendChild(cardEl);
 
-  const input = requireChild<HTMLInputElement>(cardEl, ".url-input");
-  const linkElement = requireChild<HTMLAnchorElement>(cardEl, ".url-link");
-  const searchButton = requireChild<HTMLButtonElement>(cardEl, ".url-search-btn");
-  const removeButton = requireChild<HTMLButtonElement>(cardEl, ".url-remove-btn");
-  const criteriaElement = requireChild<HTMLElement>(cardEl, ".url-criteria");
-  const cacheStatusElement = requireChild<HTMLElement>(cardEl, ".cache-status");
-  const statusElement = requireChild<HTMLElement>(cardEl, ".url-card-status");
+  const input = requireChild<HTMLInputElement>(cardEl, '.url-input');
+  const linkElement = requireChild<HTMLAnchorElement>(cardEl, '.url-link');
+  const searchButton = requireChild<HTMLButtonElement>(cardEl, '.url-search-btn');
+  const removeButton = requireChild<HTMLButtonElement>(cardEl, '.url-remove-btn');
+  const criteriaElement = requireChild<HTMLElement>(cardEl, '.url-criteria');
+  const cacheStatusElement = requireChild<HTMLElement>(cardEl, '.cache-status');
+  const statusElement = requireChild<HTMLElement>(cardEl, '.url-card-status');
 
   const data: UrlCardData = {
-    searchStatus: "idle",
-    searchedUrl: "",
+    searchStatus: 'idle',
+    searchedUrl: '',
     searchId: null,
     listingUrls: [],
     lastProgress: null,
@@ -175,14 +175,14 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   };
   const urlCard = addUrlCard(dom, data);
 
-  input.addEventListener("input", () => handleUrlInputChanged(urlCard));
-  input.addEventListener("keydown", (keyboardEvent: KeyboardEvent) => {
-    if (keyboardEvent.key === "Enter" && canSearchCard(urlCard)) searchCardAsync(urlCard);
+  input.addEventListener('input', () => handleUrlInputChanged(urlCard));
+  input.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
+    if (keyboardEvent.key === 'Enter' && canSearchCard(urlCard)) searchCardAsync(urlCard);
   });
-  searchButton.addEventListener("click", () => {
+  searchButton.addEventListener('click', () => {
     if (canSearchCard(urlCard)) searchCardAsync(urlCard);
   });
-  removeButton.addEventListener("click", () => removeUrlCard(urlCard));
+  removeButton.addEventListener('click', () => removeUrlCard(urlCard));
 
   updateRemoveButtons();
   syncUrlGroups();
@@ -193,24 +193,24 @@ export function resetAllResults(): void {
   setIsAiFilterRunning(false);
   setAiFilterPendingRun(false);
   listingsByUrl.clear();
-  getElement("listingsContainer").innerHTML = "";
-  getElement("resultCount").textContent = "0";
-  getElement("totalCount").textContent = "0";
+  getElement('listingsContainer').innerHTML = '';
+  getElement('resultCount').textContent = '0';
+  getElement('totalCount').textContent = '0';
   renderFilteredToggle();
-  getElement("resultsSection").classList.add("hidden");
+  getElement('resultsSection').classList.add('hidden');
   for (const card of urlCards) {
     const data = urlCardData(card);
     data.listingUrls = [];
-    data.searchStatus = "idle";
-    data.searchedUrl = "";
+    data.searchStatus = 'idle';
+    data.searchedUrl = '';
     data.lastProgress = null;
     data.errorMessage = null;
     data.wasCancelled = false;
-    requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
-    card.dom.criteriaElement.classList.add("hidden");
-    card.dom.cacheStatusElement.classList.add("hidden");
-    card.dom.cacheStatusElement.innerHTML = "";
-    card.dom.statusElement.classList.add("hidden");
+    requireChild<HTMLElement>(card.dom.criteriaElement, '.criteria-grid').innerHTML = '';
+    card.dom.criteriaElement.classList.add('hidden');
+    card.dom.cacheStatusElement.classList.add('hidden');
+    card.dom.cacheStatusElement.innerHTML = '';
+    card.dom.statusElement.classList.add('hidden');
     data.searchId = null;
     card.dom.input.readOnly = false;
     renderUrlRowMode(card);
@@ -220,13 +220,13 @@ export function resetAllResults(): void {
 
 export function updateRemoveButtons(): void {
   const show = urlCards.length > 1;
-  for (const card of urlCards) card.dom.removeButton.classList.toggle("hidden", !show);
+  for (const card of urlCards) card.dom.removeButton.classList.toggle('hidden', !show);
 }
 
 export function resetCardForResearch(card: UrlCard): void {
   const data = urlCardData(card);
   const otherUrls = new Set(
-    urlCards.flatMap((c) => (c === card ? [] : urlCardData(c).listingUrls)),
+    urlCards.flatMap((c) => (c === card ? [] : urlCardData(c).listingUrls))
   );
   for (const url of data.listingUrls) {
     if (!otherUrls.has(url)) {
@@ -236,25 +236,25 @@ export function resetCardForResearch(card: UrlCard): void {
     }
   }
   data.listingUrls = [];
-  data.searchStatus = "idle";
-  data.searchedUrl = "";
+  data.searchStatus = 'idle';
+  data.searchedUrl = '';
   data.lastProgress = null;
   data.errorMessage = null;
   data.wasCancelled = false;
-  requireChild<HTMLElement>(card.dom.criteriaElement, ".criteria-grid").innerHTML = "";
-  card.dom.criteriaElement.classList.add("hidden");
-  card.dom.cacheStatusElement.classList.add("hidden");
-  card.dom.cacheStatusElement.innerHTML = "";
-  card.dom.statusElement.classList.add("hidden");
+  requireChild<HTMLElement>(card.dom.criteriaElement, '.criteria-grid').innerHTML = '';
+  card.dom.criteriaElement.classList.add('hidden');
+  card.dom.cacheStatusElement.classList.add('hidden');
+  card.dom.cacheStatusElement.innerHTML = '';
+  card.dom.statusElement.classList.add('hidden');
   card.dom.input.readOnly = false;
   renderUrlRowMode(card);
-  if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
+  if (getOrderedListings().length === 0) getElement('resultsSection').classList.add('hidden');
   renderDerived();
 }
 
 export function removeUrlCard(card: UrlCard): void {
   const otherUrls = new Set(
-    urlCards.flatMap((c) => (c === card ? [] : urlCardData(c).listingUrls)),
+    urlCards.flatMap((c) => (c === card ? [] : urlCardData(c).listingUrls))
   );
   for (const url of urlCardData(card).listingUrls) {
     if (!otherUrls.has(url)) {
@@ -265,7 +265,7 @@ export function removeUrlCard(card: UrlCard): void {
   }
   card.dom.containerElement.remove();
   removeUrlCardEntry(card);
-  if (getOrderedListings().length === 0) getElement("resultsSection").classList.add("hidden");
+  if (getOrderedListings().length === 0) getElement('resultsSection').classList.add('hidden');
   updateRemoveButtons();
   syncUrlGroups();
   applyClientFilters();

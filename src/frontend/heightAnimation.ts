@@ -7,20 +7,20 @@ const SLIDE_DURATION_MS = 220;
 
 function prefersReducedMotion(): boolean {
   return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
 }
 
 function canAnimate(element: HTMLElement): boolean {
-  return typeof element.animate === "function" && !prefersReducedMotion();
+  return typeof element.animate === 'function' && !prefersReducedMotion();
 }
 
 function heightKeyframes(fromHeight: number, toHeight: number): Keyframe[] {
   return [
-    { height: `${fromHeight}px`, overflow: "hidden" },
-    { height: `${toHeight}px`, overflow: "hidden" },
+    { height: `${fromHeight}px`, overflow: 'hidden' },
+    { height: `${toHeight}px`, overflow: 'hidden' },
   ];
 }
 
@@ -31,13 +31,13 @@ export function animateHeightTransition(element: HTMLElement, fromHeight: number
   if (fromHeight === toHeight) return;
   element.animate(heightKeyframes(fromHeight, toHeight), {
     duration: SLIDE_DURATION_MS,
-    easing: "ease",
+    easing: 'ease',
   });
 }
 
 // Unhides the element and slides it open from zero height.
 export function expandElement(element: HTMLElement): void {
-  element.classList.remove("hidden");
+  element.classList.remove('hidden');
   animateHeightTransition(element, 0);
 }
 
@@ -46,9 +46,9 @@ export async function collapseElementAsync(element: HTMLElement): Promise<void> 
   if (canAnimate(element)) {
     const animation = element.animate(heightKeyframes(element.offsetHeight, 0), {
       duration: SLIDE_DURATION_MS,
-      easing: "ease",
+      easing: 'ease',
     });
     await animation.finished.catch(() => undefined);
   }
-  element.classList.add("hidden");
+  element.classList.add('hidden');
 }

@@ -9,7 +9,7 @@
  */
 
 export function requireString(val: unknown, field: string): string {
-  if (typeof val !== "string" || val.trim() === "") {
+  if (typeof val !== 'string' || val.trim() === '') {
     throw new Error(`${field} is required and must be a non-empty string`);
   }
   return val;
@@ -39,25 +39,25 @@ const DISCOVER_INPUTS_MAX_BYTES = 4096;
 
 export function parseDiscoverInputs(val: unknown): string | null {
   if (val == null) return null;
-  if (typeof val !== "object" || Array.isArray(val)) {
-    throw new Error("discoverInputs must be a plain object");
+  if (typeof val !== 'object' || Array.isArray(val)) {
+    throw new Error('discoverInputs must be a plain object');
   }
   const serialised = JSON.stringify(val);
   if (serialised.length > DISCOVER_INPUTS_MAX_BYTES) {
-    throw new Error("discoverInputs exceeds maximum size");
+    throw new Error('discoverInputs exceeds maximum size');
   }
   return serialised;
 }
 
 export function requireListingUrl(
   item: unknown,
-  index: number,
+  index: number
 ): { url: string } & Record<string, unknown> {
-  if (typeof item !== "object" || item === null) {
+  if (typeof item !== 'object' || item === null) {
     throw new Error(`listings[${index}] must be an object`);
   }
   const obj = item as Record<string, unknown>;
-  if (typeof obj.url !== "string" || obj.url.trim() === "") {
+  if (typeof obj.url !== 'string' || obj.url.trim() === '') {
     throw new Error(`listings[${index}].url is required and must be a non-empty string`);
   }
   return obj as { url: string } & Record<string, unknown>;

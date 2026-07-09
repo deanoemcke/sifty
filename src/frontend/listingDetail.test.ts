@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getElement } from "./domUtils";
-import { deepSearchListingAsync, runDeepSearchAsync } from "./listingDetail";
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getElement } from './domUtils';
+import { deepSearchListingAsync, runDeepSearchAsync } from './listingDetail';
 import {
   type ListingItem,
   listingsByUrl,
   resetState,
   setOpenModalListingUrl,
   urlCardDataById,
-} from "./state";
-import { makeListing, makeListingItem } from "./testFixtures";
+} from './state';
+import { makeListing, makeListingItem } from './testFixtures';
 
 function makeItem(url: string): ListingItem {
   return makeListingItem({
-    data: makeListing({ url, title: `Listing ${url}`, location: "Auckland" }),
+    data: makeListing({ url, title: `Listing ${url}`, location: 'Auckland' }),
   });
 }
 
@@ -32,13 +32,13 @@ function stubDeepSearchStream(events: Record<string, unknown>[]): void {
     },
   };
   vi.stubGlobal(
-    "fetch",
+    'fetch',
     vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({}),
       body: { getReader: () => reader },
-    }),
+    })
   );
 }
 
@@ -61,43 +61,43 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("deepSearchListingAsync", () => {
-  it("does not mark the listing deep-searched when the fetch fails, and shows the error", async () => {
-    const item = makeItem("https://www.trademe.co.nz/listing/1");
+describe('deepSearchListingAsync', () => {
+  it('does not mark the listing deep-searched when the fetch fails, and shows the error', async () => {
+    const item = makeItem('https://www.trademe.co.nz/listing/1');
     setOpenModalListingUrl(item.data.url);
     stubDeepSearchStream([
-      { type: "detail-error", url: item.data.url, message: "failed to fetch listing detail" },
+      { type: 'detail-error', url: item.data.url, message: 'failed to fetch listing detail' },
     ]);
 
     await deepSearchListingAsync(item);
 
     expect(item.hasBeenDeepSearched).toBe(false);
-    expect(getElement("listingModalBody").innerHTML).toContain("failed to fetch listing detail");
+    expect(getElement('listingModalBody').innerHTML).toContain('failed to fetch listing detail');
   });
 
-  it("marks the listing deep-searched and merges data on a successful detail event", async () => {
-    const item = makeItem("https://www.trademe.co.nz/listing/2");
+  it('marks the listing deep-searched and merges data on a successful detail event', async () => {
+    const item = makeItem('https://www.trademe.co.nz/listing/2');
     setOpenModalListingUrl(item.data.url);
     stubDeepSearchStream([
-      { type: "detail", url: item.data.url, detail: { description: "Great item" } },
+      { type: 'detail', url: item.data.url, detail: { description: 'Great item' } },
     ]);
 
     await deepSearchListingAsync(item);
 
     expect(item.hasBeenDeepSearched).toBe(true);
-    expect(item.data.description).toBe("Great item");
+    expect(item.data.description).toBe('Great item');
   });
 });
 
-describe("runDeepSearchAsync — mixed success/failure batch", () => {
-  it("leaves the failed listing eligible for retry while the successful one is marked done", async () => {
-    const okItem = makeItem("https://www.trademe.co.nz/listing/ok");
-    const failedItem = makeItem("https://www.trademe.co.nz/listing/failed");
+describe('runDeepSearchAsync — mixed success/failure batch', () => {
+  it('leaves the failed listing eligible for retry while the successful one is marked done', async () => {
+    const okItem = makeItem('https://www.trademe.co.nz/listing/ok');
+    const failedItem = makeItem('https://www.trademe.co.nz/listing/failed');
     listingsByUrl.set(okItem.data.url, okItem);
     listingsByUrl.set(failedItem.data.url, failedItem);
-    urlCardDataById.set("card-1", {
-      searchStatus: "done",
-      searchedUrl: "https://www.trademe.co.nz/search/test",
+    urlCardDataById.set('card-1', {
+      searchStatus: 'done',
+      searchedUrl: 'https://www.trademe.co.nz/search/test',
       searchId: null,
       listingUrls: [okItem.data.url, failedItem.data.url],
       lastProgress: null,
@@ -106,13 +106,13 @@ describe("runDeepSearchAsync — mixed success/failure batch", () => {
     });
 
     stubDeepSearchStream([
-      { type: "detail", url: okItem.data.url, detail: { description: "Great item" } },
+      { type: 'detail', url: okItem.data.url, detail: { description: 'Great item' } },
       {
-        type: "detail-error",
+        type: 'detail-error',
         url: failedItem.data.url,
-        message: "failed to fetch listing detail",
+        message: 'failed to fetch listing detail',
       },
-      { type: "complete" },
+      { type: 'complete' },
     ]);
 
     await runDeepSearchAsync();

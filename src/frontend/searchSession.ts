@@ -3,7 +3,7 @@
 // result into the URL cards. Everything that turns a stored/discovered search
 // into a live session lives here.
 
-import { fireAllCardSearches } from "./cardSearch";
+import { fireAllCardSearches } from './cardSearch';
 import {
   applyLoadedDiscoverInputs,
   DISCOVERY_BUTTON_BUSY_LABEL,
@@ -12,36 +12,36 @@ import {
   fulfillmentFromAllowShipping,
   readDiscoverInputs,
   updateDiscoveryBtn,
-} from "./discoveryForm";
-import { getElement } from "./domUtils";
-import { esc } from "./html";
-import { parseMaxPrice } from "./parseUtils";
-import { searchUrlCardAsync } from "./quickSearch";
-import { activateSidebarTab } from "./sidebarTabs";
-import { currentSearchName, type SavedSearch, setCurrentSearchName } from "./state";
+} from './discoveryForm';
+import { getElement } from './domUtils';
+import { esc } from './html';
+import { parseMaxPrice } from './parseUtils';
+import { searchUrlCardAsync } from './quickSearch';
+import { activateSidebarTab } from './sidebarTabs';
+import { currentSearchName, type SavedSearch, setCurrentSearchName } from './state';
 import {
   createUrlCard,
   handleUrlInputChanged,
   removeUrlCard,
   resetAllResults,
   X_ICON,
-} from "./urlCardRow";
-import { urlCards } from "./urlCardStore";
+} from './urlCardRow';
+import { urlCards } from './urlCardStore';
 
 export function markDirty(): void {
-  getElement("saveCurrentBtn").classList.remove("hidden");
+  getElement('saveCurrentBtn').classList.remove('hidden');
 }
 
 export function setSearchName(name: string | null): void {
   setCurrentSearchName(name);
-  getElement("saveCurrentBtn").classList.add("hidden");
+  getElement('saveCurrentBtn').classList.add('hidden');
 }
 
 // ── Saved searches ────────────────────────────────────────────────────────────
 
 export async function fetchSavedSearchesAsync(): Promise<void> {
   try {
-    const response = await fetch("/api/saved-searches", { cache: "no-store" });
+    const response = await fetch('/api/saved-searches', { cache: 'no-store' });
     const data = (await response.json()) as { searches: SavedSearch[] };
     renderSavedSearches(data.searches);
   } catch {
@@ -50,11 +50,11 @@ export async function fetchSavedSearchesAsync(): Promise<void> {
 }
 
 export function renderSavedSearches(searches: SavedSearch[]): void {
-  const list = getElement("savedSearchesList");
-  const count = getElement("savedSearchesCount");
+  const list = getElement('savedSearchesList');
+  const count = getElement('savedSearchesCount');
 
   count.textContent = String(searches.length);
-  count.classList.toggle("hidden", searches.length === 0);
+  count.classList.toggle('hidden', searches.length === 0);
 
   if (searches.length === 0) {
     list.innerHTML = '<p class="deep-empty">No favourites yet.</p>';
@@ -67,43 +67,43 @@ export function renderSavedSearches(searches: SavedSearch[]): void {
       <a class="saved-search-name load-saved-btn" href="#" title="${esc(savedSearch.name)}">${esc(savedSearch.name)}</a>
       <button class="btn icon-btn delete-saved-btn" type="button" title="Delete">${X_ICON}</button>
     </div>
-  `,
+  `
     )
-    .join("");
+    .join('');
 }
 
 export async function saveCurrentSearchAsync(name: string): Promise<void> {
   const urls = urlCards.map((card) => card.dom.input.value.trim()).filter(Boolean);
   if (!name.trim() || urls.length === 0) return;
-  const response = await fetch("/api/saved-searches", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+  const response = await fetch('/api/saved-searches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: name.trim(),
       urls,
       discoverInputs: readDiscoverInputs(),
-      aiFilter: getElement<HTMLTextAreaElement>("aiFilter").value.trim() || null,
+      aiFilter: getElement<HTMLTextAreaElement>('aiFilter').value.trim() || null,
     }),
   });
   if (response.ok) await fetchSavedSearchesAsync();
 }
 
 export async function deleteSavedSearchAsync(id: string): Promise<void> {
-  await fetch(`/api/saved-searches/${id}`, { method: "DELETE" });
+  await fetch(`/api/saved-searches/${id}`, { method: 'DELETE' });
   await fetchSavedSearchesAsync();
 }
 
-type UrlsSectionState = "idle" | "discovering" | "ready";
+type UrlsSectionState = 'idle' | 'discovering' | 'ready';
 
 // The URL cards section stays hidden ("idle") until the first search of the
 // session — either a discovery run or loading a favourite. Every caller that
 // changes what the section shows goes through this so visibility ownership
 // isn't implicit in call order.
 export function setUrlsSectionState(state: UrlsSectionState): void {
-  getElement("urlsSection").classList.toggle("hidden", state === "idle");
-  getElement("urlPlaceholder").classList.toggle("hidden", state !== "discovering");
-  getElement("urlCardsContainer").classList.toggle("hidden", state === "discovering");
-  getElement("addUrlBtn").classList.toggle("hidden", state === "discovering");
+  getElement('urlsSection').classList.toggle('hidden', state === 'idle');
+  getElement('urlPlaceholder').classList.toggle('hidden', state !== 'discovering');
+  getElement('urlCardsContainer').classList.toggle('hidden', state === 'discovering');
+  getElement('addUrlBtn').classList.toggle('hidden', state === 'discovering');
 }
 
 // loadDiscoveryResults, loadSavedSearchAsync, and handleDiscoverySubmitAsync
@@ -115,7 +115,7 @@ function trimUrlCardsToOne(): void {
 
 export function loadDiscoveryResults(
   data: { urls: string[]; name: string },
-  aiPrompt: string,
+  aiPrompt: string
 ): void {
   trimUrlCardsToOne();
   urlCards[0].dom.input.value = data.urls[0];
@@ -125,7 +125,7 @@ export function loadDiscoveryResults(
   for (const card of urlCards) handleUrlInputChanged(card);
   setSearchName(data.name);
   markDirty();
-  getElement<HTMLTextAreaElement>("aiFilter").value = aiPrompt;
+  getElement<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
   // loadDiscoveryResults owns the dispatch: kick off a search for every configured card.
   fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
@@ -136,7 +136,7 @@ let discoveryRequestId = 0;
 
 export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   discoveryRequestId++;
-  setUrlsSectionState("ready");
+  setUrlsSectionState('ready');
   trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
   if (search.urls.length === 0) return;
@@ -145,9 +145,9 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
     createUrlCard(searchUrlCardAsync).dom.input.value = search.urls[urlIndex];
   }
   for (const card of urlCards) handleUrlInputChanged(card);
-  getElement<HTMLTextAreaElement>("aiFilter").value = search.aiFilter ?? "";
+  getElement<HTMLTextAreaElement>('aiFilter').value = search.aiFilter ?? '';
   setSearchName(search.name);
-  activateSidebarTab(document, "search");
+  activateSidebarTab(document, 'search');
   // loadSavedSearchAsync owns the dispatch: kick off a search for every configured card.
   fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
@@ -156,26 +156,26 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
 
 export async function handleDiscoverySubmitAsync(): Promise<void> {
   const requestId = ++discoveryRequestId;
-  const prompt = getElement<HTMLTextAreaElement>("discoveryPrompt").value.trim();
+  const prompt = getElement<HTMLTextAreaElement>('discoveryPrompt').value.trim();
   if (!prompt) return;
-  const maxPrice = parseMaxPrice(getElement<HTMLInputElement>("discoveryMaxPrice").value);
+  const maxPrice = parseMaxPrice(getElement<HTMLInputElement>('discoveryMaxPrice').value);
   const fulfillment = fulfillmentFromAllowShipping(
-    getElement<HTMLInputElement>("discoveryAllowShipping").checked,
+    getElement<HTMLInputElement>('discoveryAllowShipping').checked
   );
-  const regionValue = getElement<HTMLSelectElement>("discoveryRegion").value || undefined;
-  const discoveryButton = getElement<HTMLButtonElement>("discoveryBtn");
-  const discoveryErrorElement = getElement<HTMLDivElement>("discoveryError");
-  discoveryErrorElement.style.display = "none";
+  const regionValue = getElement<HTMLSelectElement>('discoveryRegion').value || undefined;
+  const discoveryButton = getElement<HTMLButtonElement>('discoveryBtn');
+  const discoveryErrorElement = getElement<HTMLDivElement>('discoveryError');
+  discoveryErrorElement.style.display = 'none';
   discoveryButton.disabled = true;
   discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
-  setUrlsSectionState("discovering");
+  setUrlsSectionState('discovering');
   trimUrlCardsToOne();
-  urlCards[0].dom.input.value = "";
+  urlCards[0].dom.input.value = '';
   handleUrlInputChanged(urlCards[0]);
   try {
-    const response = await fetch("/api/discover", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const response = await fetch('/api/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, maxPrice, fulfillment, regionValue }),
     });
     const data = (await response.json()) as {
@@ -187,62 +187,62 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
     // result is stale and must not overwrite what the user is now looking at.
     if (requestId !== discoveryRequestId) return;
     if (!response.ok || !data.urls?.length) {
-      discoveryErrorElement.textContent = data.error ?? "Discovery failed";
-      discoveryErrorElement.style.display = "block";
+      discoveryErrorElement.textContent = data.error ?? 'Discovery failed';
+      discoveryErrorElement.style.display = 'block';
       return;
     }
     loadDiscoveryResults(data as { urls: string[]; name: string }, prompt);
   } catch {
     if (requestId === discoveryRequestId) {
-      discoveryErrorElement.textContent = "Discovery failed";
-      discoveryErrorElement.style.display = "block";
+      discoveryErrorElement.textContent = 'Discovery failed';
+      discoveryErrorElement.style.display = 'block';
     }
   } finally {
     discoveryButton.textContent = DISCOVERY_BUTTON_LABEL;
     updateDiscoveryBtn();
-    setUrlsSectionState("ready");
+    setUrlsSectionState('ready');
   }
 }
 
 // ── Save-search modal ─────────────────────────────────────────────────────────
 
 export function openSaveSearchModal(): void {
-  const input = getElement<HTMLInputElement>("saveSearchName");
-  input.value = currentSearchName ?? "";
+  const input = getElement<HTMLInputElement>('saveSearchName');
+  input.value = currentSearchName ?? '';
   input.select();
-  getElement("saveSearchModal").classList.remove("hidden");
+  getElement('saveSearchModal').classList.remove('hidden');
   input.focus();
 }
 
 export function closeSaveSearchModal(): void {
-  getElement("saveSearchModal").classList.add("hidden");
+  getElement('saveSearchModal').classList.add('hidden');
 }
 
 export async function handleSaveSearchConfirmAsync(): Promise<void> {
-  const name = getElement<HTMLInputElement>("saveSearchName").value.trim();
+  const name = getElement<HTMLInputElement>('saveSearchName').value.trim();
   if (!name) return;
-  const confirmButton = getElement<HTMLButtonElement>("saveSearchConfirmBtn");
+  const confirmButton = getElement<HTMLButtonElement>('saveSearchConfirmBtn');
   confirmButton.disabled = true;
   await saveCurrentSearchAsync(name);
   setSearchName(name);
   closeSaveSearchModal();
   confirmButton.disabled = false;
-  activateSidebarTab(document, "favourites");
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  activateSidebarTab(document, 'favourites');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ── Saved-search list delegation ──────────────────────────────────────────────
 
 export async function handleSavedSearchListClickAsync(mouseEvent: MouseEvent): Promise<void> {
-  const row = (mouseEvent.target as HTMLElement).closest<HTMLElement>(".saved-search-row");
+  const row = (mouseEvent.target as HTMLElement).closest<HTMLElement>('.saved-search-row');
   if (!row) return;
   const savedSearchId = row.dataset.id;
-  if (!savedSearchId) throw new Error("saved-search-row missing data-id attribute");
-  if ((mouseEvent.target as HTMLElement).closest(".delete-saved-btn")) {
+  if (!savedSearchId) throw new Error('saved-search-row missing data-id attribute');
+  if ((mouseEvent.target as HTMLElement).closest('.delete-saved-btn')) {
     await deleteSavedSearchAsync(savedSearchId);
     return;
   }
-  if ((mouseEvent.target as HTMLElement).closest(".load-saved-btn")) {
+  if ((mouseEvent.target as HTMLElement).closest('.load-saved-btn')) {
     mouseEvent.preventDefault();
     const response = await fetch(`/api/saved-searches/${savedSearchId}`);
     if (!response.ok) return;

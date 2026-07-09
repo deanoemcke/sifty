@@ -1,5 +1,5 @@
 // Browser-safe — no Node/Playwright imports.
-import { RECIPE_PATTERNS, type RecipeId } from "./metadata";
+import { RECIPE_PATTERNS, type RecipeId } from './metadata';
 
 function matchRecipePattern(url: string): (typeof RECIPE_PATTERNS)[number] | null {
   try {
@@ -8,7 +8,7 @@ function matchRecipePattern(url: string): (typeof RECIPE_PATTERNS)[number] | nul
       RECIPE_PATTERNS.find(
         (p) =>
           (hostname === p.hostname || hostname.endsWith(`.${p.hostname}`)) &&
-          pathname.includes(p.pathPrefix),
+          pathname.includes(p.pathPrefix)
       ) ?? null
     );
   } catch {

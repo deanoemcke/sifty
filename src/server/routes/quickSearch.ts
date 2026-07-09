@@ -1,12 +1,12 @@
 // Server-side only — POST /api/quick-search route handler.
 
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Listing } from "../../lib/recipes/base";
-import { requireString } from "../../lib/validate";
-import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from "../cancellation";
-import { cacheAge, getDb, isFresh, stmtGetSearch, stmtSetSearch } from "../db";
-import { readBody, sendJSON, sse, startSSE } from "../helpers";
-import { getRecipeForUrl } from "../recipes/registry";
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Listing } from '../../lib/recipes/base';
+import { requireString } from '../../lib/validate';
+import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from '../cancellation';
+import { cacheAge, getDb, isFresh, stmtGetSearch, stmtSetSearch } from '../db';
+import { readBody, sendJSON, sse, startSSE } from '../helpers';
+import { getRecipeForUrl } from '../recipes/registry';
 
 // Cached rows may predate the `relevance` field (or any future required
 // field) becoming mandatory on `Listing`. Default it on read so replaying a
@@ -17,24 +17,24 @@ export function normalizeCachedListings(rawListings: Listing[]): Listing[] {
 
 export async function handleQuickSearch(
   request: IncomingMessage,
-  response: ServerResponse,
+  response: ServerResponse
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
 
   let url: string;
   try {
-    url = requireString((body as Record<string, unknown>)?.url, "url");
+    url = requireString((body as Record<string, unknown>)?.url, 'url');
   } catch (err) {
     sendJSON(response, 400, { error: (err as Error).message });
     return;
   }
 
   const searchId = (body as Record<string, unknown>)?.searchId;
-  const searchIdStr = typeof searchId === "string" && searchId.trim() ? searchId : undefined;
+  const searchIdStr = typeof searchId === 'string' && searchId.trim() ? searchId : undefined;
 
   const recipe = getRecipeForUrl(url);
   if (!recipe) {
-    sendJSON(response, 400, { error: "No recipe found for this URL" });
+    sendJSON(response, 400, { error: 'No recipe found for this URL' });
     return;
   }
 
@@ -44,11 +44,11 @@ export async function handleQuickSearch(
     const age = cacheAge(cachedRow.cached_at);
     console.log(`[cache] search hit (${age})`);
     startSSE(response);
-    sse(response, { type: "criteria", filters: recipe.extractImplicitFilters(url) });
-    sse(response, { type: "cached", age });
+    sse(response, { type: 'criteria', filters: recipe.extractImplicitFilters(url) });
+    sse(response, { type: 'cached', age });
     for (const listing of normalizeCachedListings(JSON.parse(cachedRow.data) as Listing[]))
-      sse(response, { type: "listing", data: listing });
-    sse(response, { type: "complete" });
+      sse(response, { type: 'listing', data: listing });
+    sse(response, { type: 'complete' });
     response.end();
     return;
   }
@@ -56,12 +56,12 @@ export async function handleQuickSearch(
   startSSE(response);
   if (searchIdStr) {
     registerSearch(searchIdStr);
-    request.on("close", () => cancelSearch(searchIdStr));
+    request.on('close', () => cancelSearch(searchIdStr));
   }
   const isCancelled = () => (searchIdStr ? isSearchCancelled(searchIdStr) : false);
   const heartbeat = setInterval(() => {
     try {
-      response.write(": heartbeat\n\n");
+      response.write(': heartbeat\n\n');
     } catch {
       /* ignore */
     }
@@ -72,14 +72,14 @@ export async function handleQuickSearch(
     await recipe.quickSearchAsync(
       url,
       (event) => {
-        if (event.type === "listing") listings.push(event.data);
+        if (event.type === 'listing') listings.push(event.data);
         try {
           sse(response, event);
         } catch {
           /* client disconnected */
         }
       },
-      isCancelled,
+      isCancelled
     );
     if (!isCancelled() && listings.length > 0) {
       stmtSetSearch(database).run(url, JSON.stringify(listings), Date.now(), listings.length);
@@ -88,7 +88,7 @@ export async function handleQuickSearch(
   } catch (err) {
     if (!isCancelled())
       try {
-        sse(response, { type: "error", message: (err as Error).message });
+        sse(response, { type: 'error', message: (err as Error).message });
       } catch {
         /* ignore */
       }

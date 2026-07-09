@@ -23,7 +23,7 @@ export class ConcurrencyQueue {
     while (this.active < this.concurrency && this.queue.length > 0) {
       this.active++;
       const task = this.queue.shift();
-      if (!task) throw new Error("invariant: shift on non-empty queue returned undefined");
+      if (!task) throw new Error('invariant: shift on non-empty queue returned undefined');
       task();
     }
   }
@@ -32,8 +32,8 @@ export class ConcurrencyQueue {
 // ── Domain registry ───────────────────────────────────────────────────────────
 
 const CONCURRENCY_LIMIT_BY_DOMAIN: Record<string, number> = {
-  "trademe.co.nz": 3,
-  "facebook.com": 2,
+  'trademe.co.nz': 3,
+  'facebook.com': 2,
 };
 
 function resolveHostname(url: string): string {
@@ -52,7 +52,7 @@ export function createRegistry(): <T>(url: string, asyncTask: () => Promise<T>) 
     if (!queue) {
       const concurrency =
         Object.entries(CONCURRENCY_LIMIT_BY_DOMAIN).find(([domain]) =>
-          hostname.endsWith(domain),
+          hostname.endsWith(domain)
         )?.[1] ?? 2;
       queue = new ConcurrencyQueue(concurrency);
       queueByHostname.set(hostname, queue);

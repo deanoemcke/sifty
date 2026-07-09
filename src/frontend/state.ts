@@ -2,31 +2,31 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
-import type { Fulfillment, Listing, QuickSearchProgress } from "../lib/recipes/base";
-import { DEFAULT_SORT_OPTION, type SortOption } from "./sortListings";
+import type { Fulfillment, Listing, QuickSearchProgress } from '../lib/recipes/base';
+import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type UrlCardSearchStatus = "idle" | "searching" | "cancelling" | "done";
+export type UrlCardSearchStatus = 'idle' | 'searching' | 'cancelling' | 'done';
 
 export function isSearchButtonDisabled(
   status: UrlCardSearchStatus,
   searchedUrl: string,
-  inputValue: string,
+  inputValue: string
 ): boolean {
   return (
-    status === "searching" ||
-    status === "cancelling" ||
-    (status === "done" && searchedUrl === inputValue)
+    status === 'searching' ||
+    status === 'cancelling' ||
+    (status === 'done' && searchedUrl === inputValue)
   );
 }
 
 export function canCancelSearch(status: UrlCardSearchStatus): boolean {
-  return status === "searching";
+  return status === 'searching';
 }
 
 export function isCardSearchActive(status: UrlCardSearchStatus): boolean {
-  return status === "searching" || status === "cancelling";
+  return status === 'searching' || status === 'cancelling';
 }
 
 export interface ListingItem {

@@ -1,28 +1,28 @@
 // @vitest-environment jsdom
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireAllCardSearches } from "./cardSearch";
-import type { ListingItem } from "./state";
-import { makeListing, makeListingItem } from "./testFixtures";
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireAllCardSearches } from './cardSearch';
+import type { ListingItem } from './state';
+import { makeListing, makeListingItem } from './testFixtures';
 
-describe("fireAllCardSearches", () => {
-  it("calls the search function exactly once per card", () => {
-    const cards = [{ id: "a" }, { id: "b" }, { id: "c" }];
+describe('fireAllCardSearches', () => {
+  it('calls the search function exactly once per card', () => {
+    const cards = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
     const searchFn = vi.fn();
     fireAllCardSearches(cards, searchFn);
     expect(searchFn).toHaveBeenCalledTimes(3);
   });
 
-  it("passes each card to the search function", () => {
-    const cards = [{ id: "x" }, { id: "y" }];
+  it('passes each card to the search function', () => {
+    const cards = [{ id: 'x' }, { id: 'y' }];
     const searchFn = vi.fn();
     fireAllCardSearches(cards, searchFn);
     expect(searchFn).toHaveBeenNthCalledWith(1, cards[0]);
     expect(searchFn).toHaveBeenNthCalledWith(2, cards[1]);
   });
 
-  it("does nothing when the card list is empty", () => {
+  it('does nothing when the card list is empty', () => {
     const searchFn = vi.fn();
     fireAllCardSearches([], searchFn);
     expect(searchFn).not.toHaveBeenCalled();
@@ -42,20 +42,20 @@ describe("fireAllCardSearches", () => {
 // debounce test observe the wiring *and* confirm it reaches all the way down
 // to a real `streamPostAsync` call. `openListingCardModal` is stubbed outright
 // since exercising real modal rendering is out of scope for a routing test.
-vi.mock("./aiFilter", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./aiFilter")>();
+vi.mock('./aiFilter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./aiFilter')>();
   return {
     ...actual,
     requestAiFilterRunIfPromptLongEnough: vi.fn(actual.requestAiFilterRunIfPromptLongEnough),
   };
 });
 
-vi.mock("./listingDetail", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./listingDetail")>();
+vi.mock('./listingDetail', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./listingDetail')>();
   return { ...actual, openListingCardModal: vi.fn() };
 });
 
-vi.mock("./streamPost", () => ({
+vi.mock('./streamPost', () => ({
   streamPostAsync: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -66,27 +66,27 @@ function loadIndexHtmlBodyFixture(): string {
   // Deliberately __dirname (not import.meta.url): under "@vitest-environment
   // jsdom" import.meta.url resolves to a fake http://localhost address rather
   // than a file:// URL, which fileURLToPath rejects.
-  const indexHtmlPath = join(__dirname, "../../index.html");
-  const indexHtml = readFileSync(indexHtmlPath, "utf-8");
+  const indexHtmlPath = join(__dirname, '../../index.html');
+  const indexHtml = readFileSync(indexHtmlPath, 'utf-8');
   const bodyMatch = indexHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (!bodyMatch) throw new Error("index.html fixture: <body> tag not found");
-  return bodyMatch[1].replace(/<script[\s\S]*?<\/script>/gi, "");
+  if (!bodyMatch) throw new Error('index.html fixture: <body> tag not found');
+  return bodyMatch[1].replace(/<script[\s\S]*?<\/script>/gi, '');
 }
 
 function appendListingCardFixture(): { openArea: HTMLElement; externalLink: HTMLElement } {
-  const listingsContainer = document.getElementById("listingsContainer");
-  if (!listingsContainer) throw new Error("#listingsContainer not found in fixture");
-  const card = document.createElement("div");
-  card.className = "listing-card";
-  card.dataset.url = "https://example.com/listing/1";
-  const openArea = document.createElement("div");
-  openArea.className = "listing-open-area";
-  openArea.textContent = "A vintage road bike";
+  const listingsContainer = document.getElementById('listingsContainer');
+  if (!listingsContainer) throw new Error('#listingsContainer not found in fixture');
+  const card = document.createElement('div');
+  card.className = 'listing-card';
+  card.dataset.url = 'https://example.com/listing/1';
+  const openArea = document.createElement('div');
+  openArea.className = 'listing-open-area';
+  openArea.textContent = 'A vintage road bike';
   // Rendered as a sibling of .listing-open-area, never nested inside it —
   // mirrors resultsView.ts's real card markup.
-  const externalLink = document.createElement("a");
-  externalLink.className = "listing-external-link-btn";
-  externalLink.textContent = "Open original";
+  const externalLink = document.createElement('a');
+  externalLink.className = 'listing-external-link-btn';
+  externalLink.textContent = 'Open original';
   card.appendChild(openArea);
   card.appendChild(externalLink);
   listingsContainer.appendChild(card);
@@ -94,10 +94,10 @@ function appendListingCardFixture(): { openArea: HTMLElement; externalLink: HTML
 }
 
 function makeListingItemAt(url: string): ListingItem {
-  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: "" }) });
+  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: '' }) });
 }
 
-describe("initApp() wiring", () => {
+describe('initApp() wiring', () => {
   beforeEach(() => {
     // Fresh module instances per test so each dynamic import("./app") gets
     // its own isolated state.ts / urlCardStore.ts, rather than leaking
@@ -109,41 +109,41 @@ describe("initApp() wiring", () => {
     vi.clearAllMocks();
     document.body.innerHTML = loadIndexHtmlBodyFixture();
     vi.stubGlobal(
-      "fetch",
-      vi.fn().mockRejectedValue(new Error("network disabled in app.test.ts wiring tests")),
+      'fetch',
+      vi.fn().mockRejectedValue(new Error('network disabled in app.test.ts wiring tests'))
     );
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
-    document.body.innerHTML = "";
+    document.body.innerHTML = '';
   });
 
-  describe("AI filter auto-run", () => {
-    it("does not run immediately, but reaches a real streamPostAsync call once the debounce interval elapses", async () => {
+  describe('AI filter auto-run', () => {
+    it('does not run immediately, but reaches a real streamPostAsync call once the debounce interval elapses', async () => {
       vi.useFakeTimers();
       const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } = await import(
-        "./aiFilter"
+        './aiFilter'
       );
-      const { streamPostAsync } = await import("./streamPost");
-      const { listingsByUrl } = await import("./state");
-      const { urlCards, urlCardData } = await import("./urlCardStore");
+      const { streamPostAsync } = await import('./streamPost');
+      const { listingsByUrl } = await import('./state');
+      const { urlCards, urlCardData } = await import('./urlCardStore');
 
-      await import("./app");
+      await import('./app');
 
       // initApp() already created one blank url card (mirroring production
       // startup) — attach the seeded listing to that real card rather than
       // pushing a second, synthetic one, which would leave urlCards with an
       // entry missing DOM handles (e.g. removeButton) and break other code
       // that iterates every card, such as updateRemoveButtons().
-      const url = "https://example.com/listing/1";
+      const url = 'https://example.com/listing/1';
       listingsByUrl.set(url, makeListingItemAt(url));
       urlCardData(urlCards[0]).listingUrls = [url];
 
-      const aiFilterInput = document.getElementById("aiFilter") as HTMLTextAreaElement;
-      aiFilterInput.value = "good condition only please";
-      aiFilterInput.dispatchEvent(new Event("input"));
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+      aiFilterInput.value = 'good condition only please';
+      aiFilterInput.dispatchEvent(new Event('input'));
 
       expect(vi.mocked(requestAiFilterRunIfPromptLongEnough)).not.toHaveBeenCalled();
       expect(vi.mocked(streamPostAsync)).not.toHaveBeenCalled();
@@ -153,25 +153,25 @@ describe("initApp() wiring", () => {
       expect(vi.mocked(requestAiFilterRunIfPromptLongEnough)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(streamPostAsync)).toHaveBeenCalledTimes(1);
       const [endpoint, body] = vi.mocked(streamPostAsync).mock.calls[0];
-      expect(endpoint).toBe("/api/ai-filter");
-      expect((body as { prompt: string }).prompt).toBe("good condition only please");
+      expect(endpoint).toBe('/api/ai-filter');
+      expect((body as { prompt: string }).prompt).toBe('good condition only please');
     });
 
-    it("collapses rapid typing within the debounce window into a single call", async () => {
+    it('collapses rapid typing within the debounce window into a single call', async () => {
       vi.useFakeTimers();
       const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } = await import(
-        "./aiFilter"
+        './aiFilter'
       );
-      await import("./app");
+      await import('./app');
 
-      const aiFilterInput = document.getElementById("aiFilter") as HTMLTextAreaElement;
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
 
-      aiFilterInput.value = "good cond";
-      aiFilterInput.dispatchEvent(new Event("input"));
+      aiFilterInput.value = 'good cond';
+      aiFilterInput.dispatchEvent(new Event('input'));
       await vi.advanceTimersByTimeAsync(AI_FILTER_DEBOUNCE_MS / 2);
 
-      aiFilterInput.value = "good condition, no rust";
-      aiFilterInput.dispatchEvent(new Event("input"));
+      aiFilterInput.value = 'good condition, no rust';
+      aiFilterInput.dispatchEvent(new Event('input'));
       await vi.advanceTimersByTimeAsync(AI_FILTER_DEBOUNCE_MS / 2);
 
       // The first keystroke's timer should have been cancelled by the second,
@@ -184,70 +184,70 @@ describe("initApp() wiring", () => {
     });
   });
 
-  describe("Enter-to-submit on discovery inputs", () => {
-    it("clicks #discoveryBtn on Enter in the discovery prompt", async () => {
-      await import("./app");
-      const discoveryBtn = document.getElementById("discoveryBtn") as HTMLButtonElement;
-      const clickSpy = vi.spyOn(discoveryBtn, "click");
-      const promptInput = document.getElementById("discoveryPrompt") as HTMLTextAreaElement;
+  describe('Enter-to-submit on discovery inputs', () => {
+    it('clicks #discoveryBtn on Enter in the discovery prompt', async () => {
+      await import('./app');
+      const discoveryBtn = document.getElementById('discoveryBtn') as HTMLButtonElement;
+      const clickSpy = vi.spyOn(discoveryBtn, 'click');
+      const promptInput = document.getElementById('discoveryPrompt') as HTMLTextAreaElement;
 
       promptInput.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
       );
 
       expect(clickSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("clicks #discoveryBtn on Enter in the max-price input", async () => {
-      await import("./app");
-      const discoveryBtn = document.getElementById("discoveryBtn") as HTMLButtonElement;
-      const clickSpy = vi.spyOn(discoveryBtn, "click");
-      const maxPriceInput = document.getElementById("discoveryMaxPrice") as HTMLInputElement;
+    it('clicks #discoveryBtn on Enter in the max-price input', async () => {
+      await import('./app');
+      const discoveryBtn = document.getElementById('discoveryBtn') as HTMLButtonElement;
+      const clickSpy = vi.spyOn(discoveryBtn, 'click');
+      const maxPriceInput = document.getElementById('discoveryMaxPrice') as HTMLInputElement;
 
       maxPriceInput.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
       );
 
       expect(clickSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("does not click #discoveryBtn on Shift+Enter (newline in the prompt)", async () => {
-      await import("./app");
-      const discoveryBtn = document.getElementById("discoveryBtn") as HTMLButtonElement;
-      const clickSpy = vi.spyOn(discoveryBtn, "click");
-      const promptInput = document.getElementById("discoveryPrompt") as HTMLTextAreaElement;
+    it('does not click #discoveryBtn on Shift+Enter (newline in the prompt)', async () => {
+      await import('./app');
+      const discoveryBtn = document.getElementById('discoveryBtn') as HTMLButtonElement;
+      const clickSpy = vi.spyOn(discoveryBtn, 'click');
+      const promptInput = document.getElementById('discoveryPrompt') as HTMLTextAreaElement;
 
       promptInput.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
           shiftKey: true,
           bubbles: true,
           cancelable: true,
-        }),
+        })
       );
 
       expect(clickSpy).not.toHaveBeenCalled();
     });
   });
 
-  describe("Sort by control", () => {
-    it("populates the sort select with all options, defaulting to source-url", async () => {
-      await import("./app");
-      const sortSelect = document.getElementById("sortBy") as HTMLSelectElement;
+  describe('Sort by control', () => {
+    it('populates the sort select with all options, defaulting to source-url', async () => {
+      await import('./app');
+      const sortSelect = document.getElementById('sortBy') as HTMLSelectElement;
       expect(Array.from(sortSelect.options).map((option) => option.value)).toEqual([
-        "source-url",
-        "best-match",
-        "worst-match",
-        "lowest-price",
-        "highest-price",
+        'source-url',
+        'best-match',
+        'worst-match',
+        'lowest-price',
+        'highest-price',
       ]);
-      expect(sortSelect.value).toBe("source-url");
+      expect(sortSelect.value).toBe('source-url');
     });
 
-    it("updates state.sortBy when the select changes", async () => {
-      await import("./app");
-      const state = await import("./state");
-      const sortSelect = document.getElementById("sortBy") as HTMLSelectElement;
+    it('updates state.sortBy when the select changes', async () => {
+      await import('./app');
+      const state = await import('./state');
+      const sortSelect = document.getElementById('sortBy') as HTMLSelectElement;
 
       // renderDerived() schedules the non-default-sort DOM reorder via
       // requestAnimationFrame (see resultsView.ts's scheduleSortOrderUpdate).
@@ -256,35 +256,35 @@ describe("initApp() wiring", () => {
       // already-torn-down DOM and surfaces as an unhandled error.
       vi.useFakeTimers();
 
-      sortSelect.value = "best-match";
-      sortSelect.dispatchEvent(new Event("change"));
+      sortSelect.value = 'best-match';
+      sortSelect.dispatchEvent(new Event('change'));
 
-      expect(state.sortBy).toBe("best-match");
+      expect(state.sortBy).toBe('best-match');
       vi.advanceTimersByTime(20);
     });
   });
 
-  describe("listing card open-area vs. external-link click routing", () => {
-    it("opens the listing modal for a click inside the open area", async () => {
-      const { openListingCardModal } = await import("./listingDetail");
-      await import("./app");
+  describe('listing card open-area vs. external-link click routing', () => {
+    it('opens the listing modal for a click inside the open area', async () => {
+      const { openListingCardModal } = await import('./listingDetail');
+      await import('./app');
       const { openArea } = appendListingCardFixture();
 
-      openArea.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      openArea.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(vi.mocked(openListingCardModal)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(openListingCardModal).mock.calls[0][0]).toHaveProperty(
-        "className",
-        "listing-card",
+        'className',
+        'listing-card'
       );
     });
 
-    it("does not open the modal for a click on the external-link button", async () => {
-      const { openListingCardModal } = await import("./listingDetail");
-      await import("./app");
+    it('does not open the modal for a click on the external-link button', async () => {
+      const { openListingCardModal } = await import('./listingDetail');
+      await import('./app');
       const { externalLink } = appendListingCardFixture();
 
-      externalLink.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      externalLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(vi.mocked(openListingCardModal)).not.toHaveBeenCalled();
     });

@@ -2,10 +2,10 @@
 // The group header shows only the deduped live listing count plus a cancel
 // link while any member search is running; per-URL detail lives on the rows.
 
-import { recipeIdForUrl } from "../lib/recipes/matcher";
-import type { RecipeId } from "../lib/recipes/metadata";
-import { listingsCountText } from "./searchStatusText";
-import { canCancelSearch, isCardSearchActive, type UrlCardSearchStatus } from "./state";
+import { recipeIdForUrl } from '../lib/recipes/matcher';
+import type { RecipeId } from '../lib/recipes/metadata';
+import { listingsCountText } from './searchStatusText';
+import { canCancelSearch, isCardSearchActive, type UrlCardSearchStatus } from './state';
 
 export interface UrlGroupMemberSnapshot {
   url: string;

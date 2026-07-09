@@ -1,7 +1,7 @@
 // Server-side only — imports Node/Playwright recipes.
-import type { Recipe } from "../../lib/recipes/base";
-import { facebookRecipe } from "./facebook";
-import { trademeRecipe } from "./trademe";
+import type { Recipe } from '../../lib/recipes/base';
+import { facebookRecipe } from './facebook';
+import { trademeRecipe } from './trademe';
 
 const recipes: Recipe[] = [trademeRecipe, facebookRecipe];
 

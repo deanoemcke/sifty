@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename } from 'node:path';
 
 const BASE_PORT = 5173;
 

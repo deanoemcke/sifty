@@ -5,7 +5,7 @@
 // arguments that will be used, and the wrapped function always runs with the
 // most recently supplied arguments exactly once per frame.
 export function rafSchedule<Args extends unknown[]>(
-  fn: (...args: Args) => void,
+  fn: (...args: Args) => void
 ): (...args: Args) => void {
   let pendingArgs: Args | undefined;
   let frameId: number | undefined;

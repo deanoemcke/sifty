@@ -4,7 +4,7 @@
 // Joining by id (rather than array position) makes the two stores structurally
 // unable to drift out of sync with each other.
 
-import { type UrlCardData, urlCardDataById } from "./state";
+import { type UrlCardData, urlCardDataById } from './state';
 
 export interface UrlCardDom {
   containerElement: HTMLElement;

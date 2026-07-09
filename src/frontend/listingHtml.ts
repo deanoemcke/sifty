@@ -2,44 +2,44 @@
 // Pure string builders shared by the results grid card and the detail modal.
 // All interpolated text goes through esc(); no DOM access here.
 
-import type { Listing } from "../lib/recipes/base";
-import { esc } from "./html";
-import { formatListingPrice } from "./priceFormat";
-import type { ListingItem } from "./state";
+import type { Listing } from '../lib/recipes/base';
+import { esc } from './html';
+import { formatListingPrice } from './priceFormat';
+import type { ListingItem } from './state';
 
 export function filterBannerText(item: ListingItem): string {
-  return item.aiFilterReason ? `Filtered: ${item.aiFilterReason}` : "Filtered";
+  return item.aiFilterReason ? `Filtered: ${item.aiFilterReason}` : 'Filtered';
 }
 
 export function formatReserveText(status: string): string {
-  if (status === "NONE") return "No reserve";
-  if (status === "MET") return "Reserve met";
-  if (status === "NOT_MET") return "Reserve not met";
-  return "";
+  if (status === 'NONE') return 'No reserve';
+  if (status === 'MET') return 'Reserve met';
+  if (status === 'NOT_MET') return 'Reserve not met';
+  return '';
 }
 
 export function cleanDescription(text: string): string {
   return text
-    .split("\n")
+    .split('\n')
     .map((line) => line.trimEnd())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
 const MONTH_ABBREVIATIONS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 // Formats in UTC (not local time) so the same ISO input renders identically
@@ -63,7 +63,7 @@ const EXTERNAL_LINK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill
 // here to build the markup and by listingCardActivation.ts to detect
 // clicks/keypresses on it so they navigate instead of also opening the
 // modal underneath.
-export const EXTERNAL_LINK_BUTTON_CLASS_NAME = "listing-external-link-btn";
+export const EXTERNAL_LINK_BUTTON_CLASS_NAME = 'listing-external-link-btn';
 
 // Rendered as a sibling of .listing-open-area (not nested inside it) so a
 // focusable <a> never ends up inside the card's role="button" wrapper.
@@ -87,12 +87,12 @@ export function buildDetailPriceHtml(listing: Listing): string {
 
 export function buildDetailMetaHtml(listing: Listing): string {
   const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
-  let html = "";
+  let html = '';
   if (listing.isAuction) {
-    const reserveStatus = listing.reserveStatus ?? "";
+    const reserveStatus = listing.reserveStatus ?? '';
     const reserve = formatReserveText(reserveStatus);
     if (reserve)
-      html += `<span class="badge badge-${reserveStatus.toLowerCase().replace("_", "-")}">${esc(reserve)}</span>`;
+      html += `<span class="badge badge-${reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
   }
   return `${left}<span class="meta-right">${html}</span>`;
 }
@@ -101,42 +101,42 @@ function buildQaAttributionHtml(name: string | undefined, iso: string | undefine
   const parts: string[] = [];
   if (name) parts.push(esc(name));
   if (iso) parts.push(esc(formatListingDate(iso)));
-  return parts.length > 0 ? `<span class="qa-meta">${parts.join(", ")}</span>` : "";
+  return parts.length > 0 ? `<span class="qa-meta">${parts.join(', ')}</span>` : '';
 }
 
 function buildShippingRowHtml(
   shippingAvailable: boolean | null | undefined,
-  shippingCost: number | null | undefined,
+  shippingCost: number | null | undefined
 ): string {
-  if (shippingAvailable === undefined) return "";
+  if (shippingAvailable === undefined) return '';
   const value = !shippingAvailable
-    ? "Not available"
+    ? 'Not available'
     : shippingCost != null
       ? esc(formatListingPrice(shippingCost))
-      : "Available (cost unknown)";
+      : 'Available (cost unknown)';
   return `<span class="details-key">Shipping</span><span class="details-val">${value}</span>`;
 }
 
 function buildPickupRowHtml(
   pickupAvailable: boolean | null | undefined,
-  pickupLocation: string | null | undefined,
+  pickupLocation: string | null | undefined
 ): string {
-  if (pickupAvailable === undefined) return "";
-  const value = !pickupAvailable ? "Not available" : esc(pickupLocation ?? "Available");
+  if (pickupAvailable === undefined) return '';
+  const value = !pickupAvailable ? 'Not available' : esc(pickupLocation ?? 'Available');
   return `<span class="details-key">Pickup</span><span class="details-val">${value}</span>`;
 }
 
-function buildPhotoGalleryHtml(photos: Listing["photos"]): string {
+function buildPhotoGalleryHtml(photos: Listing['photos']): string {
   const photoList = photos ?? [];
-  if (photoList.length === 0) return "";
+  if (photoList.length === 0) return '';
   return `<div class="deep-section">
       <div class="deep-section-label">Photos</div>
       <div class="photo-gallery">${photoList
         .map(
           ({ thumbnailUrl, fullSizeUrl }) =>
-            `<a href="${esc(fullSizeUrl)}" target="_blank" rel="noopener"><img class="photo-gallery-thumb" src="${esc(thumbnailUrl)}" alt=""></a>`,
+            `<a href="${esc(fullSizeUrl)}" target="_blank" rel="noopener"><img class="photo-gallery-thumb" src="${esc(thumbnailUrl)}" alt=""></a>`
         )
-        .join("")}</div>
+        .join('')}</div>
     </div>`;
 }
 
@@ -144,23 +144,23 @@ function buildListingInfoHtml(listing: Listing): string {
   const listingInfoRows = [
     listing.startDate
       ? `<span class="details-key">Started</span><span class="details-val">${esc(formatListingDate(listing.startDate))}</span>`
-      : "",
+      : '',
     listing.endDate
       ? `<span class="details-key">Ends</span><span class="details-val">${esc(formatListingDate(listing.endDate))}</span>`
-      : "",
+      : '',
     listing.categoryPath
       ? `<span class="details-key">Category</span><span class="details-val">${esc(listing.categoryPath)}</span>`
-      : "",
+      : '',
   ].filter(Boolean);
-  if (listingInfoRows.length === 0) return "";
+  if (listingInfoRows.length === 0) return '';
   return `<div class="deep-section">
       <div class="deep-section-label">Listing info</div>
-      <div class="details-table">${listingInfoRows.join("")}</div>
+      <div class="details-table">${listingInfoRows.join('')}</div>
     </div>`;
 }
 
 export function buildExtrasHtml(listing: Listing): string {
-  let body = "";
+  let body = '';
 
   // ── Photos ────────────────────────────────────────────────────────────────
   body += buildPhotoGalleryHtml(listing.photos);
@@ -186,9 +186,9 @@ export function buildExtrasHtml(listing: Listing): string {
       <div class="details-table">${detailEntries
         .map(
           ([key, value]) =>
-            `<span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span>`,
+            `<span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span>`
         )
-        .join("")}</div>
+        .join('')}</div>
     </div>`;
   }
 
@@ -212,10 +212,10 @@ export function buildExtrasHtml(listing: Listing): string {
           `<div class="qa-item"><span class="qa-badge qa-q">Q</span><span class="qa-text">${esc(question)}</span>${buildQaAttributionHtml(askedBy, askedAt)}</div>` +
           (answer
             ? `<div class="qa-item"><span class="qa-badge qa-a">A</span><span class="qa-text">${esc(answer)}</span>${buildQaAttributionHtml(undefined, answeredAt)}</div>`
-            : "") +
-          `</div>`,
+            : '') +
+          `</div>`
       )
-      .join("");
+      .join('');
     body += `</div>`;
   }
 

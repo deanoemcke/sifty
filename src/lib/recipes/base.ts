@@ -1,6 +1,6 @@
-import type { RecipeSource } from "./metadata";
+import type { RecipeSource } from './metadata';
 
-export type ReserveStatus = "NONE" | "MET" | "NOT_MET" | "UNKNOWN";
+export type ReserveStatus = 'NONE' | 'MET' | 'NOT_MET' | 'UNKNOWN';
 
 export interface ListingPhoto {
   thumbnailUrl: string;
@@ -64,45 +64,45 @@ export interface Listing {
 export type DeepSearchDetail = Partial<
   Pick<
     Listing,
-    | "description"
-    | "extraAttributes"
-    | "questionsAndAnswers"
-    | "buyNowPrice"
-    | "reserveStatus"
-    | "pickupAvailable"
-    | "shippingAvailable"
-    | "pickupLocation"
-    | "shippingCost"
-    | "startDate"
-    | "endDate"
-    | "categoryPath"
-    | "photos"
-    | "seller"
+    | 'description'
+    | 'extraAttributes'
+    | 'questionsAndAnswers'
+    | 'buyNowPrice'
+    | 'reserveStatus'
+    | 'pickupAvailable'
+    | 'shippingAvailable'
+    | 'pickupLocation'
+    | 'shippingCost'
+    | 'startDate'
+    | 'endDate'
+    | 'categoryPath'
+    | 'photos'
+    | 'seller'
   >
 >;
 
 // Structured search progress — display wording is composed on the frontend.
 export type QuickSearchProgress =
-  | { phase: "loading" }
-  | { phase: "counted"; totalResults: number; totalPages: number }
-  | { phase: "paging"; page: number; totalPages?: number }
-  | { phase: "collecting"; foundSoFar: number; isLoadingMore: boolean };
+  | { phase: 'loading' }
+  | { phase: 'counted'; totalResults: number; totalPages: number }
+  | { phase: 'paging'; page: number; totalPages?: number }
+  | { phase: 'collecting'; foundSoFar: number; isLoadingMore: boolean };
 
 export type QuickSearchEvent =
-  | { type: "criteria"; filters: Array<[string, string]> }
-  | ({ type: "progress" } & QuickSearchProgress)
-  | { type: "listing"; data: Listing }
-  | { type: "complete" }
-  | { type: "error"; message: string };
+  | { type: 'criteria'; filters: Array<[string, string]> }
+  | ({ type: 'progress' } & QuickSearchProgress)
+  | { type: 'listing'; data: Listing }
+  | { type: 'complete' }
+  | { type: 'error'; message: string };
 
 export type DeepSearchEvent =
-  | { type: "progress"; index: number; total: number; title: string }
-  | { type: "detail"; url: string; detail: DeepSearchDetail }
-  | { type: "detail-error"; url: string; message: string }
-  | { type: "complete" }
-  | { type: "error"; message: string };
+  | { type: 'progress'; index: number; total: number; title: string }
+  | { type: 'detail'; url: string; detail: DeepSearchDetail }
+  | { type: 'detail-error'; url: string; message: string }
+  | { type: 'complete' }
+  | { type: 'error'; message: string };
 
-export type Fulfillment = "any" | "pickup" | "shipping";
+export type Fulfillment = 'any' | 'pickup' | 'shipping';
 
 export type RecipeDiscoverResult = {
   urls: string[];
@@ -151,12 +151,12 @@ export interface Recipe {
   quickSearchAsync(
     url: string,
     onEvent: (event: QuickSearchEvent) => void,
-    isCancelled?: () => boolean,
+    isCancelled?: () => boolean
   ): Promise<void>;
   deepSearchAsync(
     listings: Listing[],
     onEvent: (event: DeepSearchEvent) => void,
-    isCancelled?: () => boolean,
+    isCancelled?: () => boolean
   ): Promise<void>;
 }
 
@@ -165,5 +165,5 @@ export interface DiscoverableRecipe extends Recipe {
 }
 
 export function isDiscoverableRecipe(recipe: Recipe): recipe is DiscoverableRecipe {
-  return typeof (recipe as DiscoverableRecipe).buildDiscoverUrlsAsync === "function";
+  return typeof (recipe as DiscoverableRecipe).buildDiscoverUrlsAsync === 'function';
 }

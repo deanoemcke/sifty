@@ -1,26 +1,26 @@
 // Server-side only — AI provider configuration and JSON completion helper.
 
-import type { AiConfig, ProviderCooldownStore } from "../lib/recipes/base";
-import type { AiAuditEntry } from "./aiAuditLog";
-import { recordAiAuditEntry } from "./aiAuditLog";
+import type { AiConfig, ProviderCooldownStore } from '../lib/recipes/base';
+import type { AiAuditEntry } from './aiAuditLog';
+import { recordAiAuditEntry } from './aiAuditLog';
 
 export type { AiConfig, ProviderCooldownStore };
 
 const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string }> = {
   groq: {
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    model: "llama-3.3-70b-versatile",
-    keyVar: "GROQ_API_KEY",
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    model: 'llama-3.3-70b-versatile',
+    keyVar: 'GROQ_API_KEY',
   },
   openrouter: {
-    url: "https://openrouter.ai/api/v1/chat/completions",
-    model: "meta-llama/llama-3.3-70b-instruct",
-    keyVar: "OPENROUTER_API_KEY",
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    model: 'meta-llama/llama-3.3-70b-instruct',
+    keyVar: 'OPENROUTER_API_KEY',
   },
   gemini: {
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: "gemini-3.1-flash-lite",
-    keyVar: "GEMINI_API_KEY",
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    model: 'gemini-3.1-flash-lite',
+    keyVar: 'GEMINI_API_KEY',
   },
 };
 
@@ -43,7 +43,7 @@ export function createProviderCooldownStore(): ProviderCooldownStore {
     const currentCooldownUntilMs = cooldownUntilMsByProviderKey.get(providerKey) ?? 0;
     cooldownUntilMsByProviderKey.set(
       providerKey,
-      Math.max(currentCooldownUntilMs, cappedCooldownUntilMs),
+      Math.max(currentCooldownUntilMs, cappedCooldownUntilMs)
     );
   }
 
@@ -65,9 +65,9 @@ export function bindAIConfigResolver(cooldownStore: ProviderCooldownStore): () =
 }
 
 type ProviderCandidate =
-  | { key: string; status: "available"; config: AiConfig }
-  | { key: string; status: "no-key" }
-  | { key: string; status: "cooldown"; recoversInSecs: number };
+  | { key: string; status: 'available'; config: AiConfig }
+  | { key: string; status: 'no-key' }
+  | { key: string; status: 'cooldown'; recoversInSecs: number };
 
 function resolveProviderPriorityOrder(): string[] {
   const allKeys = Object.keys(AI_PROVIDERS);
@@ -84,14 +84,14 @@ function evaluateProviderCandidates(cooldownStore: ProviderCooldownStore): Provi
   return resolveProviderPriorityOrder().map((key): ProviderCandidate => {
     const providerConfig = AI_PROVIDERS[key];
     const apiKey = process.env[providerConfig.keyVar];
-    if (!apiKey) return { key, status: "no-key" };
+    if (!apiKey) return { key, status: 'no-key' };
     const cooldownUntil = cooldownStore.getCooldownUntil(key);
     if (cooldownUntil !== undefined && cooldownUntil > now) {
-      return { key, status: "cooldown", recoversInSecs: Math.ceil((cooldownUntil - now) / 1000) };
+      return { key, status: 'cooldown', recoversInSecs: Math.ceil((cooldownUntil - now) / 1000) };
     }
     return {
       key,
-      status: "available",
+      status: 'available',
       config: {
         url: providerConfig.url,
         model: providerConfig.model,
@@ -106,20 +106,20 @@ function evaluateProviderCandidates(cooldownStore: ProviderCooldownStore): Provi
 function formatUnavailableProvidersError(candidates: ProviderCandidate[]): string {
   const details = candidates
     .filter(
-      (c): c is Exclude<ProviderCandidate, { status: "available" }> => c.status !== "available",
+      (c): c is Exclude<ProviderCandidate, { status: 'available' }> => c.status !== 'available'
     )
     .map((c) =>
-      c.status === "no-key"
+      c.status === 'no-key'
         ? `${c.key}: no ${AI_PROVIDERS[c.key].keyVar} configured`
-        : `${c.key}: recovers in ${c.recoversInSecs}s`,
+        : `${c.key}: recovers in ${c.recoversInSecs}s`
     );
-  return `All AI providers unavailable — ${details.join("; ")}`;
+  return `All AI providers unavailable — ${details.join('; ')}`;
 }
 
 export function getAIConfig(cooldownStore: ProviderCooldownStore): AiConfig {
   const candidates = evaluateProviderCandidates(cooldownStore);
   const available = candidates.find(
-    (c): c is Extract<ProviderCandidate, { status: "available" }> => c.status === "available",
+    (c): c is Extract<ProviderCandidate, { status: 'available' }> => c.status === 'available'
   );
   if (!available) throw new Error(formatUnavailableProvidersError(candidates));
   if (available.key !== candidates[0].key) {
@@ -137,7 +137,7 @@ type OpenAIResponseShape = { choices?: Array<{ message?: { content?: string } }>
 type ParsedRetryDelay = { delaySecs: number; isConfident: boolean };
 
 function parseRetryDelaySeconds(response: Response, errorMessage: string): ParsedRetryDelay {
-  const header = response.headers.get("retry-after");
+  const header = response.headers.get('retry-after');
   if (header) {
     const parsed = Number.parseFloat(header);
     if (!Number.isNaN(parsed)) return { delaySecs: parsed, isConfident: true };
@@ -162,7 +162,7 @@ function extractErrorBodyMessage(errorData: Record<string, unknown>): string | u
     unknown
   >;
   const message = (errorBody?.error as Record<string, unknown>)?.message ?? errorBody?.message;
-  return typeof message === "string" ? message : undefined;
+  return typeof message === 'string' ? message : undefined;
 }
 
 function extractJsonContent(raw: string): string {
@@ -179,12 +179,12 @@ export const TOTAL_TIMEOUT_MS = 45_000;
 
 type AuditEntryOverrides = Omit<
   AiAuditEntry,
-  "timestamp" | "label" | "model" | "systemMessage" | "userMessage"
+  'timestamp' | 'label' | 'model' | 'systemMessage' | 'userMessage'
 >;
 
 function buildAuditEntry(
   context: { label: string; model: string; systemMessage: string; userMessage: string },
-  overrides: AuditEntryOverrides,
+  overrides: AuditEntryOverrides
 ): AiAuditEntry {
   return { timestamp: new Date().toISOString(), ...context, ...overrides };
 }
@@ -198,8 +198,8 @@ function buildAuditEntry(
 // exceeding the total time budget) is still a thrown `Error` — those aren't a
 // cooldown-policy decision, just outright failures.
 export type AiJsonResult =
-  | { kind: "ok"; value: unknown }
-  | { kind: "rate-limited"; providerKey: string; cooldownUntilMs: number; message: string };
+  | { kind: 'ok'; value: unknown }
+  | { kind: 'rate-limited'; providerKey: string; cooldownUntilMs: number; message: string };
 
 // Thin orchestration layer above `aiJSON`: applies a rate-limited outcome to the
 // cooldown store and re-throws it as a plain `Error`, or unwraps a successful
@@ -209,9 +209,9 @@ export type AiJsonResult =
 // longer makes that decision.
 export function applyAiJsonResult(
   cooldownStore: ProviderCooldownStore,
-  result: AiJsonResult,
+  result: AiJsonResult
 ): unknown {
-  if (result.kind === "ok") return result.value;
+  if (result.kind === 'ok') return result.value;
   cooldownStore.markExhausted(result.providerKey, result.cooldownUntilMs);
   throw new Error(result.message);
 }
@@ -220,7 +220,7 @@ function buildRateLimitedMessage(
   label: string,
   delaySecs: number,
   exceedsBudget: boolean,
-  errorMessage: string,
+  errorMessage: string
 ): string {
   return exceedsBudget
     ? `AI rate limited (${label}): provider asks to retry in ${delaySecs}s, exceeds ${TOTAL_TIMEOUT_MS / 1000}s budget`
@@ -233,9 +233,9 @@ function buildRateLimitedMessage(
 // `nowMs` is passed in rather than read via `Date.now()` so this stays fully deterministic and
 // testable without mocking `fetch` or timers.
 export type RateLimitDecision =
-  | { action: "return"; result: AiJsonResult }
-  | { action: "retry"; sleepMs: number }
-  | { action: "fall-through" };
+  | { action: 'return'; result: AiJsonResult }
+  | { action: 'retry'; sleepMs: number }
+  | { action: 'fall-through' };
 
 export function decideRateLimitOutcome(
   providerKey: string,
@@ -245,29 +245,29 @@ export function decideRateLimitOutcome(
   isConfident: boolean,
   remainingMs: number,
   outOfRetries: boolean,
-  nowMs: number,
+  nowMs: number
 ): RateLimitDecision {
   const rateLimitedResult = (exceedsBudget: boolean): AiJsonResult => ({
-    kind: "rate-limited",
+    kind: 'rate-limited',
     providerKey,
     cooldownUntilMs: nowMs + delaySecs * 1000,
     message: buildRateLimitedMessage(label, delaySecs, exceedsBudget, errorMessage),
   });
 
   if (isConfident && delaySecs * 1000 > remainingMs) {
-    return { action: "return", result: rateLimitedResult(true) };
+    return { action: 'return', result: rateLimitedResult(true) };
   }
   if (!outOfRetries) {
     const sleepMs = Math.min(delaySecs * 1000, Math.max(remainingMs - 1, 0));
-    return { action: "retry", sleepMs };
+    return { action: 'retry', sleepMs };
   }
   // Out of retries. A confident signal is still worth reporting up for cooldown/rotation
   // even on the final attempt; an unconfident guess must not be trusted to make that call,
   // so it falls through to the generic http_error path instead.
   if (isConfident) {
-    return { action: "return", result: rateLimitedResult(false) };
+    return { action: 'return', result: rateLimitedResult(false) };
   }
-  return { action: "fall-through" };
+  return { action: 'fall-through' };
 }
 
 export async function aiJSON(
@@ -275,7 +275,7 @@ export async function aiJSON(
   label: string,
   systemMessage: string,
   userMessage: string,
-  maxTokens: number,
+  maxTokens: number
 ): Promise<AiJsonResult> {
   console.log(`[AI] ${label} → calling model: ${aiConfig.model}`);
 
@@ -285,11 +285,11 @@ export async function aiJSON(
   function recordRateLimitedAttempt(
     attempt: number,
     errorMessage: string,
-    attemptStartedAt: number,
+    attemptStartedAt: number
   ): void {
     recordAttempt({
       attempt,
-      status: "rate_limited",
+      status: 'rate_limited',
       httpStatus: 429,
       errorMessage,
       durationMs: Date.now() - attemptStartedAt,
@@ -299,10 +299,10 @@ export async function aiJSON(
   const requestBody = JSON.stringify({
     model: aiConfig.model,
     max_tokens: maxTokens,
-    response_format: { type: "json_object" },
+    response_format: { type: 'json_object' },
     messages: [
-      { role: "system", content: systemMessage },
-      { role: "user", content: userMessage },
+      { role: 'system', content: systemMessage },
+      { role: 'user', content: userMessage },
     ],
   });
   const deadline = Date.now() + TOTAL_TIMEOUT_MS;
@@ -314,7 +314,7 @@ export async function aiJSON(
       const remaining = deadline - attemptStartedAt;
       if (remaining <= 0) {
         const errorMessage = `AI request failed: exceeded total budget (${label})`;
-        recordAttempt({ attempt, status: "budget_exceeded", errorMessage, durationMs: 0 });
+        recordAttempt({ attempt, status: 'budget_exceeded', errorMessage, durationMs: 0 });
         throw new Error(errorMessage);
       }
 
@@ -323,10 +323,10 @@ export async function aiJSON(
       let apiResponse: Response;
       try {
         apiResponse = await fetch(aiConfig.url, {
-          method: "POST",
+          method: 'POST',
           headers: {
             Authorization: `Bearer ${aiConfig.apiKey}`,
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
           body: requestBody,
           signal: controller.signal,
@@ -335,7 +335,7 @@ export async function aiJSON(
         const errorMessage = error instanceof Error ? error.message : String(error);
         recordAttempt({
           attempt,
-          status: "network_error",
+          status: 'network_error',
           errorMessage,
           durationMs: Date.now() - attemptStartedAt,
         });
@@ -354,7 +354,7 @@ export async function aiJSON(
         const errorMessage = bodyMessage || apiResponse.statusText || JSON.stringify(lastErrorData);
 
         if (apiResponse.status === 429) {
-          const { delaySecs, isConfident } = parseRetryDelaySeconds(apiResponse, bodyMessage ?? "");
+          const { delaySecs, isConfident } = parseRetryDelaySeconds(apiResponse, bodyMessage ?? '');
           const remainingMs = deadline - Date.now();
           const outOfRetries = attempt > MAX_RETRIES;
           const decision = decideRateLimitOutcome(
@@ -365,14 +365,14 @@ export async function aiJSON(
             isConfident,
             remainingMs,
             outOfRetries,
-            Date.now(),
+            Date.now()
           );
 
-          if (decision.action !== "fall-through") {
+          if (decision.action !== 'fall-through') {
             recordRateLimitedAttempt(attempt, errorMessage, attemptStartedAt);
           }
-          if (decision.action === "return") return decision.result;
-          if (decision.action === "retry") {
+          if (decision.action === 'return') return decision.result;
+          if (decision.action === 'retry') {
             console.warn(`[AI] ${label} → rate limited, retrying in ${decision.sleepMs / 1000}s`);
             await new Promise<void>((resolve) => setTimeout(resolve, decision.sleepMs));
             continue;
@@ -382,7 +382,7 @@ export async function aiJSON(
 
         recordAttempt({
           attempt,
-          status: "http_error",
+          status: 'http_error',
           httpStatus: apiResponse.status,
           errorMessage,
           durationMs: Date.now() - attemptStartedAt,
@@ -397,30 +397,30 @@ export async function aiJSON(
         const errorMessage = `AI error (${label}): malformed 200 response body`;
         recordAttempt({
           attempt,
-          status: "http_error",
+          status: 'http_error',
           httpStatus: apiResponse.status,
           errorMessage,
           durationMs: Date.now() - attemptStartedAt,
         });
         throw new Error(errorMessage);
       }
-      const raw: string = responseData.choices?.[0]?.message?.content ?? "{}";
+      const raw: string = responseData.choices?.[0]?.message?.content ?? '{}';
       const stripped = extractJsonContent(raw);
       try {
         const result: unknown = JSON.parse(stripped);
         recordAttempt({
           attempt,
-          status: "success",
+          status: 'success',
           response: result,
           durationMs: Date.now() - attemptStartedAt,
         });
         console.log(`[AI] ${label} → success`);
-        return { kind: "ok", value: result };
+        return { kind: 'ok', value: result };
       } catch {
         const errorMessage = `AI parse error (${label}): ${stripped.slice(0, 200)}`;
         recordAttempt({
           attempt,
-          status: "parse_error",
+          status: 'parse_error',
           rawContent: raw,
           errorMessage,
           durationMs: Date.now() - attemptStartedAt,

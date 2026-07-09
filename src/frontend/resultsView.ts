@@ -3,13 +3,13 @@
 // the filtered show/hide toggle, deep-search button visibility, and the
 // client-side AI-filter pass over the rendered cards.
 
-import { getElement, requireChild } from "./domUtils";
-import { esc } from "./html";
-import { applyListingCardAccessibility } from "./listingCardActivation";
-import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from "./listingHtml";
-import { rafSchedule } from "./rafSchedule";
-import { sourceBadgeHtml } from "./recipeDisplay";
-import { DEFAULT_SORT_OPTION, sortListings } from "./sortListings";
+import { getElement, requireChild } from './domUtils';
+import { esc } from './html';
+import { applyListingCardAccessibility } from './listingCardActivation';
+import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
+import { rafSchedule } from './rafSchedule';
+import { sourceBadgeHtml } from './recipeDisplay';
+import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
 import {
   cardIdByUrl,
   isAiFilterRunning,
@@ -20,23 +20,23 @@ import {
   showFilteredListings,
   sortBy,
   urlCardDataById,
-} from "./state";
-import { updateUrlGroupHeaders } from "./urlGroupsView";
+} from './state';
+import { updateUrlGroupHeaders } from './urlGroupsView';
 
 // Sole writer of the filtered-results toggle button state — derives it from state.
 export function renderFilteredToggle(): void {
-  const toggleBtn = getElement<HTMLButtonElement>("toggleFilteredBtn");
-  const label = showFilteredListings ? "Hide filtered listings" : "Show filtered listings";
-  toggleBtn.setAttribute("aria-pressed", String(showFilteredListings));
+  const toggleBtn = getElement<HTMLButtonElement>('toggleFilteredBtn');
+  const label = showFilteredListings ? 'Hide filtered listings' : 'Show filtered listings';
+  toggleBtn.setAttribute('aria-pressed', String(showFilteredListings));
   toggleBtn.title = label;
-  toggleBtn.setAttribute("aria-label", label);
+  toggleBtn.setAttribute('aria-label', label);
 }
 
 export function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
   return [...urlCardDataById.values()]
     .flatMap((data) =>
-      data.listingUrls.filter((listingUrl) => !seen.has(listingUrl) && seen.add(listingUrl)),
+      data.listingUrls.filter((listingUrl) => !seen.has(listingUrl) && seen.add(listingUrl))
     )
     .flatMap((listingUrl) => {
       // Every URL in listingUrls was added to listingsByUrl at the same time in searchUrlCardAsync.
@@ -68,7 +68,7 @@ export function applySortOrder(listings: ListingItem[]): void {
   // matching the order cards were appended to the DOM, so there's nothing to
   // re-sort or re-append on every render tick.
   if (sortBy === DEFAULT_SORT_OPTION) return;
-  const container = getElement("listingsContainer");
+  const container = getElement('listingsContainer');
   sortListings(listings, sortBy).forEach((item) => {
     const card = getCardByUrl(item.data.url);
     if (card) container.appendChild(card);
@@ -98,15 +98,15 @@ export function renderDerived(): void {
   const listings = getOrderedListings();
   const passing = listings.filter((listingItem) => listingItem.aiFilterReason === null);
   const visibleCount = showFilteredListings ? listings.length : passing.length;
-  getElement("resultCount").textContent = String(visibleCount);
-  getElement("totalCount").textContent = String(listings.length);
+  getElement('resultCount').textContent = String(visibleCount);
+  getElement('totalCount').textContent = String(listings.length);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
-    isCardSearchActive(data.searchStatus),
+    isCardSearchActive(data.searchStatus)
   );
   const hasUnscraped = passing.some((listingItem) => !listingItem.hasBeenDeepSearched);
-  getElement("deepBtn").classList.toggle(
-    "hidden",
-    isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,
+  getElement('deepBtn').classList.toggle(
+    'hidden',
+    isDeepSearchRunning || isAnyCardSearching || !hasUnscraped
   );
   renderAiFilterStatus(listings);
   scheduleSortOrderUpdate(listings);
@@ -116,13 +116,13 @@ export function renderDerived(): void {
 // Sole writer of the ai-filter status line — shows a spinner while a run is
 // in flight, otherwise the count of listings the filter has excluded.
 export function renderAiFilterStatus(listings: ListingItem[]): void {
-  const status = getElement("aiFilterStatus");
+  const status = getElement('aiFilterStatus');
   if (isAiFilterRunning) {
     status.innerHTML = `<span class="spinner"></span><span>Filtering results...</span>`;
     return;
   }
   const excludedCount = listings.filter(
-    (listingItem) => listingItem.aiFilterReason !== null,
+    (listingItem) => listingItem.aiFilterReason !== null
   ).length;
   status.textContent = `Filtered ${excludedCount} results`;
 }
@@ -132,17 +132,17 @@ export function applyClientFilters(): void {
     const passes = item.aiFilterReason === null;
     const card = getCardByUrl(item.data.url);
     if (card) {
-      const banner = requireChild<HTMLElement>(card, ".filter-banner");
+      const banner = requireChild<HTMLElement>(card, '.filter-banner');
       if (passes) {
-        card.style.display = "";
-        card.classList.remove("filtered-out");
-        banner.textContent = "";
-        banner.classList.add("hidden");
+        card.style.display = '';
+        card.classList.remove('filtered-out');
+        banner.textContent = '';
+        banner.classList.add('hidden');
       } else {
-        card.classList.add("filtered-out");
+        card.classList.add('filtered-out');
         banner.textContent = filterBannerText(item);
-        banner.classList.remove("hidden");
-        card.style.display = showFilteredListings ? "" : "none";
+        banner.classList.remove('hidden');
+        card.style.display = showFilteredListings ? '' : 'none';
       }
     }
   }
@@ -166,8 +166,8 @@ export function renderCard(item: ListingItem): void {
   }
 
   const existing = document.getElementById(cardId);
-  const card = existing ?? document.createElement("div");
-  card.className = "listing-card";
+  const card = existing ?? document.createElement('div');
+  card.className = 'listing-card';
   card.id = cardId;
   card.dataset.url = listing.url;
 
@@ -207,7 +207,7 @@ export function renderCard(item: ListingItem): void {
     </div>
   `;
 
-  applyListingCardAccessibility(requireChild(card, ".listing-open-area"), listing.title);
+  applyListingCardAccessibility(requireChild(card, '.listing-open-area'), listing.title);
 
-  if (!existing) getElement("listingsContainer").appendChild(card);
+  if (!existing) getElement('listingsContainer').appendChild(card);
 }

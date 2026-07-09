@@ -1,16 +1,16 @@
-import { getElement } from "./domUtils";
-import { formatListingPrice } from "./priceFormat";
-import { promptHash } from "./renderUtils";
-import { applyClientFilters, getOrderedListings, renderDerived } from "./resultsView";
+import { getElement } from './domUtils';
+import { formatListingPrice } from './priceFormat';
+import { promptHash } from './renderUtils';
+import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
 import {
   aiFilterPendingRun,
   isAiFilterRunning,
   listingsByUrl,
   setAiFilterPendingRun,
   setIsAiFilterRunning,
-} from "./state";
-import { setStatus } from "./statusBar";
-import { streamPostAsync } from "./streamPost";
+} from './state';
+import { setStatus } from './statusBar';
+import { streamPostAsync } from './streamPost';
 
 // The "already checked" cache in `runAiFilterAsync` is keyed on a hash of the
 // full prompt, so every keystroke changes the hash and makes the entire
@@ -70,7 +70,7 @@ export function shouldAutoRunAiFilter(prompt: string): boolean {
  */
 export function clearAiFilterResults(): void {
   const hasFilteredResults = [...listingsByUrl.values()].some(
-    (item) => item.aiFilterReason !== null,
+    (item) => item.aiFilterReason !== null
   );
   for (const item of listingsByUrl.values()) {
     item.aiFilterReason = null;
@@ -87,8 +87,8 @@ export function clearAiFilterResults(): void {
  * receive that `Event` object instead of any caller-supplied value.
  */
 export function requestAiFilterRunIfPromptLongEnough(): void {
-  const prompt = getElement<HTMLTextAreaElement>("aiFilter").value;
-  if (prompt.trim() === "") {
+  const prompt = getElement<HTMLTextAreaElement>('aiFilter').value;
+  if (prompt.trim() === '') {
     clearAiFilterResults();
     return;
   }
@@ -102,7 +102,7 @@ export async function runAiFilterAsync(): Promise<void> {
     return;
   }
 
-  const prompt = getElement<HTMLTextAreaElement>("aiFilter").value.trim();
+  const prompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
   if (!prompt) return;
   const hash = promptHash(prompt);
   const toCheck = getOrderedListings().filter((item) => item.aiCheckedHash !== hash);
@@ -115,7 +115,7 @@ export async function runAiFilterAsync(): Promise<void> {
 
   try {
     await streamPostAsync(
-      "/api/ai-filter",
+      '/api/ai-filter',
       {
         prompt,
         listings: toCheck.map((item) => ({
@@ -123,11 +123,11 @@ export async function runAiFilterAsync(): Promise<void> {
           title: item.data.title,
           price: formatListingPrice(item.data.price),
           location: item.data.location,
-          description: (item.data.description ?? "").slice(0, 300),
+          description: (item.data.description ?? '').slice(0, 300),
         })),
       },
       (event) => {
-        if (event.type === "result") {
+        if (event.type === 'result') {
           for (const result of event.results as Array<{
             url: string;
             pass: boolean;
@@ -137,19 +137,19 @@ export async function runAiFilterAsync(): Promise<void> {
             const item = listingsByUrl.get(result.url);
             if (item) {
               item.aiCheckedHash = hash;
-              item.aiFilterReason = result.pass ? null : (result.reason ?? "No reason given");
+              item.aiFilterReason = result.pass ? null : (result.reason ?? 'No reason given');
               item.data.relevance = result.relevance;
             }
           }
           applyClientFilters();
-        } else if (event.type === "error") {
+        } else if (event.type === 'error') {
           streamError = event.message as string;
         }
-      },
+      }
     );
     if (streamError) throw new Error(streamError);
   } catch (error) {
-    setStatus((error as Error).message, "error");
+    setStatus((error as Error).message, 'error');
   } finally {
     setIsAiFilterRunning(false);
     renderDerived();

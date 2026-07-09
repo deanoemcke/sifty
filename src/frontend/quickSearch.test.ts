@@ -1,24 +1,24 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "../lib/recipes/base";
-import { normalizeListingRelevance, searchUrlCardAsync } from "./quickSearch";
-import { cardStatusText } from "./searchStatusText";
-import { listingsByUrl, resetState, type UrlCardData } from "./state";
-import { cancelSearch, cardStatusSnapshot } from "./urlCardRow";
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Listing } from '../lib/recipes/base';
+import { normalizeListingRelevance, searchUrlCardAsync } from './quickSearch';
+import { cardStatusText } from './searchStatusText';
+import { listingsByUrl, resetState, type UrlCardData } from './state';
+import { cancelSearch, cardStatusSnapshot } from './urlCardRow';
 import {
   addUrlCard,
   resetUrlCardStore,
   type UrlCard,
   type UrlCardDom,
   urlCardData,
-} from "./urlCardStore";
+} from './urlCardStore';
 
-const TRADEME_URL = "https://www.trademe.co.nz/search/test";
+const TRADEME_URL = 'https://www.trademe.co.nz/search/test';
 
 function makeCardData(): UrlCardData {
   return {
-    searchStatus: "idle",
-    searchedUrl: "",
+    searchStatus: 'idle',
+    searchedUrl: '',
     searchId: null,
     listingUrls: [],
     lastProgress: null,
@@ -28,19 +28,19 @@ function makeCardData(): UrlCardData {
 }
 
 function makeCardDom(url: string): UrlCardDom {
-  const criteriaElement = document.createElement("div");
+  const criteriaElement = document.createElement('div');
   criteriaElement.innerHTML = '<div class="criteria-grid"></div>';
-  const input = document.createElement("input");
+  const input = document.createElement('input');
   input.value = url;
   return {
-    containerElement: document.createElement("div"),
+    containerElement: document.createElement('div'),
     input,
-    linkElement: document.createElement("a"),
-    searchButton: document.createElement("button"),
-    removeButton: document.createElement("button"),
+    linkElement: document.createElement('a'),
+    searchButton: document.createElement('button'),
+    removeButton: document.createElement('button'),
     criteriaElement,
-    cacheStatusElement: document.createElement("div"),
-    statusElement: document.createElement("div"),
+    cacheStatusElement: document.createElement('div'),
+    statusElement: document.createElement('div'),
   };
 }
 
@@ -62,13 +62,13 @@ function stubQuickSearchStream(chunks: string[], onBeforeRead?: (callIndex: numb
     },
   };
   vi.stubGlobal(
-    "fetch",
+    'fetch',
     vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({}),
       body: { getReader: () => reader },
-    }),
+    })
   );
 }
 
@@ -94,8 +94,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("searchUrlCardAsync — post-stream cancellation disambiguation", () => {
-  it("marks the search cancelled when cancelSearch fires while the stream is still being read", async () => {
+describe('searchUrlCardAsync — post-stream cancellation disambiguation', () => {
+  it('marks the search cancelled when cancelSearch fires while the stream is still being read', async () => {
     const card = addSearchableCard();
     stubQuickSearchStream(['data: {"type":"progress","phase":"loading"}\n'], (callIndex) => {
       // Simulates the user clicking cancel in the gap between two network reads.
@@ -105,43 +105,43 @@ describe("searchUrlCardAsync — post-stream cancellation disambiguation", () =>
     await searchUrlCardAsync(card);
 
     const data = urlCardData(card);
-    expect(data.searchStatus).toBe("idle");
+    expect(data.searchStatus).toBe('idle');
     expect(data.wasCancelled).toBe(true);
     expect(cardStatusText(cardStatusSnapshot(card))).toEqual({
-      text: "Cancelled — 0 listings",
-      kind: "error",
+      text: 'Cancelled — 0 listings',
+      kind: 'error',
     });
   });
 
-  it("marks the search done, not cancelled, when the stream finishes without an intervening cancel", async () => {
+  it('marks the search done, not cancelled, when the stream finishes without an intervening cancel', async () => {
     const card = addSearchableCard();
     stubQuickSearchStream(['data: {"type":"progress","phase":"loading"}\n']);
 
     await searchUrlCardAsync(card);
 
     const data = urlCardData(card);
-    expect(data.searchStatus).toBe("done");
+    expect(data.searchStatus).toBe('done');
     expect(data.wasCancelled).toBe(false);
   });
 });
 
-describe("normalizeListingRelevance", () => {
-  it("leaves an existing relevance untouched", () => {
-    const listing = { url: "a", relevance: 7 } as Listing;
+describe('normalizeListingRelevance', () => {
+  it('leaves an existing relevance untouched', () => {
+    const listing = { url: 'a', relevance: 7 } as Listing;
     expect(normalizeListingRelevance(listing).relevance).toBe(7);
   });
 
-  it("defaults relevance to 0 when absent, e.g. a pre-deploy cached row replayed via SSE", () => {
+  it('defaults relevance to 0 when absent, e.g. a pre-deploy cached row replayed via SSE', () => {
     // `JSON.parse(ev.data)` on a stale cache entry produces an object with no
     // `relevance` key — the `as Listing` cast lets it through undetected.
-    const staleListing = { url: "a" } as Listing;
+    const staleListing = { url: 'a' } as Listing;
     expect(staleListing.relevance).toBeUndefined();
     expect(normalizeListingRelevance(staleListing).relevance).toBe(0);
   });
 });
 
-describe("searchUrlCardAsync — stale cached listing data", () => {
-  it("defaults relevance to 0 for a listing event replaying a pre-deploy cache row", async () => {
+describe('searchUrlCardAsync — stale cached listing data', () => {
+  it('defaults relevance to 0 for a listing event replaying a pre-deploy cache row', async () => {
     const card = addSearchableCard();
     // Simulates the server replaying a row cached before `relevance` became
     // mandatory on `Listing` — the SSE payload simply omits the field.
@@ -152,7 +152,7 @@ describe("searchUrlCardAsync — stale cached listing data", () => {
 
     await searchUrlCardAsync(card);
 
-    const item = listingsByUrl.get("https://example.com/stale");
+    const item = listingsByUrl.get('https://example.com/stale');
     expect(item?.data.relevance).toBe(0);
   });
 });

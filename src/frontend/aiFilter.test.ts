@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AI_FILTER_DEBOUNCE_MS,
   clearAiFilterResults,
@@ -8,17 +8,17 @@ import {
   runAiFilterAsync,
   scheduleAiFilterRun,
   shouldAutoRunAiFilter,
-} from "./aiFilter";
-import { isAiFilterRunning, type ListingItem, listingsByUrl, resetState } from "./state";
-import { makeListing, makeListingItem } from "./testFixtures";
-import { addUrlCard, resetUrlCardStore, type UrlCardDom } from "./urlCardStore";
+} from './aiFilter';
+import { isAiFilterRunning, type ListingItem, listingsByUrl, resetState } from './state';
+import { makeListing, makeListingItem } from './testFixtures';
+import { addUrlCard, resetUrlCardStore, type UrlCardDom } from './urlCardStore';
 
 function makeListingItemAt(url: string): ListingItem {
-  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: "" }) });
+  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: '' }) });
 }
 
-describe("scheduleAiFilterRun", () => {
-  it("calls runAiFilterAsync when the filter is not already running", () => {
+describe('scheduleAiFilterRun', () => {
+  it('calls runAiFilterAsync when the filter is not already running', () => {
     const runAiFilterAsync = vi.fn();
     const setAiFilterPendingRun = vi.fn();
 
@@ -32,7 +32,7 @@ describe("scheduleAiFilterRun", () => {
     expect(setAiFilterPendingRun).not.toHaveBeenCalled();
   });
 
-  it("sets aiFilterPendingRun to true and does not call runAiFilterAsync when the filter is already running", () => {
+  it('sets aiFilterPendingRun to true and does not call runAiFilterAsync when the filter is already running', () => {
     const runAiFilterAsync = vi.fn();
     const setAiFilterPendingRun = vi.fn();
 
@@ -60,32 +60,32 @@ function stubAiFilterStream(chunks: string[]): void {
         : { value: undefined, done: true },
   };
   vi.stubGlobal(
-    "fetch",
+    'fetch',
     vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({}),
       body: { getReader: () => reader },
-    }),
+    })
   );
 }
 
 function makeCardDom(): UrlCardDom {
-  const criteriaElement = document.createElement("div");
+  const criteriaElement = document.createElement('div');
   criteriaElement.innerHTML = '<div class="criteria-grid"></div>';
   return {
-    containerElement: document.createElement("div"),
-    input: document.createElement("input"),
-    linkElement: document.createElement("a"),
-    searchButton: document.createElement("button"),
-    removeButton: document.createElement("button"),
+    containerElement: document.createElement('div'),
+    input: document.createElement('input'),
+    linkElement: document.createElement('a'),
+    searchButton: document.createElement('button'),
+    removeButton: document.createElement('button'),
     criteriaElement,
-    cacheStatusElement: document.createElement("div"),
-    statusElement: document.createElement("div"),
+    cacheStatusElement: document.createElement('div'),
+    statusElement: document.createElement('div'),
   };
 }
 
-describe("runAiFilterAsync", () => {
+describe('runAiFilterAsync', () => {
   beforeEach(() => {
     resetState();
     resetUrlCardStore();
@@ -105,14 +105,14 @@ describe("runAiFilterAsync", () => {
     vi.unstubAllGlobals();
   });
 
-  it("writes the AI-assigned relevance score onto the listing when a result event arrives", async () => {
-    const url = "https://example.com/1";
+  it('writes the AI-assigned relevance score onto the listing when a result event arrives', async () => {
+    const url = 'https://example.com/1';
     const item: ListingItem = makeListingItem({
-      data: makeListing({ url, title: "Item", location: "Auckland" }),
+      data: makeListing({ url, title: 'Item', location: 'Auckland' }),
     });
     listingsByUrl.set(url, item);
     addUrlCard(makeCardDom(), {
-      searchStatus: "done",
+      searchStatus: 'done',
       searchedUrl: url,
       searchId: null,
       listingUrls: [url],
@@ -131,8 +131,8 @@ describe("runAiFilterAsync", () => {
   });
 });
 
-describe("AI_FILTER_DEBOUNCE_MS", () => {
-  it("is long enough to absorb a normal typing pause instead of resubmitting on every gap", () => {
+describe('AI_FILTER_DEBOUNCE_MS', () => {
+  it('is long enough to absorb a normal typing pause instead of resubmitting on every gap', () => {
     // The debounce interval must comfortably exceed a mid-sentence typing pause
     // so normal typing doesn't resubmit the full listing set to the LLM on
     // every keystroke gap. 500ms (the pre-fix value) fires far too often.
@@ -140,21 +140,21 @@ describe("AI_FILTER_DEBOUNCE_MS", () => {
   });
 });
 
-describe("shouldAutoRunAiFilter", () => {
-  it("is false when the prompt is shorter than the minimum length", () => {
-    expect(shouldAutoRunAiFilter("a".repeat(MIN_AI_FILTER_PROMPT_LENGTH - 1))).toBe(false);
+describe('shouldAutoRunAiFilter', () => {
+  it('is false when the prompt is shorter than the minimum length', () => {
+    expect(shouldAutoRunAiFilter('a'.repeat(MIN_AI_FILTER_PROMPT_LENGTH - 1))).toBe(false);
   });
 
-  it("is false when the prompt is only whitespace padded above the minimum length", () => {
-    expect(shouldAutoRunAiFilter(`  ${"a".repeat(MIN_AI_FILTER_PROMPT_LENGTH - 1)}  `)).toBe(false);
+  it('is false when the prompt is only whitespace padded above the minimum length', () => {
+    expect(shouldAutoRunAiFilter(`  ${'a'.repeat(MIN_AI_FILTER_PROMPT_LENGTH - 1)}  `)).toBe(false);
   });
 
-  it("is true when the prompt meets the minimum length", () => {
-    expect(shouldAutoRunAiFilter("a".repeat(MIN_AI_FILTER_PROMPT_LENGTH))).toBe(true);
+  it('is true when the prompt meets the minimum length', () => {
+    expect(shouldAutoRunAiFilter('a'.repeat(MIN_AI_FILTER_PROMPT_LENGTH))).toBe(true);
   });
 });
 
-describe("requestAiFilterRunIfPromptLongEnough", () => {
+describe('requestAiFilterRunIfPromptLongEnough', () => {
   beforeEach(() => {
     resetState();
     resetUrlCardStore();
@@ -167,9 +167,9 @@ describe("requestAiFilterRunIfPromptLongEnough", () => {
     `;
   });
 
-  it("does not start a run when the prompt is shorter than the minimum length", () => {
-    const textarea = document.getElementById("aiFilter") as HTMLTextAreaElement;
-    textarea.value = "a".repeat(MIN_AI_FILTER_PROMPT_LENGTH - 1);
+  it('does not start a run when the prompt is shorter than the minimum length', () => {
+    const textarea = document.getElementById('aiFilter') as HTMLTextAreaElement;
+    textarea.value = 'a'.repeat(MIN_AI_FILTER_PROMPT_LENGTH - 1);
 
     requestAiFilterRunIfPromptLongEnough();
 
@@ -182,42 +182,42 @@ describe("requestAiFilterRunIfPromptLongEnough", () => {
     // debounce() forwards whatever arguments it's called with, and
     // addEventListener invokes listeners with the DOM Event — this must not
     // crash or be treated as a caller-supplied dependency when called that way.
-    const textarea = document.getElementById("aiFilter") as HTMLTextAreaElement;
-    textarea.value = "";
-    const fakeInputEvent = new Event("input");
+    const textarea = document.getElementById('aiFilter') as HTMLTextAreaElement;
+    textarea.value = '';
+    const fakeInputEvent = new Event('input');
 
     expect(() =>
-      (requestAiFilterRunIfPromptLongEnough as unknown as (event: Event) => void)(fakeInputEvent),
+      (requestAiFilterRunIfPromptLongEnough as unknown as (event: Event) => void)(fakeInputEvent)
     ).not.toThrow();
   });
 
-  it("clears a previously filtered-out listing when the prompt is emptied", () => {
-    const item = makeListingItemAt("https://l/1");
-    item.aiFilterReason = "too old";
-    listingsByUrl.set("https://l/1", item);
-    const textarea = document.getElementById("aiFilter") as HTMLTextAreaElement;
-    textarea.value = "";
+  it('clears a previously filtered-out listing when the prompt is emptied', () => {
+    const item = makeListingItemAt('https://l/1');
+    item.aiFilterReason = 'too old';
+    listingsByUrl.set('https://l/1', item);
+    const textarea = document.getElementById('aiFilter') as HTMLTextAreaElement;
+    textarea.value = '';
 
     requestAiFilterRunIfPromptLongEnough();
 
-    expect(listingsByUrl.get("https://l/1")?.aiFilterReason).toBeNull();
-    expect(document.getElementById("aiFilterStatus")?.textContent).toBe("Filtered 0 results");
+    expect(listingsByUrl.get('https://l/1')?.aiFilterReason).toBeNull();
+    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 0 results');
   });
 
-  it("does not clear an existing filtered-out listing while the prompt is short but non-empty", () => {
-    const item = makeListingItemAt("https://l/1");
-    item.aiFilterReason = "too old";
-    listingsByUrl.set("https://l/1", item);
-    const textarea = document.getElementById("aiFilter") as HTMLTextAreaElement;
-    textarea.value = "ab";
+  it('does not clear an existing filtered-out listing while the prompt is short but non-empty', () => {
+    const item = makeListingItemAt('https://l/1');
+    item.aiFilterReason = 'too old';
+    listingsByUrl.set('https://l/1', item);
+    const textarea = document.getElementById('aiFilter') as HTMLTextAreaElement;
+    textarea.value = 'ab';
 
     requestAiFilterRunIfPromptLongEnough();
 
-    expect(listingsByUrl.get("https://l/1")?.aiFilterReason).toBe("too old");
+    expect(listingsByUrl.get('https://l/1')?.aiFilterReason).toBe('too old');
   });
 });
 
-describe("clearAiFilterResults", () => {
+describe('clearAiFilterResults', () => {
   beforeEach(() => {
     resetState();
     resetUrlCardStore();
@@ -229,19 +229,19 @@ describe("clearAiFilterResults", () => {
     `;
   });
 
-  it("resets aiFilterReason and aiCheckedHash to null for every listing", () => {
-    const filtered = makeListingItemAt("https://l/1");
-    filtered.aiFilterReason = "too old";
+  it('resets aiFilterReason and aiCheckedHash to null for every listing', () => {
+    const filtered = makeListingItemAt('https://l/1');
+    filtered.aiFilterReason = 'too old';
     filtered.aiCheckedHash = 123;
-    const passed = makeListingItemAt("https://l/2");
+    const passed = makeListingItemAt('https://l/2');
     passed.aiCheckedHash = 456;
     listingsByUrl.set(filtered.data.url, filtered);
     listingsByUrl.set(passed.data.url, passed);
 
     clearAiFilterResults();
 
-    expect(listingsByUrl.get("https://l/1")?.aiFilterReason).toBeNull();
-    expect(listingsByUrl.get("https://l/1")?.aiCheckedHash).toBeNull();
-    expect(listingsByUrl.get("https://l/2")?.aiCheckedHash).toBeNull();
+    expect(listingsByUrl.get('https://l/1')?.aiFilterReason).toBeNull();
+    expect(listingsByUrl.get('https://l/1')?.aiCheckedHash).toBeNull();
+    expect(listingsByUrl.get('https://l/2')?.aiCheckedHash).toBeNull();
   });
 });

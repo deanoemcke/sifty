@@ -1,10 +1,10 @@
 // Standardised search status wording — all user-visible search progress text
 // is composed here from semantic state, never hand-built at call sites.
 
-import type { QuickSearchProgress } from "../lib/recipes/base";
-import type { UrlCardSearchStatus } from "./state";
+import type { QuickSearchProgress } from '../lib/recipes/base';
+import type { UrlCardSearchStatus } from './state';
 
-export type CardStatusKind = "info" | "success" | "error";
+export type CardStatusKind = 'info' | 'success' | 'error';
 
 export interface CardStatusSnapshot {
   searchStatus: UrlCardSearchStatus;
@@ -15,7 +15,7 @@ export interface CardStatusSnapshot {
 }
 
 function plural(count: number): string {
-  return count !== 1 ? "s" : "";
+  return count !== 1 ? 's' : '';
 }
 
 export function listingsCountText(count: number): string {
@@ -24,40 +24,40 @@ export function listingsCountText(count: number): string {
 
 export function progressText(progress: QuickSearchProgress): string {
   switch (progress.phase) {
-    case "loading":
-      return "Loading…";
-    case "counted":
+    case 'loading':
+      return 'Loading…';
+    case 'counted':
       return `${progress.totalResults} result${plural(progress.totalResults)} across ${progress.totalPages} page${plural(progress.totalPages)}`;
-    case "paging":
+    case 'paging':
       return progress.totalPages === undefined
         ? `Fetching page ${progress.page}…`
         : `Fetching page ${progress.page}/${progress.totalPages}…`;
-    case "collecting":
-      return `Found ${listingsCountText(progress.foundSoFar)}${progress.isLoadingMore ? ", loading more…" : "…"}`;
+    case 'collecting':
+      return `Found ${listingsCountText(progress.foundSoFar)}${progress.isLoadingMore ? ', loading more…' : '…'}`;
   }
 }
 
 // Boundary validation for progress events arriving over the SSE stream.
 export function parseQuickSearchProgress(raw: Record<string, unknown>): QuickSearchProgress | null {
   switch (raw.phase) {
-    case "loading":
-      return { phase: "loading" };
-    case "counted":
-      return typeof raw.totalResults === "number" && typeof raw.totalPages === "number"
-        ? { phase: "counted", totalResults: raw.totalResults, totalPages: raw.totalPages }
+    case 'loading':
+      return { phase: 'loading' };
+    case 'counted':
+      return typeof raw.totalResults === 'number' && typeof raw.totalPages === 'number'
+        ? { phase: 'counted', totalResults: raw.totalResults, totalPages: raw.totalPages }
         : null;
-    case "paging":
-      return typeof raw.page === "number"
+    case 'paging':
+      return typeof raw.page === 'number'
         ? {
-            phase: "paging",
+            phase: 'paging',
             page: raw.page,
-            ...(typeof raw.totalPages === "number" ? { totalPages: raw.totalPages } : {}),
+            ...(typeof raw.totalPages === 'number' ? { totalPages: raw.totalPages } : {}),
           }
         : null;
-    case "collecting":
-      return typeof raw.foundSoFar === "number"
+    case 'collecting':
+      return typeof raw.foundSoFar === 'number'
         ? {
-            phase: "collecting",
+            phase: 'collecting',
             foundSoFar: raw.foundSoFar,
             isLoadingMore: raw.isLoadingMore === true,
           }
@@ -68,17 +68,17 @@ export function parseQuickSearchProgress(raw: Record<string, unknown>): QuickSea
 }
 
 export function cardStatusText(
-  snapshot: CardStatusSnapshot,
+  snapshot: CardStatusSnapshot
 ): { text: string; kind: CardStatusKind } | null {
   const { searchStatus, lastProgress, listingsFoundCount, errorMessage, wasCancelled } = snapshot;
-  if (searchStatus === "searching")
-    return { text: lastProgress ? progressText(lastProgress) : "Fetching listings…", kind: "info" };
-  if (searchStatus === "cancelling") return { text: "Cancelling…", kind: "info" };
+  if (searchStatus === 'searching')
+    return { text: lastProgress ? progressText(lastProgress) : 'Fetching listings…', kind: 'info' };
+  if (searchStatus === 'cancelling') return { text: 'Cancelling…', kind: 'info' };
   if (wasCancelled)
-    return { text: `Cancelled — ${listingsCountText(listingsFoundCount)}`, kind: "error" };
-  if (searchStatus === "done")
+    return { text: `Cancelled — ${listingsCountText(listingsFoundCount)}`, kind: 'error' };
+  if (searchStatus === 'done')
     return errorMessage
-      ? { text: errorMessage, kind: "error" }
-      : { text: listingsCountText(listingsFoundCount), kind: "success" };
+      ? { text: errorMessage, kind: 'error' }
+      : { text: listingsCountText(listingsFoundCount), kind: 'success' };
   return null;
 }
