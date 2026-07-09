@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderCooldownStore } from "../../lib/recipes/base";
 import { aiJSON, getAIConfig } from "../ai";
-import { clampRelevance, handleAiFilter } from "./aiFilter";
+import { clampRelevance, handleAiFilter, isValidFilterResultEntry } from "./aiFilter";
 
 // `applyAiJsonResult` is left as the real implementation (not mocked) so these tests
 // exercise the actual orchestration logic — unwrapping an ok result, or marking the
@@ -77,6 +77,38 @@ describe("clampRelevance", () => {
     expect(clampRelevance(undefined)).toBe(0);
     expect(clampRelevance(null)).toBe(0);
     expect(clampRelevance("7")).toBe(0);
+  });
+});
+
+describe("isValidFilterResultEntry", () => {
+  it("accepts a well-formed entry", () => {
+    expect(isValidFilterResultEntry({ index: 1, pass: true, reason: null })).toBe(true);
+    expect(isValidFilterResultEntry({ index: 1, pass: false, reason: "wrong type" })).toBe(true);
+  });
+
+  it("accepts a missing reason", () => {
+    expect(isValidFilterResultEntry({ index: 1, pass: true })).toBe(true);
+  });
+
+  it("rejects a non-boolean pass", () => {
+    expect(isValidFilterResultEntry({ index: 1, pass: "yes", reason: null })).toBe(false);
+    expect(isValidFilterResultEntry({ index: 1, pass: 1, reason: null })).toBe(false);
+    expect(isValidFilterResultEntry({ index: 1, reason: null })).toBe(false);
+  });
+
+  it("rejects a reason that is neither a string nor null/undefined", () => {
+    expect(isValidFilterResultEntry({ index: 1, pass: true, reason: 42 })).toBe(false);
+    expect(isValidFilterResultEntry({ index: 1, pass: true, reason: { text: "no" } })).toBe(false);
+  });
+
+  it("rejects a non-numeric index", () => {
+    expect(isValidFilterResultEntry({ index: "1", pass: true, reason: null })).toBe(false);
+  });
+
+  it("rejects non-object values", () => {
+    expect(isValidFilterResultEntry(null)).toBe(false);
+    expect(isValidFilterResultEntry(undefined)).toBe(false);
+    expect(isValidFilterResultEntry("nope")).toBe(false);
   });
 });
 
@@ -255,6 +287,72 @@ describe("handleAiFilter", () => {
         { url: "https://example.com/1", pass: true, reason: null, relevance: 9 },
         { url: "https://example.com/2", pass: false, reason: "wrong type", relevance: 0 },
       ],
+    });
+  });
+
+  it("drops a result entry with a non-boolean pass instead of propagating it as-is", async () => {
+    const CONFIG_A = {
+      url: "a",
+      model: "m",
+      apiKey: "k",
+      providerKey: "a",
+      cooldownStore: STUB_COOLDOWN_STORE,
+    };
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: "ok",
+      value: {
+        results: [
+          { index: 1, pass: "yes", reason: null, relevance: 5 },
+          { index: 2, pass: true, reason: null, relevance: 5 },
+        ],
+      },
+    });
+
+    const request = makeRequest({
+      listings: [makeListing("https://example.com/1"), makeListing("https://example.com/2")],
+      prompt: "laptop",
+    });
+    const response = makeResponse();
+
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
+
+    expect(response.events).toContainEqual({
+      type: "result",
+      results: [{ url: "https://example.com/2", pass: true, reason: null, relevance: 5 }],
+    });
+  });
+
+  it("drops a result entry with a non-string, non-null reason instead of propagating it as-is", async () => {
+    const CONFIG_A = {
+      url: "a",
+      model: "m",
+      apiKey: "k",
+      providerKey: "a",
+      cooldownStore: STUB_COOLDOWN_STORE,
+    };
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: "ok",
+      value: {
+        results: [
+          { index: 1, pass: false, reason: 42, relevance: 3 },
+          { index: 2, pass: true, reason: null, relevance: 5 },
+        ],
+      },
+    });
+
+    const request = makeRequest({
+      listings: [makeListing("https://example.com/1"), makeListing("https://example.com/2")],
+      prompt: "laptop",
+    });
+    const response = makeResponse();
+
+    await handleAiFilter(request, response, STUB_COOLDOWN_STORE);
+
+    expect(response.events).toContainEqual({
+      type: "result",
+      results: [{ url: "https://example.com/2", pass: true, reason: null, relevance: 5 }],
     });
   });
 });

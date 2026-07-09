@@ -19,6 +19,29 @@ export function clampRelevance(value: unknown): number {
   return Math.min(9, Math.max(0, value));
 }
 
+interface RawFilterResultEntry {
+  index: number;
+  pass: boolean;
+  reason: string | null;
+  relevance?: unknown;
+}
+
+// Unlike relevance, there's no sensible value to coerce a malformed `pass` or
+// `reason` into, so an entry with either field the wrong shape is dropped
+// entirely — consistent with how an entry whose index doesn't resolve to a
+// known listing is already dropped via the url filter below.
+export function isValidFilterResultEntry(value: unknown): value is RawFilterResultEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.index === "number" &&
+    typeof candidate.pass === "boolean" &&
+    (candidate.reason === null ||
+      candidate.reason === undefined ||
+      typeof candidate.reason === "string")
+  );
+}
+
 export async function handleAiFilter(
   request: IncomingMessage,
   response: ServerResponse,
@@ -90,22 +113,13 @@ export async function handleAiFilter(
           if (typeof result !== "object" || result === null)
             throw new Error("AI filter: expected object response");
           const resultObj = result as Record<string, unknown>;
-          const parsed: Array<{
-            index: number;
-            pass: boolean;
-            reason: string | null;
-            relevance: unknown;
-          }> = Array.isArray(result)
+          const parsed: unknown[] = Array.isArray(result)
             ? result
             : Array.isArray(resultObj.results)
-              ? (resultObj.results as Array<{
-                  index: number;
-                  pass: boolean;
-                  reason: string | null;
-                  relevance: unknown;
-                }>)
+              ? resultObj.results
               : [];
           const results = parsed
+            .filter(isValidFilterResultEntry)
             .map((resultItem) => ({
               url: batch[resultItem.index - 1]?.url ?? "",
               pass: resultItem.pass,
