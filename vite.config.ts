@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createProviderCooldownStore } from './src/server/ai';
-import { getWorktreePort } from './vite.config.helpers';
+import { getWorktreeLabel, getWorktreePort } from './vite.config.helpers';
 import { handleCancelSearch } from './src/server/routes/cancelSearch';
 import { handleQuickSearch } from './src/server/routes/quickSearch';
 import { handleDeepSearch } from './src/server/routes/deepSearch';
@@ -21,6 +21,9 @@ const providerCooldownStore = createProviderCooldownStore();
 type Next = (err?: unknown) => void;
 
 export default defineConfig({
+  define: {
+    __WORKTREE_LABEL__: JSON.stringify(getWorktreeLabel(process.cwd())),
+  },
   server: {
     port: getWorktreePort(process.cwd()),
     strictPort: true,
