@@ -8,6 +8,7 @@ import {
   renderCard,
   renderDerived,
   renderFilteredToggle,
+  scheduleSortOrderUpdate,
 } from "./resultsView";
 import {
   type ListingItem,
@@ -199,15 +200,102 @@ describe("applySortOrder", () => {
     expect(containerCardUrls()).toEqual(["https://l/2", "https://l/3", "https://l/1"]);
   });
 
-  it("re-applies sort order as part of renderDerived", () => {
+  it("re-applies sort order as part of renderDerived, once the scheduled frame fires", () => {
+    vi.useFakeTimers();
+    try {
+      addCardWithListings(urls);
+      renderAllCards();
+      (listingsByUrl.get("https://l/1") as ListingItem).data.price = 30;
+      (listingsByUrl.get("https://l/2") as ListingItem).data.price = 10;
+      (listingsByUrl.get("https://l/3") as ListingItem).data.price = 20;
+      setSortBy("lowest-price");
+      renderDerived();
+      // Not applied synchronously — it's scheduled for the next frame.
+      expect(containerCardUrls()).toEqual(urls);
+      vi.advanceTimersByTime(20);
+      expect(containerCardUrls()).toEqual(["https://l/2", "https://l/3", "https://l/1"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("scheduleSortOrderUpdate", () => {
+  const urls = ["https://l/1", "https://l/2", "https://l/3"];
+
+  function renderAllCards(): void {
+    for (const url of urls) renderCard(listingsByUrl.get(url) as ListingItem);
+  }
+
+  function containerCardUrls(): (string | undefined)[] {
+    const container = document.getElementById("listingsContainer") as HTMLElement;
+    return [...container.children].map((child) => (child as HTMLElement).dataset.url);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not schedule an animation frame for the default source-url sort", () => {
     addCardWithListings(urls);
     renderAllCards();
-    (listingsByUrl.get("https://l/1") as ListingItem).data.price = 30;
-    (listingsByUrl.get("https://l/2") as ListingItem).data.price = 10;
-    (listingsByUrl.get("https://l/3") as ListingItem).data.price = 20;
+    const rafSpy = vi.spyOn(globalThis, "requestAnimationFrame");
+    scheduleSortOrderUpdate(getOrderedListings());
+    expect(rafSpy).not.toHaveBeenCalled();
+  });
+
+  it("coalesces a burst of rapid calls during streaming into a single sort/reorder using the last snapshot", () => {
+    addCardWithListings(urls);
+    renderAllCards();
     setSortBy("lowest-price");
-    renderDerived();
-    expect(containerCardUrls()).toEqual(["https://l/2", "https://l/3", "https://l/1"]);
+    const getByIdSpy = vi.spyOn(document, "getElementById");
+
+    // Simulate several SSE "listing" events landing within the same frame,
+    // each with a progressively updated price and listing snapshot.
+    (listingsByUrl.get("https://l/1") as ListingItem).data.price = 30;
+    (listingsByUrl.get("https://l/2") as ListingItem).data.price = 20;
+    (listingsByUrl.get("https://l/3") as ListingItem).data.price = 10;
+    scheduleSortOrderUpdate(getOrderedListings());
+
+    (listingsByUrl.get("https://l/1") as ListingItem).data.price = 10;
+    (listingsByUrl.get("https://l/2") as ListingItem).data.price = 20;
+    (listingsByUrl.get("https://l/3") as ListingItem).data.price = 30;
+    scheduleSortOrderUpdate(getOrderedListings());
+
+    (listingsByUrl.get("https://l/1") as ListingItem).data.price = 20;
+    (listingsByUrl.get("https://l/2") as ListingItem).data.price = 30;
+    (listingsByUrl.get("https://l/3") as ListingItem).data.price = 10;
+    scheduleSortOrderUpdate(getOrderedListings());
+
+    // Nothing runs synchronously — the sort/reorder is deferred.
+    expect(getByIdSpy).not.toHaveBeenCalled();
+    expect(containerCardUrls()).toEqual(urls);
+    getByIdSpy.mockClear();
+
+    vi.advanceTimersByTime(20);
+
+    // Exactly one lookup per card, plus one for the container — proving the
+    // sort/reorder ran once, not three times.
+    expect(getByIdSpy).toHaveBeenCalledTimes(urls.length + 1);
+    // And it used the last-scheduled snapshot: l/3 has the lowest price.
+    expect(containerCardUrls()).toEqual(["https://l/3", "https://l/1", "https://l/2"]);
+  });
+
+  it("only requests a single animation frame for a burst of calls", () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    setSortBy("lowest-price");
+    const rafSpy = vi.spyOn(globalThis, "requestAnimationFrame");
+
+    scheduleSortOrderUpdate(getOrderedListings());
+    scheduleSortOrderUpdate(getOrderedListings());
+    scheduleSortOrderUpdate(getOrderedListings());
+
+    expect(rafSpy).toHaveBeenCalledTimes(1);
   });
 });
 

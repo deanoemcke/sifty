@@ -249,10 +249,18 @@ describe("initApp() wiring", () => {
       const state = await import("./state");
       const sortSelect = document.getElementById("sortBy") as HTMLSelectElement;
 
+      // renderDerived() schedules the non-default-sort DOM reorder via
+      // requestAnimationFrame (see resultsView.ts's scheduleSortOrderUpdate).
+      // Fake timers + an explicit frame-advance flush that scheduled work
+      // before the test ends — otherwise it fires later against this test's
+      // already-torn-down DOM and surfaces as an unhandled error.
+      vi.useFakeTimers();
+
       sortSelect.value = "best-match";
       sortSelect.dispatchEvent(new Event("change"));
 
       expect(state.sortBy).toBe("best-match");
+      vi.advanceTimersByTime(20);
     });
   });
 

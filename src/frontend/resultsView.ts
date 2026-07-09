@@ -7,6 +7,7 @@ import { getElement, requireChild } from "./domUtils";
 import { esc } from "./html";
 import { applyListingCardAccessibility } from "./listingCardActivation";
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from "./listingHtml";
+import { rafSchedule } from "./rafSchedule";
 import { sourceBadgeHtml } from "./recipeDisplay";
 import { DEFAULT_SORT_OPTION, sortListings } from "./sortListings";
 import {
@@ -56,10 +57,12 @@ export function getSortedListings(): ListingItem[] {
 // that's a known, currently-unaddressed trade-off, not fixed here.
 //
 // Takes the caller's already-computed listing list rather than recomputing it
-// via getSortedListings()/getOrderedListings() — renderDerived() (the only
-// caller, fired once per streamed listing event) already built that list for
-// its own counts, so recomputing it here would redo the same
-// urlCardDataById/listingsByUrl traversal on every SSE tick.
+// via getSortedListings()/getOrderedListings() — renderDerived() already
+// built that list for its own counts, so recomputing it here would redo the
+// same urlCardDataById/listingsByUrl traversal. renderDerived() never calls
+// this directly — see scheduleSortOrderUpdate() below, which coalesces the
+// many calls renderDerived makes during an active SSE stream into one call
+// here per animation frame.
 export function applySortOrder(listings: ListingItem[]): void {
   // Default sort is a no-op: listings are already in natural/insertion order,
   // matching the order cards were appended to the DOM, so there's nothing to
@@ -70,6 +73,25 @@ export function applySortOrder(listings: ListingItem[]): void {
     const card = getCardByUrl(item.data.url);
     if (card) container.appendChild(card);
   });
+}
+
+// During an active SSE stream, renderDerived() (and therefore this) fires
+// once per listing arrival — often many times within a single animation
+// frame for a fast stream. Re-sorting and re-appending every card on every
+// one of those calls is wasted work: only the sort that's in effect
+// immediately before the next paint is ever visible. rafSchedule() coalesces
+// a burst of calls into a single applySortOrder() invocation on the next
+// frame, using whichever listings snapshot was passed most recently.
+//
+// The default-sort check is duplicated here (ahead of applySortOrder's own
+// check) deliberately: it lets renderDerived skip scheduling a frame at all
+// for the common case, rather than scheduling one just to have
+// applySortOrder no-op inside it.
+const scheduleApplySortOrderOnNextFrame = rafSchedule(applySortOrder);
+
+export function scheduleSortOrderUpdate(listings: ListingItem[]): void {
+  if (sortBy === DEFAULT_SORT_OPTION) return;
+  scheduleApplySortOrderOnNextFrame(listings);
 }
 
 export function renderDerived(): void {
@@ -87,7 +109,7 @@ export function renderDerived(): void {
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,
   );
   renderAiFilterStatus(listings);
-  applySortOrder(listings);
+  scheduleSortOrderUpdate(listings);
   updateUrlGroupHeaders();
 }
 
