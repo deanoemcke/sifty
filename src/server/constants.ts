@@ -7,3 +7,6 @@ export const MAX_PAGES_PER_SEARCH = 20;
 
 /** Maximum number of listings processed in a single deep search run. */
 export const MAX_DEEP_SEARCH_ITEMS = 100;
+
+/** Maximum number of listings emitted from a single quick-search URL. */
+export const MAX_RESULTS_PER_URL = 100;
