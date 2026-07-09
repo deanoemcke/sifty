@@ -14,7 +14,7 @@ import { handleListingCardKeydown, resolveListingCardOpenArea } from "./listingC
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from "./listingDetail";
 import { applyBrandTitle } from "./pageTitle";
 import { searchUrlCardAsync } from "./quickSearch";
-import { applyClientFilters, renderFilteredToggle } from "./resultsView";
+import { applyClientFilters, renderDerived, renderFilteredToggle } from "./resultsView";
 import {
   closeSaveSearchModal,
   fetchSavedSearchesAsync,
@@ -25,7 +25,13 @@ import {
   openSaveSearchModal,
 } from "./searchSession";
 import { activateSidebarTab } from "./sidebarTabs";
-import { setShowFilteredListings, showFilteredListings } from "./state";
+import {
+  DEFAULT_SORT_OPTION,
+  populateSortSelect,
+  SORT_OPTIONS,
+  type SortOption,
+} from "./sortListings";
+import { setShowFilteredListings, setSortBy, showFilteredListings } from "./state";
 import { cancelGroupSearches, createUrlCard } from "./urlCardRow";
 import { toggleUrlGroup } from "./urlGroupsView";
 
@@ -50,6 +56,12 @@ function initApp(): void {
     setShowFilteredListings(!showFilteredListings);
     renderFilteredToggle();
     applyClientFilters();
+  });
+
+  populateSortSelect(getElement<HTMLSelectElement>("sortBy"), SORT_OPTIONS, DEFAULT_SORT_OPTION);
+  getElement<HTMLSelectElement>("sortBy").addEventListener("change", (changeEvent) => {
+    setSortBy((changeEvent.target as HTMLSelectElement).value as SortOption);
+    renderDerived();
   });
 
   // Populate region dropdown and wire the allow-shipping checkbox

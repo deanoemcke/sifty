@@ -2,8 +2,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "../lib/recipes/base";
 import { fireAllCardSearches } from "./cardSearch";
+import type { ListingItem } from "./state";
+import { makeListing, makeListingItem } from "./testFixtures";
 
 describe("fireAllCardSearches", () => {
   it("calls the search function exactly once per card", () => {
@@ -92,13 +93,8 @@ function appendListingCardFixture(): { openArea: HTMLElement; externalLink: HTML
   return { openArea, externalLink };
 }
 
-function makeListingItem(url: string) {
-  return {
-    data: { source: "trademe", title: url, price: null, location: "", url } as Listing,
-    hasBeenDeepSearched: false,
-    aiCheckedHash: null,
-    aiFilterReason: null,
-  };
+function makeListingItemAt(url: string): ListingItem {
+  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: "" }) });
 }
 
 describe("initApp() wiring", () => {
@@ -127,8 +123,9 @@ describe("initApp() wiring", () => {
   describe("AI filter auto-run", () => {
     it("does not run immediately, but reaches a real streamPostAsync call once the debounce interval elapses", async () => {
       vi.useFakeTimers();
-      const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } =
-        await import("./aiFilter");
+      const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } = await import(
+        "./aiFilter"
+      );
       const { streamPostAsync } = await import("./streamPost");
       const { listingsByUrl } = await import("./state");
       const { urlCards, urlCardData } = await import("./urlCardStore");
@@ -141,7 +138,7 @@ describe("initApp() wiring", () => {
       // entry missing DOM handles (e.g. removeButton) and break other code
       // that iterates every card, such as updateRemoveButtons().
       const url = "https://example.com/listing/1";
-      listingsByUrl.set(url, makeListingItem(url));
+      listingsByUrl.set(url, makeListingItemAt(url));
       urlCardData(urlCards[0]).listingUrls = [url];
 
       const aiFilterInput = document.getElementById("aiFilter") as HTMLTextAreaElement;
@@ -162,8 +159,9 @@ describe("initApp() wiring", () => {
 
     it("collapses rapid typing within the debounce window into a single call", async () => {
       vi.useFakeTimers();
-      const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } =
-        await import("./aiFilter");
+      const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } = await import(
+        "./aiFilter"
+      );
       await import("./app");
 
       const aiFilterInput = document.getElementById("aiFilter") as HTMLTextAreaElement;
@@ -229,6 +227,40 @@ describe("initApp() wiring", () => {
       );
 
       expect(clickSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Sort by control", () => {
+    it("populates the sort select with all options, defaulting to source-url", async () => {
+      await import("./app");
+      const sortSelect = document.getElementById("sortBy") as HTMLSelectElement;
+      expect(Array.from(sortSelect.options).map((option) => option.value)).toEqual([
+        "source-url",
+        "best-match",
+        "worst-match",
+        "lowest-price",
+        "highest-price",
+      ]);
+      expect(sortSelect.value).toBe("source-url");
+    });
+
+    it("updates state.sortBy when the select changes", async () => {
+      await import("./app");
+      const state = await import("./state");
+      const sortSelect = document.getElementById("sortBy") as HTMLSelectElement;
+
+      // renderDerived() schedules the non-default-sort DOM reorder via
+      // requestAnimationFrame (see resultsView.ts's scheduleSortOrderUpdate).
+      // Fake timers + an explicit frame-advance flush that scheduled work
+      // before the test ends — otherwise it fires later against this test's
+      // already-torn-down DOM and surfaces as an unhandled error.
+      vi.useFakeTimers();
+
+      sortSelect.value = "best-match";
+      sortSelect.dispatchEvent(new Event("change"));
+
+      expect(state.sortBy).toBe("best-match");
+      vi.advanceTimersByTime(20);
     });
   });
 

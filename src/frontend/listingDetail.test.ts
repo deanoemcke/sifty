@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "../lib/recipes/base";
 import { getElement } from "./domUtils";
 import { deepSearchListingAsync, runDeepSearchAsync } from "./listingDetail";
 import {
@@ -10,25 +9,12 @@ import {
   setOpenModalListingUrl,
   urlCardDataById,
 } from "./state";
-
-function makeListing(url: string): Listing {
-  return {
-    source: "trademe",
-    title: `Listing ${url}`,
-    price: 100,
-    location: "Auckland",
-    url,
-    isAuction: false,
-  };
-}
+import { makeListing, makeListingItem } from "./testFixtures";
 
 function makeItem(url: string): ListingItem {
-  return {
-    data: makeListing(url),
-    hasBeenDeepSearched: false,
-    aiCheckedHash: null,
-    aiFilterReason: null,
-  };
+  return makeListingItem({
+    data: makeListing({ url, title: `Listing ${url}`, location: "Auckland" }),
+  });
 }
 
 // Stubs the fetch call `streamPostAsync` makes, resolving every SSE event on

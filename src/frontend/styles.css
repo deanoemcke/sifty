@@ -552,6 +552,14 @@ button.filter-toggle-btn:hover {
   background: var(--yellow-bg);
   border-color: #fde68a;
 }
+.sort-row label {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+.sort-row select {
+  flex: 0 0 auto;
+  width: auto;
+}
 
 /* ── Listing cards ── */
 #listingsContainer {
@@ -646,11 +654,6 @@ button.filter-toggle-btn:hover {
   min-width: 0;
   padding: 0.65rem 0.8rem 0.35rem;
 }
-.listing-card.filtered-out .listing-body,
-.listing-card.filtered-out .listing-card-footer {
-  background: var(--yellow-bg);
-  opacity: 0.6;
-}
 
 .listing-title {
   flex: 1;
@@ -672,6 +675,11 @@ button.filter-toggle-btn:hover {
   gap: 0.4rem;
   margin-top: auto;
   padding: 0 0.8rem 0.75rem;
+}
+.listing-card.filtered-out .listing-body,
+.listing-card.filtered-out .listing-card-footer {
+  background: var(--yellow-bg);
+  opacity: 0.6;
 }
 /* Sibling of .listing-open-area, overlaid on the thumbnail's top-right
    corner (mirrors .listing-source-badge in the top-left) — kept outside

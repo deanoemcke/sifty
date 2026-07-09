@@ -193,6 +193,7 @@ export function buildListing(raw: RawApiItem): Listing | null {
     thumbnailUrl: raw.pictureHref?.replace("/photoserver/thumb/", "/photoserver/full/"),
     isAuction: !raw.isBuyNowOnly,
     reserveStatus: mapReserveState(raw.reserveState),
+    relevance: 0,
   };
 
   if (raw.hasBuyNow) listing.buyNowPrice = raw.buyNowPrice ?? null;
