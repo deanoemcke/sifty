@@ -48,9 +48,12 @@ export function getSortedListings(): ListingItem[] {
   return sortListings(getOrderedListings(), sortBy);
 }
 
-// Reorders rendered cards via the CSS `order` property (the grid respects it
-// like flexbox would) rather than moving DOM nodes, so resorting doesn't
-// disturb focus, hover, or scroll position.
+// Reorders rendered cards by moving DOM nodes (container.appendChild) so
+// DOM/tab order always matches visual order for keyboard and screen-reader
+// users. appendChild-ing an already-attached node moves it without detaching
+// focus in modern browsers, so re-sorting a focused card doesn't steal focus
+// away from it. It may still shift the scroll position of the moved card —
+// that's a known, currently-unaddressed trade-off, not fixed here.
 //
 // Takes the caller's already-computed listing list rather than recomputing it
 // via getSortedListings()/getOrderedListings() — renderDerived() (the only
@@ -60,11 +63,12 @@ export function getSortedListings(): ListingItem[] {
 export function applySortOrder(listings: ListingItem[]): void {
   // Default sort is a no-op: listings are already in natural/insertion order,
   // matching the order cards were appended to the DOM, so there's nothing to
-  // re-sort or re-write on every render tick.
+  // re-sort or re-append on every render tick.
   if (sortBy === DEFAULT_SORT_OPTION) return;
-  sortListings(listings, sortBy).forEach((item, index) => {
+  const container = getElement("listingsContainer");
+  sortListings(listings, sortBy).forEach((item) => {
     const card = getCardByUrl(item.data.url);
-    if (card) card.style.order = String(index);
+    if (card) container.appendChild(card);
   });
 }
 

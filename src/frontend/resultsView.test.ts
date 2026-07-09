@@ -160,14 +160,22 @@ describe("applySortOrder", () => {
     for (const url of urls) renderCard(listingsByUrl.get(url) as ListingItem);
   }
 
+  // Cards are reordered by moving DOM nodes (appendChild), not by writing
+  // style.order, so tab order and screen-reader reading order match the
+  // visual sort. This reads container child order directly rather than
+  // any style property.
+  function containerCardUrls(): (string | undefined)[] {
+    const container = document.getElementById("listingsContainer") as HTMLElement;
+    return [...container.children].map((child) => (child as HTMLElement).dataset.url);
+  }
+
   it("is a no-op for the default source-url sort, since insertion order already matches", () => {
     addCardWithListings(urls);
     renderAllCards();
     applySortOrder(getOrderedListings());
-    // style.order is left untouched (all cards tie at the browser default),
-    // relying on DOM insertion order — which already matches source-url order —
-    // to determine visual order, rather than doing a needless sort + writes.
-    expect(urls.map((url) => getCardByUrl(url)?.style.order)).toEqual(["", "", ""]);
+    // DOM order is left untouched — it already matches source-url order from
+    // insertion — rather than doing a needless sort + re-append.
+    expect(containerCardUrls()).toEqual(urls);
   });
 
   it("skips card lookups and DOM writes entirely for the default source-url sort", () => {
@@ -184,7 +192,8 @@ describe("applySortOrder", () => {
     setSortBy("best-match");
     const getByIdSpy = vi.spyOn(document, "getElementById");
     applySortOrder(getOrderedListings());
-    expect(getByIdSpy).toHaveBeenCalledTimes(urls.length);
+    // One lookup per card, plus one for the listingsContainer itself.
+    expect(getByIdSpy).toHaveBeenCalledTimes(urls.length + 1);
   });
 
   it("orders cards by relevance descending for best-match", () => {
@@ -195,9 +204,10 @@ describe("applySortOrder", () => {
     (listingsByUrl.get("https://l/3") as ListingItem).data.relevance = 5;
     setSortBy("best-match");
     applySortOrder(getOrderedListings());
-    expect(getCardByUrl("https://l/2")?.style.order).toBe("0");
-    expect(getCardByUrl("https://l/3")?.style.order).toBe("1");
-    expect(getCardByUrl("https://l/1")?.style.order).toBe("2");
+    // DOM order (container.children), not just visual order, must match the
+    // sort — this is what keeps keyboard tab order and screen-reader reading
+    // order in sync with what's shown on screen.
+    expect(containerCardUrls()).toEqual(["https://l/2", "https://l/3", "https://l/1"]);
   });
 
   it("re-applies sort order as part of renderDerived", () => {
@@ -208,9 +218,7 @@ describe("applySortOrder", () => {
     (listingsByUrl.get("https://l/3") as ListingItem).data.price = 20;
     setSortBy("lowest-price");
     renderDerived();
-    expect(getCardByUrl("https://l/2")?.style.order).toBe("0");
-    expect(getCardByUrl("https://l/3")?.style.order).toBe("1");
-    expect(getCardByUrl("https://l/1")?.style.order).toBe("2");
+    expect(containerCardUrls()).toEqual(["https://l/2", "https://l/3", "https://l/1"]);
   });
 });
 
