@@ -27,6 +27,7 @@ export default defineConfig({
   server: {
     port: getWorktreePort(process.cwd()),
     strictPort: true,
+    allowedHosts: ['sandbag-crumpled-numbly.ngrok-free.dev'],
   },
   plugins: [{
     name: 'sifty-api',
