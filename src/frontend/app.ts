@@ -12,6 +12,7 @@ import {
 import { getElement } from "./domUtils";
 import { handleListingCardKeydown, resolveListingCardOpenArea } from "./listingCardActivation";
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from "./listingDetail";
+import { applyBrandTitle } from "./pageTitle";
 import { searchUrlCardAsync } from "./quickSearch";
 import { applyClientFilters, renderFilteredToggle } from "./resultsView";
 import {
@@ -31,6 +32,7 @@ import { toggleUrlGroup } from "./urlGroupsView";
 // ── Event wiring ──────────────────────────────────────────────────────────────
 
 function initApp(): void {
+  applyBrandTitle(__WORKTREE_LABEL__);
   getElement("discoveryBtn").textContent = DISCOVERY_BUTTON_LABEL;
   renderFilteredToggle();
   createUrlCard(searchUrlCardAsync);
