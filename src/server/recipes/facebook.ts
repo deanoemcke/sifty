@@ -53,39 +53,83 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
 // ── Browser context ───────────────────────────────────────────────────────────
 
+const LOGIN_REQUIRED_MESSAGE = "Facebook requires login. Set FB_COOKIES environment variable.";
+
+export class MissingFacebookCookiesError extends Error {
+  constructor(reason: string) {
+    super(reason ? `${LOGIN_REQUIRED_MESSAGE} ${reason}` : LOGIN_REQUIRED_MESSAGE);
+    this.name = "MissingFacebookCookiesError";
+  }
+}
+
+type RawFacebookCookie = Record<string, unknown>;
+
+function cookieExpirySeconds(cookie: RawFacebookCookie): number | undefined {
+  if (typeof cookie.expirationDate === "number") return cookie.expirationDate;
+  if (typeof cookie.expires === "number") return cookie.expires;
+  return undefined;
+}
+
+// FB_COOKIES: JSON array of cookies exported from your browser (e.g. via the
+// "Cookie Editor" extension — Export > Export as JSON). Validated up front so a
+// missing/malformed/expired cookie set fails immediately, before any browser is
+// launched or network request made, instead of only surfacing after a full,
+// doomed scrape attempt.
+export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCookie[] {
+  if (!cookiesJson) throw new MissingFacebookCookiesError("");
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(cookiesJson);
+  } catch {
+    throw new MissingFacebookCookiesError("FB_COOKIES is not valid JSON.");
+  }
+
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new MissingFacebookCookiesError("FB_COOKIES must be a non-empty JSON array of cookies.");
+  }
+
+  const nowSeconds = Date.now() / 1000;
+  const unexpired = (raw as RawFacebookCookie[]).filter((cookie) => {
+    const expiry = cookieExpirySeconds(cookie);
+    return expiry === undefined || expiry > nowSeconds;
+  });
+
+  if (unexpired.length === 0) {
+    throw new MissingFacebookCookiesError("All cookies in FB_COOKIES have expired.");
+  }
+
+  return unexpired;
+}
+
+function toPlaywrightCookies(
+  cookies: RawFacebookCookie[],
+): Parameters<BrowserContext["addCookies"]>[0] {
+  return cookies.map((cookie) => ({
+    name: String(cookie.name),
+    value: String(cookie.value),
+    domain: String(cookie.domain ?? ".facebook.com"),
+    path: String(cookie.path ?? "/"),
+    secure: Boolean(cookie.secure),
+    httpOnly: Boolean(cookie.httpOnly),
+    sameSite: (["Strict", "Lax", "None"].includes(String(cookie.sameSite))
+      ? cookie.sameSite
+      : "Lax") as "Strict" | "Lax" | "None",
+    ...(typeof cookie.expirationDate === "number"
+      ? { expires: cookie.expirationDate }
+      : typeof cookie.expires === "number"
+        ? { expires: cookie.expires }
+        : {}),
+  }));
+}
+
 async function createContext(): Promise<{ browser: Browser; context: BrowserContext }> {
+  const cookies = parseFbCookies(process.env.FB_COOKIES);
+
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: "en-NZ" });
-
-  // FB_COOKIES: JSON array of cookies exported from your browser (e.g. via the
-  // "Cookie Editor" extension — Export > Export as JSON).
-  const cookiesJson = process.env.FB_COOKIES;
-  if (cookiesJson) {
-    try {
-      const raw = JSON.parse(cookiesJson) as Array<Record<string, unknown>>;
-      await context.addCookies(
-        raw.map((cookie) => ({
-          name: String(cookie.name),
-          value: String(cookie.value),
-          domain: String(cookie.domain ?? ".facebook.com"),
-          path: String(cookie.path ?? "/"),
-          secure: Boolean(cookie.secure),
-          httpOnly: Boolean(cookie.httpOnly),
-          sameSite: (["Strict", "Lax", "None"].includes(String(cookie.sameSite))
-            ? cookie.sameSite
-            : "Lax") as "Strict" | "Lax" | "None",
-          ...(typeof cookie.expirationDate === "number"
-            ? { expires: cookie.expirationDate }
-            : typeof cookie.expires === "number"
-              ? { expires: cookie.expires }
-              : {}),
-        })),
-      );
-      console.log(`[facebook] loaded ${raw.length} cookies from FB_COOKIES`);
-    } catch (error) {
-      console.log("[facebook] Failed to parse FB_COOKIES:", error);
-    }
-  }
+  await context.addCookies(toPlaywrightCookies(cookies));
+  console.log(`[facebook] loaded ${cookies.length} cookies from FB_COOKIES`);
 
   return { browser, context };
 }
@@ -96,6 +140,49 @@ async function maskHeadless(page: Page): Promise<void> {
     // @ts-expect-error
     if (!window.chrome) window.chrome = { runtime: {} };
   });
+}
+
+// ── Login wall detection ────────────────────────────────────────────────────
+//
+// One shared detector, used at every point a login wall can appear (quick search,
+// immediately after load and again after listings start rendering; deep search's
+// per-listing detail fetch) instead of the three previously-inconsistent ad-hoc
+// checks. Combines a precise DOM-selector check with a URL check and a body-text
+// heuristic fallback, so markup changes Facebook makes don't silently blind the
+// selector check.
+
+export function isLoginWallUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.startsWith("/login");
+  } catch {
+    return false;
+  }
+}
+
+export function isLoginWallText(snippet: string): boolean {
+  const lower = snippet.toLowerCase();
+  return lower.includes("log in") || lower.includes("sign up");
+}
+
+async function evaluateLoginWallSignals(
+  page: Page,
+): Promise<{ domMatch: boolean; textSnippet: string }> {
+  return page
+    .evaluate(() => ({
+      domMatch:
+        !!document.getElementById("login_popup_cta_form") ||
+        !!document.querySelector('form[action*="/login/device-based/"]') ||
+        (!!document.querySelector('input[name="email"]') &&
+          !!document.querySelector('input[name="pass"]')),
+      textSnippet: document.body.innerText.slice(0, 300),
+    }))
+    .catch(() => ({ domMatch: false, textSnippet: "" }));
+}
+
+export async function detectLoginWallAsync(page: Page): Promise<boolean> {
+  if (isLoginWallUrl(page.url())) return true;
+  const { domMatch, textSnippet } = await evaluateLoginWallSignals(page);
+  return domMatch || isLoginWallText(textSnippet);
 }
 
 // ── Listing extraction via MutationObserver ───────────────────────────────────
@@ -228,6 +315,14 @@ async function quickSearchAsync(
       await page.waitForTimeout(1000);
     }
 
+    // Check for a login wall immediately — it's present in the DOM as soon as the
+    // page loads, so this catches it well before the 15s listings-selector wait below
+    // would otherwise be needed to notice the same thing.
+    if (await detectLoginWallAsync(page)) {
+      onEvent({ type: "error", message: LOGIN_REQUIRED_MESSAGE });
+      return;
+    }
+
     // Wait for listings to render, or detect a login/block state
     const listingsAppeared = await page
       .waitForSelector('a[href*="/marketplace/item/"]', { timeout: 15000 })
@@ -236,19 +331,11 @@ async function quickSearchAsync(
     console.log(`[facebook] listingsAppeared: ${listingsAppeared} — url: ${page.url()}`);
 
     if (!listingsAppeared) {
-      const snippet = await page
-        .evaluate(() => document.body.innerText)
-        .catch(() => "")
-        .then((t) => t.slice(0, 300));
-      console.log(`[facebook] page text snippet:\n${snippet}`);
-      const isLoginWall =
-        page.url().includes("/login") ||
-        snippet.toLowerCase().includes("log in") ||
-        snippet.toLowerCase().includes("sign up");
+      const isLoginWall = await detectLoginWallAsync(page);
       onEvent({
         type: "error",
         message: isLoginWall
-          ? "Facebook requires login. Set FB_COOKIES environment variable."
+          ? LOGIN_REQUIRED_MESSAGE
           : "No listings found. Facebook may be blocking access or the search returned no results.",
       });
       return;
@@ -295,18 +382,10 @@ async function quickSearchAsync(
         isLoadingMore: false,
       });
 
-    // The login wall modal is present in the DOM from page load — check immediately after
-    // the observer fires so we can skip the scroll loop and report the partial results.
-    const loginWallDetected = await page
-      .evaluate(() => {
-        return (
-          !!document.getElementById("login_popup_cta_form") ||
-          !!document.querySelector('form[action*="/login/device-based/"]') ||
-          !!document.querySelector('input[name="email"]') ||
-          !!document.querySelector('input[name="pass"]')
-        );
-      })
-      .catch(() => false);
+    // A login wall can also appear only after the observer is injected (e.g. a wall
+    // that renders asynchronously) — check again here so we skip the scroll loop and
+    // report the partial results already collected.
+    const loginWallDetected = await detectLoginWallAsync(page);
 
     console.log(`[facebook] loginWallDetected: ${loginWallDetected}`);
 
@@ -429,10 +508,17 @@ export function buildFacebookDeepSearchDetail(
   return { description, extraAttributes, questionsAndAnswers: [], pickupLocation };
 }
 
-async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise<DeepSearchDetail> {
+export async function fetchFacebookListingDetailAsync(
+  page: Page,
+  url: string,
+): Promise<DeepSearchDetail> {
   console.log(`[facebook] fetching: ${url}`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForTimeout(3000);
+
+  if (await detectLoginWallAsync(page)) {
+    throw new Error(LOGIN_REQUIRED_MESSAGE);
+  }
 
   // Expand truncated description if "See more" is present
   const seeMoreBtn = page.getByRole("button", { name: "See more" }).first();
@@ -484,8 +570,16 @@ async function deepSearchAsync(
               total: listings.length,
               title: listing.title,
             });
-            const detail = await fetchFacebookListingDetailAsync(currentPage, listing.url);
-            onEvent({ type: "detail", url: listing.url, detail });
+            try {
+              const detail = await fetchFacebookListingDetailAsync(currentPage, listing.url);
+              onEvent({ type: "detail", url: listing.url, detail });
+            } catch (error) {
+              onEvent({
+                type: "detail-error",
+                url: listing.url,
+                message: (error as Error).message,
+              });
+            }
           } finally {
             await currentPage.close();
           }
