@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { searchUrlCardAsync } from "./quickSearch";
+import type { Listing } from "../lib/recipes/base";
+import { normalizeListingRelevance, searchUrlCardAsync } from "./quickSearch";
 import { cardStatusText } from "./searchStatusText";
-import { resetState, type UrlCardData } from "./state";
+import { listingsByUrl, resetState, type UrlCardData } from "./state";
 import { cancelSearch, cardStatusSnapshot } from "./urlCardRow";
 import {
   addUrlCard,
@@ -121,5 +122,37 @@ describe("searchUrlCardAsync — post-stream cancellation disambiguation", () =>
     const data = urlCardData(card);
     expect(data.searchStatus).toBe("done");
     expect(data.wasCancelled).toBe(false);
+  });
+});
+
+describe("normalizeListingRelevance", () => {
+  it("leaves an existing relevance untouched", () => {
+    const listing = { url: "a", relevance: 7 } as Listing;
+    expect(normalizeListingRelevance(listing).relevance).toBe(7);
+  });
+
+  it("defaults relevance to 0 when absent, e.g. a pre-deploy cached row replayed via SSE", () => {
+    // `JSON.parse(ev.data)` on a stale cache entry produces an object with no
+    // `relevance` key — the `as Listing` cast lets it through undetected.
+    const staleListing = { url: "a" } as Listing;
+    expect(staleListing.relevance).toBeUndefined();
+    expect(normalizeListingRelevance(staleListing).relevance).toBe(0);
+  });
+});
+
+describe("searchUrlCardAsync — stale cached listing data", () => {
+  it("defaults relevance to 0 for a listing event replaying a pre-deploy cache row", async () => {
+    const card = addSearchableCard();
+    // Simulates the server replaying a row cached before `relevance` became
+    // mandatory on `Listing` — the SSE payload simply omits the field.
+    stubQuickSearchStream([
+      'data: {"type":"cached","age":"5m"}\n',
+      'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/stale","isAuction":false}}\n',
+    ]);
+
+    await searchUrlCardAsync(card);
+
+    const item = listingsByUrl.get("https://example.com/stale");
+    expect(item?.data.relevance).toBe(0);
   });
 });

@@ -19,6 +19,13 @@ import { renderCardStatus, resetAllResults, resetCardForResearch } from "./urlCa
 import { type UrlCard, urlCardData } from "./urlCardStore";
 import { updateUrlGroupHeaders } from "./urlGroupsView";
 
+// A "listing" SSE event may replay a pre-deploy cached row that predates the
+// `relevance` field becoming mandatory on `Listing`. Default it here so a
+// stale cache entry can't feed `undefined`/NaN into the sort comparator.
+export function normalizeListingRelevance(listing: Listing): Listing {
+  return { ...listing, relevance: listing.relevance ?? 0 };
+}
+
 export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   const data = urlCardData(card);
   const url = card.dom.input.value.trim();
@@ -59,7 +66,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           updateUrlGroupHeaders();
         }
       } else if (ev.type === "listing") {
-        const listing = ev.data as Listing;
+        const listing = normalizeListingRelevance(ev.data as Listing);
         data.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = {

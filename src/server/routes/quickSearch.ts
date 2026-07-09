@@ -8,6 +8,13 @@ import { cacheAge, getDb, isFresh, stmtGetSearch, stmtSetSearch } from "../db";
 import { readBody, sendJSON, sse, startSSE } from "../helpers";
 import { getRecipeForUrl } from "../recipes/registry";
 
+// Cached rows may predate the `relevance` field (or any future required
+// field) becoming mandatory on `Listing`. Default it on read so replaying a
+// pre-deploy cache entry can't feed `undefined`/NaN into the sort comparator.
+export function normalizeCachedListings(rawListings: Listing[]): Listing[] {
+  return rawListings.map((listing) => ({ ...listing, relevance: listing.relevance ?? 0 }));
+}
+
 export async function handleQuickSearch(
   request: IncomingMessage,
   response: ServerResponse,
@@ -39,7 +46,7 @@ export async function handleQuickSearch(
     startSSE(response);
     sse(response, { type: "criteria", filters: recipe.extractImplicitFilters(url) });
     sse(response, { type: "cached", age });
-    for (const listing of JSON.parse(cachedRow.data) as Listing[])
+    for (const listing of normalizeCachedListings(JSON.parse(cachedRow.data) as Listing[]))
       sse(response, { type: "listing", data: listing });
     sse(response, { type: "complete" });
     response.end();
