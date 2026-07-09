@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createProviderCooldownStore } from './src/server/ai';
+import { parseFbCookies } from './src/server/recipes/facebook';
 import { getWorktreeLabel, getWorktreePort } from './vite.config.helpers';
 import { handleCancelSearch } from './src/server/routes/cancelSearch';
 import { handleQuickSearch } from './src/server/routes/quickSearch';
@@ -32,6 +33,9 @@ export default defineConfig({
   plugins: [{
     name: 'sifty-api',
     configureServer(server) {
+      const fbCookies = parseFbCookies(process.env.FB_COOKIES);
+      console.log(`[startup] FB_COOKIES valid — ${fbCookies.length} cookie(s) loaded`);
+
       server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Next) => {
         const urlPath = req.url?.split('?')[0] ?? '';
 
