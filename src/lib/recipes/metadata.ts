@@ -7,9 +7,19 @@
 export enum RecipeId {
   Trademe = 1,
   Facebook = 2,
+  TrademeExpired = 3,
 }
 
 export const RECIPE_PATTERNS = [
+  // trademe-expired must precede trademe: both share a hostname, matchRecipePattern
+  // takes the first match, and trademe's pathPrefix is '' (matches any path on the
+  // hostname) — so the more specific legacy pattern needs first refusal.
+  {
+    name: 'trademe-expired',
+    recipeId: RecipeId.TrademeExpired,
+    hostname: 'trademe.co.nz',
+    pathPrefix: '/Browse/SearchResults.aspx',
+  },
   { name: 'trademe', recipeId: RecipeId.Trademe, hostname: 'trademe.co.nz', pathPrefix: '' },
   {
     name: 'facebook',

@@ -13,6 +13,14 @@ describe('isValidRecipeUrl', () => {
     });
   });
 
+  describe('trademe-expired', () => {
+    it('accepts a legacy Browse/SearchResults.aspx URL', () => {
+      expect(isValidRecipeUrl('https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356')).toBe(
+        true
+      );
+    });
+  });
+
   describe('facebook marketplace', () => {
     it('accepts a facebook marketplace item URL', () => {
       expect(isValidRecipeUrl('https://www.facebook.com/marketplace/item/123')).toBe(true);
@@ -55,6 +63,12 @@ describe('recipeIdForUrl', () => {
     expect(recipeIdForUrl('https://www.facebook.com/marketplace/item/123')).toBe(RecipeId.Facebook);
   });
 
+  it('resolves a legacy Browse/SearchResults.aspx URL to the TrademeExpired recipe id, not Trademe', () => {
+    expect(recipeIdForUrl('https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356')).toBe(
+      RecipeId.TrademeExpired
+    );
+  });
+
   it('returns null for an unrecognised URL', () => {
     expect(recipeIdForUrl('https://www.google.com/search?q=test')).toBe(null);
   });
@@ -71,5 +85,9 @@ describe('RecipeId', () => {
 
   it('assigns Facebook recipe id 2', () => {
     expect(RecipeId.Facebook).toBe(2);
+  });
+
+  it('assigns TrademeExpired recipe id 3', () => {
+    expect(RecipeId.TrademeExpired).toBe(3);
   });
 });

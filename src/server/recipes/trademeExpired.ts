@@ -1,0 +1,250 @@
+import { JSDOM } from 'jsdom';
+import { chromium } from 'playwright';
+import type {
+  DeepSearchEvent,
+  DiscoverableRecipe,
+  DiscoverContext,
+  Listing,
+  QuickSearchEvent,
+  RecipeDiscoverResult,
+  ReserveStatus,
+} from '../../lib/recipes/base';
+import { requirePattern } from '../../lib/recipes/metadata';
+import { MAX_PAGES_PER_SEARCH } from '../constants';
+import { getDb, stmtGetCategoryByLegacyPath, stmtGetCategoryLegacyPath } from '../db';
+import { parsePriceValue } from './trademe';
+import { type DiscoverEntry, resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
+
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const TRADEME_ORIGIN = 'https://www.trademe.co.nz';
+
+const LEGACY_PATTERN = requirePattern('trademe-expired');
+
+// ── cid/rptpath <-> legacy_path ─────────────────────────────────────────────────
+// TradeMe's category JSON `Number` field (stored as `legacy_path`, e.g. "0002-0356-")
+// already *is* the full cid/rptpath ancestor chain, zero-padded to 4 digits per segment
+// — verified empirically against a real search: "Computers/Laptops" has legacy_path
+// "0002-0356-", and stripping the padding gives exactly rptpath=2-356- with cid=356.
+
+export function deriveLegacyCidAndRptpath(legacyPath: string): { cid: string; rptpath: string } {
+  const segments = legacyPath
+    .split('-')
+    .filter((segment) => segment.length > 0)
+    .map((segment) => String(Number(segment)));
+  return { cid: segments[segments.length - 1], rptpath: `${segments.join('-')}-` };
+}
+
+export function reconstructLegacyPathFromRptpath(rptpath: string): string {
+  const segments = rptpath.split('-').filter((segment) => segment.length > 0);
+  return `${segments.map((segment) => segment.padStart(4, '0')).join('-')}-`;
+}
+
+// ── Discover URL building ─────────────────────────────────────────────────────
+// current=0 (closed listings) and sort_order=bids_asc (TradeMe's legacy code for the
+// "Most bids" sort — there is no "least bids" option) are hardcoded, not user-configurable:
+// they're what makes this recipe "expired, sold" rather than a generic search. searchregion
+// is likewise hardcoded to 100 (nationwide) since this recipe always searches all regions.
+// from=advanced&advanced=true are required to avoid TradeMe 301-redirecting to the modern
+// site — verified empirically; omitting either one triggers the redirect.
+
+export function buildLegacySearchUrl(entry: DiscoverEntry, legacyPath: string): string {
+  const { cid, rptpath } = deriveLegacyCidAndRptpath(legacyPath);
+  const params = new URLSearchParams();
+  params.set('cid', cid);
+  params.set('rptpath', rptpath);
+  if (entry.searchString) params.set('searchstring', entry.searchString);
+  params.set('current', '0');
+  params.set('sort_order', 'bids_asc');
+  params.set('searchregion', '100');
+  params.set('advanced', 'true');
+  params.set('from', 'advanced');
+  return `${TRADEME_ORIGIN}/Browse/SearchResults.aspx?${params.toString()}`;
+}
+
+async function buildDiscoverUrlsAsync(
+  prompt: string,
+  context: DiscoverContext
+): Promise<RecipeDiscoverResult> {
+  const { entries, warnings } = await resolveDiscoverCategoriesAsync(prompt, context.getAiConfig);
+  const database = getDb();
+  const stmt = stmtGetCategoryLegacyPath(database);
+  const urls: string[] = [];
+  const allWarnings = [...warnings];
+  for (const entry of entries) {
+    const row = stmt.get(entry.slug);
+    if (!row) {
+      allWarnings.push(`no legacy category mapping for slug "${entry.slug}"`);
+      continue;
+    }
+    urls.push(buildLegacySearchUrl(entry, row.legacy_path));
+  }
+  return { urls, warnings: allWarnings };
+}
+
+// ── Implicit filter extraction ────────────────────────────────────────────────
+// current/sort_order/searchregion/advanced/from are forced by this recipe, not filters
+// the user chose, so (unlike trademe.ts's extractImplicitFilters) they're never shown.
+
+export function extractImplicitFilters(urlStr: string): Array<[string, string]> {
+  try {
+    const url = new URL(urlStr);
+    const filterRows: Array<[string, string]> = [];
+
+    const searchstring = url.searchParams.get('searchstring');
+    if (searchstring) filterRows.push(['Search', searchstring]);
+
+    const rptpath = url.searchParams.get('rptpath');
+    if (rptpath) {
+      const legacyPath = reconstructLegacyPathFromRptpath(rptpath);
+      const row = stmtGetCategoryByLegacyPath(getDb()).get(legacyPath);
+      if (row) filterRows.push(['Category', row.display]);
+    }
+
+    return filterRows;
+  } catch {
+    return [];
+  }
+}
+
+// ── Search results page parsing ───────────────────────────────────────────────
+// The legacy site server-renders each listing as a `.listingCard` — verified against a
+// real captured page (see __fixtures__/trademe-legacy-search.html). Only bid-based auction
+// listings are in scope (this recipe's purpose is sold-price research): a card with no
+// `.listingNumberOfBidsText` (e.g. a Buy-Now-only listing) is skipped, not counted as sold
+// or unsold. Results are sorted most-bids-first (see buildLegacySearchUrl), so the first
+// zero-bid card means every remaining card on every remaining page is also unsold — callers
+// use `reachedZeroBids` to stop paginating rather than scanning further.
+
+const BID_COUNT_PATTERN = /(\d+)\s*bids?/i;
+
+function mapLegacyReserveText(text: string | undefined): ReserveStatus {
+  if (text === undefined) return 'NONE';
+  if (text === 'Reserve Met') return 'MET';
+  if (text === 'Reserve Not Met') return 'NOT_MET';
+  return 'UNKNOWN';
+}
+
+export function parseLegacySearchResultsHtml(html: string): {
+  listings: Listing[];
+  reachedZeroBids: boolean;
+} {
+  const document = new JSDOM(html).window.document;
+  const listings: Listing[] = [];
+  let reachedZeroBids = false;
+
+  for (const card of Array.from(document.querySelectorAll('.listingCard'))) {
+    const bidCountText = card.querySelector('.listingNumberOfBidsText')?.textContent ?? '';
+    const bidCountMatch = bidCountText.match(BID_COUNT_PATTERN);
+    if (!bidCountMatch) continue;
+    if (Number(bidCountMatch[1]) === 0) {
+      reachedZeroBids = true;
+      break;
+    }
+
+    const titleAnchor = card.querySelector('.listingTitle a');
+    const title = titleAnchor?.textContent?.trim();
+    const href = titleAnchor?.getAttribute('href');
+    if (!title || !href) continue;
+
+    const priceText = card.querySelector('.listingBidPrice')?.textContent ?? '';
+    const thumbnailUrl = card.querySelector('.listingImage img')?.getAttribute('src') ?? undefined;
+    const reserveText = card.querySelector('.reserve-text')?.textContent?.trim();
+
+    listings.push({
+      source: LEGACY_PATTERN.name,
+      title,
+      price: parsePriceValue(priceText),
+      location: card.querySelector('.listingLocation')?.textContent?.trim() || 'Unknown',
+      url: href.startsWith('http') ? href : `${TRADEME_ORIGIN}${href}`,
+      isAuction: true,
+      thumbnailUrl,
+      reserveStatus: mapLegacyReserveText(reserveText),
+      relevance: 0,
+    });
+  }
+
+  return { listings, reachedZeroBids };
+}
+
+// ── Recipe implementation ─────────────────────────────────────────────────────
+
+async function quickSearchAsync(
+  searchUrl: string,
+  onEvent: (event: QuickSearchEvent) => void,
+  isCancelled?: () => boolean
+): Promise<void> {
+  onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
+
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const page = await context.newPage();
+
+    const seenUrls = new Set<string>();
+    let foundSoFar = 0;
+    for (let pageNumber = 1; pageNumber <= MAX_PAGES_PER_SEARCH; pageNumber++) {
+      if (isCancelled?.()) break;
+
+      onEvent({ type: 'progress', phase: 'paging', page: pageNumber });
+      const pageUrlInstance = new URL(searchUrl);
+      pageUrlInstance.searchParams.set('page', String(pageNumber));
+      await page.goto(pageUrlInstance.toString(), {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+
+      const html = await page.content();
+      const { listings, reachedZeroBids } = parseLegacySearchResultsHtml(html);
+      if (listings.length === 0 && !reachedZeroBids) break; // no more pages
+
+      for (const listing of listings) {
+        if (seenUrls.has(listing.url)) continue;
+        seenUrls.add(listing.url);
+        foundSoFar++;
+        onEvent({ type: 'listing', data: listing });
+      }
+      onEvent({
+        type: 'progress',
+        phase: 'collecting',
+        foundSoFar,
+        isLoadingMore: !reachedZeroBids,
+      });
+
+      if (reachedZeroBids) break;
+    }
+
+    onEvent({ type: 'complete' });
+  } catch (error) {
+    onEvent({ type: 'error', message: (error as Error).message });
+  } finally {
+    await browser.close();
+  }
+}
+
+// This recipe's listings already carry everything it cares about (price, bid-derived
+// sold status, location) from quickSearch alone — there's no additional per-listing
+// detail page to fetch, so deep search is a no-op rather than a Playwright-driven
+// re-scrape of an archived listing page.
+async function deepSearchAsync(
+  _listings: Listing[],
+  onEvent: (event: DeepSearchEvent) => void
+): Promise<void> {
+  onEvent({ type: 'complete' });
+}
+
+export const trademeExpiredRecipe: DiscoverableRecipe = {
+  name: LEGACY_PATTERN.name,
+  matches(url: string): boolean {
+    try {
+      const { hostname, pathname } = new URL(url);
+      return hostname.endsWith(LEGACY_PATTERN.hostname) && pathname === LEGACY_PATTERN.pathPrefix;
+    } catch {
+      return false;
+    }
+  },
+  extractImplicitFilters,
+  quickSearchAsync,
+  deepSearchAsync,
+  buildDiscoverUrlsAsync,
+};

@@ -47,8 +47,8 @@ describe('initSchema', () => {
     const db = new Database(':memory:');
     initSchema(db);
     db.prepare(
-      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2) VALUES (?, ?, ?, ?, ?)'
-    ).run('electronics', 'Electronics', 1, null, 'electronics');
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('electronics', 'Electronics', 1, null, 'electronics', '0124-');
     initSchema(db);
     const count = db
       .prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories')

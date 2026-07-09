@@ -35,7 +35,8 @@ export function initSchema(database: Database.Database): void {
       display     TEXT NOT NULL,
       depth       INTEGER NOT NULL,
       parent_slug TEXT,
-      top2        TEXT NOT NULL
+      top2        TEXT NOT NULL,
+      legacy_path TEXT NOT NULL
     );
   `);
 }
@@ -90,6 +91,7 @@ export type SavedSearchRow = {
   created_at: number;
 };
 export type CategoryRow = { slug: string; display: string };
+export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
 
 // ── Statement accessors ───────────────────────────────────────────────────────
@@ -155,6 +157,16 @@ export function stmtGetCategoriesAtDepth2(database: Database.Database) {
 export function stmtGetCategoriesByTop2(database: Database.Database) {
   return database.prepare<[string], CategoryRow>(
     'SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug'
+  );
+}
+export function stmtGetCategoryLegacyPath(database: Database.Database) {
+  return database.prepare<[string], CategoryLegacyPathRow>(
+    'SELECT legacy_path FROM trademe_categories WHERE slug = ?'
+  );
+}
+export function stmtGetCategoryByLegacyPath(database: Database.Database) {
+  return database.prepare<[string], CategoryRow>(
+    'SELECT slug, display FROM trademe_categories WHERE legacy_path = ?'
   );
 }
 
