@@ -8,7 +8,7 @@ import { esc } from "./html";
 import { applyListingCardAccessibility } from "./listingCardActivation";
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from "./listingHtml";
 import { sourceBadgeHtml } from "./recipeDisplay";
-import { sortListings } from "./sortListings";
+import { DEFAULT_SORT_OPTION, sortListings } from "./sortListings";
 import {
   cardIdByUrl,
   isAiFilterRunning,
@@ -58,6 +58,10 @@ export function getSortedListings(): ListingItem[] {
 // its own counts, so recomputing it here would redo the same
 // urlCardDataById/listingsByUrl traversal on every SSE tick.
 export function applySortOrder(listings: ListingItem[]): void {
+  // Default sort is a no-op: listings are already in natural/insertion order,
+  // matching the order cards were appended to the DOM, so there's nothing to
+  // re-sort or re-write on every render tick.
+  if (sortBy === DEFAULT_SORT_OPTION) return;
   sortListings(listings, sortBy).forEach((item, index) => {
     const card = getCardByUrl(item.data.url);
     if (card) card.style.order = String(index);

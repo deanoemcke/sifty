@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listing } from "../lib/recipes/base";
 import { requireChild } from "./domUtils";
 import {
@@ -67,6 +67,10 @@ beforeEach(() => {
     <span id="aiFilterStatus"></span>
     <div id="listingsContainer"></div>
   `;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("getOrderedListings", () => {
@@ -156,11 +160,31 @@ describe("applySortOrder", () => {
     for (const url of urls) renderCard(listingsByUrl.get(url) as ListingItem);
   }
 
-  it("orders cards by source-url order by default", () => {
+  it("is a no-op for the default source-url sort, since insertion order already matches", () => {
     addCardWithListings(urls);
     renderAllCards();
     applySortOrder(getOrderedListings());
-    expect(urls.map((url) => getCardByUrl(url)?.style.order)).toEqual(["0", "1", "2"]);
+    // style.order is left untouched (all cards tie at the browser default),
+    // relying on DOM insertion order — which already matches source-url order —
+    // to determine visual order, rather than doing a needless sort + writes.
+    expect(urls.map((url) => getCardByUrl(url)?.style.order)).toEqual(["", "", ""]);
+  });
+
+  it("skips card lookups and DOM writes entirely for the default source-url sort", () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    const getByIdSpy = vi.spyOn(document, "getElementById");
+    applySortOrder(getOrderedListings());
+    expect(getByIdSpy).not.toHaveBeenCalled();
+  });
+
+  it("still performs card lookups and DOM writes for a non-default sort", () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    setSortBy("best-match");
+    const getByIdSpy = vi.spyOn(document, "getElementById");
+    applySortOrder(getOrderedListings());
+    expect(getByIdSpy).toHaveBeenCalledTimes(urls.length);
   });
 
   it("orders cards by relevance descending for best-match", () => {
