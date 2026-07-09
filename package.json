@@ -12,7 +12,8 @@
     "format": "biome format --write src/",
     "fix": "biome check --write src/",
     "check": "biome check src/",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postinstall": "tsx scripts/setup-worktree-links.ts"
   },
   "keywords": [],
   "author": "",

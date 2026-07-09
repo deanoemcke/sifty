@@ -58,10 +58,20 @@ function logDbStats(database: Database.Database): void {
     console.log(`[cache] opened db — ${searchCount} searches, ${detailCount} listing details`);
 }
 
+// WAL mode lets one writer and multiple readers access the file concurrently instead of
+// exclusive-locking it; the busy timeout makes a writer retry for a while instead of
+// throwing SQLITE_BUSY immediately. Both matter once cache.db is shared (e.g. symlinked)
+// across worktrees whose dev servers run as separate processes at the same time.
+export function configureDatabaseConnection(database: Database.Database): void {
+  database.pragma("journal_mode = WAL");
+  database.pragma("busy_timeout = 5000");
+}
+
 export function getDb(): Database.Database {
   if (_db) return _db;
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   _db = new Database(DB_PATH);
+  configureDatabaseConnection(_db);
   initSchema(_db);
   logDbStats(_db);
   return _db;
