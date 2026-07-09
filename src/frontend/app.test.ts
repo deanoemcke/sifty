@@ -2,8 +2,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "../lib/recipes/base";
 import { fireAllCardSearches } from "./cardSearch";
+import type { ListingItem } from "./state";
+import { makeListing, makeListingItem } from "./testFixtures";
 
 describe("fireAllCardSearches", () => {
   it("calls the search function exactly once per card", () => {
@@ -92,13 +93,8 @@ function appendListingCardFixture(): { openArea: HTMLElement; externalLink: HTML
   return { openArea, externalLink };
 }
 
-function makeListingItem(url: string) {
-  return {
-    data: { source: "trademe", title: url, price: null, location: "", url } as Listing,
-    hasBeenDeepSearched: false,
-    aiCheckedHash: null,
-    aiFilterReason: null,
-  };
+function makeListingItemAt(url: string): ListingItem {
+  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: "" }) });
 }
 
 describe("initApp() wiring", () => {
@@ -142,7 +138,7 @@ describe("initApp() wiring", () => {
       // entry missing DOM handles (e.g. removeButton) and break other code
       // that iterates every card, such as updateRemoveButtons().
       const url = "https://example.com/listing/1";
-      listingsByUrl.set(url, makeListingItem(url));
+      listingsByUrl.set(url, makeListingItemAt(url));
       urlCardData(urlCards[0]).listingUrls = [url];
 
       const aiFilterInput = document.getElementById("aiFilter") as HTMLTextAreaElement;

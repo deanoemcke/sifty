@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "../lib/recipes/base";
 import {
   AI_FILTER_DEBOUNCE_MS,
   clearAiFilterResults,
@@ -11,21 +10,11 @@ import {
   shouldAutoRunAiFilter,
 } from "./aiFilter";
 import { isAiFilterRunning, type ListingItem, listingsByUrl, resetState } from "./state";
+import { makeListing, makeListingItem } from "./testFixtures";
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from "./urlCardStore";
 
-function makeListingItem(url: string): ListingItem {
-  return {
-    data: {
-      source: "trademe",
-      title: url,
-      price: null,
-      location: "",
-      url,
-    } as Listing,
-    hasBeenDeepSearched: false,
-    aiCheckedHash: null,
-    aiFilterReason: null,
-  };
+function makeListingItemAt(url: string): ListingItem {
+  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: "" }) });
 }
 
 describe("scheduleAiFilterRun", () => {
@@ -96,18 +85,6 @@ function makeCardDom(): UrlCardDom {
   };
 }
 
-function makeListing(url: string): Listing {
-  return {
-    source: "trademe",
-    title: "Item",
-    price: 100,
-    location: "Auckland",
-    url,
-    isAuction: false,
-    relevance: 0,
-  };
-}
-
 describe("runAiFilterAsync", () => {
   beforeEach(() => {
     resetState();
@@ -130,12 +107,9 @@ describe("runAiFilterAsync", () => {
 
   it("writes the AI-assigned relevance score onto the listing when a result event arrives", async () => {
     const url = "https://example.com/1";
-    const item: ListingItem = {
-      data: makeListing(url),
-      hasBeenDeepSearched: false,
-      aiCheckedHash: null,
-      aiFilterReason: null,
-    };
+    const item: ListingItem = makeListingItem({
+      data: makeListing({ url, title: "Item", location: "Auckland" }),
+    });
     listingsByUrl.set(url, item);
     addUrlCard(makeCardDom(), {
       searchStatus: "done",
@@ -218,7 +192,7 @@ describe("requestAiFilterRunIfPromptLongEnough", () => {
   });
 
   it("clears a previously filtered-out listing when the prompt is emptied", () => {
-    const item = makeListingItem("https://l/1");
+    const item = makeListingItemAt("https://l/1");
     item.aiFilterReason = "too old";
     listingsByUrl.set("https://l/1", item);
     const textarea = document.getElementById("aiFilter") as HTMLTextAreaElement;
@@ -231,7 +205,7 @@ describe("requestAiFilterRunIfPromptLongEnough", () => {
   });
 
   it("does not clear an existing filtered-out listing while the prompt is short but non-empty", () => {
-    const item = makeListingItem("https://l/1");
+    const item = makeListingItemAt("https://l/1");
     item.aiFilterReason = "too old";
     listingsByUrl.set("https://l/1", item);
     const textarea = document.getElementById("aiFilter") as HTMLTextAreaElement;
@@ -256,10 +230,10 @@ describe("clearAiFilterResults", () => {
   });
 
   it("resets aiFilterReason and aiCheckedHash to null for every listing", () => {
-    const filtered = makeListingItem("https://l/1");
+    const filtered = makeListingItemAt("https://l/1");
     filtered.aiFilterReason = "too old";
     filtered.aiCheckedHash = 123;
-    const passed = makeListingItem("https://l/2");
+    const passed = makeListingItemAt("https://l/2");
     passed.aiCheckedHash = 456;
     listingsByUrl.set(filtered.data.url, filtered);
     listingsByUrl.set(passed.data.url, passed);

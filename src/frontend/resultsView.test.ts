@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Listing } from "../lib/recipes/base";
 import { requireChild } from "./domUtils";
 import {
   applySortOrder,
@@ -19,21 +18,11 @@ import {
   setSortBy,
   type UrlCardData,
 } from "./state";
+import { makeListing, makeListingItem } from "./testFixtures";
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from "./urlCardStore";
 
-function makeListingItem(url: string): ListingItem {
-  return {
-    data: {
-      source: "trademe",
-      title: url,
-      price: null,
-      location: "",
-      url,
-    } as Listing,
-    hasBeenDeepSearched: false,
-    aiCheckedHash: null,
-    aiFilterReason: null,
-  };
+function makeListingItemAt(url: string): ListingItem {
+  return makeListingItem({ data: makeListing({ url, title: url, price: null, location: "" }) });
 }
 
 function setAiFilterReason(url: string, reason: string): void {
@@ -52,7 +41,7 @@ function addCardWithListings(listingUrls: string[]): void {
   };
   addUrlCard({ input: document.createElement("input") } as UrlCardDom, data);
   for (const url of listingUrls) {
-    if (!listingsByUrl.has(url)) listingsByUrl.set(url, makeListingItem(url));
+    if (!listingsByUrl.has(url)) listingsByUrl.set(url, makeListingItemAt(url));
   }
 }
 
@@ -228,7 +217,7 @@ describe("renderCard", () => {
   // applyListingCardAccessibility) — a focusable <a> nested inside another
   // interactive control is an invalid ARIA content model.
   it("renders the external-link button outside .listing-open-area", () => {
-    renderCard(makeListingItem("https://l/1"));
+    renderCard(makeListingItemAt("https://l/1"));
     const card = requireChild<HTMLElement>(document.body, ".listing-card");
     const openArea = requireChild<HTMLElement>(card, ".listing-open-area");
     expect(openArea.querySelector(".listing-external-link-btn")).toBeNull();

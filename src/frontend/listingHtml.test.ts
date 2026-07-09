@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { Listing } from "../lib/recipes/base";
 import {
   buildCardFooterHtml,
   buildCardMetaHtml,
@@ -13,30 +12,7 @@ import {
   formatListingDate,
   formatReserveText,
 } from "./listingHtml";
-import type { ListingItem } from "./state";
-
-function makeListing(overrides: Partial<Listing> = {}): Listing {
-  return {
-    source: "trademe",
-    title: "Test listing",
-    price: 100,
-    location: "Wellington",
-    url: "https://example.com/listing/1",
-    isAuction: false,
-    relevance: 0,
-    ...overrides,
-  };
-}
-
-function makeListingItem(overrides: Partial<ListingItem> = {}): ListingItem {
-  return {
-    data: makeListing(),
-    hasBeenDeepSearched: false,
-    aiCheckedHash: null,
-    aiFilterReason: null,
-    ...overrides,
-  };
-}
+import { makeListing, makeListingItem } from "./testFixtures";
 
 describe("formatReserveText", () => {
   it("maps each reserve status to its label", () => {
