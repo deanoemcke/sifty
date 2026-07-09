@@ -107,7 +107,7 @@ vi.mock("playwright", () => ({
   },
 }));
 
-vi.mock("../queue", () => ({
+vi.mock("../../lib/queue", () => ({
   enqueue: (_: string, fn: () => Promise<unknown>) => fn(),
 }));
 
