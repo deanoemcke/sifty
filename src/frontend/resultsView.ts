@@ -51,8 +51,14 @@ export function getSortedListings(): ListingItem[] {
 // Reorders rendered cards via the CSS `order` property (the grid respects it
 // like flexbox would) rather than moving DOM nodes, so resorting doesn't
 // disturb focus, hover, or scroll position.
-export function applySortOrder(): void {
-  getSortedListings().forEach((item, index) => {
+//
+// Takes the caller's already-computed listing list rather than recomputing it
+// via getSortedListings()/getOrderedListings() — renderDerived() (the only
+// caller, fired once per streamed listing event) already built that list for
+// its own counts, so recomputing it here would redo the same
+// urlCardDataById/listingsByUrl traversal on every SSE tick.
+export function applySortOrder(listings: ListingItem[]): void {
+  sortListings(listings, sortBy).forEach((item, index) => {
     const card = getCardByUrl(item.data.url);
     if (card) card.style.order = String(index);
   });
@@ -73,7 +79,7 @@ export function renderDerived(): void {
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped,
   );
   renderAiFilterStatus(listings);
-  applySortOrder();
+  applySortOrder(listings);
   updateUrlGroupHeaders();
 }
 

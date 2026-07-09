@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Listing } from "../lib/recipes/base";
 import { requireChild } from "./domUtils";
 import {
@@ -135,6 +135,18 @@ describe("renderDerived", () => {
     renderDerived();
     expect(document.getElementById("aiFilterStatus")?.textContent).toBe("Filtered 1 results");
   });
+
+  it("builds the ordered listing list only once per render tick", () => {
+    const urls = ["https://l/1", "https://l/2", "https://l/3"];
+    addCardWithListings(urls);
+    const getListingByUrlSpy = vi.spyOn(listingsByUrl, "get");
+    renderDerived();
+    // getOrderedListings() looks up every url in listingsByUrl exactly once;
+    // if renderDerived's sort step recomputes the ordered list independently
+    // (rather than reusing the list renderDerived already built), this count
+    // doubles to 2 * urls.length.
+    expect(getListingByUrlSpy).toHaveBeenCalledTimes(urls.length);
+  });
 });
 
 describe("applySortOrder", () => {
@@ -147,7 +159,7 @@ describe("applySortOrder", () => {
   it("orders cards by source-url order by default", () => {
     addCardWithListings(urls);
     renderAllCards();
-    applySortOrder();
+    applySortOrder(getOrderedListings());
     expect(urls.map((url) => getCardByUrl(url)?.style.order)).toEqual(["0", "1", "2"]);
   });
 
@@ -158,7 +170,7 @@ describe("applySortOrder", () => {
     (listingsByUrl.get("https://l/2") as ListingItem).data.relevance = 9;
     (listingsByUrl.get("https://l/3") as ListingItem).data.relevance = 5;
     setSortBy("best-match");
-    applySortOrder();
+    applySortOrder(getOrderedListings());
     expect(getCardByUrl("https://l/2")?.style.order).toBe("0");
     expect(getCardByUrl("https://l/3")?.style.order).toBe("1");
     expect(getCardByUrl("https://l/1")?.style.order).toBe("2");
