@@ -14,7 +14,7 @@ import type {
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
-import { MAX_PAGES_PER_SEARCH } from '../constants';
+import { MAX_PAGES_PER_SEARCH, MAX_RESULTS_PER_URL } from '../constants';
 import type { CategoryRow } from '../db';
 import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from '../db';
 
@@ -619,15 +619,22 @@ async function quickSearchAsync(
 
     const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
 
-    const totalPages = Math.min(Math.ceil(totalCount / pageSize), MAX_PAGES_PER_SEARCH);
+    const totalPages = Math.min(
+      Math.ceil(totalCount / pageSize),
+      MAX_PAGES_PER_SEARCH,
+      Math.ceil(MAX_RESULTS_PER_URL / pageSize)
+    );
 
     onEvent({ type: 'progress', phase: 'counted', totalResults: totalCount, totalPages });
 
     const seenUrls = new Set<string>();
+    let emittedCount = 0;
     const emit = (listings: Listing[]) => {
       for (const listing of listings) {
+        if (emittedCount >= MAX_RESULTS_PER_URL) return;
         if (seenUrls.has(listing.url)) continue;
         seenUrls.add(listing.url);
+        emittedCount++;
         onEvent({ type: 'listing', data: listing });
       }
     };

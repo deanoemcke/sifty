@@ -15,6 +15,8 @@ import {
   MissingFacebookCookiesError,
   parseFacebookPriceLines,
   parseFbCookies,
+  processRawListing,
+  type RawListingMsg,
 } from './facebook';
 
 const TEST_REGIONS = [
@@ -631,6 +633,39 @@ describe('fetchFacebookListingDetailAsync', () => {
       'https://www.facebook.com/marketplace/item/123/'
     );
     expect(detail.description).toBe('A lovely lamp in great condition.');
+  });
+});
+
+// ── processRawListing (per-URL result cap) ────────────────────────────────────
+
+describe('processRawListing', () => {
+  function makeRawListing(overrides: Partial<RawListingMsg> = {}): RawListingMsg {
+    return {
+      id: '123',
+      url: 'https://www.facebook.com/marketplace/item/123/',
+      ariaLabel: 'Vintage lamp, NZ$80, Auckland',
+      innerText: 'Vintage lamp\nNZ$80\nAuckland',
+      thumbnailUrl: '',
+      ...overrides,
+    };
+  }
+
+  it('emits the listing and increments the counter when under the cap', () => {
+    const onEvent = vi.fn();
+    const counter = { total: 99 };
+    processRawListing(makeRawListing(), new Set(), onEvent, counter);
+
+    expect(counter.total).toBe(100);
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'listing' }));
+  });
+
+  it('does not emit or increment the counter once the cap is reached', () => {
+    const onEvent = vi.fn();
+    const counter = { total: 100 };
+    processRawListing(makeRawListing(), new Set(), onEvent, counter);
+
+    expect(counter.total).toBe(100);
+    expect(onEvent).not.toHaveBeenCalled();
   });
 });
 
