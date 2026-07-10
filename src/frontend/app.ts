@@ -29,8 +29,12 @@ import {
   openSaveSearchModal,
 } from './searchSession';
 import {
+  applyShowSelectSelection,
   closeShowDropdownPanel,
-  renderShowDropdownCheckboxes,
+  populateShowControls,
+  renderShowControls,
+  SHOW_CHECKBOX_ID_BY_CATEGORY,
+  SHOW_OPTIONS,
   setListingCategoryVisible,
   toggleShowDropdownPanel,
   updateShowSoldOptionVisibility,
@@ -51,7 +55,7 @@ import { toggleUrlGroup } from './urlGroupsView';
 function initApp(): void {
   applyBrandTitle(__WORKTREE_LABEL__);
   getElement('discoveryBtn').textContent = DISCOVERY_BUTTON_LABEL;
-  renderShowDropdownCheckboxes();
+  populateShowControls();
   updateShowSoldOptionVisibility();
   createUrlCard(searchUrlCardAsync);
   getElement<HTMLTextAreaElement>('discoveryPrompt').focus();
@@ -68,17 +72,20 @@ function initApp(): void {
   document.addEventListener('click', (mouseEvent: MouseEvent) => {
     if (!getElement('showDropdown').contains(mouseEvent.target as Node)) closeShowDropdownPanel();
   });
-  getElement<HTMLInputElement>('showAvailable').addEventListener('change', (changeEvent) => {
-    setListingCategoryVisible('available', (changeEvent.target as HTMLInputElement).checked);
+  for (const { value } of SHOW_OPTIONS) {
+    getElement<HTMLInputElement>(SHOW_CHECKBOX_ID_BY_CATEGORY[value]).addEventListener(
+      'change',
+      (changeEvent) => {
+        setListingCategoryVisible(value, (changeEvent.target as HTMLInputElement).checked);
+        applyClientFilters();
+        renderShowControls();
+      }
+    );
+  }
+  getElement<HTMLSelectElement>('showNativeSelect').addEventListener('change', (changeEvent) => {
+    applyShowSelectSelection(changeEvent.target as HTMLSelectElement);
     applyClientFilters();
-  });
-  getElement<HTMLInputElement>('showSold').addEventListener('change', (changeEvent) => {
-    setListingCategoryVisible('sold', (changeEvent.target as HTMLInputElement).checked);
-    applyClientFilters();
-  });
-  getElement<HTMLInputElement>('showFiltered').addEventListener('change', (changeEvent) => {
-    setListingCategoryVisible('filtered', (changeEvent.target as HTMLInputElement).checked);
-    applyClientFilters();
+    renderShowControls();
   });
   getElement<HTMLInputElement>('discoveryIncludeSoldItems').addEventListener(
     'change',

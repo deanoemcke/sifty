@@ -566,6 +566,24 @@ label {
 .show-dropdown-panel .checkbox-row:last-child {
   margin-bottom: 0;
 }
+/* Hybrid mobile control: on coarse-pointer devices a transparent native
+   <select multiple> overlays the Show button, so taps open the platform's
+   native multi-select picker instead of the custom panel. */
+.show-native-select {
+  display: none;
+}
+@media (hover: none) and (pointer: coarse) {
+  .show-native-select {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    opacity: 0;
+    font-size: 16px; /* prevents iOS focus zoom */
+    appearance: none;
+    -webkit-appearance: none;
+  }
+}
 .sort-row label {
   margin-bottom: 0;
   flex-shrink: 0;

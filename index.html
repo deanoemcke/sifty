@@ -104,20 +104,8 @@
           <button id="showDropdownBtn" class="show-dropdown-btn" type="button" aria-haspopup="true" aria-expanded="false">
             Show
           </button>
-          <div id="showDropdownPanel" class="show-dropdown-panel hidden">
-            <label class="checkbox-row" for="showAvailable">
-              <input id="showAvailable" type="checkbox" checked />
-              Available
-            </label>
-            <label class="checkbox-row" id="showSoldRow" for="showSold">
-              <input id="showSold" type="checkbox" checked />
-              Sold
-            </label>
-            <label class="checkbox-row" for="showFiltered">
-              <input id="showFiltered" type="checkbox" checked />
-              Filtered
-            </label>
-          </div>
+          <select id="showNativeSelect" class="show-native-select" multiple aria-label="Show"></select>
+          <div id="showDropdownPanel" class="show-dropdown-panel hidden"></div>
         </div>
         <label for="sortBy">Sort by</label>
         <select id="sortBy"></select>

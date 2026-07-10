@@ -35,6 +35,11 @@ beforeEach(() => {
     <input id="showAvailable" type="checkbox" checked />
     <label id="showSoldRow" class="hidden"><input id="showSold" type="checkbox" checked /></label>
     <input id="showFiltered" type="checkbox" checked />
+    <select id="showNativeSelect" multiple>
+      <option value="available" selected>Available</option>
+      <option value="sold" selected>Sold</option>
+      <option value="filtered" selected>Filtered</option>
+    </select>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>

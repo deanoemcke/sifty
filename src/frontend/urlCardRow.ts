@@ -10,7 +10,7 @@ import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
 import { applyClientFilters, getCardByUrl, getOrderedListings, renderDerived } from './resultsView';
 import { type CardStatusSnapshot, cardStatusText } from './searchStatusText';
-import { renderShowDropdownCheckboxes } from './showDropdown';
+import { renderShowControls } from './showDropdown';
 import {
   canCancelSearch,
   cardIdByUrl,
@@ -191,7 +191,7 @@ export function resetAllResults(): void {
   getElement('listingsContainer').innerHTML = '';
   getElement('resultCount').textContent = '0';
   getElement('totalCount').textContent = '0';
-  renderShowDropdownCheckboxes();
+  renderShowControls();
   getElement('resultsSection').classList.add('hidden');
   for (const card of urlCards) {
     const data = urlCardData(card);

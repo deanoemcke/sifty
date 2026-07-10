@@ -341,6 +341,37 @@ describe('initApp() wiring', () => {
   });
 
   describe('Show dropdown control', () => {
+    it('init populates the checkbox panel and the native select from SHOW_OPTIONS', async () => {
+      await import('./app');
+      const checkboxIds = Array.from(
+        document.querySelectorAll('#showDropdownPanel input[type="checkbox"]')
+      ).map((checkbox) => checkbox.id);
+      expect(checkboxIds).toEqual(['showAvailable', 'showSold', 'showFiltered']);
+
+      // "Include sold items" defaults to unchecked, so init hides the sold
+      // row and strips the sold option from the native select.
+      const select = document.getElementById('showNativeSelect') as HTMLSelectElement;
+      expect(Array.from(select.options).map((option) => option.value)).toEqual([
+        'available',
+        'filtered',
+      ]);
+      expect(Array.from(select.options).every((option) => option.selected)).toBe(true);
+      expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+    });
+
+    it('changing the native select updates state and mirrors into the checkboxes', async () => {
+      await import('./app');
+      const state = await import('./state');
+      const select = document.getElementById('showNativeSelect') as HTMLSelectElement;
+      const filteredOption = select.querySelector('option[value="filtered"]') as HTMLOptionElement;
+
+      filteredOption.selected = false;
+      select.dispatchEvent(new Event('change'));
+
+      expect(state.visibleListingCategories.has('filtered')).toBe(false);
+      expect((document.getElementById('showFiltered') as HTMLInputElement).checked).toBe(false);
+    });
+
     it('clicking the Show button opens the panel and sets aria-expanded', async () => {
       await import('./app');
       const panel = document.getElementById('showDropdownPanel') as HTMLElement;
@@ -378,20 +409,27 @@ describe('initApp() wiring', () => {
       expect(state.visibleListingCategories.has('sold')).toBe(false);
     });
 
-    it('toggling "Include sold items" shows/hides the Sold row', async () => {
+    it('toggling "Include sold items" shows/hides the Sold row and native option', async () => {
       await import('./app');
       const includeSoldItems = document.getElementById(
         'discoveryIncludeSoldItems'
       ) as HTMLInputElement;
       const soldRow = document.getElementById('showSoldRow') as HTMLElement;
+      const select = document.getElementById('showNativeSelect') as HTMLSelectElement;
 
       includeSoldItems.checked = false;
       includeSoldItems.dispatchEvent(new Event('change'));
       expect(soldRow.classList.contains('hidden')).toBe(true);
+      expect(select.querySelector('option[value="sold"]')).toBeNull();
 
       includeSoldItems.checked = true;
       includeSoldItems.dispatchEvent(new Event('change'));
       expect(soldRow.classList.contains('hidden')).toBe(false);
+      expect(Array.from(select.options).map((option) => option.value)).toEqual([
+        'available',
+        'sold',
+        'filtered',
+      ]);
     });
   });
 
