@@ -31,6 +31,10 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
     const query = url.searchParams.get('query');
     if (query) filterRows.push(['Search', query]);
 
+    if (url.searchParams.get('availability') === 'out of stock') {
+      filterRows.push(['Availability', 'SOLD']);
+    }
+
     const minPrice = url.searchParams.get('minPrice');
     const maxPrice = url.searchParams.get('maxPrice');
     if (minPrice && maxPrice) filterRows.push(['Price', `$${minPrice} – $${maxPrice}`]);

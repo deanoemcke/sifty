@@ -159,6 +159,19 @@ describe('extractImplicitFilters', () => {
     const filters = extractImplicitFilters(url);
     expect(filters).toContainEqual(['Search', 'pole trimmer']);
   });
+
+  it('shows Availability: SOLD for a sold-items search (availability=out of stock)', () => {
+    const url =
+      'https://www.facebook.com/marketplace/wellington/search?query=pole%20trimmer&availability=out%20of%20stock';
+    const filters = extractImplicitFilters(url);
+    expect(filters).toContainEqual(['Availability', 'SOLD']);
+  });
+
+  it('omits Availability for a normal (non-sold) search', () => {
+    const url = 'https://www.facebook.com/marketplace/wellington/search?query=pole%20trimmer';
+    const filters = extractImplicitFilters(url);
+    expect(filters.map(([key]) => key)).not.toContain('Availability');
+  });
 });
 
 describe('parseFacebookPriceLines', () => {
