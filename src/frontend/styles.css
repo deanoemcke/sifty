@@ -337,7 +337,6 @@ label {
 }
 .url-criteria .criteria-val {
   font-size: 0.72rem;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
