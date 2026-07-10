@@ -270,6 +270,42 @@ describe('parseFacebookPriceLines', () => {
     expect(result.price).toBe(50);
     expect(result.lines).toEqual(['NZ$50', 'Sold', 'Titahi Bay']);
   });
+
+  it('falls back to parsing a combined "Sold · NZ$50" single-line shape', () => {
+    // If Facebook ever renders the status row as one line instead of three
+    // flex-item lines, the combined shape must still be recognised.
+    const result = parseFacebookPriceLines('Sold · NZ$50\nOld chair\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(50);
+    expect(result.lines).toEqual(['NZ$50', 'Old chair', 'Titahi Bay']);
+  });
+
+  it('falls back to parsing a combined "Pending · Free" single-line shape', () => {
+    const result = parseFacebookPriceLines('Pending · Free\nOld chair\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(0);
+    expect(result.lines).toEqual(['Free', 'Old chair', 'Titahi Bay']);
+  });
+
+  it('warns and keeps the remainder when a combined status line has an unparseable price', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = parseFacebookPriceLines('Sold · about $50 ono\nOld chair\nTitahi Bay');
+      expect(result.isSold).toBe(true);
+      expect(result.price).toBeNull();
+      expect(result.lines).toEqual(['about $50 ono', 'Old chair', 'Titahi Bay']);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[facebook]'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not treat a title containing "·" without a status prefix as isSold', () => {
+    const result = parseFacebookPriceLines('Table · solid rimu\nNZ$40\nHamilton');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(40);
+    expect(result.lines).toEqual(['Table · solid rimu', 'NZ$40', 'Hamilton']);
+  });
 });
 
 // ── buildFacebookUrl ──────────────────────────────────────────────────────────

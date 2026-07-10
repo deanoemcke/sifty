@@ -215,6 +215,14 @@ export function parseFacebookPriceValue(priceLine: string | undefined): number |
 // line set and doesn't need to know about the status marker.
 const STATUS_LINE_REGEX = /^(?:Sold|Pending)$/i;
 const SEPARATOR_LINE_REGEX = /^·$/;
+// Fallback for the alternative markup shape where the status row renders as one
+// combined line ("Sold · NZ$50") instead of three flex-item lines. The status
+// word plus the "·" separator at the start of a line is the sold/pending marker;
+// the remainder (normally the price) is kept as its own line so downstream
+// price/title/location parsing sees the same clean line set as the three-line
+// shape. If the remainder is not a parseable price the anomaly is logged rather
+// than silently discarded.
+const COMBINED_STATUS_LINE_REGEX = /^(?:Sold|Pending)\s*·\s*(.+)$/i;
 
 export function parseFacebookPriceLines(innerText: string): {
   price: number | null;
@@ -235,10 +243,24 @@ export function parseFacebookPriceLines(innerText: string): {
       statusLineIndices.add(lineIndex);
     }
   }
-  const isSold = statusLineIndices.size > 0;
-  const lines = rawLines.filter(
-    (line, lineIndex) => !statusLineIndices.has(lineIndex) && !SEPARATOR_LINE_REGEX.test(line)
-  );
+  let isSold = statusLineIndices.size > 0;
+
+  const lines: string[] = [];
+  for (let lineIndex = 0; lineIndex < rawLines.length; lineIndex++) {
+    const line = rawLines[lineIndex];
+    if (statusLineIndices.has(lineIndex) || SEPARATOR_LINE_REGEX.test(line)) continue;
+    const combinedMatch = line.match(COMBINED_STATUS_LINE_REGEX);
+    if (combinedMatch) {
+      isSold = true;
+      const remainder = combinedMatch[1].trim();
+      if (!PRICE_REGEX.test(remainder)) {
+        console.warn(`[facebook] combined status line has an unparseable price: "${line}"`);
+      }
+      lines.push(remainder);
+      continue;
+    }
+    lines.push(line);
+  }
 
   const priceLines = lines.filter((line) => PRICE_REGEX.test(line));
   const price = parseFacebookPriceValue(priceLines[0]);
