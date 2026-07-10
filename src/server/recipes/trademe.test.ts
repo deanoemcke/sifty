@@ -2,22 +2,27 @@ import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON } from '../ai';
-import { type CategoryRow, getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from '../db';
+import {
+  type CategoryLegacyPathRow,
+  type CategoryRow,
+  getDb,
+  stmtGetCategoriesAtDepth2,
+  stmtGetCategoriesByTop2,
+  stmtGetCategoryLegacyPath,
+} from '../db';
 import {
   buildListing,
   buildPhotosFromUrls,
   buildTrademeUrl,
-  collapseEntries,
-  type DiscoverEntry,
   extractImplicitFilters,
   fetchSingleListingDetailAsync,
   mapReserveState,
   parseListingDetailResponse,
   parseSearchApiResponse,
   parseTradeMeDate,
-  STEP2_SYSTEM_PROMPT,
   trademeRecipe,
 } from './trademe';
+import type { DiscoverEntry } from './trademeCategoryResolver';
 
 // `applyAiJsonResult` is left as the real implementation (not mocked) so these tests
 // exercise the actual orchestration logic — unwrapping an ok result, or marking the
@@ -30,6 +35,7 @@ vi.mock('../db', () => ({
   getDb: vi.fn(),
   stmtGetCategoriesAtDepth2: vi.fn(),
   stmtGetCategoriesByTop2: vi.fn(),
+  stmtGetCategoryLegacyPath: vi.fn(),
 }));
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
@@ -855,144 +861,11 @@ describe('extractImplicitFilters', () => {
   });
 });
 
-// ── STEP2_SYSTEM_PROMPT ───────────────────────────────────────────────────────
-
-describe('STEP2_SYSTEM_PROMPT', () => {
-  it('contains the required JSON schema keywords for the AI response contract', () => {
-    expect(STEP2_SYSTEM_PROMPT).toContain('"categories"');
-    expect(STEP2_SYSTEM_PROMPT).toContain('"slug"');
-    expect(STEP2_SYSTEM_PROMPT).toContain('"searchString"');
-  });
-
-  it('instructs the AI to return JSON', () => {
-    expect(STEP2_SYSTEM_PROMPT).toContain('Return JSON');
-  });
-});
-
-// ── collapseEntries ───────────────────────────────────────────────────────────
+// ── buildTrademeUrl ───────────────────────────────────────────────────────────
 
 function entry(slug: string, searchString: string | null = null): DiscoverEntry {
   return { slug, searchString };
 }
-
-describe('collapseEntries', () => {
-  it('returns an empty array unchanged', () => {
-    expect(collapseEntries([])).toEqual([]);
-  });
-
-  it('passes through a single entry with no siblings', () => {
-    const input = [entry('computers/laptops/apple')];
-    expect(collapseEntries(input)).toEqual(input);
-  });
-
-  it('drops a child when its parent is also present in the list', () => {
-    const input = [entry('computers/laptops'), entry('computers/laptops/apple')];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0].slug).toBe('computers/laptops');
-  });
-
-  it('collapses two siblings with the same searchString to their parent', () => {
-    const input = [
-      entry('marketplace/computers/laptops/apple', 'macbook'),
-      entry('marketplace/computers/laptops/dell', 'macbook'),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ slug: 'marketplace/computers/laptops', searchString: 'macbook' });
-  });
-
-  it('does not collapse siblings when their shared parent slug has fewer than 3 segments', () => {
-    const input = [
-      entry('computers/laptops/apple', 'macbook'),
-      entry('computers/laptops/dell', 'macbook'),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(2);
-  });
-
-  it('does not collapse siblings with different searchStrings', () => {
-    const input = [
-      entry('marketplace/computers/laptops/apple', 'macbook'),
-      entry('marketplace/computers/laptops/dell', 'latitude'),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(2);
-  });
-
-  it('does not collapse a lone entry with no siblings', () => {
-    const input = [entry('marketplace/computers/laptops/apple', 'macbook')];
-    expect(collapseEntries(input)).toEqual(input);
-  });
-
-  it('collapses three siblings to one parent entry', () => {
-    const input = [
-      entry('marketplace/computers/laptops/apple', null),
-      entry('marketplace/computers/laptops/dell', null),
-      entry('marketplace/computers/laptops/lenovo', null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ slug: 'marketplace/computers/laptops', searchString: null });
-  });
-
-  it('collapses one sibling group and leaves unrelated entries untouched', () => {
-    const input = [
-      entry('marketplace/computers/laptops/apple', 'macbook'),
-      entry('marketplace/computers/laptops/dell', 'macbook'),
-      entry('marketplace/electronics/cameras/dslr', null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(2);
-    const slugs = result.map((e) => e.slug);
-    expect(slugs).toContain('marketplace/computers/laptops');
-    expect(slugs).toContain('marketplace/electronics/cameras/dslr');
-  });
-
-  it('does not emit the collapsed parent slug twice when three siblings collapse', () => {
-    const input = [
-      entry('marketplace/furniture/home/bedroom', null),
-      entry('marketplace/furniture/home/living', null),
-      entry('marketplace/furniture/home/dining', null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0].slug).toBe('marketplace/furniture/home');
-  });
-
-  it('does not collapse siblings when their parent is present in the input', () => {
-    const input = [
-      entry('marketplace/furniture/home'),
-      entry('marketplace/furniture/home/bedroom', null),
-      entry('marketplace/furniture/home/living', null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(1);
-    expect(result[0].slug).toBe('marketplace/furniture/home');
-  });
-
-  it('collapses two independent sibling groups under separate parents without merging them', () => {
-    // Regression guard: collapsing siblings in one group must not affect siblings in an
-    // unrelated group that shares no ancestor. Each group produces its own parent entry.
-    const input = [
-      entry('marketplace/computers/laptops/apple', 'macbook'),
-      entry('marketplace/computers/laptops/dell', 'macbook'),
-      entry('marketplace/furniture/home/bedroom', null),
-      entry('marketplace/furniture/home/living', null),
-    ];
-    const result = collapseEntries(input);
-    expect(result).toHaveLength(2);
-    const slugs = result.map((e) => e.slug);
-    expect(slugs).toContain('marketplace/computers/laptops');
-    expect(slugs).toContain('marketplace/furniture/home');
-    const laptops = result.find((e) => e.slug === 'marketplace/computers/laptops');
-    const home = result.find((e) => e.slug === 'marketplace/furniture/home');
-    expect(laptops?.searchString).toBe('macbook');
-    expect(home?.searchString).toBeNull();
-  });
-});
-
-// ── buildTrademeUrl ───────────────────────────────────────────────────────────
 
 describe('buildTrademeUrl', () => {
   it('wraps a non-section slug in "marketplace/"', () => {
@@ -1105,6 +978,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls.length).toBeGreaterThan(0);
@@ -1128,6 +1002,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 800,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls[0]).toContain('price_max=800');
@@ -1149,6 +1024,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toEqual([]);
@@ -1169,6 +1045,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1205,6 +1082,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1228,6 +1106,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1264,6 +1143,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1285,6 +1165,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid broad categories');
@@ -1327,6 +1208,7 @@ describe('buildDiscoverUrlsAsync', () => {
     await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig,
     });
 
@@ -1353,6 +1235,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step1)');
@@ -1386,11 +1269,75 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step2:electronics/electronics)');
 
     expect(markExhausted).toHaveBeenCalledWith('mock', cooldownUntilMs);
+  });
+
+  describe('includeSoldItems', () => {
+    beforeEach(() => {
+      vi.mocked(aiJSON)
+        .mockResolvedValueOnce(
+          aiJsonOk({
+            categories: ['Electronics'],
+            searchLabel: 'laptops',
+            searchQuery: 'laptop',
+          })
+        )
+        .mockResolvedValueOnce(
+          aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
+        );
+    });
+
+    it('does not build legacy sold-item URLs when false', async () => {
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+      expect(result.urls).toHaveLength(1);
+      expect(vi.mocked(stmtGetCategoryLegacyPath)).not.toHaveBeenCalled();
+    });
+
+    it('also builds a legacy sold-item URL per resolved category when true', async () => {
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      const modernUrl = result.urls.find((u) => u.includes('trademe.co.nz/a/'));
+      const legacyUrl = result.urls.find((u) => u.includes('Browse/SearchResults.aspx'));
+      expect(modernUrl).toContain('electronics/laptops');
+      expect(legacyUrl).toContain('cid=356');
+      expect(legacyUrl).toContain('rptpath=2-356-');
+    });
+
+    it('warns instead of throwing when a resolved category has no legacy mapping', async () => {
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => undefined,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1); // modern URL only
+      expect(result.warnings.some((w) => w.includes('no legacy category mapping'))).toBe(true);
+    });
   });
 });
 

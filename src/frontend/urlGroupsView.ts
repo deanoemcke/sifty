@@ -3,7 +3,7 @@
 // Grouping logic (which cards form a group, header wording) lives in
 // urlGroups.ts; this module owns only the DOM and the expansion state.
 
-import { recipeIdForUrl } from '../lib/recipes/matcher';
+import { recipeGroupIdForUrl } from '../lib/recipes/matcher';
 import type { RecipeId } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
 import { collapseElementAsync, expandElement } from './heightAnimation';
@@ -14,7 +14,7 @@ import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from '
 
 const CHEVRON_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
 
-const urlGroupExpandedByRecipeId = new Map<RecipeId, boolean>();
+const urlGroupExpandedByGroupId = new Map<RecipeId, boolean>();
 
 export function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
   const data = urlCardData(card);
@@ -25,19 +25,19 @@ export function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
   };
 }
 
-export function findUrlGroupElement(recipeId: RecipeId): HTMLElement | null {
+export function findUrlGroupElement(groupId: RecipeId): HTMLElement | null {
   return getElement('urlCardsContainer').querySelector<HTMLElement>(
-    `.url-group[data-recipe-id="${recipeId}"]`
+    `.url-group[data-recipe-id="${groupId}"]`
   );
 }
 
-export function buildUrlGroupElement(recipeId: RecipeId): HTMLElement {
+export function buildUrlGroupElement(groupId: RecipeId): HTMLElement {
   const groupEl = document.createElement('div');
   groupEl.className = 'url-group';
-  groupEl.dataset.recipeId = String(recipeId);
+  groupEl.dataset.recipeId = String(groupId);
   groupEl.innerHTML = `
     <div class="url-group-header">
-      ${recipeFaviconHtml(recipeId)}
+      ${recipeFaviconHtml(groupId)}
       <span class="url-group-status"></span>
       <button class="cache-clear-btn url-group-cancel hidden" type="button">cancel</button>
       <button class="btn icon-btn url-group-toggle" type="button" title="Show URLs">${CHEVRON_ICON}</button>
@@ -48,24 +48,24 @@ export function buildUrlGroupElement(recipeId: RecipeId): HTMLElement {
 }
 
 // Reconciles the group containers with the cards' current recipes: groups are
-// kept in recipe-id order at the top, unmatched rows stay loose below them.
+// kept in group-id order at the top, unmatched rows stay loose below them.
 export function syncUrlGroups(): void {
   const container = getElement('urlCardsContainer');
   const summaries = computeUrlGroups(urlCards.map(urlGroupMemberSnapshot));
   for (const summary of summaries) {
-    const groupEl = findUrlGroupElement(summary.recipeId) ?? buildUrlGroupElement(summary.recipeId);
+    const groupEl = findUrlGroupElement(summary.groupId) ?? buildUrlGroupElement(summary.groupId);
     container.appendChild(groupEl);
     const rowsEl = requireChild<HTMLElement>(groupEl, '.url-group-rows');
-    if (urlGroupExpandedByRecipeId.get(summary.recipeId)) rowsEl.classList.remove('hidden');
-    groupEl.classList.toggle('expanded', urlGroupExpandedByRecipeId.get(summary.recipeId) ?? false);
+    if (urlGroupExpandedByGroupId.get(summary.groupId)) rowsEl.classList.remove('hidden');
+    groupEl.classList.toggle('expanded', urlGroupExpandedByGroupId.get(summary.groupId) ?? false);
   }
   for (const card of urlCards) {
-    const recipeId = recipeIdForUrl(card.dom.input.value.trim());
+    const groupId = recipeGroupIdForUrl(card.dom.input.value.trim());
     const rowEl = card.dom.containerElement;
     const targetParent =
-      recipeId === null
+      groupId === null
         ? container
-        : (findUrlGroupElement(recipeId)?.querySelector<HTMLElement>('.url-group-rows') ??
+        : (findUrlGroupElement(groupId)?.querySelector<HTMLElement>('.url-group-rows') ??
           container);
     if (rowEl.parentElement !== targetParent) targetParent.appendChild(rowEl);
   }
@@ -78,7 +78,7 @@ export function syncUrlGroups(): void {
 
 export function updateUrlGroupHeaders(): void {
   for (const summary of computeUrlGroups(urlCards.map(urlGroupMemberSnapshot))) {
-    const groupEl = findUrlGroupElement(summary.recipeId);
+    const groupEl = findUrlGroupElement(summary.groupId);
     if (!groupEl) continue;
     const view = groupHeaderView(summary);
     const statusEl = requireChild<HTMLElement>(groupEl, '.url-group-status');
@@ -92,21 +92,21 @@ export function updateUrlGroupHeaders(): void {
   }
 }
 
-export function expandUrlGroup(recipeId: RecipeId): void {
-  if (urlGroupExpandedByRecipeId.get(recipeId)) return;
-  urlGroupExpandedByRecipeId.set(recipeId, true);
-  const groupEl = findUrlGroupElement(recipeId);
+export function expandUrlGroup(groupId: RecipeId): void {
+  if (urlGroupExpandedByGroupId.get(groupId)) return;
+  urlGroupExpandedByGroupId.set(groupId, true);
+  const groupEl = findUrlGroupElement(groupId);
   if (!groupEl) return;
   groupEl.classList.add('expanded');
   expandElement(requireChild<HTMLElement>(groupEl, '.url-group-rows'));
 }
 
-export function toggleUrlGroup(recipeId: RecipeId): void {
-  const groupEl = findUrlGroupElement(recipeId);
+export function toggleUrlGroup(groupId: RecipeId): void {
+  const groupEl = findUrlGroupElement(groupId);
   if (!groupEl) return;
   const rowsEl = requireChild<HTMLElement>(groupEl, '.url-group-rows');
-  const isExpanded = urlGroupExpandedByRecipeId.get(recipeId) ?? false;
-  urlGroupExpandedByRecipeId.set(recipeId, !isExpanded);
+  const isExpanded = urlGroupExpandedByGroupId.get(groupId) ?? false;
+  urlGroupExpandedByGroupId.set(groupId, !isExpanded);
   groupEl.classList.toggle('expanded', !isExpanded);
   if (isExpanded) collapseElementAsync(rowsEl);
   else expandElement(rowsEl);

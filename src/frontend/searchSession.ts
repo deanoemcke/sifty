@@ -162,6 +162,7 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   const fulfillment = fulfillmentFromAllowShipping(
     getElement<HTMLInputElement>('discoveryAllowShipping').checked
   );
+  const includeSoldItems = getElement<HTMLInputElement>('discoveryIncludeSoldItems').checked;
   const regionValue = getElement<HTMLSelectElement>('discoveryRegion').value || undefined;
   const discoveryButton = getElement<HTMLButtonElement>('discoveryBtn');
   const discoveryErrorElement = getElement<HTMLDivElement>('discoveryError');
@@ -176,7 +177,7 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
     const response = await fetch('/api/discover', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, maxPrice, fulfillment, regionValue }),
+      body: JSON.stringify({ prompt, maxPrice, fulfillment, includeSoldItems, regionValue }),
     });
     const data = (await response.json()) as {
       urls?: string[];

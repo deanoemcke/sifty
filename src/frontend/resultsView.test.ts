@@ -9,6 +9,7 @@ import {
   renderFilteredToggle,
   scheduleSortOrderUpdate,
 } from './resultsView';
+import * as sortListingsModule from './sortListings';
 import {
   type ListingItem,
   listingsByUrl,
@@ -175,9 +176,12 @@ describe('applySortOrder', () => {
     expect(getByIdSpy).not.toHaveBeenCalled();
   });
 
-  it('still performs card lookups and DOM writes for a non-default sort', () => {
+  it('still performs card lookups and DOM writes for a non-default sort that actually reorders', () => {
     addCardWithListings(urls);
     renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
     setSortBy('best-match');
     const getByIdSpy = vi.spyOn(document, 'getElementById');
     applySortOrder(getOrderedListings());
@@ -216,6 +220,59 @@ describe('applySortOrder', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Regression coverage for the SSE hot-path cost of sorting: scheduleSortOrderUpdate
+// fires once per streamed listing, so the "would this reorder anything" check
+// must stay cheap for the common case, and any real sort must never be
+// recomputed within the same call.
+describe('sort call efficiency (SSE hot-path regression coverage)', () => {
+  const urls = ['https://l/1', 'https://l/2', 'https://l/3'];
+
+  function renderAllCards(): void {
+    for (const url of urls) renderCard(listingsByUrl.get(url) as ListingItem);
+  }
+
+  it('never calls sortListings for the default sort with a single source', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(getOrderedListings());
+    scheduleSortOrderUpdate(getOrderedListings());
+    expect(sortSpy).not.toHaveBeenCalled();
+  });
+
+  it('calls sortListings exactly once per applySortOrder call when a reorder is actually needed', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(getOrderedListings());
+    expect(sortSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls sortListings exactly once when the default sort has mixed sources', () => {
+    const listings = [
+      makeListingItem({ data: makeListing({ url: 'https://l/1', source: 'facebook' }) }),
+      makeListingItem({ data: makeListing({ url: 'https://l/2', source: 'trademe' }) }),
+    ];
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(listings);
+    expect(sortSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat trademe and trademe-expired as mixed sources', () => {
+    const listings = [
+      makeListingItem({ data: makeListing({ url: 'https://l/1', source: 'trademe-expired' }) }),
+      makeListingItem({ data: makeListing({ url: 'https://l/2', source: 'trademe' }) }),
+    ];
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(listings);
+    expect(sortSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -287,6 +344,9 @@ describe('scheduleSortOrderUpdate', () => {
   it('only requests a single animation frame for a burst of calls', () => {
     addCardWithListings(urls);
     renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.price = 30;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.price = 20;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.price = 10;
     setSortBy('lowest-price');
     const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
 
@@ -309,6 +369,23 @@ describe('renderCard', () => {
     const openArea = requireChild<HTMLElement>(card, '.listing-open-area');
     expect(openArea.querySelector('.listing-external-link-btn')).toBeNull();
     expect(card.querySelector('.listing-external-link-btn')).not.toBeNull();
+  });
+
+  it('shows the sold banner and sold class for a sold listing', () => {
+    renderCard(makeListingItem({ data: makeListing({ url: 'https://l/1', isSold: true }) }));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.classList.contains('sold')).toBe(true);
+    const banner = requireChild<HTMLElement>(card, '.sold-banner');
+    expect(banner.classList.contains('hidden')).toBe(false);
+    expect(banner.textContent).toBe('SOLD');
+  });
+
+  it('hides the sold banner and omits the sold class for a non-sold listing', () => {
+    renderCard(makeListingItemAt('https://l/1'));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.classList.contains('sold')).toBe(false);
+    const banner = requireChild<HTMLElement>(card, '.sold-banner');
+    expect(banner.classList.contains('hidden')).toBe(true);
   });
 });
 

@@ -3,6 +3,7 @@
 // the filtered show/hide toggle, deep-search button visibility, and the
 // client-side AI-filter pass over the rendered cards.
 
+import { requirePattern } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
 import { applyListingCardAccessibility } from './listingCardActivation';
@@ -63,13 +64,42 @@ export function getSortedListings(): ListingItem[] {
 // this directly — see scheduleSortOrderUpdate() below, which coalesces the
 // many calls renderDerived makes during an active SSE stream into one call
 // here per animation frame.
+
+// O(n) scan (no sort, no requirePattern-per-comparison) for whether listings
+// span more than one canonical source group — e.g. trademe mixed with
+// facebook. trademe and trademe-expired share a groupId (see
+// RECIPE_PATTERNS in metadata.ts) so a trademe/trademe-expired mix does NOT
+// count as mixed here, matching sortListings' own grouping.
+function sourcesAreMixed(listings: ListingItem[]): boolean {
+  if (listings.length === 0) return false;
+  const firstGroupId = requirePattern(listings[0].data.source).groupId;
+  return listings.some((item) => requirePattern(item.data.source).groupId !== firstGroupId);
+}
+
+// Returns the sorted listings when re-sorting would actually reorder the
+// DOM, or null when it wouldn't. Shared by scheduleSortOrderUpdate (to
+// decide whether to schedule a frame at all) and applySortOrder (to decide
+// whether to touch the DOM), so a single call through either function never
+// sorts more than once.
+//
+// For the default source-url sort with sources that aren't mixed, insertion
+// order is already correct by construction (see getOrderedListings), so this
+// bypasses sorting entirely via the cheap sourcesAreMixed() scan above —
+// restoring the O(1)/O(n) per-event cost this module's SSE-streaming
+// comments below rely on for the common case. Only a mixed-source result set
+// or a non-default sort falls through to an actual sort, and even then only
+// once.
+function sortedIfReorderNeeded(listings: ListingItem[]): ListingItem[] | null {
+  if (sortBy === DEFAULT_SORT_OPTION && !sourcesAreMixed(listings)) return null;
+  const sorted = sortListings(listings, sortBy);
+  return sorted.every((item, index) => item === listings[index]) ? null : sorted;
+}
+
 export function applySortOrder(listings: ListingItem[]): void {
-  // Default sort is a no-op: listings are already in natural/insertion order,
-  // matching the order cards were appended to the DOM, so there's nothing to
-  // re-sort or re-append on every render tick.
-  if (sortBy === DEFAULT_SORT_OPTION) return;
+  const sorted = sortedIfReorderNeeded(listings);
+  if (!sorted) return;
   const container = getElement('listingsContainer');
-  sortListings(listings, sortBy).forEach((item) => {
+  sorted.forEach((item) => {
     const card = getCardByUrl(item.data.url);
     if (card) container.appendChild(card);
   });
@@ -82,15 +112,12 @@ export function applySortOrder(listings: ListingItem[]): void {
 // immediately before the next paint is ever visible. rafSchedule() coalesces
 // a burst of calls into a single applySortOrder() invocation on the next
 // frame, using whichever listings snapshot was passed most recently.
-//
-// The default-sort check is duplicated here (ahead of applySortOrder's own
-// check) deliberately: it lets renderDerived skip scheduling a frame at all
-// for the common case, rather than scheduling one just to have
-// applySortOrder no-op inside it.
 const scheduleApplySortOrderOnNextFrame = rafSchedule(applySortOrder);
 
 export function scheduleSortOrderUpdate(listings: ListingItem[]): void {
-  if (sortBy === DEFAULT_SORT_OPTION) return;
+  // Skip scheduling a frame at all for the common no-reorder case, rather
+  // than scheduling one just to have applySortOrder no-op inside it.
+  if (!sortedIfReorderNeeded(listings)) return;
   scheduleApplySortOrderOnNextFrame(listings);
 }
 
@@ -167,7 +194,7 @@ export function renderCard(item: ListingItem): void {
 
   const existing = document.getElementById(cardId);
   const card = existing ?? document.createElement('div');
-  card.className = 'listing-card';
+  card.className = listing.isSold ? 'listing-card sold' : 'listing-card';
   card.id = cardId;
   card.dataset.url = listing.url;
 
@@ -195,6 +222,7 @@ export function renderCard(item: ListingItem): void {
           ${thumb}
           ${sourceBadgeHtml(listing.source, 28)}
           <div class="filter-banner hidden"></div>
+          <div class="sold-banner ${listing.isSold ? '' : 'hidden'}">SOLD</div>
         </div>
         <div class="listing-body">
           <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>

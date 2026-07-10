@@ -2,7 +2,7 @@
 // The group header shows only the deduped live listing count plus a cancel
 // link while any member search is running; per-URL detail lives on the rows.
 
-import { recipeIdForUrl } from '../lib/recipes/matcher';
+import { recipeGroupIdForUrl } from '../lib/recipes/matcher';
 import type { RecipeId } from '../lib/recipes/metadata';
 import { listingsCountText } from './searchStatusText';
 import { canCancelSearch, isCardSearchActive, type UrlCardSearchStatus } from './state';
@@ -14,7 +14,7 @@ export interface UrlGroupMemberSnapshot {
 }
 
 export interface UrlGroupSummary {
-  recipeId: RecipeId;
+  groupId: RecipeId;
   uniqueListingsCount: number;
   canCancel: boolean;
   // True while any member search is still running or cancelling.
@@ -22,18 +22,18 @@ export interface UrlGroupSummary {
 }
 
 export function computeUrlGroups(members: readonly UrlGroupMemberSnapshot[]): UrlGroupSummary[] {
-  const membersByRecipeId = new Map<RecipeId, UrlGroupMemberSnapshot[]>();
+  const membersByGroupId = new Map<RecipeId, UrlGroupMemberSnapshot[]>();
   for (const member of members) {
-    const recipeId = recipeIdForUrl(member.url);
-    if (recipeId === null) continue;
-    const bucket = membersByRecipeId.get(recipeId);
+    const groupId = recipeGroupIdForUrl(member.url);
+    if (groupId === null) continue;
+    const bucket = membersByGroupId.get(groupId);
     if (bucket) bucket.push(member);
-    else membersByRecipeId.set(recipeId, [member]);
+    else membersByGroupId.set(groupId, [member]);
   }
-  return [...membersByRecipeId.entries()]
-    .sort(([recipeIdA], [recipeIdB]) => recipeIdA - recipeIdB)
-    .map(([recipeId, groupMembers]) => ({
-      recipeId,
+  return [...membersByGroupId.entries()]
+    .sort(([groupIdA], [groupIdB]) => groupIdA - groupIdB)
+    .map(([groupId, groupMembers]) => ({
+      groupId,
       uniqueListingsCount: new Set(groupMembers.flatMap((m) => m.listingUrls)).size,
       canCancel: groupMembers.some((m) => canCancelSearch(m.searchStatus)),
       isBusy: groupMembers.some((m) => isCardSearchActive(m.searchStatus)),

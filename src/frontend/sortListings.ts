@@ -2,6 +2,7 @@
 // Pure sort logic for the results grid — no DOM access except populateSortSelect,
 // which only builds <option> elements.
 
+import { requirePattern } from '../lib/recipes/metadata';
 import type { ListingItem } from './state';
 
 export type SortOption =
@@ -31,9 +32,15 @@ function comparePrice(a: number | null, b: number | null, ascending: boolean): n
 }
 
 export function sortListings(listings: ListingItem[], sortBy: SortOption): ListingItem[] {
-  if (sortBy === 'source-url') return [...listings];
   const sorted = [...listings];
-  if (sortBy === 'best-match') {
+  if (sortBy === 'source-url') {
+    // Stable sort by canonical source group, so e.g. trademe and
+    // trademe-expired listings end up adjacent instead of interleaved,
+    // while listings within the same group keep their relative order.
+    sorted.sort(
+      (a, b) => requirePattern(a.data.source).groupId - requirePattern(b.data.source).groupId
+    );
+  } else if (sortBy === 'best-match') {
     sorted.sort((a, b) => b.data.relevance - a.data.relevance);
   } else if (sortBy === 'worst-match') {
     sorted.sort((a, b) => a.data.relevance - b.data.relevance);

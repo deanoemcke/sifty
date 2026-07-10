@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import type { Listing } from '../lib/recipes/base';
+import type { RecipeSource } from '../lib/recipes/metadata';
 import {
   DEFAULT_SORT_OPTION,
   populateSortSelect,
@@ -10,9 +11,14 @@ import {
 } from './sortListings';
 import type { ListingItem } from './state';
 
-function makeListingItem(url: string, relevance: number, price: number | null): ListingItem {
+function makeListingItem(
+  url: string,
+  relevance: number,
+  price: number | null,
+  source: RecipeSource = 'trademe'
+): ListingItem {
   return {
-    data: { source: 'trademe', title: url, price, location: '', url, relevance } as Listing,
+    data: { source, title: url, price, location: '', url, relevance } as Listing,
     hasBeenDeepSearched: false,
     aiCheckedHash: null,
     aiFilterReason: null,
@@ -20,7 +26,7 @@ function makeListingItem(url: string, relevance: number, price: number | null): 
 }
 
 describe('sortListings', () => {
-  it('leaves source-url order untouched', () => {
+  it('leaves source-url order untouched when all listings share one source', () => {
     const listings = [
       makeListingItem('a', 3, 10),
       makeListingItem('b', 9, 5),
@@ -29,6 +35,23 @@ describe('sortListings', () => {
     expect(sortListings(listings, 'source-url').map((item) => item.data.url)).toEqual([
       'a',
       'b',
+      'c',
+    ]);
+  });
+
+  it('groups trademe and trademe-expired listings together, ahead of facebook, preserving relative order within each group', () => {
+    const listings = [
+      makeListingItem('a', 0, 0, 'facebook'),
+      makeListingItem('b', 0, 0, 'trademe'),
+      makeListingItem('c', 0, 0, 'facebook'),
+      makeListingItem('d', 0, 0, 'trademe-expired'),
+      makeListingItem('e', 0, 0, 'trademe'),
+    ];
+    expect(sortListings(listings, 'source-url').map((item) => item.data.url)).toEqual([
+      'b',
+      'd',
+      'e',
+      'a',
       'c',
     ]);
   });

@@ -130,18 +130,32 @@ describe('discoverCategoriesAsync', () => {
       }),
     ]);
 
-    await discoverCategoriesAsync('  macbook  ', 800, 'pickup', '2', STUB_COOLDOWN_STORE);
+    await discoverCategoriesAsync('  macbook  ', 800, 'pickup', '2', STUB_COOLDOWN_STORE, true);
     expect(captured).toHaveLength(1);
     expect(captured[0].prompt).toBe('  macbook  ');
     const context = captured[0].context as DiscoverContext;
     expect(context.maxPrice).toBe(800);
     expect(context.fulfillment).toBe('pickup');
     expect(context.regionValue).toBe('2');
+    expect(context.includeSoldItems).toBe(true);
     // `getAiConfig` is a resolver bound to this call's cooldown store (via
     // `bindAIConfigResolver`), not a bare reference to the mocked `getAIConfig` —
     // assert behaviourally that it forwards to `getAIConfig` with that store.
     expect(context.getAiConfig()).toBe(MOCK_AI_CONFIG);
     expect(vi.mocked(getAIConfig)).toHaveBeenCalledWith(STUB_COOLDOWN_STORE);
+  });
+
+  it('defaults includeSoldItems to false when omitted', async () => {
+    const captured: DiscoverContext[] = [];
+    vi.mocked(getAllRecipes).mockReturnValue([
+      withBuildDiscover(makeStubRecipe(['https://www.trademe.co.nz/a/x']), async (_p, ctx) => {
+        captured.push(ctx);
+        return { urls: ['https://www.trademe.co.nz/a/x'], warnings: [] };
+      }),
+    ]);
+
+    await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE);
+    expect(captured[0].includeSoldItems).toBe(false);
   });
 
   it('returns URLs from successful recipes even when another recipe throws', async () => {

@@ -29,13 +29,15 @@ export async function discoverCategoriesAsync(
   discoveryMaxPrice: number,
   discoveryFulfillment: Fulfillment,
   discoveryRegion: string | undefined,
-  cooldownStore: ProviderCooldownStore
+  cooldownStore: ProviderCooldownStore,
+  discoveryIncludeSoldItems = false
 ): Promise<DiscoverResult> {
   getAIConfig(cooldownStore); // fail fast before running any recipe if no provider is configured at all
   const context: DiscoverContext = {
     maxPrice: discoveryMaxPrice,
     fulfillment: discoveryFulfillment,
     regionValue: discoveryRegion,
+    includeSoldItems: discoveryIncludeSoldItems,
     getAiConfig: bindAIConfigResolver(cooldownStore),
   };
   const allRecipes = getAllRecipes();
@@ -85,6 +87,7 @@ export async function handleDiscover(
     typeof rawBody.regionValue === 'string' && rawBody.regionValue.trim()
       ? rawBody.regionValue
       : undefined;
+  const discoveryIncludeSoldItems = rawBody.includeSoldItems === true;
 
   try {
     const result = await discoverCategoriesAsync(
@@ -92,7 +95,8 @@ export async function handleDiscover(
       discoveryMaxPrice,
       discoveryFulfillment,
       discoveryRegion,
-      cooldownStore
+      cooldownStore,
+      discoveryIncludeSoldItems
     );
     sendJSON(response, 200, result);
   } catch (err) {

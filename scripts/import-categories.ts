@@ -22,17 +22,21 @@ if (!fs.existsSync(JSON_PATH)) {
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 
+// Dropped and recreated on every import (not IF NOT EXISTS): this table is a full,
+// disposable derivation of the JSON asset, so a schema change here doesn't need a
+// migration path — just re-run this script.
 db.exec(`
-  CREATE TABLE IF NOT EXISTS trademe_categories (
+  DROP TABLE IF EXISTS trademe_categories;
+  CREATE TABLE trademe_categories (
     slug        TEXT PRIMARY KEY,
     display     TEXT NOT NULL,
     depth       INTEGER NOT NULL,
     parent_slug TEXT,
-    top2        TEXT NOT NULL
+    top2        TEXT NOT NULL,
+    legacy_path TEXT NOT NULL
   );
 `);
 
-db.prepare('DELETE FROM trademe_categories').run();
 console.log('Cleared trademe_categories.');
 
 interface Category {
@@ -52,7 +56,7 @@ function topLevelSlug(name: string): string {
   return nameToSlug(name);
 }
 
-const rows: [string, string, number, string | null, string][] = [];
+const rows: [string, string, number, string | null, string, string][] = [];
 const seen = new Set<string>();
 
 function walk(node: Category, parentSlugParts: string[], parentDisplayParts: string[], depth: number): void {
@@ -67,7 +71,7 @@ function walk(node: Category, parentSlugParts: string[], parentDisplayParts: str
 
   if (depth >= 2 && !seen.has(slug)) {
     seen.add(slug);
-    rows.push([slug, display, depth, parent_slug, top2]);
+    rows.push([slug, display, depth, parent_slug, top2, node.Number]);
   }
 
   for (const sub of node.Subcategories ?? []) {
@@ -81,10 +85,10 @@ for (const top of data.Subcategories ?? []) {
 }
 
 const insert = db.prepare(
-  'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2) VALUES (?, ?, ?, ?, ?)'
+  'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
 );
 const insertAll = db.transaction(() => {
-  for (const r of rows) insert.run(r[0], r[1], r[2], r[3], r[4]);
+  for (const r of rows) insert.run(r[0], r[1], r[2], r[3], r[4], r[5]);
 });
 insertAll();
 

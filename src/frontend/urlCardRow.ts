@@ -4,7 +4,7 @@
 // action itself is injected into createUrlCard so this module never depends
 // on the quick-search implementation.
 
-import { isValidRecipeUrl, recipeIdForUrl } from '../lib/recipes/matcher';
+import { isValidRecipeUrl, recipeGroupIdForUrl } from '../lib/recipes/matcher';
 import type { RecipeId } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
@@ -86,21 +86,21 @@ export function cancelSearch(card: UrlCard): void {
   }).catch(() => null);
 }
 
-export function cancelGroupSearches(recipeId: RecipeId): void {
+export function cancelGroupSearches(groupId: RecipeId): void {
   for (const card of urlCards) {
-    if (recipeIdForUrl(card.dom.input.value.trim()) === recipeId) cancelSearch(card);
+    if (recipeGroupIdForUrl(card.dom.input.value.trim()) === groupId) cancelSearch(card);
   }
 }
 
 export function handleUrlInputChanged(card: UrlCard): void {
   card.dom.searchButton.disabled = !canSearchCard(card);
-  const recipeId = recipeIdForUrl(card.dom.input.value.trim());
+  const groupId = recipeGroupIdForUrl(card.dom.input.value.trim());
   const previousParent = card.dom.containerElement.parentElement;
   syncUrlGroups();
   // A row that just moved into a collapsed group would vanish mid-edit —
   // expand its destination group so the input stays visible.
-  if (card.dom.containerElement.parentElement !== previousParent && recipeId !== null)
-    expandUrlGroup(recipeId);
+  if (card.dom.containerElement.parentElement !== previousParent && groupId !== null)
+    expandUrlGroup(groupId);
 }
 
 // Once a search has touched the row, the URL displays as a truncated link;

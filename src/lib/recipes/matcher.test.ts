@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidRecipeUrl, recipeIdForUrl } from './matcher';
+import { isValidRecipeUrl, recipeGroupIdForUrl, recipeIdForUrl } from './matcher';
 import { RecipeId } from './metadata';
 
 describe('isValidRecipeUrl', () => {
@@ -10,6 +10,14 @@ describe('isValidRecipeUrl', () => {
 
     it('accepts a trademe listing URL with any path', () => {
       expect(isValidRecipeUrl('https://www.trademe.co.nz/a/marketplace/listing/123')).toBe(true);
+    });
+  });
+
+  describe('trademe-expired', () => {
+    it('accepts a legacy Browse/SearchResults.aspx URL', () => {
+      expect(isValidRecipeUrl('https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356')).toBe(
+        true
+      );
     });
   });
 
@@ -55,12 +63,42 @@ describe('recipeIdForUrl', () => {
     expect(recipeIdForUrl('https://www.facebook.com/marketplace/item/123')).toBe(RecipeId.Facebook);
   });
 
+  it('resolves a legacy Browse/SearchResults.aspx URL to the TrademeExpired recipe id, not Trademe', () => {
+    expect(recipeIdForUrl('https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356')).toBe(
+      RecipeId.TrademeExpired
+    );
+  });
+
   it('returns null for an unrecognised URL', () => {
     expect(recipeIdForUrl('https://www.google.com/search?q=test')).toBe(null);
   });
 
   it('returns null for malformed input', () => {
     expect(recipeIdForUrl('not-a-url')).toBe(null);
+  });
+});
+
+describe('recipeGroupIdForUrl', () => {
+  it('resolves a trademe URL to the Trademe group id', () => {
+    expect(recipeGroupIdForUrl('https://www.trademe.co.nz/a/marketplace/listing/123')).toBe(
+      RecipeId.Trademe
+    );
+  });
+
+  it('resolves a legacy trademe-expired URL to the Trademe group id, same as trademe', () => {
+    expect(recipeGroupIdForUrl('https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356')).toBe(
+      RecipeId.Trademe
+    );
+  });
+
+  it('resolves a facebook marketplace URL to the Facebook group id', () => {
+    expect(recipeGroupIdForUrl('https://www.facebook.com/marketplace/item/123')).toBe(
+      RecipeId.Facebook
+    );
+  });
+
+  it('returns null for an unrecognised URL', () => {
+    expect(recipeGroupIdForUrl('https://www.google.com/search?q=test')).toBe(null);
   });
 });
 
@@ -71,5 +109,9 @@ describe('RecipeId', () => {
 
   it('assigns Facebook recipe id 2', () => {
     expect(RecipeId.Facebook).toBe(2);
+  });
+
+  it('assigns TrademeExpired recipe id 3', () => {
+    expect(RecipeId.TrademeExpired).toBe(3);
   });
 });

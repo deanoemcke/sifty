@@ -15,6 +15,11 @@ const SOURCE_META: Record<RecipeId, { label: string; faviconDomain: string; bran
       faviconDomain: 'facebook.com',
       brandColor: '#0866ff',
     },
+    [RecipeId.TrademeExpired]: {
+      label: 'Trade Me (sold)',
+      faviconDomain: 'trademe.co.nz',
+      brandColor: '#feeb33',
+    },
   };
 
 export function recipeFaviconHtml(recipeId: RecipeId, sizePx = 14): string {

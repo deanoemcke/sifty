@@ -4,6 +4,7 @@ import type { UrlCardSearchStatus } from './state';
 import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from './urlGroups';
 
 const TRADEME_URL = 'https://www.trademe.co.nz/a/marketplace/search?q=x';
+const TRADEME_EXPIRED_URL = 'https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356';
 const FACEBOOK_URL = 'https://www.facebook.com/marketplace/wellington/search?query=x';
 
 function member(overrides: Partial<UrlGroupMemberSnapshot> = {}): UrlGroupMemberSnapshot {
@@ -16,13 +17,21 @@ function member(overrides: Partial<UrlGroupMemberSnapshot> = {}): UrlGroupMember
 }
 
 describe('computeUrlGroups', () => {
-  it('groups members by recipe, ordered by recipe id, skipping unmatched urls', () => {
+  it('groups members by group id, ordered by group id, skipping unmatched urls', () => {
     const groups = computeUrlGroups([
       member({ url: FACEBOOK_URL }),
       member({ url: TRADEME_URL }),
       member({ url: 'not-a-url' }),
     ]);
-    expect(groups.map((g) => g.recipeId)).toEqual([RecipeId.Trademe, RecipeId.Facebook]);
+    expect(groups.map((g) => g.groupId)).toEqual([RecipeId.Trademe, RecipeId.Facebook]);
+  });
+
+  it('collapses trademe and trademe-expired urls into a single group', () => {
+    const groups = computeUrlGroups([
+      member({ url: TRADEME_URL }),
+      member({ url: TRADEME_EXPIRED_URL }),
+    ]);
+    expect(groups.map((g) => g.groupId)).toEqual([RecipeId.Trademe]);
   });
 
   it("counts unique listings across the group's members", () => {
@@ -60,7 +69,7 @@ describe('groupHeaderView', () => {
   it('shows the count, spinner and cancel link while searches run', () => {
     expect(
       groupHeaderView({
-        recipeId: RecipeId.Trademe,
+        groupId: RecipeId.Trademe,
         uniqueListingsCount: 12,
         canCancel: true,
         isBusy: true,
@@ -71,7 +80,7 @@ describe('groupHeaderView', () => {
   it('hides the spinner and cancel link when nothing is running', () => {
     expect(
       groupHeaderView({
-        recipeId: RecipeId.Trademe,
+        groupId: RecipeId.Trademe,
         uniqueListingsCount: 1,
         canCancel: false,
         isBusy: false,

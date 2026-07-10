@@ -23,3 +23,10 @@ export function isValidRecipeUrl(url: string): boolean {
 export function recipeIdForUrl(url: string): RecipeId | null {
   return matchRecipePattern(url)?.recipeId ?? null;
 }
+
+// The canonical group a URL's recipe belongs to for display purposes (URL group
+// cards, sort-by-source) — distinct from recipeIdForUrl, which returns the true
+// matched recipe and still distinguishes e.g. trademe from trademe-expired.
+export function recipeGroupIdForUrl(url: string): RecipeId | null {
+  return matchRecipePattern(url)?.groupId ?? null;
+}
