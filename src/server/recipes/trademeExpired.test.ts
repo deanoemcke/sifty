@@ -111,10 +111,18 @@ describe('extractImplicitFilters', () => {
   beforeEach(() => {
     vi.mocked(getDb).mockReturnValue({} as unknown as Database.Database);
     vi.mocked(stmtGetCategoryByLegacyPath).mockReturnValue({
-      get: (legacyPath: string) =>
-        legacyPath === '0002-0356-'
-          ? { slug: 'computers/laptops', display: 'Computers > Laptops' }
-          : undefined,
+      get: (legacyPath: string) => {
+        if (legacyPath === '0002-0356-') {
+          return { slug: 'computers/laptops', display: 'Computers > Laptops' };
+        }
+        if (legacyPath === '0002-0356-0032-2273-') {
+          return {
+            slug: 'computers/laptops/apple/macbook',
+            display: 'Computers > Laptops > Apple > MacBook',
+          };
+        }
+        return undefined;
+      },
     } as unknown as ReturnType<typeof stmtGetCategoryByLegacyPath>);
   });
 
@@ -148,6 +156,28 @@ describe('extractImplicitFilters', () => {
 
   it('returns an empty array for a malformed URL', () => {
     expect(extractImplicitFilters('not-a-url')).toEqual([]);
+  });
+
+  it('puts Category before Search, matching trademe.ts ordering', () => {
+    const filters = extractImplicitFilters(
+      'https://www.trademe.co.nz/Browse/SearchResults.aspx?searchstring=macbook+pro&cid=356&rptpath=2-356-'
+    );
+    const keys = filters.map(([key]) => key);
+    expect(keys.indexOf('Category')).toBeLessThan(keys.indexOf('Search'));
+  });
+
+  it('shows only the last two breadcrumb sections of the category', () => {
+    const filters = extractImplicitFilters(
+      'https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=2273&rptpath=2-356-32-2273-'
+    );
+    expect(filters).toContainEqual(['Category', 'Apple > MacBook']);
+  });
+
+  it('always includes Availability: SOLD, since this recipe only ever searches closed listings', () => {
+    const filters = extractImplicitFilters(
+      'https://www.trademe.co.nz/Browse/SearchResults.aspx?searchstring=macbook+pro&cid=356&rptpath=2-356-'
+    );
+    expect(filters).toContainEqual(['Availability', 'SOLD']);
   });
 });
 

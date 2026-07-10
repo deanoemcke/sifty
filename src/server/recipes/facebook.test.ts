@@ -51,8 +51,19 @@ type FacebookPageOptions = {
   bodyText?: string;
 };
 
-const { getNextPage, resetPageQueue, makeFacebookPage } = vi.hoisted(() => {
+const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } = vi.hoisted(() => {
   const queue: unknown[] = [];
+
+  // Tracks how many mocked Chromium instances are live at once, so tests can
+  // assert that concurrent searches do (or don't) stack browser sessions.
+  const browserSessionTracker = {
+    activeCount: 0,
+    maxActiveCount: 0,
+    reset() {
+      this.activeCount = 0;
+      this.maxActiveCount = 0;
+    },
+  };
 
   function makeFacebookPage(options: FacebookPageOptions = {}) {
     const {
@@ -106,24 +117,52 @@ const { getNextPage, resetPageQueue, makeFacebookPage } = vi.hoisted(() => {
       (queue.shift() as ReturnType<typeof makeFacebookPage>) ?? makeFacebookPage(),
     resetPageQueue: (...items: unknown[]) => queue.splice(0, queue.length, ...items),
     makeFacebookPage,
+    browserSessionTracker,
   };
 });
 
 vi.mock('playwright', () => ({
   chromium: {
-    launch: async () => ({
-      newContext: async () => ({
-        newPage: async () => getNextPage(),
-        addCookies: async () => {},
-      }),
-      close: async () => {},
-    }),
+    launch: async () => {
+      browserSessionTracker.activeCount++;
+      browserSessionTracker.maxActiveCount = Math.max(
+        browserSessionTracker.maxActiveCount,
+        browserSessionTracker.activeCount
+      );
+      return {
+        newContext: async () => ({
+          newPage: async () => getNextPage(),
+          addCookies: async () => {},
+        }),
+        close: async () => {
+          browserSessionTracker.activeCount--;
+        },
+      };
+    },
   },
 }));
 
-vi.mock('../../lib/queue', () => ({
-  enqueue: (_: string, fn: () => Promise<unknown>) => fn(),
-}));
+// The real `enqueue` limits per-domain concurrency (facebook.com = 2). This mock
+// serializes every task (concurrency 1) and records each URL, so tests can
+// observe behaviourally that a code path is routed through the limiter — a
+// plain passthrough would make a bypassed limiter indistinguishable from a
+// working one.
+const { enqueuedUrls, serializingEnqueue } = vi.hoisted(() => {
+  const enqueuedUrls: string[] = [];
+  let chainTail: Promise<unknown> = Promise.resolve();
+  function serializingEnqueue<T>(url: string, asyncTask: () => Promise<T>): Promise<T> {
+    enqueuedUrls.push(url);
+    const result = chainTail.then(asyncTask);
+    chainTail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+  return { enqueuedUrls, serializingEnqueue };
+});
+
+vi.mock('../../lib/queue', () => ({ enqueue: serializingEnqueue }));
 
 const VALID_FB_COOKIES = JSON.stringify([{ name: 'c_user', value: '12345' }]);
 
@@ -158,6 +197,19 @@ describe('extractImplicitFilters', () => {
     const url = 'https://www.facebook.com/marketplace/wellington/search?query=pole%20trimmer';
     const filters = extractImplicitFilters(url);
     expect(filters).toContainEqual(['Search', 'pole trimmer']);
+  });
+
+  it('shows Availability: SOLD for a sold-items search (availability=out of stock)', () => {
+    const url =
+      'https://www.facebook.com/marketplace/wellington/search?query=pole%20trimmer&availability=out%20of%20stock';
+    const filters = extractImplicitFilters(url);
+    expect(filters).toContainEqual(['Availability', 'SOLD']);
+  });
+
+  it('omits Availability for a normal (non-sold) search', () => {
+    const url = 'https://www.facebook.com/marketplace/wellington/search?query=pole%20trimmer';
+    const filters = extractImplicitFilters(url);
+    expect(filters.map(([key]) => key)).not.toContain('Availability');
   });
 });
 
@@ -203,63 +255,186 @@ describe('parseFacebookPriceLines', () => {
     const result = parseFacebookPriceLines('Vintage lamp\nNZ$80\nAuckland');
     expect(result.lines).toEqual(['Vintage lamp', 'NZ$80', 'Auckland']);
   });
+
+  it('returns isSold: false for a normal listing', () => {
+    const result = parseFacebookPriceLines('Vintage lamp\nNZ$80\nAuckland');
+    expect(result.isSold).toBe(false);
+  });
+
+  it('returns isSold: true and strips the status/separator lines for a "Sold" listing', () => {
+    // Real captured innerText: the status word, the "·" separator, and the price
+    // each render as separate flex items, i.e. separate lines — not one combined
+    // "Sold · NZ$100" line.
+    const result = parseFacebookPriceLines(
+      'Sold\n·\nNZ$100\nMacBook Air 2015\nTitahi Bay, New Zealand'
+    );
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(100);
+    expect(result.lines).toEqual(['NZ$100', 'MacBook Air 2015', 'Titahi Bay, New Zealand']);
+  });
+
+  it('returns isSold: true and strips the status/separator lines for a "Pending" listing', () => {
+    const result = parseFacebookPriceLines('Pending\n·\nNZ$50\nOld chair\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(50);
+    expect(result.lines).toEqual(['NZ$50', 'Old chair', 'Titahi Bay']);
+  });
+
+  it('does not treat a title merely containing the word "sold" as isSold', () => {
+    const result = parseFacebookPriceLines('Sold as-is toolbox\nNZ$40\nHamilton');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(40);
+  });
+
+  it('does not treat a title line that is literally "Sold" (no adjacent separator) as isSold', () => {
+    // The real sold/pending marker is always immediately followed by the "·"
+    // separator line. A bare "Sold" title must not be misclassified, and must
+    // stay in the line pool so the title/location fallback still sees it.
+    const result = parseFacebookPriceLines('Sold\nNZ$40\nHamilton');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(40);
+    expect(result.lines).toEqual(['Sold', 'NZ$40', 'Hamilton']);
+  });
+
+  it('does not treat a location line that is literally "Pending" as isSold', () => {
+    const result = parseFacebookPriceLines('Antique desk\nNZ$120\nPending');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(120);
+    expect(result.lines).toEqual(['Antique desk', 'NZ$120', 'Pending']);
+  });
+
+  it('strips only the adjacent status/separator pair when a sold listing also has a status-like title', () => {
+    const result = parseFacebookPriceLines('Pending\n·\nNZ$50\nSold\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(50);
+    expect(result.lines).toEqual(['NZ$50', 'Sold', 'Titahi Bay']);
+  });
+
+  it('falls back to parsing a combined "Sold · NZ$50" single-line shape', () => {
+    // If Facebook ever renders the status row as one line instead of three
+    // flex-item lines, the combined shape must still be recognised.
+    const result = parseFacebookPriceLines('Sold · NZ$50\nOld chair\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(50);
+    expect(result.lines).toEqual(['NZ$50', 'Old chair', 'Titahi Bay']);
+  });
+
+  it('falls back to parsing a combined "Pending · Free" single-line shape', () => {
+    const result = parseFacebookPriceLines('Pending · Free\nOld chair\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(0);
+    expect(result.lines).toEqual(['Free', 'Old chair', 'Titahi Bay']);
+  });
+
+  it('warns and keeps the remainder when a combined status line has an unparseable price', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = parseFacebookPriceLines('Sold · about $50 ono\nOld chair\nTitahi Bay');
+      expect(result.isSold).toBe(true);
+      expect(result.price).toBeNull();
+      expect(result.lines).toEqual(['about $50 ono', 'Old chair', 'Titahi Bay']);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[facebook]'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not treat a title containing "·" without a status prefix as isSold', () => {
+    const result = parseFacebookPriceLines('Table · solid rimu\nNZ$40\nHamilton');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(40);
+    expect(result.lines).toEqual(['Table · solid rimu', 'NZ$40', 'Hamilton']);
+  });
 });
 
 // ── buildFacebookUrl ──────────────────────────────────────────────────────────
 
 describe('buildFacebookUrl', () => {
   it('always sets query, exact, and sortBy', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
     expect(url).toContain('query=macbook');
     expect(url).toContain('exact=false');
     expect(url).toContain('sortBy=creation_time_descend');
   });
 
   it('adds maxPrice when > 0', () => {
-    const url = buildFacebookUrl('macbook', 800, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 800, 'any', undefined, false, TEST_REGIONS);
     expect(url).toContain('maxPrice=800');
   });
 
   it('omits maxPrice when 0', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
     expect(url).not.toContain('maxPrice');
   });
 
   it('sets deliveryMethod=local_pick_up for pickup fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, false, TEST_REGIONS);
     expect(url).toContain('deliveryMethod=local_pick_up');
   });
 
   it('sets deliveryMethod=shipping for shipping fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, false, TEST_REGIONS);
     expect(url).toContain('deliveryMethod=shipping');
   });
 
   it('omits deliveryMethod for "any" fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
     expect(url).not.toContain('deliveryMethod');
   });
 
   it('injects location segment when pickup and regionValue matches a region', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', false, TEST_REGIONS);
     expect(url).toContain('/marketplace/auckland/search');
   });
 
   it('omits location segment when pickup but regionValue is undefined', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, false, TEST_REGIONS);
     expect(url).toContain('/marketplace/search');
     expect(url).not.toContain('/marketplace/auckland/');
   });
 
   it('omits location segment when fulfillment is "any" even with regionValue', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', '2', TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', '2', false, TEST_REGIONS);
     expect(url).not.toContain('/marketplace/auckland/');
   });
 
   it('omits location segment when regionValue does not match any region', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', '999', TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', '999', false, TEST_REGIONS);
     expect(url).toContain('/marketplace/search');
     expect(url).not.toContain('/marketplace/undefined/');
+  });
+
+  it('adds availability=out of stock when includeSoldItems is true', () => {
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, true, TEST_REGIONS);
+    expect(new URL(url).searchParams.get('availability')).toBe('out of stock');
+  });
+
+  it('omits maxPrice when includeSoldItems is true even if maxPrice > 0', () => {
+    const url = buildFacebookUrl('macbook', 800, 'any', undefined, true, TEST_REGIONS);
+    expect(url).not.toContain('maxPrice');
+  });
+
+  it('omits deliveryMethod when includeSoldItems is true even for pickup fulfillment', () => {
+    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, true, TEST_REGIONS);
+    expect(url).not.toContain('deliveryMethod');
+  });
+
+  it('omits deliveryMethod when includeSoldItems is true even for shipping fulfillment', () => {
+    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, true, TEST_REGIONS);
+    expect(url).not.toContain('deliveryMethod');
+  });
+
+  it('omits location segment when includeSoldItems is true even for pickup with a matching region', () => {
+    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', true, TEST_REGIONS);
+    expect(url).not.toContain('/marketplace/auckland/');
+    expect(url).toContain('/marketplace/search');
+  });
+
+  it('still sets query, exact, and sortBy when includeSoldItems is true', () => {
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, true, TEST_REGIONS);
+    expect(url).toContain('query=macbook');
+    expect(url).toContain('exact=false');
+    expect(url).toContain('sortBy=creation_time_descend');
   });
 });
 
@@ -433,6 +608,46 @@ describe('buildDiscoverUrlsAsync', () => {
       })
     ).rejects.toThrow('AI unavailable');
   });
+
+  it('adds a second sold-items URL when includeSoldItems is true', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 500,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls).toHaveLength(2);
+    expect(new URL(result.urls[1]).searchParams.get('availability')).toBe('out of stock');
+  });
+
+  it('the sold-items URL omits maxPrice, deliveryMethod, and region even when set', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 500,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls[1]).not.toContain('maxPrice');
+    expect(result.urls[1]).not.toContain('deliveryMethod');
+    expect(result.urls[1]).not.toContain('/marketplace/auckland/');
+  });
+
+  it('the first URL is unaffected by includeSoldItems', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 500,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls[0]).toContain('maxPrice=500');
+    expect(result.urls[0]).toContain('/marketplace/auckland/search');
+  });
 });
 
 describe('buildFacebookDeepSearchDetail', () => {
@@ -487,6 +702,29 @@ describe('buildFacebookListing', () => {
       'Wellington'
     );
     expect(listing.relevance).toBe(0);
+  });
+
+  it('defaults isSold to false when omitted', () => {
+    const listing = buildFacebookListing(
+      'https://facebook.com/marketplace/item/123',
+      undefined,
+      'Lamp',
+      null,
+      'Wellington'
+    );
+    expect(listing.isSold).toBe(false);
+  });
+
+  it('sets isSold to true when passed', () => {
+    const listing = buildFacebookListing(
+      'https://facebook.com/marketplace/item/123',
+      undefined,
+      'MacBook Air 2015',
+      100,
+      'Titahi Bay',
+      true
+    );
+    expect(listing.isSold).toBe(true);
   });
 });
 
@@ -674,6 +912,49 @@ describe('processRawListing', () => {
     expect(counter.total).toBe(100);
     expect(onEvent).not.toHaveBeenCalled();
   });
+
+  it('emits isSold: true for a "Sold" listing (status/separator/price on separate lines)', () => {
+    const onEvent = vi.fn();
+    processRawListing(
+      makeRawListing({
+        ariaLabel: 'MacBook Air 2015, NZ$100, Titahi Bay, New Zealand',
+        innerText: 'Sold\n·\nNZ$100\nMacBook Air 2015\nTitahi Bay, New Zealand',
+      }),
+      new Set(),
+      onEvent,
+      { total: 0 }
+    );
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'listing', data: expect.objectContaining({ isSold: true }) })
+    );
+  });
+
+  it('emits isSold: true for a "Pending" listing', () => {
+    const onEvent = vi.fn();
+    processRawListing(
+      makeRawListing({
+        ariaLabel: 'Old chair, NZ$50, Titahi Bay',
+        innerText: 'Pending\n·\nNZ$50\nOld chair\nTitahi Bay',
+      }),
+      new Set(),
+      onEvent,
+      { total: 0 }
+    );
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'listing', data: expect.objectContaining({ isSold: true }) })
+    );
+  });
+
+  it('emits isSold: false for a normal listing', () => {
+    const onEvent = vi.fn();
+    processRawListing(makeRawListing(), new Set(), onEvent, { total: 0 });
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'listing', data: expect.objectContaining({ isSold: false }) })
+    );
+  });
 });
 
 // ── quickSearchAsync (login wall paths) ───────────────────────────────────────
@@ -725,6 +1006,56 @@ describe('facebookRecipe.quickSearchAsync', () => {
         'No listings found. Facebook may be blocking access or the search returned no results.',
     });
     expect(page.waitForSelectorCalls.length).toBeGreaterThan(0);
+  });
+});
+
+// ── quickSearchAsync (domain concurrency limiting) ────────────────────────────
+//
+// Every quick search launches its own authenticated headless browser off the
+// shared FB_COOKIES session, and a sold-items discover produces two Facebook
+// URLs fired concurrently by the frontend — so the browser launch must be
+// routed through the per-domain limiter, exactly like deepSearchAsync's
+// per-listing fetches already are.
+
+describe('facebookRecipe.quickSearchAsync — domain concurrency limiting', () => {
+  beforeEach(() => {
+    resetPageQueue();
+    browserSessionTracker.reset();
+    enqueuedUrls.length = 0;
+    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('routes the browser launch through the domain limiter, keyed by the search URL', async () => {
+    const searchUrl = 'https://www.facebook.com/marketplace/search?query=lamp';
+    resetPageQueue(makeFacebookPage({ domLoginWall: true }));
+
+    await facebookRecipe.quickSearchAsync(searchUrl, () => {});
+
+    expect(enqueuedUrls).toContain(searchUrl);
+  });
+
+  it('never overlaps browser sessions when the limiter serializes two concurrent searches', async () => {
+    resetPageQueue(
+      makeFacebookPage({ domLoginWall: true }),
+      makeFacebookPage({ domLoginWall: true })
+    );
+
+    await Promise.all([
+      facebookRecipe.quickSearchAsync(
+        'https://www.facebook.com/marketplace/search?query=lamp',
+        () => {}
+      ),
+      facebookRecipe.quickSearchAsync(
+        'https://www.facebook.com/marketplace/search?query=lamp&availability=out%20of%20stock',
+        () => {}
+      ),
+    ]);
+
+    expect(browserSessionTracker.maxActiveCount).toBe(1);
   });
 });
 

@@ -31,6 +31,10 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
     const query = url.searchParams.get('query');
     if (query) filterRows.push(['Search', query]);
 
+    if (url.searchParams.get('availability') === 'out of stock') {
+      filterRows.push(['Availability', 'SOLD']);
+    }
+
     const minPrice = url.searchParams.get('minPrice');
     const maxPrice = url.searchParams.get('maxPrice');
     if (minPrice && maxPrice) filterRows.push(['Price', `$${minPrice} – $${maxPrice}`]);
@@ -199,17 +203,68 @@ export function parseFacebookPriceValue(priceLine: string | undefined): number |
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// A sold/pending listing's price row renders as three separate flex items — the
+// status word ("Sold" or "Pending"), a "·" separator, then the price — and each
+// flex item forces its own line in `innerText`. So they arrive as three distinct
+// lines, not one combined "Sold · NZ$100" line. A status word only counts as the
+// sold/pending marker when the very next line is the separator — that adjacency
+// distinguishes the real marker from a title or location that happens to be
+// literally "Sold" or "Pending". Matched status lines are stripped (along with
+// bare separator lines) here, at the point lines are normalized, so every
+// downstream consumer (price parsing, title/location fallback) sees a clean
+// line set and doesn't need to know about the status marker.
+const STATUS_LINE_REGEX = /^(?:Sold|Pending)$/i;
+const SEPARATOR_LINE_REGEX = /^·$/;
+// Fallback for the alternative markup shape where the status row renders as one
+// combined line ("Sold · NZ$50") instead of three flex-item lines. The status
+// word plus the "·" separator at the start of a line is the sold/pending marker;
+// the remainder (normally the price) is kept as its own line so downstream
+// price/title/location parsing sees the same clean line set as the three-line
+// shape. If the remainder is not a parseable price the anomaly is logged rather
+// than silently discarded.
+const COMBINED_STATUS_LINE_REGEX = /^(?:Sold|Pending)\s*·\s*(.+)$/i;
+
 export function parseFacebookPriceLines(innerText: string): {
   price: number | null;
+  isSold: boolean;
   lines: string[];
 } {
-  const lines = innerText
+  const rawLines = innerText
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+
+  const statusLineIndices = new Set<number>();
+  for (let lineIndex = 0; lineIndex < rawLines.length - 1; lineIndex++) {
+    if (
+      STATUS_LINE_REGEX.test(rawLines[lineIndex]) &&
+      SEPARATOR_LINE_REGEX.test(rawLines[lineIndex + 1])
+    ) {
+      statusLineIndices.add(lineIndex);
+    }
+  }
+  let isSold = statusLineIndices.size > 0;
+
+  const lines: string[] = [];
+  for (let lineIndex = 0; lineIndex < rawLines.length; lineIndex++) {
+    const line = rawLines[lineIndex];
+    if (statusLineIndices.has(lineIndex) || SEPARATOR_LINE_REGEX.test(line)) continue;
+    const combinedMatch = line.match(COMBINED_STATUS_LINE_REGEX);
+    if (combinedMatch) {
+      isSold = true;
+      const remainder = combinedMatch[1].trim();
+      if (!PRICE_REGEX.test(remainder)) {
+        console.warn(`[facebook] combined status line has an unparseable price: "${line}"`);
+      }
+      lines.push(remainder);
+      continue;
+    }
+    lines.push(line);
+  }
+
   const priceLines = lines.filter((line) => PRICE_REGEX.test(line));
   const price = parseFacebookPriceValue(priceLines[0]);
-  return { price, lines };
+  return { price, isSold, lines };
 }
 
 export function buildFacebookListing(
@@ -217,7 +272,8 @@ export function buildFacebookListing(
   thumbnailUrl: string | undefined,
   title: string,
   price: number | null,
-  location: string
+  location: string,
+  isSold = false
 ): Listing {
   return {
     source: FACEBOOK_PATTERN.name,
@@ -228,6 +284,7 @@ export function buildFacebookListing(
     thumbnailUrl,
     isAuction: false,
     relevance: 0,
+    isSold,
   };
 }
 
@@ -251,7 +308,7 @@ export function processRawListing(
   seen.add(raw.id);
   if (counter.total >= MAX_RESULTS_PER_URL) return;
 
-  const { price, lines: innerLines } = parseFacebookPriceLines(raw.innerText);
+  const { price, lines: innerLines, isSold } = parseFacebookPriceLines(raw.innerText);
 
   let title = '',
     location = 'Unknown';
@@ -270,7 +327,14 @@ export function processRawListing(
   counter.total++;
   onEvent({
     type: 'listing',
-    data: buildFacebookListing(raw.url, raw.thumbnailUrl || undefined, title, price, location),
+    data: buildFacebookListing(
+      raw.url,
+      raw.thumbnailUrl || undefined,
+      title,
+      price,
+      location,
+      isSold
+    ),
   });
 }
 
@@ -283,6 +347,21 @@ async function quickSearchAsync(
 ): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
+  // Each quick search launches its own authenticated headless browser off the
+  // shared FB_COOKIES session, and a sold-items discover produces two Facebook
+  // URLs that the frontend fires concurrently. Route the launch through the
+  // per-domain concurrency limiter — the same one deepSearchAsync uses — so
+  // concurrent searches can't stack unbounded logged-in sessions on one cookie
+  // jar. The criteria event is emitted before queueing so the card gets its
+  // filter chips immediately, even while the search waits for a slot.
+  await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));
+}
+
+async function runQuickSearchAsync(
+  searchUrl: string,
+  onEvent: (event: QuickSearchEvent) => void,
+  isCancelled?: () => boolean
+): Promise<void> {
   let browser: Browser | undefined;
   try {
     const browserSetup = await createContext();
@@ -625,14 +704,19 @@ export function buildFacebookUrl(
   maxPrice: number,
   fulfillment: Fulfillment,
   regionValue: string | undefined,
+  includeSoldItems: boolean,
   regions = getRegions()
 ): string {
-  const pickupOnly = fulfillment === 'pickup' && !!regionValue;
+  const pickupOnly = !includeSoldItems && fulfillment === 'pickup' && !!regionValue;
   const fbParams = new URLSearchParams();
   fbParams.set('query', searchTerm);
-  if (maxPrice > 0) fbParams.set('maxPrice', String(maxPrice));
-  if (fulfillment === 'pickup') fbParams.set('deliveryMethod', 'local_pick_up');
-  else if (fulfillment === 'shipping') fbParams.set('deliveryMethod', 'shipping');
+  if (includeSoldItems) {
+    fbParams.set('availability', 'out of stock');
+  } else {
+    if (maxPrice > 0) fbParams.set('maxPrice', String(maxPrice));
+    if (fulfillment === 'pickup') fbParams.set('deliveryMethod', 'local_pick_up');
+    else if (fulfillment === 'shipping') fbParams.set('deliveryMethod', 'shipping');
+  }
   fbParams.set('exact', 'false');
   fbParams.set('sortBy', 'creation_time_descend');
   let fbLocationSegment = '';
@@ -645,12 +729,15 @@ export function buildFacebookUrl(
 
 async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
   const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.getAiConfig());
-  return {
-    urls: [
-      buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue),
-    ],
-    warnings: [] as string[],
-  };
+  const urls = [
+    buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, false),
+  ];
+  if (context.includeSoldItems) {
+    urls.push(
+      buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, true)
+    );
+  }
+  return { urls, warnings: [] as string[] };
 }
 
 // ── Recipe ────────────────────────────────────────────────────────────────────
