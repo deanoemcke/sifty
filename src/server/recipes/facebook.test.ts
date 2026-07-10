@@ -246,6 +246,30 @@ describe('parseFacebookPriceLines', () => {
     expect(result.isSold).toBe(false);
     expect(result.price).toBe(40);
   });
+
+  it('does not treat a title line that is literally "Sold" (no adjacent separator) as isSold', () => {
+    // The real sold/pending marker is always immediately followed by the "·"
+    // separator line. A bare "Sold" title must not be misclassified, and must
+    // stay in the line pool so the title/location fallback still sees it.
+    const result = parseFacebookPriceLines('Sold\nNZ$40\nHamilton');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(40);
+    expect(result.lines).toEqual(['Sold', 'NZ$40', 'Hamilton']);
+  });
+
+  it('does not treat a location line that is literally "Pending" as isSold', () => {
+    const result = parseFacebookPriceLines('Antique desk\nNZ$120\nPending');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(120);
+    expect(result.lines).toEqual(['Antique desk', 'NZ$120', 'Pending']);
+  });
+
+  it('strips only the adjacent status/separator pair when a sold listing also has a status-like title', () => {
+    const result = parseFacebookPriceLines('Pending\n·\nNZ$50\nSold\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(50);
+    expect(result.lines).toEqual(['NZ$50', 'Sold', 'Titahi Bay']);
+  });
 });
 
 // ── buildFacebookUrl ──────────────────────────────────────────────────────────

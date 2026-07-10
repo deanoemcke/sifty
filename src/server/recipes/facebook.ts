@@ -206,10 +206,13 @@ export function parseFacebookPriceValue(priceLine: string | undefined): number |
 // A sold/pending listing's price row renders as three separate flex items — the
 // status word ("Sold" or "Pending"), a "·" separator, then the price — and each
 // flex item forces its own line in `innerText`. So they arrive as three distinct
-// lines, not one combined "Sold · NZ$100" line. Both status words are stripped
-// (along with the bare separator line) here, at the point lines are normalized,
-// so every downstream consumer (price parsing, title/location fallback) sees a
-// clean line set and doesn't need to know about the status marker.
+// lines, not one combined "Sold · NZ$100" line. A status word only counts as the
+// sold/pending marker when the very next line is the separator — that adjacency
+// distinguishes the real marker from a title or location that happens to be
+// literally "Sold" or "Pending". Matched status lines are stripped (along with
+// bare separator lines) here, at the point lines are normalized, so every
+// downstream consumer (price parsing, title/location fallback) sees a clean
+// line set and doesn't need to know about the status marker.
 const STATUS_LINE_REGEX = /^(?:Sold|Pending)$/i;
 const SEPARATOR_LINE_REGEX = /^·$/;
 
@@ -223,9 +226,18 @@ export function parseFacebookPriceLines(innerText: string): {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-  const isSold = rawLines.some((line) => STATUS_LINE_REGEX.test(line));
+  const statusLineIndices = new Set<number>();
+  for (let lineIndex = 0; lineIndex < rawLines.length - 1; lineIndex++) {
+    if (
+      STATUS_LINE_REGEX.test(rawLines[lineIndex]) &&
+      SEPARATOR_LINE_REGEX.test(rawLines[lineIndex + 1])
+    ) {
+      statusLineIndices.add(lineIndex);
+    }
+  }
+  const isSold = statusLineIndices.size > 0;
   const lines = rawLines.filter(
-    (line) => !STATUS_LINE_REGEX.test(line) && !SEPARATOR_LINE_REGEX.test(line)
+    (line, lineIndex) => !statusLineIndices.has(lineIndex) && !SEPARATOR_LINE_REGEX.test(line)
   );
 
   const priceLines = lines.filter((line) => PRICE_REGEX.test(line));
