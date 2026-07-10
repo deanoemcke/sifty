@@ -69,15 +69,22 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
     const url = new URL(urlStr);
     const filterRows: Array<[string, string]> = [];
 
-    const searchstring = url.searchParams.get('searchstring');
-    if (searchstring) filterRows.push(['Search', searchstring]);
-
     const rptpath = url.searchParams.get('rptpath');
     if (rptpath) {
       const legacyPath = reconstructLegacyPathFromRptpath(rptpath);
       const row = stmtGetCategoryByLegacyPath(getDb()).get(legacyPath);
-      if (row) filterRows.push(['Category', row.display]);
+      if (row) {
+        // Only the last two breadcrumb sections — matches trademe.ts's normal-listing display.
+        const cat = row.display.split(' > ').slice(-2).join(' > ');
+        filterRows.push(['Category', cat]);
+      }
     }
+
+    const searchstring = url.searchParams.get('searchstring');
+    if (searchstring) filterRows.push(['Search', searchstring]);
+
+    // Every URL this recipe handles is a closed/sold-listings search (see current=0 above).
+    filterRows.push(['Availability', 'SOLD']);
 
     return filterRows;
   } catch {
