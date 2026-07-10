@@ -33,7 +33,7 @@ beforeEach(() => {
     <span id="resultCount"></span>
     <span id="totalCount"></span>
     <input id="showAvailable" type="checkbox" checked />
-    <input id="showSold" type="checkbox" checked />
+    <label id="showSoldRow" class="hidden"><input id="showSold" type="checkbox" checked /></label>
     <input id="showFiltered" type="checkbox" checked />
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
@@ -185,4 +185,31 @@ it('does not let a stale discovery response overwrite a saved search loaded whil
 
   // It must not clobber the saved search the user is now looking at.
   expect(urlCards[0].dom.input.value).toBe('https://example.com/saved');
+});
+
+it('reveals the "Show > Sold" option when a loaded saved search included sold items', async () => {
+  // The row starts hidden (mirroring a fresh app load where "include sold
+  // items" is unchecked) — loading a saved search sets the checkbox via a
+  // property assignment, which fires no "change" event, so the row must be
+  // synced explicitly rather than relying on the checkbox's own listener.
+  expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+
+  await loadSavedSearchAsync({
+    id: 'saved-2',
+    name: 'saved search with sold items',
+    urls: [],
+    aiFilter: null,
+    createdAt: 0,
+    discoverInputs: {
+      prompt: 'lamp',
+      maxPrice: 50,
+      fulfillment: 'any',
+      includeSoldItems: true,
+    },
+  });
+
+  expect((document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked).toBe(
+    true
+  );
+  expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
 });
