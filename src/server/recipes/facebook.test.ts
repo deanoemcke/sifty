@@ -51,8 +51,19 @@ type FacebookPageOptions = {
   bodyText?: string;
 };
 
-const { getNextPage, resetPageQueue, makeFacebookPage } = vi.hoisted(() => {
+const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } = vi.hoisted(() => {
   const queue: unknown[] = [];
+
+  // Tracks how many mocked Chromium instances are live at once, so tests can
+  // assert that concurrent searches do (or don't) stack browser sessions.
+  const browserSessionTracker = {
+    activeCount: 0,
+    maxActiveCount: 0,
+    reset() {
+      this.activeCount = 0;
+      this.maxActiveCount = 0;
+    },
+  };
 
   function makeFacebookPage(options: FacebookPageOptions = {}) {
     const {
@@ -106,24 +117,52 @@ const { getNextPage, resetPageQueue, makeFacebookPage } = vi.hoisted(() => {
       (queue.shift() as ReturnType<typeof makeFacebookPage>) ?? makeFacebookPage(),
     resetPageQueue: (...items: unknown[]) => queue.splice(0, queue.length, ...items),
     makeFacebookPage,
+    browserSessionTracker,
   };
 });
 
 vi.mock('playwright', () => ({
   chromium: {
-    launch: async () => ({
-      newContext: async () => ({
-        newPage: async () => getNextPage(),
-        addCookies: async () => {},
-      }),
-      close: async () => {},
-    }),
+    launch: async () => {
+      browserSessionTracker.activeCount++;
+      browserSessionTracker.maxActiveCount = Math.max(
+        browserSessionTracker.maxActiveCount,
+        browserSessionTracker.activeCount
+      );
+      return {
+        newContext: async () => ({
+          newPage: async () => getNextPage(),
+          addCookies: async () => {},
+        }),
+        close: async () => {
+          browserSessionTracker.activeCount--;
+        },
+      };
+    },
   },
 }));
 
-vi.mock('../../lib/queue', () => ({
-  enqueue: (_: string, fn: () => Promise<unknown>) => fn(),
-}));
+// The real `enqueue` limits per-domain concurrency (facebook.com = 2). This mock
+// serializes every task (concurrency 1) and records each URL, so tests can
+// observe behaviourally that a code path is routed through the limiter — a
+// plain passthrough would make a bypassed limiter indistinguishable from a
+// working one.
+const { enqueuedUrls, serializingEnqueue } = vi.hoisted(() => {
+  const enqueuedUrls: string[] = [];
+  let chainTail: Promise<unknown> = Promise.resolve();
+  function serializingEnqueue<T>(url: string, asyncTask: () => Promise<T>): Promise<T> {
+    enqueuedUrls.push(url);
+    const result = chainTail.then(asyncTask);
+    chainTail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+  return { enqueuedUrls, serializingEnqueue };
+});
+
+vi.mock('../../lib/queue', () => ({ enqueue: serializingEnqueue }));
 
 const VALID_FB_COOKIES = JSON.stringify([{ name: 'c_user', value: '12345' }]);
 
@@ -967,6 +1006,56 @@ describe('facebookRecipe.quickSearchAsync', () => {
         'No listings found. Facebook may be blocking access or the search returned no results.',
     });
     expect(page.waitForSelectorCalls.length).toBeGreaterThan(0);
+  });
+});
+
+// ── quickSearchAsync (domain concurrency limiting) ────────────────────────────
+//
+// Every quick search launches its own authenticated headless browser off the
+// shared FB_COOKIES session, and a sold-items discover produces two Facebook
+// URLs fired concurrently by the frontend — so the browser launch must be
+// routed through the per-domain limiter, exactly like deepSearchAsync's
+// per-listing fetches already are.
+
+describe('facebookRecipe.quickSearchAsync — domain concurrency limiting', () => {
+  beforeEach(() => {
+    resetPageQueue();
+    browserSessionTracker.reset();
+    enqueuedUrls.length = 0;
+    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('routes the browser launch through the domain limiter, keyed by the search URL', async () => {
+    const searchUrl = 'https://www.facebook.com/marketplace/search?query=lamp';
+    resetPageQueue(makeFacebookPage({ domLoginWall: true }));
+
+    await facebookRecipe.quickSearchAsync(searchUrl, () => {});
+
+    expect(enqueuedUrls).toContain(searchUrl);
+  });
+
+  it('never overlaps browser sessions when the limiter serializes two concurrent searches', async () => {
+    resetPageQueue(
+      makeFacebookPage({ domLoginWall: true }),
+      makeFacebookPage({ domLoginWall: true })
+    );
+
+    await Promise.all([
+      facebookRecipe.quickSearchAsync(
+        'https://www.facebook.com/marketplace/search?query=lamp',
+        () => {}
+      ),
+      facebookRecipe.quickSearchAsync(
+        'https://www.facebook.com/marketplace/search?query=lamp&availability=out%20of%20stock',
+        () => {}
+      ),
+    ]);
+
+    expect(browserSessionTracker.maxActiveCount).toBe(1);
   });
 });
 

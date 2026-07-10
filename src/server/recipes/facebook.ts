@@ -347,6 +347,21 @@ async function quickSearchAsync(
 ): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
+  // Each quick search launches its own authenticated headless browser off the
+  // shared FB_COOKIES session, and a sold-items discover produces two Facebook
+  // URLs that the frontend fires concurrently. Route the launch through the
+  // per-domain concurrency limiter — the same one deepSearchAsync uses — so
+  // concurrent searches can't stack unbounded logged-in sessions on one cookie
+  // jar. The criteria event is emitted before queueing so the card gets its
+  // filter chips immediately, even while the search waits for a slot.
+  await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));
+}
+
+async function runQuickSearchAsync(
+  searchUrl: string,
+  onEvent: (event: QuickSearchEvent) => void,
+  isCancelled?: () => boolean
+): Promise<void> {
   let browser: Browser | undefined;
   try {
     const browserSetup = await createContext();
