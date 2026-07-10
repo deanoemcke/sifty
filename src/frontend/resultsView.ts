@@ -3,13 +3,14 @@
 // the filtered show/hide toggle, deep-search button visibility, and the
 // client-side AI-filter pass over the rendered cards.
 
+import { requirePattern } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
 import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
 import { rafSchedule } from './rafSchedule';
 import { sourceBadgeHtml } from './recipeDisplay';
-import { sortListings } from './sortListings';
+import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
 import {
   cardIdByUrl,
   isAiFilterRunning,
@@ -63,18 +64,42 @@ export function getSortedListings(): ListingItem[] {
 // this directly — see scheduleSortOrderUpdate() below, which coalesces the
 // many calls renderDerived makes during an active SSE stream into one call
 // here per animation frame.
-// True when sorting listings wouldn't actually move any card — the common
-// case for the default source-url sort with a single result source, and for
-// any other sort once its order has already been applied.
-function sortWouldReorder(listings: ListingItem[]): boolean {
+
+// O(n) scan (no sort, no requirePattern-per-comparison) for whether listings
+// span more than one canonical source group — e.g. trademe mixed with
+// facebook. trademe and trademe-expired share a groupId (see
+// RECIPE_PATTERNS in metadata.ts) so a trademe/trademe-expired mix does NOT
+// count as mixed here, matching sortListings' own grouping.
+function sourcesAreMixed(listings: ListingItem[]): boolean {
+  if (listings.length === 0) return false;
+  const firstGroupId = requirePattern(listings[0].data.source).groupId;
+  return listings.some((item) => requirePattern(item.data.source).groupId !== firstGroupId);
+}
+
+// Returns the sorted listings when re-sorting would actually reorder the
+// DOM, or null when it wouldn't. Shared by scheduleSortOrderUpdate (to
+// decide whether to schedule a frame at all) and applySortOrder (to decide
+// whether to touch the DOM), so a single call through either function never
+// sorts more than once.
+//
+// For the default source-url sort with sources that aren't mixed, insertion
+// order is already correct by construction (see getOrderedListings), so this
+// bypasses sorting entirely via the cheap sourcesAreMixed() scan above —
+// restoring the O(1)/O(n) per-event cost this module's SSE-streaming
+// comments below rely on for the common case. Only a mixed-source result set
+// or a non-default sort falls through to an actual sort, and even then only
+// once.
+function sortedIfReorderNeeded(listings: ListingItem[]): ListingItem[] | null {
+  if (sortBy === DEFAULT_SORT_OPTION && !sourcesAreMixed(listings)) return null;
   const sorted = sortListings(listings, sortBy);
-  return !sorted.every((item, index) => item === listings[index]);
+  return sorted.every((item, index) => item === listings[index]) ? null : sorted;
 }
 
 export function applySortOrder(listings: ListingItem[]): void {
-  if (!sortWouldReorder(listings)) return;
+  const sorted = sortedIfReorderNeeded(listings);
+  if (!sorted) return;
   const container = getElement('listingsContainer');
-  sortListings(listings, sortBy).forEach((item) => {
+  sorted.forEach((item) => {
     const card = getCardByUrl(item.data.url);
     if (card) container.appendChild(card);
   });
@@ -92,7 +117,7 @@ const scheduleApplySortOrderOnNextFrame = rafSchedule(applySortOrder);
 export function scheduleSortOrderUpdate(listings: ListingItem[]): void {
   // Skip scheduling a frame at all for the common no-reorder case, rather
   // than scheduling one just to have applySortOrder no-op inside it.
-  if (!sortWouldReorder(listings)) return;
+  if (!sortedIfReorderNeeded(listings)) return;
   scheduleApplySortOrderOnNextFrame(listings);
 }
 

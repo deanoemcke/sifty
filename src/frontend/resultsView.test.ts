@@ -9,6 +9,7 @@ import {
   renderFilteredToggle,
   scheduleSortOrderUpdate,
 } from './resultsView';
+import * as sortListingsModule from './sortListings';
 import {
   type ListingItem,
   listingsByUrl,
@@ -219,6 +220,59 @@ describe('applySortOrder', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Regression coverage for the SSE hot-path cost of sorting: scheduleSortOrderUpdate
+// fires once per streamed listing, so the "would this reorder anything" check
+// must stay cheap for the common case, and any real sort must never be
+// recomputed within the same call.
+describe('sort call efficiency (SSE hot-path regression coverage)', () => {
+  const urls = ['https://l/1', 'https://l/2', 'https://l/3'];
+
+  function renderAllCards(): void {
+    for (const url of urls) renderCard(listingsByUrl.get(url) as ListingItem);
+  }
+
+  it('never calls sortListings for the default sort with a single source', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(getOrderedListings());
+    scheduleSortOrderUpdate(getOrderedListings());
+    expect(sortSpy).not.toHaveBeenCalled();
+  });
+
+  it('calls sortListings exactly once per applySortOrder call when a reorder is actually needed', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(getOrderedListings());
+    expect(sortSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls sortListings exactly once when the default sort has mixed sources', () => {
+    const listings = [
+      makeListingItem({ data: makeListing({ url: 'https://l/1', source: 'facebook' }) }),
+      makeListingItem({ data: makeListing({ url: 'https://l/2', source: 'trademe' }) }),
+    ];
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(listings);
+    expect(sortSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat trademe and trademe-expired as mixed sources', () => {
+    const listings = [
+      makeListingItem({ data: makeListing({ url: 'https://l/1', source: 'trademe-expired' }) }),
+      makeListingItem({ data: makeListing({ url: 'https://l/2', source: 'trademe' }) }),
+    ];
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(listings);
+    expect(sortSpy).not.toHaveBeenCalled();
   });
 });
 
