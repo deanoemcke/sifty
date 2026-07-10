@@ -167,7 +167,7 @@ export function renderCard(item: ListingItem): void {
 
   const existing = document.getElementById(cardId);
   const card = existing ?? document.createElement('div');
-  card.className = 'listing-card';
+  card.className = listing.isSold ? 'listing-card sold' : 'listing-card';
   card.id = cardId;
   card.dataset.url = listing.url;
 
@@ -195,6 +195,7 @@ export function renderCard(item: ListingItem): void {
           ${thumb}
           ${sourceBadgeHtml(listing.source, 28)}
           <div class="filter-banner hidden"></div>
+          <div class="sold-banner ${listing.isSold ? '' : 'hidden'}">SOLD</div>
         </div>
         <div class="listing-body">
           <div class="listing-title" title="${esc(listing.title)}">${esc(listing.title)}</div>

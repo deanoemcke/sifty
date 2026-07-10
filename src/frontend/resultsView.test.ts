@@ -310,6 +310,23 @@ describe('renderCard', () => {
     expect(openArea.querySelector('.listing-external-link-btn')).toBeNull();
     expect(card.querySelector('.listing-external-link-btn')).not.toBeNull();
   });
+
+  it('shows the sold banner and sold class for a sold listing', () => {
+    renderCard(makeListingItem({ data: makeListing({ url: 'https://l/1', isSold: true }) }));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.classList.contains('sold')).toBe(true);
+    const banner = requireChild<HTMLElement>(card, '.sold-banner');
+    expect(banner.classList.contains('hidden')).toBe(false);
+    expect(banner.textContent).toBe('SOLD');
+  });
+
+  it('hides the sold banner and omits the sold class for a non-sold listing', () => {
+    renderCard(makeListingItemAt('https://l/1'));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.classList.contains('sold')).toBe(false);
+    const banner = requireChild<HTMLElement>(card, '.sold-banner');
+    expect(banner.classList.contains('hidden')).toBe(true);
+  });
 });
 
 describe('renderFilteredToggle', () => {

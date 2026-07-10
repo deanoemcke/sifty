@@ -2,18 +2,16 @@ import { JSDOM } from 'jsdom';
 import { chromium } from 'playwright';
 import type {
   DeepSearchEvent,
-  DiscoverableRecipe,
-  DiscoverContext,
   Listing,
   QuickSearchEvent,
-  RecipeDiscoverResult,
+  Recipe,
   ReserveStatus,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { MAX_PAGES_PER_SEARCH } from '../constants';
-import { getDb, stmtGetCategoryByLegacyPath, stmtGetCategoryLegacyPath } from '../db';
+import { getDb, stmtGetCategoryByLegacyPath } from '../db';
 import { parsePriceValue } from './trademe';
-import { type DiscoverEntry, resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
+import type { DiscoverEntry } from './trademeCategoryResolver';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -60,26 +58,6 @@ export function buildLegacySearchUrl(entry: DiscoverEntry, legacyPath: string): 
   params.set('advanced', 'true');
   params.set('from', 'advanced');
   return `${TRADEME_ORIGIN}/Browse/SearchResults.aspx?${params.toString()}`;
-}
-
-async function buildDiscoverUrlsAsync(
-  prompt: string,
-  context: DiscoverContext
-): Promise<RecipeDiscoverResult> {
-  const { entries, warnings } = await resolveDiscoverCategoriesAsync(prompt, context.getAiConfig);
-  const database = getDb();
-  const stmt = stmtGetCategoryLegacyPath(database);
-  const urls: string[] = [];
-  const allWarnings = [...warnings];
-  for (const entry of entries) {
-    const row = stmt.get(entry.slug);
-    if (!row) {
-      allWarnings.push(`no legacy category mapping for slug "${entry.slug}"`);
-      continue;
-    }
-    urls.push(buildLegacySearchUrl(entry, row.legacy_path));
-  }
-  return { urls, warnings: allWarnings };
 }
 
 // ── Implicit filter extraction ────────────────────────────────────────────────
@@ -159,6 +137,7 @@ export function parseLegacySearchResultsHtml(html: string): {
       url: href.startsWith('http') ? href : `${TRADEME_ORIGIN}${href}`,
       isAuction: true,
       thumbnailUrl,
+      isSold: true,
       reserveStatus: mapLegacyReserveText(reserveText),
       relevance: 0,
     });
@@ -233,7 +212,7 @@ async function deepSearchAsync(
   onEvent({ type: 'complete' });
 }
 
-export const trademeExpiredRecipe: DiscoverableRecipe = {
+export const trademeExpiredRecipe: Recipe = {
   name: LEGACY_PATTERN.name,
   matches(url: string): boolean {
     try {
@@ -246,5 +225,4 @@ export const trademeExpiredRecipe: DiscoverableRecipe = {
   extractImplicitFilters,
   quickSearchAsync,
   deepSearchAsync,
-  buildDiscoverUrlsAsync,
 };

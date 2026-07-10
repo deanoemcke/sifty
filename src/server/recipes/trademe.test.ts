@@ -2,7 +2,14 @@ import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON } from '../ai';
-import { type CategoryRow, getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from '../db';
+import {
+  type CategoryLegacyPathRow,
+  type CategoryRow,
+  getDb,
+  stmtGetCategoriesAtDepth2,
+  stmtGetCategoriesByTop2,
+  stmtGetCategoryLegacyPath,
+} from '../db';
 import {
   buildListing,
   buildPhotosFromUrls,
@@ -28,6 +35,7 @@ vi.mock('../db', () => ({
   getDb: vi.fn(),
   stmtGetCategoriesAtDepth2: vi.fn(),
   stmtGetCategoriesByTop2: vi.fn(),
+  stmtGetCategoryLegacyPath: vi.fn(),
 }));
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
@@ -970,6 +978,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls.length).toBeGreaterThan(0);
@@ -993,6 +1002,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 800,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls[0]).toContain('price_max=800');
@@ -1014,6 +1024,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toEqual([]);
@@ -1034,6 +1045,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1070,6 +1082,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1093,6 +1106,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1129,6 +1143,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1150,6 +1165,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid broad categories');
@@ -1192,6 +1208,7 @@ describe('buildDiscoverUrlsAsync', () => {
     await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig,
     });
 
@@ -1218,6 +1235,7 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step1)');
@@ -1251,11 +1269,75 @@ describe('buildDiscoverUrlsAsync', () => {
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step2:electronics/electronics)');
 
     expect(markExhausted).toHaveBeenCalledWith('mock', cooldownUntilMs);
+  });
+
+  describe('includeSoldItems', () => {
+    beforeEach(() => {
+      vi.mocked(aiJSON)
+        .mockResolvedValueOnce(
+          aiJsonOk({
+            categories: ['Electronics'],
+            searchLabel: 'laptops',
+            searchQuery: 'laptop',
+          })
+        )
+        .mockResolvedValueOnce(
+          aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
+        );
+    });
+
+    it('does not build legacy sold-item URLs when false', async () => {
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+      expect(result.urls).toHaveLength(1);
+      expect(vi.mocked(stmtGetCategoryLegacyPath)).not.toHaveBeenCalled();
+    });
+
+    it('also builds a legacy sold-item URL per resolved category when true', async () => {
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      const modernUrl = result.urls.find((u) => u.includes('trademe.co.nz/a/'));
+      const legacyUrl = result.urls.find((u) => u.includes('Browse/SearchResults.aspx'));
+      expect(modernUrl).toContain('electronics/laptops');
+      expect(legacyUrl).toContain('cid=356');
+      expect(legacyUrl).toContain('rptpath=2-356-');
+    });
+
+    it('warns instead of throwing when a resolved category has no legacy mapping', async () => {
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => undefined,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1); // modern URL only
+      expect(result.warnings.some((w) => w.includes('no legacy category mapping'))).toBe(true);
+    });
   });
 });
 

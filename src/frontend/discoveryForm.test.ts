@@ -70,10 +70,13 @@ function buildDiscoveryForm(): DiscoveryFormElements {
   const discoveryButton = document.createElement('button');
   const allowShippingCheckbox = document.createElement('input');
   allowShippingCheckbox.type = 'checkbox';
+  const includeSoldItemsCheckbox = document.createElement('input');
+  includeSoldItemsCheckbox.type = 'checkbox';
   return {
     promptInput: document.createElement('textarea'),
     maxPriceInput: document.createElement('input'),
     allowShippingCheckbox,
+    includeSoldItemsCheckbox,
     regionSelect,
     discoveryButton,
   };
@@ -92,6 +95,26 @@ describe('applyLoadedDiscoverInputs', () => {
     expect(elements.maxPriceInput.value).toBe('250');
     expect(elements.allowShippingCheckbox.checked).toBe(false);
     expect(elements.regionSelect.value).toBe('1');
+  });
+
+  it('restores the include-sold-items checkbox from the saved inputs', () => {
+    const elements = buildDiscoveryForm();
+    applyLoadedDiscoverInputs(elements, {
+      prompt: 'mid-century sideboard',
+      fulfillment: 'any',
+      includeSoldItems: true,
+    });
+    expect(elements.includeSoldItemsCheckbox.checked).toBe(true);
+  });
+
+  it('defaults the include-sold-items checkbox to unticked when the saved inputs omit it', () => {
+    const elements = buildDiscoveryForm();
+    elements.includeSoldItemsCheckbox.checked = true;
+    applyLoadedDiscoverInputs(elements, {
+      prompt: 'mid-century sideboard',
+      fulfillment: 'any',
+    });
+    expect(elements.includeSoldItemsCheckbox.checked).toBe(false);
   });
 
   it('disables the discovery button even when the loaded inputs are valid', () => {
@@ -137,6 +160,7 @@ function mountDiscoveryFormFixture(): void {
     <textarea id="discoveryPrompt"></textarea>
     <input id="discoveryMaxPrice" />
     <input id="discoveryAllowShipping" type="checkbox" checked />
+    <input id="discoveryIncludeSoldItems" type="checkbox" />
     <select id="discoveryRegion"><option value="">Any</option><option value="12">Wellington</option></select>
     <button id="discoveryBtn"></button>
   `;
@@ -152,6 +176,7 @@ describe('readDiscoverInputs', () => {
       prompt: 'lamp',
       maxPrice: 50,
       fulfillment: 'any',
+      includeSoldItems: false,
       region: '12',
     });
   });
@@ -162,6 +187,12 @@ describe('readDiscoverInputs', () => {
     const inputs = readDiscoverInputs();
     expect(inputs.region).toBeUndefined();
     expect(inputs.fulfillment).toBe('pickup');
+  });
+
+  it('reads the include-sold-items checkbox', () => {
+    mountDiscoveryFormFixture();
+    (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = true;
+    expect(readDiscoverInputs().includeSoldItems).toBe(true);
   });
 });
 

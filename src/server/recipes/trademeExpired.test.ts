@@ -2,9 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CategoryLegacyPathRow } from '../db';
-import { getDb, stmtGetCategoryByLegacyPath, stmtGetCategoryLegacyPath } from '../db';
-import { resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
+import { getDb, stmtGetCategoryByLegacyPath } from '../db';
 import {
   buildLegacySearchUrl,
   deriveLegacyCidAndRptpath,
@@ -16,13 +14,8 @@ import {
 
 vi.mock('../db', () => ({
   getDb: vi.fn(),
-  stmtGetCategoryLegacyPath: vi.fn(),
   stmtGetCategoryByLegacyPath: vi.fn(),
 }));
-vi.mock('./trademeCategoryResolver', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./trademeCategoryResolver')>();
-  return { ...actual, resolveDiscoverCategoriesAsync: vi.fn() };
-});
 
 const FIXTURE_HTML = fs.readFileSync(
   path.join(__dirname, '__fixtures__/trademe-legacy-search.html'),
@@ -161,12 +154,14 @@ describe('parseLegacySearchResultsHtml', () => {
       price: 212,
       location: 'Auckland City, Auckland, NZ',
       isAuction: true,
+      isSold: true,
       reserveStatus: 'MET',
       url: 'https://www.trademe.co.nz/computers/laptops/laptops/apple/listing-5967796300.htm?archive=1',
     });
     expect(listings[1]).toMatchObject({
       title: 'Macbook Pro 14-inch 2021 (M1 Pro, 32gb, 1tb)',
       price: 785,
+      isSold: true,
       reserveStatus: 'NOT_MET',
     });
   });
@@ -181,39 +176,5 @@ describe('parseLegacySearchResultsHtml', () => {
     const { listings, reachedZeroBids } = parseLegacySearchResultsHtml('<ul></ul>');
     expect(listings).toEqual([]);
     expect(reachedZeroBids).toBe(false);
-  });
-});
-
-describe('trademeExpiredRecipe.buildDiscoverUrlsAsync', () => {
-  const STUB_COOLDOWN_STORE = { markExhausted: () => {}, getCooldownUntil: () => undefined };
-  const MOCK_AI = {
-    url: 'http://example.com',
-    model: 'llama',
-    apiKey: 'key',
-    providerKey: 'mock',
-    cooldownStore: STUB_COOLDOWN_STORE,
-  };
-
-  afterEach(() => vi.resetAllMocks());
-
-  it('builds a legacy search URL for a resolved category slug', async () => {
-    vi.mocked(getDb).mockReturnValue({} as unknown as Database.Database);
-    vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
-      get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
-    } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
-    vi.mocked(resolveDiscoverCategoriesAsync).mockResolvedValue({
-      entries: [{ slug: 'computers/laptops', searchString: 'macbook pro' }],
-      warnings: [],
-    });
-
-    const result = await trademeExpiredRecipe.buildDiscoverUrlsAsync('macbook pro', {
-      maxPrice: 0,
-      fulfillment: 'any',
-      getAiConfig: () => MOCK_AI,
-    });
-
-    expect(result.urls).toHaveLength(1);
-    expect(result.urls[0]).toContain('cid=356');
-    expect(result.urls[0]).toContain('rptpath=2-356-');
   });
 });

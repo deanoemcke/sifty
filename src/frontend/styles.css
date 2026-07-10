@@ -615,6 +615,28 @@ button.filter-toggle-btn:hover {
 .filter-banner.hidden {
   display: none;
 }
+.sold-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.35rem 0.8rem;
+  background: var(--red-bg);
+  color: var(--red);
+  border-bottom: 1px solid #fecaca;
+  font-size: 0.78rem;
+  font-weight: 500;
+  z-index: 1;
+}
+.sold-banner.hidden {
+  display: none;
+}
+/* Filtered outranks sold: hide the sold banner once the AI filter marks a
+   card as filtered-out, regardless of which class landed first — `sold` is
+   set synchronously at render time, `filtered-out` asynchronously later. */
+.listing-card.filtered-out .sold-banner {
+  display: none;
+}
 /* Wraps the thumbnail so the source favicon can overlay its top-left corner */
 .listing-thumb-wrap {
   position: relative;
@@ -679,6 +701,11 @@ button.filter-toggle-btn:hover {
 .listing-card.filtered-out .listing-body,
 .listing-card.filtered-out .listing-card-footer {
   background: var(--yellow-bg);
+  opacity: 0.6;
+}
+.listing-card.sold:not(.filtered-out) .listing-body,
+.listing-card.sold:not(.filtered-out) .listing-card-footer {
+  background: var(--red-bg);
   opacity: 0.6;
 }
 /* Sibling of .listing-open-area, overlaid on the thumbnail's top-right

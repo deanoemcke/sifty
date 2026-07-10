@@ -40,6 +40,7 @@ export interface DiscoverInputs {
   prompt: string;
   maxPrice?: number;
   fulfillment: Fulfillment;
+  includeSoldItems?: boolean;
   region?: string;
 }
 

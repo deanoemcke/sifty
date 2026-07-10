@@ -14,7 +14,9 @@ import type {
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { MAX_PAGES_PER_SEARCH, MAX_RESULTS_PER_URL } from '../constants';
+import { getDb, stmtGetCategoryLegacyPath } from '../db';
 import { type DiscoverEntry, resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
+import { buildLegacySearchUrl } from './trademeExpired';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -468,7 +470,21 @@ async function buildDiscoverUrlsAsync(
   const urls = entries.map((entry) =>
     buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue)
   );
-  return { urls, warnings };
+  const allWarnings = [...warnings];
+
+  if (context.includeSoldItems) {
+    const stmt = stmtGetCategoryLegacyPath(getDb());
+    for (const entry of entries) {
+      const row = stmt.get(entry.slug);
+      if (!row) {
+        allWarnings.push(`no legacy category mapping for slug "${entry.slug}"`);
+        continue;
+      }
+      urls.push(buildLegacySearchUrl(entry, row.legacy_path));
+    }
+  }
+
+  return { urls, warnings: allWarnings };
 }
 
 // ── Recipe implementation ─────────────────────────────────────────────────────

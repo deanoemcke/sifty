@@ -12,6 +12,7 @@ beforeEach(() => {
     <textarea id="discoveryPrompt">lamp</textarea>
     <input id="discoveryMaxPrice" />
     <input id="discoveryAllowShipping" type="checkbox" />
+    <input id="discoveryIncludeSoldItems" type="checkbox" />
     <select id="discoveryRegion"><option value="">Any</option></select>
     <button id="discoveryBtn"></button>
 

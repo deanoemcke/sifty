@@ -350,6 +350,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls).toHaveLength(1);
@@ -363,6 +364,7 @@ describe('buildDiscoverUrlsAsync', () => {
       {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI_CONFIG,
       }
     );
@@ -374,6 +376,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 500,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain('maxPrice=500');
@@ -384,6 +387,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
       fulfillment: 'pickup',
+      includeSoldItems: false,
       regionValue: '2',
       getAiConfig: () => MOCK_AI_CONFIG,
     });
@@ -395,6 +399,7 @@ describe('buildDiscoverUrlsAsync', () => {
     const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.warnings).toEqual([]);
@@ -405,6 +410,7 @@ describe('buildDiscoverUrlsAsync', () => {
     await facebookRecipe.buildDiscoverUrlsAsync('  macbook pro  ', {
       maxPrice: 0,
       fulfillment: 'any',
+      includeSoldItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(vi.mocked(aiJSON)).toHaveBeenCalledWith(
@@ -422,6 +428,7 @@ describe('buildDiscoverUrlsAsync', () => {
       facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
         maxPrice: 0,
         fulfillment: 'any',
+        includeSoldItems: false,
         getAiConfig: () => MOCK_AI_CONFIG,
       })
     ).rejects.toThrow('AI unavailable');
