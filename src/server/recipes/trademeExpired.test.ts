@@ -193,7 +193,7 @@ describe('parseLegacySearchResultsHtml', () => {
     expect(listings[1]).toMatchObject({
       title: 'Macbook Pro 14-inch 2021 (M1 Pro, 32gb, 1tb)',
       price: 785,
-      isSold: true,
+      isSold: false,
       reserveStatus: 'NOT_MET',
     });
   });

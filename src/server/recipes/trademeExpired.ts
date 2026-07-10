@@ -128,6 +128,7 @@ export function parseLegacySearchResultsHtml(html: string): {
     const priceText = card.querySelector('.listingBidPrice')?.textContent ?? '';
     const thumbnailUrl = card.querySelector('.listingImage img')?.getAttribute('src') ?? undefined;
     const reserveText = card.querySelector('.reserve-text')?.textContent?.trim();
+    const reserveStatus = mapLegacyReserveText(reserveText);
 
     listings.push({
       source: LEGACY_PATTERN.name,
@@ -137,8 +138,8 @@ export function parseLegacySearchResultsHtml(html: string): {
       url: href.startsWith('http') ? href : `${TRADEME_ORIGIN}${href}`,
       isAuction: true,
       thumbnailUrl,
-      isSold: true,
-      reserveStatus: mapLegacyReserveText(reserveText),
+      isSold: reserveStatus !== 'NOT_MET',
+      reserveStatus,
       relevance: 0,
     });
   }
