@@ -203,63 +203,126 @@ describe('parseFacebookPriceLines', () => {
     const result = parseFacebookPriceLines('Vintage lamp\nNZ$80\nAuckland');
     expect(result.lines).toEqual(['Vintage lamp', 'NZ$80', 'Auckland']);
   });
+
+  it('returns isSold: false for a normal listing', () => {
+    const result = parseFacebookPriceLines('Vintage lamp\nNZ$80\nAuckland');
+    expect(result.isSold).toBe(false);
+  });
+
+  it('returns isSold: true and strips the status/separator lines for a "Sold" listing', () => {
+    // Real captured innerText: the status word, the "·" separator, and the price
+    // each render as separate flex items, i.e. separate lines — not one combined
+    // "Sold · NZ$100" line.
+    const result = parseFacebookPriceLines(
+      'Sold\n·\nNZ$100\nMacBook Air 2015\nTitahi Bay, New Zealand'
+    );
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(100);
+    expect(result.lines).toEqual(['NZ$100', 'MacBook Air 2015', 'Titahi Bay, New Zealand']);
+  });
+
+  it('returns isSold: true and strips the status/separator lines for a "Pending" listing', () => {
+    const result = parseFacebookPriceLines('Pending\n·\nNZ$50\nOld chair\nTitahi Bay');
+    expect(result.isSold).toBe(true);
+    expect(result.price).toBe(50);
+    expect(result.lines).toEqual(['NZ$50', 'Old chair', 'Titahi Bay']);
+  });
+
+  it('does not treat a title merely containing the word "sold" as isSold', () => {
+    const result = parseFacebookPriceLines('Sold as-is toolbox\nNZ$40\nHamilton');
+    expect(result.isSold).toBe(false);
+    expect(result.price).toBe(40);
+  });
 });
 
 // ── buildFacebookUrl ──────────────────────────────────────────────────────────
 
 describe('buildFacebookUrl', () => {
   it('always sets query, exact, and sortBy', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
     expect(url).toContain('query=macbook');
     expect(url).toContain('exact=false');
     expect(url).toContain('sortBy=creation_time_descend');
   });
 
   it('adds maxPrice when > 0', () => {
-    const url = buildFacebookUrl('macbook', 800, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 800, 'any', undefined, false, TEST_REGIONS);
     expect(url).toContain('maxPrice=800');
   });
 
   it('omits maxPrice when 0', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
     expect(url).not.toContain('maxPrice');
   });
 
   it('sets deliveryMethod=local_pick_up for pickup fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, false, TEST_REGIONS);
     expect(url).toContain('deliveryMethod=local_pick_up');
   });
 
   it('sets deliveryMethod=shipping for shipping fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, false, TEST_REGIONS);
     expect(url).toContain('deliveryMethod=shipping');
   });
 
   it('omits deliveryMethod for "any" fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
     expect(url).not.toContain('deliveryMethod');
   });
 
   it('injects location segment when pickup and regionValue matches a region', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', false, TEST_REGIONS);
     expect(url).toContain('/marketplace/auckland/search');
   });
 
   it('omits location segment when pickup but regionValue is undefined', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, false, TEST_REGIONS);
     expect(url).toContain('/marketplace/search');
     expect(url).not.toContain('/marketplace/auckland/');
   });
 
   it('omits location segment when fulfillment is "any" even with regionValue', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', '2', TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'any', '2', false, TEST_REGIONS);
     expect(url).not.toContain('/marketplace/auckland/');
   });
 
   it('omits location segment when regionValue does not match any region', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', '999', TEST_REGIONS);
+    const url = buildFacebookUrl('macbook', 0, 'pickup', '999', false, TEST_REGIONS);
     expect(url).toContain('/marketplace/search');
     expect(url).not.toContain('/marketplace/undefined/');
+  });
+
+  it('adds availability=out of stock when includeSoldItems is true', () => {
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, true, TEST_REGIONS);
+    expect(new URL(url).searchParams.get('availability')).toBe('out of stock');
+  });
+
+  it('omits maxPrice when includeSoldItems is true even if maxPrice > 0', () => {
+    const url = buildFacebookUrl('macbook', 800, 'any', undefined, true, TEST_REGIONS);
+    expect(url).not.toContain('maxPrice');
+  });
+
+  it('omits deliveryMethod when includeSoldItems is true even for pickup fulfillment', () => {
+    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, true, TEST_REGIONS);
+    expect(url).not.toContain('deliveryMethod');
+  });
+
+  it('omits deliveryMethod when includeSoldItems is true even for shipping fulfillment', () => {
+    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, true, TEST_REGIONS);
+    expect(url).not.toContain('deliveryMethod');
+  });
+
+  it('omits location segment when includeSoldItems is true even for pickup with a matching region', () => {
+    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', true, TEST_REGIONS);
+    expect(url).not.toContain('/marketplace/auckland/');
+    expect(url).toContain('/marketplace/search');
+  });
+
+  it('still sets query, exact, and sortBy when includeSoldItems is true', () => {
+    const url = buildFacebookUrl('macbook', 0, 'any', undefined, true, TEST_REGIONS);
+    expect(url).toContain('query=macbook');
+    expect(url).toContain('exact=false');
+    expect(url).toContain('sortBy=creation_time_descend');
   });
 });
 
@@ -433,6 +496,46 @@ describe('buildDiscoverUrlsAsync', () => {
       })
     ).rejects.toThrow('AI unavailable');
   });
+
+  it('adds a second sold-items URL when includeSoldItems is true', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 500,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls).toHaveLength(2);
+    expect(new URL(result.urls[1]).searchParams.get('availability')).toBe('out of stock');
+  });
+
+  it('the sold-items URL omits maxPrice, deliveryMethod, and region even when set', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 500,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls[1]).not.toContain('maxPrice');
+    expect(result.urls[1]).not.toContain('deliveryMethod');
+    expect(result.urls[1]).not.toContain('/marketplace/auckland/');
+  });
+
+  it('the first URL is unaffected by includeSoldItems', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 500,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls[0]).toContain('maxPrice=500');
+    expect(result.urls[0]).toContain('/marketplace/auckland/search');
+  });
 });
 
 describe('buildFacebookDeepSearchDetail', () => {
@@ -487,6 +590,29 @@ describe('buildFacebookListing', () => {
       'Wellington'
     );
     expect(listing.relevance).toBe(0);
+  });
+
+  it('defaults isSold to false when omitted', () => {
+    const listing = buildFacebookListing(
+      'https://facebook.com/marketplace/item/123',
+      undefined,
+      'Lamp',
+      null,
+      'Wellington'
+    );
+    expect(listing.isSold).toBe(false);
+  });
+
+  it('sets isSold to true when passed', () => {
+    const listing = buildFacebookListing(
+      'https://facebook.com/marketplace/item/123',
+      undefined,
+      'MacBook Air 2015',
+      100,
+      'Titahi Bay',
+      true
+    );
+    expect(listing.isSold).toBe(true);
   });
 });
 
@@ -673,6 +799,49 @@ describe('processRawListing', () => {
 
     expect(counter.total).toBe(100);
     expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it('emits isSold: true for a "Sold" listing (status/separator/price on separate lines)', () => {
+    const onEvent = vi.fn();
+    processRawListing(
+      makeRawListing({
+        ariaLabel: 'MacBook Air 2015, NZ$100, Titahi Bay, New Zealand',
+        innerText: 'Sold\n·\nNZ$100\nMacBook Air 2015\nTitahi Bay, New Zealand',
+      }),
+      new Set(),
+      onEvent,
+      { total: 0 }
+    );
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'listing', data: expect.objectContaining({ isSold: true }) })
+    );
+  });
+
+  it('emits isSold: true for a "Pending" listing', () => {
+    const onEvent = vi.fn();
+    processRawListing(
+      makeRawListing({
+        ariaLabel: 'Old chair, NZ$50, Titahi Bay',
+        innerText: 'Pending\n·\nNZ$50\nOld chair\nTitahi Bay',
+      }),
+      new Set(),
+      onEvent,
+      { total: 0 }
+    );
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'listing', data: expect.objectContaining({ isSold: true }) })
+    );
+  });
+
+  it('emits isSold: false for a normal listing', () => {
+    const onEvent = vi.fn();
+    processRawListing(makeRawListing(), new Set(), onEvent, { total: 0 });
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'listing', data: expect.objectContaining({ isSold: false }) })
+    );
   });
 });
 

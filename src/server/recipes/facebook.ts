@@ -199,17 +199,34 @@ export function parseFacebookPriceValue(priceLine: string | undefined): number |
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// A sold/pending listing's price row renders as three separate flex items — the
+// status word ("Sold" or "Pending"), a "·" separator, then the price — and each
+// flex item forces its own line in `innerText`. So they arrive as three distinct
+// lines, not one combined "Sold · NZ$100" line. Both status words are stripped
+// (along with the bare separator line) here, at the point lines are normalized,
+// so every downstream consumer (price parsing, title/location fallback) sees a
+// clean line set and doesn't need to know about the status marker.
+const STATUS_LINE_REGEX = /^(?:Sold|Pending)$/i;
+const SEPARATOR_LINE_REGEX = /^·$/;
+
 export function parseFacebookPriceLines(innerText: string): {
   price: number | null;
+  isSold: boolean;
   lines: string[];
 } {
-  const lines = innerText
+  const rawLines = innerText
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+
+  const isSold = rawLines.some((line) => STATUS_LINE_REGEX.test(line));
+  const lines = rawLines.filter(
+    (line) => !STATUS_LINE_REGEX.test(line) && !SEPARATOR_LINE_REGEX.test(line)
+  );
+
   const priceLines = lines.filter((line) => PRICE_REGEX.test(line));
   const price = parseFacebookPriceValue(priceLines[0]);
-  return { price, lines };
+  return { price, isSold, lines };
 }
 
 export function buildFacebookListing(
@@ -217,7 +234,8 @@ export function buildFacebookListing(
   thumbnailUrl: string | undefined,
   title: string,
   price: number | null,
-  location: string
+  location: string,
+  isSold = false
 ): Listing {
   return {
     source: FACEBOOK_PATTERN.name,
@@ -228,6 +246,7 @@ export function buildFacebookListing(
     thumbnailUrl,
     isAuction: false,
     relevance: 0,
+    isSold,
   };
 }
 
@@ -251,7 +270,7 @@ export function processRawListing(
   seen.add(raw.id);
   if (counter.total >= MAX_RESULTS_PER_URL) return;
 
-  const { price, lines: innerLines } = parseFacebookPriceLines(raw.innerText);
+  const { price, lines: innerLines, isSold } = parseFacebookPriceLines(raw.innerText);
 
   let title = '',
     location = 'Unknown';
@@ -270,7 +289,14 @@ export function processRawListing(
   counter.total++;
   onEvent({
     type: 'listing',
-    data: buildFacebookListing(raw.url, raw.thumbnailUrl || undefined, title, price, location),
+    data: buildFacebookListing(
+      raw.url,
+      raw.thumbnailUrl || undefined,
+      title,
+      price,
+      location,
+      isSold
+    ),
   });
 }
 
@@ -625,14 +651,19 @@ export function buildFacebookUrl(
   maxPrice: number,
   fulfillment: Fulfillment,
   regionValue: string | undefined,
+  includeSoldItems: boolean,
   regions = getRegions()
 ): string {
-  const pickupOnly = fulfillment === 'pickup' && !!regionValue;
+  const pickupOnly = !includeSoldItems && fulfillment === 'pickup' && !!regionValue;
   const fbParams = new URLSearchParams();
   fbParams.set('query', searchTerm);
-  if (maxPrice > 0) fbParams.set('maxPrice', String(maxPrice));
-  if (fulfillment === 'pickup') fbParams.set('deliveryMethod', 'local_pick_up');
-  else if (fulfillment === 'shipping') fbParams.set('deliveryMethod', 'shipping');
+  if (includeSoldItems) {
+    fbParams.set('availability', 'out of stock');
+  } else {
+    if (maxPrice > 0) fbParams.set('maxPrice', String(maxPrice));
+    if (fulfillment === 'pickup') fbParams.set('deliveryMethod', 'local_pick_up');
+    else if (fulfillment === 'shipping') fbParams.set('deliveryMethod', 'shipping');
+  }
   fbParams.set('exact', 'false');
   fbParams.set('sortBy', 'creation_time_descend');
   let fbLocationSegment = '';
@@ -645,12 +676,15 @@ export function buildFacebookUrl(
 
 async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
   const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.getAiConfig());
-  return {
-    urls: [
-      buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue),
-    ],
-    warnings: [] as string[],
-  };
+  const urls = [
+    buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, false),
+  ];
+  if (context.includeSoldItems) {
+    urls.push(
+      buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, true)
+    );
+  }
+  return { urls, warnings: [] as string[] };
 }
 
 // ── Recipe ────────────────────────────────────────────────────────────────────
