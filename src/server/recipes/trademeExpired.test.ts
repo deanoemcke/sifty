@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Listing } from '../../lib/recipes/base';
+import { MAX_RESULTS_PER_URL } from '../constants';
 import { getDb, stmtGetCategoryByLegacyPath } from '../db';
 import {
   buildLegacySearchUrl,
@@ -15,6 +17,36 @@ import {
 vi.mock('../db', () => ({
   getDb: vi.fn(),
   stmtGetCategoryByLegacyPath: vi.fn(),
+}));
+
+// ── Playwright mock for quickSearch integration tests ─────────────────────────
+// trademeExpired's quickSearchAsync reuses a single Page across all page
+// navigations (unlike trademe.ts, which opens one Page per page number), so the
+// mock queues HTML strings returned by successive `page.content()` calls rather
+// than queuing whole Page objects.
+
+const { queueLegacyPages, shiftLegacyPage } = vi.hoisted(() => {
+  const htmlQueue: string[] = [];
+  return {
+    queueLegacyPages: (...htmlPages: string[]) => {
+      htmlQueue.splice(0, htmlQueue.length, ...htmlPages);
+    },
+    shiftLegacyPage: () => htmlQueue.shift() ?? '<html><body></body></html>',
+  };
+});
+
+vi.mock('playwright', () => ({
+  chromium: {
+    launch: async () => ({
+      newContext: async () => ({
+        newPage: async () => ({
+          goto: async () => {},
+          content: async () => shiftLegacyPage(),
+        }),
+      }),
+      close: async () => {},
+    }),
+  },
 }));
 
 const FIXTURE_HTML = fs.readFileSync(
@@ -176,5 +208,46 @@ describe('parseLegacySearchResultsHtml', () => {
     const { listings, reachedZeroBids } = parseLegacySearchResultsHtml('<ul></ul>');
     expect(listings).toEqual([]);
     expect(reachedZeroBids).toBe(false);
+  });
+});
+
+// ── quickSearch MAX_RESULTS_PER_URL cap ───────────────────────────────────────
+
+function makeLegacyCard(index: number): string {
+  return `
+    <div class="listingCard">
+      <div class="listingNumberOfBidsText">1 bid</div>
+      <div class="listingTitle"><a href="/listing-${index}.htm">Item ${index}</a></div>
+      <div class="listingBidPrice">$${index}</div>
+      <div class="listingLocation">Auckland</div>
+    </div>`;
+}
+
+function makeLegacyPageHtml(cardIndexes: number[]): string {
+  return `<html><body><ul>${cardIndexes.map(makeLegacyCard).join('')}</ul></body></html>`;
+}
+
+describe('quickSearchAsync MAX_RESULTS_PER_URL cap', () => {
+  it('never emits more than MAX_RESULTS_PER_URL listings for a single URL, even with more pages left', async () => {
+    const cardsPerPage = 60;
+    // 3 pages of non-zero-bid cards (never reaching zero bids) — 180 listings total,
+    // well beyond MAX_RESULTS_PER_URL (100), so the cap must kick in before the
+    // legacy scraper's own MAX_PAGES_PER_SEARCH (20) pagination limit would.
+    const pages = Array.from({ length: 3 }, (_, pageIndex) =>
+      makeLegacyPageHtml(
+        Array.from({ length: cardsPerPage }, (_, i) => pageIndex * cardsPerPage + i + 1)
+      )
+    );
+    queueLegacyPages(...pages);
+
+    const collected: Listing[] = [];
+    await trademeExpiredRecipe.quickSearchAsync(
+      'https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356',
+      (ev) => {
+        if (ev.type === 'listing') collected.push(ev.data);
+      }
+    );
+
+    expect(collected).toHaveLength(MAX_RESULTS_PER_URL);
   });
 });

@@ -8,7 +8,7 @@ import type {
   ReserveStatus,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
-import { MAX_PAGES_PER_SEARCH } from '../constants';
+import { MAX_PAGES_PER_SEARCH, MAX_RESULTS_PER_URL } from '../constants';
 import { getDb, stmtGetCategoryByLegacyPath } from '../db';
 import { parsePriceValue } from './trademe';
 import type { DiscoverEntry } from './trademeCategoryResolver';
@@ -178,19 +178,21 @@ async function quickSearchAsync(
       if (listings.length === 0 && !reachedZeroBids) break; // no more pages
 
       for (const listing of listings) {
+        if (foundSoFar >= MAX_RESULTS_PER_URL) break;
         if (seenUrls.has(listing.url)) continue;
         seenUrls.add(listing.url);
         foundSoFar++;
         onEvent({ type: 'listing', data: listing });
       }
+      const cappedAtLimit = foundSoFar >= MAX_RESULTS_PER_URL;
       onEvent({
         type: 'progress',
         phase: 'collecting',
         foundSoFar,
-        isLoadingMore: !reachedZeroBids,
+        isLoadingMore: !reachedZeroBids && !cappedAtLimit,
       });
 
-      if (reachedZeroBids) break;
+      if (reachedZeroBids || cappedAtLimit) break;
     }
 
     onEvent({ type: 'complete' });
