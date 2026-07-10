@@ -14,7 +14,7 @@ import { handleListingCardKeydown, resolveListingCardOpenArea } from './listingC
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from './listingDetail';
 import { applyBrandTitle } from './pageTitle';
 import { searchUrlCardAsync } from './quickSearch';
-import { applyClientFilters, renderDerived, renderFilteredToggle } from './resultsView';
+import { applyClientFilters, renderDerived } from './resultsView';
 import {
   closeSaveSearchModal,
   fetchSavedSearchesAsync,
@@ -24,6 +24,13 @@ import {
   markDirty,
   openSaveSearchModal,
 } from './searchSession';
+import {
+  closeShowDropdownPanel,
+  renderShowDropdownCheckboxes,
+  setListingCategoryVisible,
+  toggleShowDropdownPanel,
+  updateShowSoldOptionVisibility,
+} from './showDropdown';
 import { activateSidebarTab } from './sidebarTabs';
 import {
   DEFAULT_SORT_OPTION,
@@ -31,7 +38,7 @@ import {
   SORT_OPTIONS,
   type SortOption,
 } from './sortListings';
-import { setShowFilteredListings, setSortBy, showFilteredListings } from './state';
+import { setSortBy } from './state';
 import { cancelGroupSearches, createUrlCard } from './urlCardRow';
 import { toggleUrlGroup } from './urlGroupsView';
 
@@ -40,7 +47,8 @@ import { toggleUrlGroup } from './urlGroupsView';
 function initApp(): void {
   applyBrandTitle(__WORKTREE_LABEL__);
   getElement('discoveryBtn').textContent = DISCOVERY_BUTTON_LABEL;
-  renderFilteredToggle();
+  renderShowDropdownCheckboxes();
+  updateShowSoldOptionVisibility();
   createUrlCard(searchUrlCardAsync);
   getElement<HTMLTextAreaElement>('discoveryPrompt').focus();
 
@@ -52,11 +60,26 @@ function initApp(): void {
 
   getElement<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearchAsync());
 
-  getElement('toggleFilteredBtn').addEventListener('click', () => {
-    setShowFilteredListings(!showFilteredListings);
-    renderFilteredToggle();
+  getElement('showDropdownBtn').addEventListener('click', () => toggleShowDropdownPanel());
+  document.addEventListener('click', (mouseEvent: MouseEvent) => {
+    if (!getElement('showDropdown').contains(mouseEvent.target as Node)) closeShowDropdownPanel();
+  });
+  getElement<HTMLInputElement>('showAvailable').addEventListener('change', (changeEvent) => {
+    setListingCategoryVisible('available', (changeEvent.target as HTMLInputElement).checked);
     applyClientFilters();
   });
+  getElement<HTMLInputElement>('showSold').addEventListener('change', (changeEvent) => {
+    setListingCategoryVisible('sold', (changeEvent.target as HTMLInputElement).checked);
+    applyClientFilters();
+  });
+  getElement<HTMLInputElement>('showFiltered').addEventListener('change', (changeEvent) => {
+    setListingCategoryVisible('filtered', (changeEvent.target as HTMLInputElement).checked);
+    applyClientFilters();
+  });
+  getElement<HTMLInputElement>('discoveryIncludeSoldItems').addEventListener(
+    'change',
+    updateShowSoldOptionVisibility
+  );
 
   populateSortSelect(getElement<HTMLSelectElement>('sortBy'), SORT_OPTIONS, DEFAULT_SORT_OPTION);
   getElement<HTMLSelectElement>('sortBy').addEventListener('change', (changeEvent) => {

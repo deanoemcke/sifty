@@ -13,25 +13,17 @@ import { sourceBadgeHtml } from './recipeDisplay';
 import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
 import {
   cardIdByUrl,
+  getListingCategory,
   isAiFilterRunning,
   isCardSearchActive,
   isDeepSearchRunning,
   type ListingItem,
   listingsByUrl,
-  showFilteredListings,
   sortBy,
   urlCardDataById,
+  visibleListingCategories,
 } from './state';
 import { updateUrlGroupHeaders } from './urlGroupsView';
-
-// Sole writer of the filtered-results toggle button state — derives it from state.
-export function renderFilteredToggle(): void {
-  const toggleBtn = getElement<HTMLButtonElement>('toggleFilteredBtn');
-  const label = showFilteredListings ? 'Hide filtered listings' : 'Show filtered listings';
-  toggleBtn.setAttribute('aria-pressed', String(showFilteredListings));
-  toggleBtn.title = label;
-  toggleBtn.setAttribute('aria-label', label);
-}
 
 export function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
@@ -124,7 +116,9 @@ export function scheduleSortOrderUpdate(listings: ListingItem[]): void {
 export function renderDerived(): void {
   const listings = getOrderedListings();
   const passing = listings.filter((listingItem) => listingItem.aiFilterReason === null);
-  const visibleCount = showFilteredListings ? listings.length : passing.length;
+  const visibleCount = listings.filter((listingItem) =>
+    visibleListingCategories.has(getListingCategory(listingItem))
+  ).length;
   getElement('resultCount').textContent = String(visibleCount);
   getElement('totalCount').textContent = String(listings.length);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
@@ -156,12 +150,11 @@ export function renderAiFilterStatus(listings: ListingItem[]): void {
 
 export function applyClientFilters(): void {
   for (const item of getOrderedListings()) {
-    const passes = item.aiFilterReason === null;
+    const category = getListingCategory(item);
     const card = getCardByUrl(item.data.url);
     if (card) {
       const banner = requireChild<HTMLElement>(card, '.filter-banner');
-      if (passes) {
-        card.style.display = '';
+      if (category !== 'filtered') {
         card.classList.remove('filtered-out');
         banner.textContent = '';
         banner.classList.add('hidden');
@@ -169,8 +162,8 @@ export function applyClientFilters(): void {
         card.classList.add('filtered-out');
         banner.textContent = filterBannerText(item);
         banner.classList.remove('hidden');
-        card.style.display = showFilteredListings ? '' : 'none';
       }
+      card.style.display = visibleListingCategories.has(category) ? '' : 'none';
     }
   }
   renderDerived();

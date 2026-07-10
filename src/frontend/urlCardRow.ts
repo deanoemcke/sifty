@@ -8,14 +8,9 @@ import { isValidRecipeUrl, recipeGroupIdForUrl } from '../lib/recipes/matcher';
 import type { RecipeId } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
-import {
-  applyClientFilters,
-  getCardByUrl,
-  getOrderedListings,
-  renderDerived,
-  renderFilteredToggle,
-} from './resultsView';
+import { applyClientFilters, getCardByUrl, getOrderedListings, renderDerived } from './resultsView';
 import { type CardStatusSnapshot, cardStatusText } from './searchStatusText';
+import { renderShowDropdownCheckboxes } from './showDropdown';
 import {
   canCancelSearch,
   cardIdByUrl,
@@ -196,7 +191,7 @@ export function resetAllResults(): void {
   getElement('listingsContainer').innerHTML = '';
   getElement('resultCount').textContent = '0';
   getElement('totalCount').textContent = '0';
-  renderFilteredToggle();
+  renderShowDropdownCheckboxes();
   getElement('resultsSection').classList.add('hidden');
   for (const card of urlCards) {
     const data = urlCardData(card);

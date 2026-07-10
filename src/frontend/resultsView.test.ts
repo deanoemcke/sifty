@@ -2,11 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requireChild } from './domUtils';
 import {
+  applyClientFilters,
   applySortOrder,
+  getCardByUrl,
   getOrderedListings,
   renderCard,
   renderDerived,
-  renderFilteredToggle,
   scheduleSortOrderUpdate,
 } from './resultsView';
 import * as sortListingsModule from './sortListings';
@@ -15,9 +16,9 @@ import {
   listingsByUrl,
   resetState,
   setIsAiFilterRunning,
-  setShowFilteredListings,
   setSortBy,
   type UrlCardData,
+  visibleListingCategories,
 } from './state';
 import { makeListing, makeListingItem } from './testFixtures';
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from './urlCardStore';
@@ -50,7 +51,6 @@ beforeEach(() => {
   resetState();
   resetUrlCardStore();
   document.body.innerHTML = `
-    <button id="toggleFilteredBtn"></button>
     <span id="resultCount"></span>
     <span id="totalCount"></span>
     <button id="deepBtn"></button>
@@ -82,7 +82,7 @@ describe('renderDerived', () => {
   it('counts only passing listings as visible when filtered listings are hidden', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
-    setShowFilteredListings(false);
+    visibleListingCategories.delete('filtered');
     renderDerived();
     expect(document.getElementById('resultCount')?.textContent).toBe('1');
     expect(document.getElementById('totalCount')?.textContent).toBe('2');
@@ -91,7 +91,6 @@ describe('renderDerived', () => {
   it('counts all listings as visible when filtered listings are shown', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
-    setShowFilteredListings(true);
     renderDerived();
     expect(document.getElementById('resultCount')?.textContent).toBe('2');
     expect(document.getElementById('totalCount')?.textContent).toBe('2');
@@ -389,17 +388,51 @@ describe('renderCard', () => {
   });
 });
 
-describe('renderFilteredToggle', () => {
-  it('derives the pressed state and label from showFilteredListings state', () => {
-    setShowFilteredListings(true);
-    renderFilteredToggle();
-    const toggleBtn = document.getElementById('toggleFilteredBtn') as HTMLButtonElement;
-    expect(toggleBtn.getAttribute('aria-pressed')).toBe('true');
-    expect(toggleBtn.title).toBe('Hide filtered listings');
+describe('applyClientFilters', () => {
+  function renderListing(url: string, overrides: Partial<ListingItem> = {}): void {
+    const item = makeListingItem({
+      data: makeListing({ url, title: url, price: null, location: '' }),
+      ...overrides,
+    });
+    listingsByUrl.set(url, item);
+    addCardWithListings([url]);
+    renderCard(item);
+  }
 
-    setShowFilteredListings(false);
-    renderFilteredToggle();
-    expect(toggleBtn.getAttribute('aria-pressed')).toBe('false');
-    expect(toggleBtn.title).toBe('Show filtered listings');
+  it('hides sold listings when "sold" is removed from visibleListingCategories', () => {
+    renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
+    visibleListingCategories.delete('sold');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
+  });
+
+  it('hides filtered listings when "filtered" is removed', () => {
+    renderListing('https://l/1', { aiFilterReason: 'too old' });
+    visibleListingCategories.delete('filtered');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
+  });
+
+  it('hides available listings when "available" is removed', () => {
+    renderListing('https://l/1');
+    visibleListingCategories.delete('available');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
+  });
+
+  it('restores display when the category is re-added', () => {
+    renderListing('https://l/1', { aiFilterReason: 'too old' });
+    visibleListingCategories.delete('filtered');
+    applyClientFilters();
+    visibleListingCategories.add('filtered');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
+  });
+
+  it('does not hide a sold listing when only "filtered" is removed', () => {
+    renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
+    visibleListingCategories.delete('filtered');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
   });
 });

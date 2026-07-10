@@ -66,8 +66,23 @@ export interface SavedSearch {
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
+export type ListingVisibilityCategory = 'available' | 'sold' | 'filtered';
+
+export function getListingCategory(item: ListingItem): ListingVisibilityCategory {
+  if (item.aiFilterReason !== null) return 'filtered';
+  return item.data.isSold ? 'sold' : 'available';
+}
+
+export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
+  'available',
+  'sold',
+  'filtered',
+];
+
 export let currentSearchName: string | null = null;
-export let showFilteredListings = true;
+export const visibleListingCategories = new Set<ListingVisibilityCategory>(
+  ALL_LISTING_VISIBILITY_CATEGORIES
+);
 export let isDeepSearchRunning = false;
 export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
@@ -97,10 +112,6 @@ export const cardIdByUrl = new Map<string, string>();
 
 export function setCurrentSearchName(name: string | null): void {
   currentSearchName = name;
-}
-
-export function setShowFilteredListings(value: boolean): void {
-  showFilteredListings = value;
 }
 
 export function setIsDeepSearchRunning(value: boolean): void {
@@ -139,7 +150,8 @@ export function setBulkDeepSearchUrls(urls: Set<string> | null): void {
 
 export function resetState(): void {
   currentSearchName = null;
-  showFilteredListings = true;
+  visibleListingCategories.clear();
+  for (const category of ALL_LISTING_VISIBILITY_CATEGORIES) visibleListingCategories.add(category);
   isDeepSearchRunning = false;
   deepSearchId = null;
   deepSearchCancellationRequested = false;

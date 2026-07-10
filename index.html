@@ -95,13 +95,29 @@
         <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
       </div>
       <div class="results-header-row ai-filter-row">
-        <button id="toggleFilteredBtn" class="icon-btn filter-toggle-btn" type="button" aria-pressed="true" title="Hide filtered listings" aria-label="Hide filtered listings">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-        </button>
         <textarea id="aiFilter" rows="1" placeholder="Add more detail to filter your search results.."></textarea>
         <span id="aiFilterStatus" class="ai-filter-status"></span>
       </div>
       <div class="results-header-row sort-row">
+        <div class="show-dropdown" id="showDropdown">
+          <button id="showDropdownBtn" class="show-dropdown-btn" type="button" aria-haspopup="true" aria-expanded="false">
+            Show
+          </button>
+          <div id="showDropdownPanel" class="show-dropdown-panel hidden">
+            <label class="checkbox-row" for="showAvailable">
+              <input id="showAvailable" type="checkbox" checked />
+              Available
+            </label>
+            <label class="checkbox-row" id="showSoldRow" for="showSold">
+              <input id="showSold" type="checkbox" checked />
+              Sold
+            </label>
+            <label class="checkbox-row" for="showFiltered">
+              <input id="showFiltered" type="checkbox" checked />
+              Filtered
+            </label>
+          </div>
+        </div>
         <label for="sortBy">Sort by</label>
         <select id="sortBy"></select>
       </div>

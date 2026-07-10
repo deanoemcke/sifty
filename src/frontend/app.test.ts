@@ -264,6 +264,61 @@ describe('initApp() wiring', () => {
     });
   });
 
+  describe('Show dropdown control', () => {
+    it('clicking the Show button opens the panel and sets aria-expanded', async () => {
+      await import('./app');
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(true);
+
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+
+      expect(panel.classList.contains('hidden')).toBe(false);
+      expect(document.getElementById('showDropdownBtn')?.getAttribute('aria-expanded')).toBe(
+        'true'
+      );
+    });
+
+    it('a click outside the dropdown closes the panel', async () => {
+      await import('./app');
+      document
+        .getElementById('showDropdownBtn')
+        ?.dispatchEvent(new Event('click', { bubbles: true }));
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      document.body.dispatchEvent(new Event('click', { bubbles: true }));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
+    it('toggling the Sold checkbox updates state and re-applies client filters', async () => {
+      await import('./app');
+      const state = await import('./state');
+      const soldCheckbox = document.getElementById('showSold') as HTMLInputElement;
+
+      soldCheckbox.checked = false;
+      soldCheckbox.dispatchEvent(new Event('change'));
+
+      expect(state.visibleListingCategories.has('sold')).toBe(false);
+    });
+
+    it('toggling "Include sold items" shows/hides the Sold row', async () => {
+      await import('./app');
+      const includeSoldItems = document.getElementById(
+        'discoveryIncludeSoldItems'
+      ) as HTMLInputElement;
+      const soldRow = document.getElementById('showSoldRow') as HTMLElement;
+
+      includeSoldItems.checked = false;
+      includeSoldItems.dispatchEvent(new Event('change'));
+      expect(soldRow.classList.contains('hidden')).toBe(true);
+
+      includeSoldItems.checked = true;
+      includeSoldItems.dispatchEvent(new Event('change'));
+      expect(soldRow.classList.contains('hidden')).toBe(false);
+    });
+  });
+
   describe('listing card open-area vs. external-link click routing', () => {
     it('opens the listing modal for a click inside the open area', async () => {
       const { openListingCardModal } = await import('./listingDetail');

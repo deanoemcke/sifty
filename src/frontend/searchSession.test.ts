@@ -32,7 +32,9 @@ beforeEach(() => {
     <div id="listingsContainer"></div>
     <span id="resultCount"></span>
     <span id="totalCount"></span>
-    <button id="toggleFilteredBtn"></button>
+    <input id="showAvailable" type="checkbox" checked />
+    <input id="showSold" type="checkbox" checked />
+    <input id="showFiltered" type="checkbox" checked />
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <span id="aiFilterStatus"></span>
