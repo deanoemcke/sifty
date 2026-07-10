@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidRecipeUrl, recipeIdForUrl } from './matcher';
+import { isValidRecipeUrl, recipeGroupIdForUrl, recipeIdForUrl } from './matcher';
 import { RecipeId } from './metadata';
 
 describe('isValidRecipeUrl', () => {
@@ -75,6 +75,30 @@ describe('recipeIdForUrl', () => {
 
   it('returns null for malformed input', () => {
     expect(recipeIdForUrl('not-a-url')).toBe(null);
+  });
+});
+
+describe('recipeGroupIdForUrl', () => {
+  it('resolves a trademe URL to the Trademe group id', () => {
+    expect(recipeGroupIdForUrl('https://www.trademe.co.nz/a/marketplace/listing/123')).toBe(
+      RecipeId.Trademe
+    );
+  });
+
+  it('resolves a legacy trademe-expired URL to the Trademe group id, same as trademe', () => {
+    expect(recipeGroupIdForUrl('https://www.trademe.co.nz/Browse/SearchResults.aspx?cid=356')).toBe(
+      RecipeId.Trademe
+    );
+  });
+
+  it('resolves a facebook marketplace URL to the Facebook group id', () => {
+    expect(recipeGroupIdForUrl('https://www.facebook.com/marketplace/item/123')).toBe(
+      RecipeId.Facebook
+    );
+  });
+
+  it('returns null for an unrecognised URL', () => {
+    expect(recipeGroupIdForUrl('https://www.google.com/search?q=test')).toBe(null);
   });
 });
 

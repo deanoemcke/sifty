@@ -14,16 +14,29 @@ export const RECIPE_PATTERNS = [
   // trademe-expired must precede trademe: both share a hostname, matchRecipePattern
   // takes the first match, and trademe's pathPrefix is '' (matches any path on the
   // hostname) — so the more specific legacy pattern needs first refusal.
+  //
+  // groupId canonicalizes trademe-expired onto the same id as trademe: they're
+  // presented as a single source (one URL group card, grouped together when
+  // sorting by source) even though they remain distinct recipes so listings can
+  // still show a "sold" vs active badge via their own recipeId.
   {
     name: 'trademe-expired',
     recipeId: RecipeId.TrademeExpired,
+    groupId: RecipeId.Trademe,
     hostname: 'trademe.co.nz',
     pathPrefix: '/Browse/SearchResults.aspx',
   },
-  { name: 'trademe', recipeId: RecipeId.Trademe, hostname: 'trademe.co.nz', pathPrefix: '' },
+  {
+    name: 'trademe',
+    recipeId: RecipeId.Trademe,
+    groupId: RecipeId.Trademe,
+    hostname: 'trademe.co.nz',
+    pathPrefix: '',
+  },
   {
     name: 'facebook',
     recipeId: RecipeId.Facebook,
+    groupId: RecipeId.Facebook,
     hostname: 'facebook.com',
     pathPrefix: '/marketplace/',
   },

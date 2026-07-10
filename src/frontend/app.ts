@@ -120,13 +120,13 @@ function initApp(): void {
   getElement('urlCardsContainer').addEventListener('click', (mouseEvent: MouseEvent) => {
     const groupEl = (mouseEvent.target as HTMLElement).closest<HTMLElement>('.url-group');
     if (!groupEl) return;
-    const recipeId = Number(groupEl.dataset.recipeId) as RecipeId;
+    const groupId = Number(groupEl.dataset.recipeId) as RecipeId;
     if ((mouseEvent.target as HTMLElement).closest('.url-group-toggle')) {
-      toggleUrlGroup(recipeId);
+      toggleUrlGroup(groupId);
       return;
     }
     if ((mouseEvent.target as HTMLElement).closest('.url-group-cancel')) {
-      cancelGroupSearches(recipeId);
+      cancelGroupSearches(groupId);
     }
   });
 
