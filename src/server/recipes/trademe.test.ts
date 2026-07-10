@@ -1285,4 +1285,32 @@ describe('quickSearch', () => {
 
     expect(collected).toHaveLength(27);
   });
+
+  it('caps emitted listings at MAX_RESULTS_PER_URL when totalCount exceeds it', async () => {
+    const makeItem = (i: number) => ({
+      Title: `Item ${i}`,
+      PriceDisplay: '$1',
+      Region: 'Auckland',
+      CanonicalPath: `/listing/${i}`,
+    });
+
+    const pageSize = 40;
+    resetPageQueue(
+      ...Array.from({ length: 5 }, (_, pageIndex) => ({
+        List: Array.from({ length: pageSize }, (_, i) => makeItem(pageIndex * pageSize + i + 1)),
+        TotalCount: 200,
+        PageSize: pageSize,
+      }))
+    );
+
+    const collected: unknown[] = [];
+    await trademeRecipe.quickSearchAsync(
+      'https://www.trademe.co.nz/a/marketplace/computers/search',
+      (ev) => {
+        if (ev.type === 'listing') collected.push(ev.data);
+      }
+    );
+
+    expect(collected).toHaveLength(100);
+  });
 });

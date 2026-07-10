@@ -12,6 +12,7 @@ import type {
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
+import { MAX_RESULTS_PER_URL } from '../constants';
 import { getRegions } from '../services/regions';
 
 const USER_AGENT =
@@ -232,7 +233,7 @@ export function buildFacebookListing(
 
 // Called from browser-side MutationObserver via page.exposeFunction.
 // Runs in Node.js; returns void (browser side fire-and-forgets).
-type RawListingMsg = {
+export type RawListingMsg = {
   id: string;
   url: string;
   ariaLabel: string;
@@ -240,7 +241,7 @@ type RawListingMsg = {
   thumbnailUrl: string;
 };
 
-function processRawListing(
+export function processRawListing(
   raw: RawListingMsg,
   seen: Set<string>,
   onEvent: (event: QuickSearchEvent) => void,
@@ -248,6 +249,7 @@ function processRawListing(
 ): void {
   if (seen.has(raw.id)) return;
   seen.add(raw.id);
+  if (counter.total >= MAX_RESULTS_PER_URL) return;
 
   const { price, lines: innerLines } = parseFacebookPriceLines(raw.innerText);
 
@@ -403,6 +405,7 @@ async function quickSearchAsync(
     let lastTotal = 0;
     for (;;) {
       if (isCancelled?.()) break;
+      if (counter.total >= MAX_RESULTS_PER_URL) break;
       const bodyText: string = await page.evaluate(() => document.body.innerText);
       if (bodyText.includes('Results from outside your search')) break;
 
