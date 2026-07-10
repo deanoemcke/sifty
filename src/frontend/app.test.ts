@@ -47,6 +47,7 @@ vi.mock('./aiFilter', async (importOriginal) => {
   return {
     ...actual,
     requestAiFilterRunIfPromptLongEnough: vi.fn(actual.requestAiFilterRunIfPromptLongEnough),
+    requestAiFilterRun: vi.fn(actual.requestAiFilterRun),
   };
 });
 
@@ -227,6 +228,81 @@ describe('initApp() wiring', () => {
       );
 
       expect(clickSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('AI filter button', () => {
+    it('clicks #aiFilterBtn on Enter in the AI filter textarea', async () => {
+      await import('./app');
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      const clickSpy = vi.spyOn(aiFilterBtn, 'click');
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+
+      aiFilterInput.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      );
+
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not click #aiFilterBtn on Shift+Enter (newline in the prompt)', async () => {
+      await import('./app');
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      const clickSpy = vi.spyOn(aiFilterBtn, 'click');
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+
+      aiFilterInput.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+
+      expect(clickSpy).not.toHaveBeenCalled();
+    });
+
+    it('runs the ai filter immediately on click, bypassing the debounce/min-length guard', async () => {
+      const { requestAiFilterRun } = await import('./aiFilter');
+      await import('./app');
+
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      // Shorter than MIN_AI_FILTER_PROMPT_LENGTH — the debounced auto-run
+      // would ignore this, but an explicit click must still run it.
+      aiFilterInput.value = 'old';
+      aiFilterInput.dispatchEvent(new Event('input'));
+
+      aiFilterBtn.click();
+
+      expect(vi.mocked(requestAiFilterRun)).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables the button while a run is in flight and re-enables it once done', async () => {
+      const { streamPostAsync } = await import('./streamPost');
+      let resolveStream: () => void = () => {};
+      vi.mocked(streamPostAsync).mockReturnValue(
+        new Promise((resolve) => {
+          resolveStream = () => resolve(undefined);
+        })
+      );
+      await import('./app');
+
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      aiFilterInput.value = 'good condition only please';
+      aiFilterInput.dispatchEvent(new Event('input'));
+
+      aiFilterBtn.click();
+      await Promise.resolve();
+
+      expect(aiFilterBtn.disabled).toBe(true);
+      expect(aiFilterBtn.querySelector('.spinner')).not.toBeNull();
+
+      resolveStream();
+      await vi.waitFor(() => expect(aiFilterBtn.disabled).toBe(false));
+      expect(aiFilterBtn.textContent).toBe('Filter');
     });
   });
 

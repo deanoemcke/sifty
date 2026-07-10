@@ -512,19 +512,19 @@ label {
   color: var(--text);
   font-weight: 600;
 }
+.ai-filter-label {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
 .ai-filter-row textarea {
   flex: 1;
   min-width: 180px;
   resize: vertical;
   background: var(--surface);
 }
-.ai-filter-status {
+.ai-filter-btn {
   flex-shrink: 0;
-  font-size: 0.875rem;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
 }
 .results-count {
   background: var(--primary);
@@ -921,6 +921,10 @@ label {
   to {
     transform: rotate(360deg);
   }
+}
+.btn-primary .spinner {
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
 }
 
 /* ── URL card inline status — a plain single line of text, no box ── */

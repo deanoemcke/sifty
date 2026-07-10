@@ -54,7 +54,8 @@ beforeEach(() => {
     <span id="resultCount"></span>
     <span id="totalCount"></span>
     <button id="deepBtn"></button>
-    <span id="aiFilterStatus"></span>
+    <textarea id="aiFilter"></textarea>
+    <button id="aiFilterBtn"></button>
     <div id="listingsContainer"></div>
   `;
 });
@@ -96,37 +97,43 @@ describe('renderDerived', () => {
     expect(document.getElementById('totalCount')?.textContent).toBe('2');
   });
 
-  it('shows a zero count before any listing has been excluded', () => {
+  it('disables the ai-filter button and shows the empty state when the prompt is blank', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     renderDerived();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 0 results');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(true);
+    expect(filterBtn.textContent).toBe('Filter');
   });
 
-  it('counts excluded listings in the ai-filter status line', () => {
-    addCardWithListings(['https://l/1', 'https://l/2', 'https://l/3']);
-    setAiFilterReason('https://l/2', 'too old');
-    setAiFilterReason('https://l/3', 'wrong colour');
+  it('enables the ai-filter button once a prompt is entered', () => {
+    addCardWithListings(['https://l/1', 'https://l/2']);
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
     renderDerived();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 2 results');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(false);
   });
 
-  it('shows a spinner and filtering message while the ai filter is running', () => {
+  it('shows a spinner and disables the ai-filter button while the ai filter is running', () => {
     addCardWithListings(['https://l/1']);
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
     setIsAiFilterRunning(true);
     renderDerived();
-    const status = document.getElementById('aiFilterStatus') as HTMLElement;
-    expect(status.querySelector('.spinner')).not.toBeNull();
-    expect(status.textContent).toContain('Filtering results...');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(true);
+    expect(filterBtn.querySelector('.spinner')).not.toBeNull();
+    expect(filterBtn.textContent).toContain('Filtering..');
   });
 
-  it('reverts to the filtered count once the ai filter run finishes', () => {
+  it('re-enables the ai-filter button and restores its label once the run finishes', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
-    setAiFilterReason('https://l/2', 'too old');
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
     setIsAiFilterRunning(true);
     renderDerived();
     setIsAiFilterRunning(false);
     renderDerived();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 1 results');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(false);
+    expect(filterBtn.textContent).toBe('Filter');
   });
 
   it('builds the ordered listing list only once per render tick', () => {

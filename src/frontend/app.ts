@@ -1,5 +1,9 @@
 import type { RecipeId } from '../lib/recipes/metadata';
-import { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } from './aiFilter';
+import {
+  AI_FILTER_DEBOUNCE_MS,
+  requestAiFilterRun,
+  requestAiFilterRunIfPromptLongEnough,
+} from './aiFilter';
 import { debounce } from './debounce';
 import {
   DEFAULT_REGION_DISPLAY,
@@ -14,7 +18,7 @@ import { handleListingCardKeydown, resolveListingCardOpenArea } from './listingC
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from './listingDetail';
 import { applyBrandTitle } from './pageTitle';
 import { searchUrlCardAsync } from './quickSearch';
-import { applyClientFilters, renderDerived } from './resultsView';
+import { applyClientFilters, renderAiFilterButton, renderDerived } from './resultsView';
 import {
   closeSaveSearchModal,
   fetchSavedSearchesAsync,
@@ -132,6 +136,15 @@ function initApp(): void {
   getElement<HTMLTextAreaElement>('aiFilter').addEventListener(
     'input',
     debouncedRequestAiFilterRun
+  );
+  getElement<HTMLTextAreaElement>('aiFilter').addEventListener('input', renderAiFilterButton);
+  getElement<HTMLButtonElement>('aiFilterBtn').addEventListener('click', () =>
+    requestAiFilterRun()
+  );
+  const submitAiFilterForm = (): void => getElement<HTMLButtonElement>('aiFilterBtn').click();
+  getElement<HTMLTextAreaElement>('aiFilter').addEventListener(
+    'keydown',
+    (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitAiFilterForm)
   );
 
   // Mark dirty on any URL input change or new URL card

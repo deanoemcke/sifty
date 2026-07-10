@@ -129,23 +129,21 @@ export function renderDerived(): void {
     'hidden',
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped
   );
-  renderAiFilterStatus(listings);
+  renderAiFilterButton();
   scheduleSortOrderUpdate(listings);
   updateUrlGroupHeaders();
 }
 
-// Sole writer of the ai-filter status line — shows a spinner while a run is
-// in flight, otherwise the count of listings the filter has excluded.
-export function renderAiFilterStatus(listings: ListingItem[]): void {
-  const status = getElement('aiFilterStatus');
-  if (isAiFilterRunning) {
-    status.innerHTML = `<span class="spinner"></span><span>Filtering results...</span>`;
-    return;
-  }
-  const excludedCount = listings.filter(
-    (listingItem) => listingItem.aiFilterReason !== null
-  ).length;
-  status.textContent = `Filtered ${excludedCount} results`;
+// Sole writer of the ai-filter button's disabled/label state — disabled with
+// a spinner while a run is in flight, disabled with no criteria typed yet,
+// otherwise enabled and ready to submit.
+export function renderAiFilterButton(): void {
+  const filterBtn = getElement<HTMLButtonElement>('aiFilterBtn');
+  const promptIsEmpty = getElement<HTMLTextAreaElement>('aiFilter').value.trim() === '';
+  filterBtn.disabled = isAiFilterRunning || promptIsEmpty;
+  filterBtn.innerHTML = isAiFilterRunning
+    ? '<span class="spinner"></span><span>Filtering..</span>'
+    : 'Filter';
 }
 
 export function applyClientFilters(): void {

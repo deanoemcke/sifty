@@ -52,7 +52,7 @@ beforeEach(() => {
     <span id="totalCount"></span>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
-    <span id="aiFilterStatus"></span>
+    <button id="aiFilterBtn"></button>
     <div id="urlCardsContainer"></div>
   `;
 });

@@ -95,9 +95,8 @@ describe('runAiFilterAsync', () => {
       <span id="resultCount"></span>
       <span id="totalCount"></span>
       <button id="deepBtn"></button>
-      <span id="aiFilterStatus"></span>
       <textarea id="aiFilter">laptop</textarea>
-      <button id="applyAiFilterBtn"></button>
+      <button id="aiFilterBtn"></button>
     `;
   });
 
@@ -163,7 +162,7 @@ describe('requestAiFilterRunIfPromptLongEnough', () => {
       <span id="resultCount"></span>
       <span id="totalCount"></span>
       <button id="deepBtn"></button>
-      <span id="aiFilterStatus"></span>
+      <button id="aiFilterBtn"></button>
     `;
   });
 
@@ -201,7 +200,6 @@ describe('requestAiFilterRunIfPromptLongEnough', () => {
     requestAiFilterRunIfPromptLongEnough();
 
     expect(listingsByUrl.get('https://l/1')?.aiFilterReason).toBeNull();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 0 results');
   });
 
   it('does not clear an existing filtered-out listing while the prompt is short but non-empty', () => {
@@ -225,7 +223,8 @@ describe('clearAiFilterResults', () => {
       <span id="resultCount"></span>
       <span id="totalCount"></span>
       <button id="deepBtn"></button>
-      <span id="aiFilterStatus"></span>
+      <textarea id="aiFilter"></textarea>
+      <button id="aiFilterBtn"></button>
     `;
   });
 

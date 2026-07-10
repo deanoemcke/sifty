@@ -37,7 +37,7 @@ beforeEach(() => {
     <input id="showFiltered" type="checkbox" checked />
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
-    <span id="aiFilterStatus"></span>
+    <button id="aiFilterBtn"></button>
 
     <button id="searchTabBtn" class="active"></button>
     <button id="favouritesTabBtn"></button>
