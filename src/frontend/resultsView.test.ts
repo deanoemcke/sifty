@@ -175,9 +175,12 @@ describe('applySortOrder', () => {
     expect(getByIdSpy).not.toHaveBeenCalled();
   });
 
-  it('still performs card lookups and DOM writes for a non-default sort', () => {
+  it('still performs card lookups and DOM writes for a non-default sort that actually reorders', () => {
     addCardWithListings(urls);
     renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
     setSortBy('best-match');
     const getByIdSpy = vi.spyOn(document, 'getElementById');
     applySortOrder(getOrderedListings());
@@ -287,6 +290,9 @@ describe('scheduleSortOrderUpdate', () => {
   it('only requests a single animation frame for a burst of calls', () => {
     addCardWithListings(urls);
     renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.price = 30;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.price = 20;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.price = 10;
     setSortBy('lowest-price');
     const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
 

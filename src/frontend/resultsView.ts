@@ -9,7 +9,7 @@ import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
 import { rafSchedule } from './rafSchedule';
 import { sourceBadgeHtml } from './recipeDisplay';
-import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
+import { sortListings } from './sortListings';
 import {
   cardIdByUrl,
   isAiFilterRunning,
@@ -63,11 +63,16 @@ export function getSortedListings(): ListingItem[] {
 // this directly — see scheduleSortOrderUpdate() below, which coalesces the
 // many calls renderDerived makes during an active SSE stream into one call
 // here per animation frame.
+// True when sorting listings wouldn't actually move any card — the common
+// case for the default source-url sort with a single result source, and for
+// any other sort once its order has already been applied.
+function sortWouldReorder(listings: ListingItem[]): boolean {
+  const sorted = sortListings(listings, sortBy);
+  return !sorted.every((item, index) => item === listings[index]);
+}
+
 export function applySortOrder(listings: ListingItem[]): void {
-  // Default sort is a no-op: listings are already in natural/insertion order,
-  // matching the order cards were appended to the DOM, so there's nothing to
-  // re-sort or re-append on every render tick.
-  if (sortBy === DEFAULT_SORT_OPTION) return;
+  if (!sortWouldReorder(listings)) return;
   const container = getElement('listingsContainer');
   sortListings(listings, sortBy).forEach((item) => {
     const card = getCardByUrl(item.data.url);
@@ -82,15 +87,12 @@ export function applySortOrder(listings: ListingItem[]): void {
 // immediately before the next paint is ever visible. rafSchedule() coalesces
 // a burst of calls into a single applySortOrder() invocation on the next
 // frame, using whichever listings snapshot was passed most recently.
-//
-// The default-sort check is duplicated here (ahead of applySortOrder's own
-// check) deliberately: it lets renderDerived skip scheduling a frame at all
-// for the common case, rather than scheduling one just to have
-// applySortOrder no-op inside it.
 const scheduleApplySortOrderOnNextFrame = rafSchedule(applySortOrder);
 
 export function scheduleSortOrderUpdate(listings: ListingItem[]): void {
-  if (sortBy === DEFAULT_SORT_OPTION) return;
+  // Skip scheduling a frame at all for the common no-reorder case, rather
+  // than scheduling one just to have applySortOrder no-op inside it.
+  if (!sortWouldReorder(listings)) return;
   scheduleApplySortOrderOnNextFrame(listings);
 }
 
