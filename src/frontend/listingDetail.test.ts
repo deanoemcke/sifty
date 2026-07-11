@@ -49,8 +49,6 @@ beforeEach(() => {
     <div id="listingModal" class="hidden"></div>
     <div id="listingModalBody"></div>
     <div id="statusBar" class="hidden"></div>
-    <span id="resultCount"></span>
-    <span id="totalCount"></span>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>

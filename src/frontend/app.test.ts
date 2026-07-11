@@ -323,11 +323,11 @@ describe('initApp() wiring', () => {
         'source-url',
       ]);
       expect(document.querySelector('#sortDropdown .dropdown-trigger-label')?.textContent).toBe(
-        'Sort results'
+        'Source URL'
       );
     });
 
-    it('updates state.sortBy and the checked radio when an option changes', async () => {
+    it('updates state.sortBy, the checked radio, and the trigger label when an option changes', async () => {
       await import('./app');
       const state = await import('./state');
       const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
@@ -344,6 +344,9 @@ describe('initApp() wiring', () => {
 
       expect(state.sortBy).toBe('best-match');
       expect((document.getElementById('sortSourceUrl') as HTMLInputElement).checked).toBe(false);
+      expect(document.querySelector('#sortDropdown .dropdown-trigger-label')?.textContent).toBe(
+        'Best match'
+      );
       vi.advanceTimersByTime(20);
     });
 
@@ -380,7 +383,7 @@ describe('initApp() wiring', () => {
       // "Include sold items" defaults to unchecked, so init hides the sold row.
       expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
       expect(document.querySelector('#showDropdown .dropdown-trigger-label')?.textContent).toBe(
-        'Show 0 results'
+        '0 of 0 results'
       );
     });
 

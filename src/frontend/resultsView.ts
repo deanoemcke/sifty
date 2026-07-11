@@ -120,8 +120,6 @@ export function renderDerived(): void {
   const visibleCount = listings.filter((listingItem) =>
     visibleListingCategories.has(getListingCategory(listingItem))
   ).length;
-  getElement('resultCount').textContent = String(visibleCount);
-  getElement('totalCount').textContent = String(listings.length);
   renderShowOptions(listings, visibleCount);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
     isCardSearchActive(data.searchStatus)

@@ -539,6 +539,13 @@ label {
    panel DOM becomes a full-screen sheet purely via this media query — no JS
    device detection, since that's what broke the previous native-select
    mobile attempt (browsers don't treat <select multiple> like a modal). */
+.dropdown-external-label {
+  margin-bottom: 0;
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  color: var(--text);
+  cursor: pointer;
+}
 .dropdown-control {
   position: relative;
 }
@@ -600,7 +607,7 @@ label {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.3rem;
-  font-size: 0.8rem;
+  font-size: 0.875rem;
   color: var(--text);
   cursor: pointer;
   user-select: none;
@@ -647,7 +654,6 @@ label {
     padding: 0.5rem 1rem;
   }
   .dropdown-option-row {
-    font-size: 1rem;
     padding: 0.6rem 0;
   }
   .dropdown-panel-footer {

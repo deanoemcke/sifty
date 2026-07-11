@@ -188,8 +188,6 @@ export function resetAllResults(): void {
   setAiFilterPendingRun(false);
   listingsByUrl.clear();
   getElement('listingsContainer').innerHTML = '';
-  getElement('resultCount').textContent = '0';
-  getElement('totalCount').textContent = '0';
   getElement('resultsSection').classList.add('hidden');
   for (const card of urlCards) {
     const data = urlCardData(card);

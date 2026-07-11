@@ -52,8 +52,6 @@ beforeEach(() => {
   resetState();
   resetUrlCardStore();
   document.body.innerHTML = `
-    <span id="resultCount"></span>
-    <span id="totalCount"></span>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
@@ -88,25 +86,22 @@ describe('renderDerived', () => {
     setAiFilterReason('https://l/2', 'too old');
     visibleListingCategories.delete('filtered');
     renderDerived();
-    expect(document.getElementById('resultCount')?.textContent).toBe('1');
-    expect(document.getElementById('totalCount')?.textContent).toBe('2');
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('1 of 2 results');
   });
 
   it('counts all listings as visible when filtered listings are shown', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
     renderDerived();
-    expect(document.getElementById('resultCount')?.textContent).toBe('2');
-    expect(document.getElementById('totalCount')?.textContent).toBe('2');
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('2 of 2 results');
   });
 
-  it('refreshes the Show dropdown counts and trigger label', () => {
+  it('refreshes the Show dropdown per-category counts', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
     renderDerived();
     expect(document.getElementById('showAvailableCount')?.textContent).toBe('(1)');
     expect(document.getElementById('showFilteredCount')?.textContent).toBe('(1)');
-    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Show 2 results');
   });
 
   it('disables the ai-filter button and shows the empty state when the prompt is blank', () => {

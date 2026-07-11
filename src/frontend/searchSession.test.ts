@@ -31,8 +31,6 @@ beforeEach(() => {
 
     <div id="resultsSection" class="hidden"></div>
     <div id="listingsContainer"></div>
-    <span id="resultCount"></span>
-    <span id="totalCount"></span>
     <div id="showDropdown">
       <button id="showDropdownBtn" type="button" aria-expanded="false">
         <span class="dropdown-trigger-label">Show</span>

@@ -48,9 +48,9 @@ describe('populateShowControls', () => {
     expect(rowLabels).toEqual(['Available', 'Sold', 'Filtered']);
   });
 
-  it('seeds the trigger and footer labels to "Show 0 results"', () => {
-    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Show 0 results');
-    expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe('Show 0 results');
+  it('seeds the trigger and footer labels to "0 of 0 results"', () => {
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('0 of 0 results');
+    expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe('0 of 0 results');
   });
 });
 
@@ -81,13 +81,13 @@ describe('tallyListingCategories', () => {
 });
 
 describe('renderShowOptions', () => {
-  it('writes per-category counts and a pluralized trigger/footer label', () => {
+  it('writes per-category counts and a "visible of total results" trigger/footer label', () => {
     const listings = [
       makeListingItem(),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
       makeListingItem({ aiFilterReason: 'too expensive' }),
     ];
-    renderShowOptions(listings, 47);
+    renderShowOptions(listings, 2);
     for (const [category, count] of [
       ['showAvailable', 1],
       ['showSold', 1],
@@ -95,13 +95,13 @@ describe('renderShowOptions', () => {
     ] as const) {
       expect(document.getElementById(`${category}Count`)?.textContent).toBe(`(${count})`);
     }
-    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Show 47 results');
-    expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe('Show 47 results');
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('2 of 3 results');
+    expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe('2 of 3 results');
   });
 
-  it('singularizes "1 result"', () => {
-    renderShowOptions([], 1);
-    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Show 1 result');
+  it('does not pluralize — "results" is always literal, matching the old header phrasing', () => {
+    renderShowOptions([], 0);
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('0 of 0 results');
   });
 });
 

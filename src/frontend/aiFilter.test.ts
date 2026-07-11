@@ -93,8 +93,6 @@ describe('runAiFilterAsync', () => {
     document.body.innerHTML = `
       <div id="resultsSection" class="hidden"></div>
       <div id="listingsContainer"></div>
-      <span id="resultCount"></span>
-      <span id="totalCount"></span>
       <button id="deepBtn"></button>
       <textarea id="aiFilter">laptop</textarea>
       <button id="aiFilterBtn"></button>
@@ -162,8 +160,6 @@ describe('requestAiFilterRunIfPromptLongEnough', () => {
     resetUrlCardStore();
     document.body.innerHTML = `
       <textarea id="aiFilter"></textarea>
-      <span id="resultCount"></span>
-      <span id="totalCount"></span>
       <button id="deepBtn"></button>
       <button id="aiFilterBtn"></button>
       ${SHOW_DROPDOWN_FIXTURE_HTML}
@@ -225,8 +221,6 @@ describe('clearAiFilterResults', () => {
     resetState();
     resetUrlCardStore();
     document.body.innerHTML = `
-      <span id="resultCount"></span>
-      <span id="totalCount"></span>
       <button id="deepBtn"></button>
       <textarea id="aiFilter"></textarea>
       <button id="aiFilterBtn"></button>

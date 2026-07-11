@@ -87,13 +87,11 @@ export function tallyListingCategories(
   return tally;
 }
 
-function pluralize(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
-}
-
 // Sole writer of the per-category count spans and the trigger/footer label.
 // Called from resultsView.ts's renderDerived() with the listings/visibleCount
-// it already computed, so counts stay on a single update path.
+// it already computed, so counts stay on a single update path. The label
+// format and literal "results" (never pluralized) match the header's former
+// "Showing N / X results" line, which this control now replaces.
 export function renderShowOptions(listings: ListingItem[], visibleCount: number): void {
   const tally = tallyListingCategories(listings);
   for (const [category, checkboxId] of Object.entries(SHOW_CHECKBOX_ID_BY_CATEGORY) as Array<
@@ -101,7 +99,7 @@ export function renderShowOptions(listings: ListingItem[], visibleCount: number)
   >) {
     getElement(`${checkboxId}Count`).textContent = `(${tally[category]})`;
   }
-  setDropdownLabel(getShowDropdownElements(), `Show ${pluralize(visibleCount, 'result')}`);
+  setDropdownLabel(getShowDropdownElements(), `${visibleCount} of ${listings.length} results`);
 }
 
 export function setListingCategoryVisible(
