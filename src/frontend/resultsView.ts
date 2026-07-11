@@ -10,6 +10,7 @@ import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
 import { rafSchedule } from './rafSchedule';
 import { sourceBadgeHtml } from './recipeDisplay';
+import { renderShowOptions } from './showDropdown';
 import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
 import {
   cardIdByUrl,
@@ -121,6 +122,7 @@ export function renderDerived(): void {
   ).length;
   getElement('resultCount').textContent = String(visibleCount);
   getElement('totalCount').textContent = String(listings.length);
+  renderShowOptions(listings, visibleCount);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
     isCardSearchActive(data.searchStatus)
   );

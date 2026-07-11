@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getElement } from './domUtils';
 import { deepSearchListingAsync, runDeepSearchAsync } from './listingDetail';
+import { populateShowControls } from './showDropdown';
 import {
   type ListingItem,
   listingsByUrl,
@@ -9,7 +10,7 @@ import {
   setOpenModalListingUrl,
   urlCardDataById,
 } from './state';
-import { makeListing, makeListingItem } from './testFixtures';
+import { makeListing, makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
 
 function makeItem(url: string): ListingItem {
   return makeListingItem({
@@ -54,7 +55,9 @@ beforeEach(() => {
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
     <div id="urlCardsContainer"></div>
+    ${SHOW_DROPDOWN_FIXTURE_HTML}
   `;
+  populateShowControls();
 });
 
 afterEach(() => {

@@ -306,24 +306,31 @@ describe('initApp() wiring', () => {
     });
   });
 
-  describe('Sort by control', () => {
-    it('populates the sort select with all options, defaulting to source-url', async () => {
+  describe('Sort dropdown control', () => {
+    it('populates the sort panel with all options, defaulting to source-url', async () => {
       await import('./app');
-      const sortSelect = document.getElementById('sortBy') as HTMLSelectElement;
-      expect(Array.from(sortSelect.options).map((option) => option.value)).toEqual([
+      const radios = Array.from(
+        document.querySelectorAll<HTMLInputElement>('#sortDropdownOptions input[type="radio"]')
+      );
+      expect(radios.map((radio) => radio.value)).toEqual([
         'source-url',
         'best-match',
         'worst-match',
         'lowest-price',
         'highest-price',
       ]);
-      expect(sortSelect.value).toBe('source-url');
+      expect(radios.filter((radio) => radio.checked).map((radio) => radio.value)).toEqual([
+        'source-url',
+      ]);
+      expect(document.querySelector('#sortDropdown .dropdown-trigger-label')?.textContent).toBe(
+        'Sort results'
+      );
     });
 
-    it('updates state.sortBy when the select changes', async () => {
+    it('updates state.sortBy and the checked radio when an option changes', async () => {
       await import('./app');
       const state = await import('./state');
-      const sortSelect = document.getElementById('sortBy') as HTMLSelectElement;
+      const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
 
       // renderDerived() schedules the non-default-sort DOM reorder via
       // requestAnimationFrame (see resultsView.ts's scheduleSortOrderUpdate).
@@ -332,44 +339,49 @@ describe('initApp() wiring', () => {
       // already-torn-down DOM and surfaces as an unhandled error.
       vi.useFakeTimers();
 
-      sortSelect.value = 'best-match';
-      sortSelect.dispatchEvent(new Event('change'));
+      bestMatchRadio.checked = true;
+      bestMatchRadio.dispatchEvent(new Event('change'));
 
       expect(state.sortBy).toBe('best-match');
+      expect((document.getElementById('sortSourceUrl') as HTMLInputElement).checked).toBe(false);
       vi.advanceTimersByTime(20);
+    });
+
+    it('clicking the Sort button opens the panel and sets aria-expanded', async () => {
+      await import('./app');
+      const panel = document.getElementById('sortDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(true);
+
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+
+      expect(panel.classList.contains('hidden')).toBe(false);
+      expect(document.getElementById('sortDropdownBtn')?.getAttribute('aria-expanded')).toBe(
+        'true'
+      );
+    });
+
+    it('clicking the footer button closes the panel', async () => {
+      await import('./app');
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+      document.getElementById('sortDropdownFooterBtn')?.dispatchEvent(new Event('click'));
+
+      expect(document.getElementById('sortDropdownPanel')?.classList.contains('hidden')).toBe(true);
     });
   });
 
   describe('Show dropdown control', () => {
-    it('init populates the checkbox panel and the native select from SHOW_OPTIONS', async () => {
+    it('init populates the checkbox panel from SHOW_OPTIONS, hiding Sold by default', async () => {
       await import('./app');
       const checkboxIds = Array.from(
-        document.querySelectorAll('#showDropdownPanel input[type="checkbox"]')
+        document.querySelectorAll('#showDropdownOptions input[type="checkbox"]')
       ).map((checkbox) => checkbox.id);
       expect(checkboxIds).toEqual(['showAvailable', 'showSold', 'showFiltered']);
 
-      // "Include sold items" defaults to unchecked, so init hides the sold
-      // row and strips the sold option from the native select.
-      const select = document.getElementById('showNativeSelect') as HTMLSelectElement;
-      expect(Array.from(select.options).map((option) => option.value)).toEqual([
-        'available',
-        'filtered',
-      ]);
-      expect(Array.from(select.options).every((option) => option.selected)).toBe(true);
+      // "Include sold items" defaults to unchecked, so init hides the sold row.
       expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
-    });
-
-    it('changing the native select updates state and mirrors into the checkboxes', async () => {
-      await import('./app');
-      const state = await import('./state');
-      const select = document.getElementById('showNativeSelect') as HTMLSelectElement;
-      const filteredOption = select.querySelector('option[value="filtered"]') as HTMLOptionElement;
-
-      filteredOption.selected = false;
-      select.dispatchEvent(new Event('change'));
-
-      expect(state.visibleListingCategories.has('filtered')).toBe(false);
-      expect((document.getElementById('showFiltered') as HTMLInputElement).checked).toBe(false);
+      expect(document.querySelector('#showDropdown .dropdown-trigger-label')?.textContent).toBe(
+        'Show 0 results'
+      );
     });
 
     it('clicking the Show button opens the panel and sets aria-expanded', async () => {
@@ -398,6 +410,40 @@ describe('initApp() wiring', () => {
       expect(panel.classList.contains('hidden')).toBe(true);
     });
 
+    it('pressing Escape closes the open panel', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
+    it('clicking the footer button closes the panel', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      document.getElementById('showDropdownFooterBtn')?.dispatchEvent(new Event('click'));
+
+      expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(true);
+    });
+
+    it('opening the Sort panel closes an open Show panel, and vice versa', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(
+        false
+      );
+
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+
+      expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(true);
+      expect(document.getElementById('sortDropdownPanel')?.classList.contains('hidden')).toBe(
+        false
+      );
+    });
+
     it('toggling the Sold checkbox updates state and re-applies client filters', async () => {
       await import('./app');
       const state = await import('./state');
@@ -409,27 +455,20 @@ describe('initApp() wiring', () => {
       expect(state.visibleListingCategories.has('sold')).toBe(false);
     });
 
-    it('toggling "Include sold items" shows/hides the Sold row and native option', async () => {
+    it('toggling "Include sold items" shows/hides the Sold row', async () => {
       await import('./app');
       const includeSoldItems = document.getElementById(
         'discoveryIncludeSoldItems'
       ) as HTMLInputElement;
       const soldRow = document.getElementById('showSoldRow') as HTMLElement;
-      const select = document.getElementById('showNativeSelect') as HTMLSelectElement;
 
       includeSoldItems.checked = false;
       includeSoldItems.dispatchEvent(new Event('change'));
       expect(soldRow.classList.contains('hidden')).toBe(true);
-      expect(select.querySelector('option[value="sold"]')).toBeNull();
 
       includeSoldItems.checked = true;
       includeSoldItems.dispatchEvent(new Event('change'));
       expect(soldRow.classList.contains('hidden')).toBe(false);
-      expect(Array.from(select.options).map((option) => option.value)).toEqual([
-        'available',
-        'sold',
-        'filtered',
-      ]);
     });
   });
 

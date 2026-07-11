@@ -28,3 +28,21 @@ export function makeListingItem(overrides: Partial<ListingItem> = {}): ListingIt
     ...overrides,
   };
 }
+
+// renderDerived() (resultsView.ts) always refreshes the Show dropdown, so any
+// test fixture that triggers it needs this minimal Show DOM present or
+// getElement() throws. Append this markup and call populateShowControls()
+// (from ./showDropdown) in beforeEach, alongside the rest of a test file's
+// hand-built fixture.
+export const SHOW_DROPDOWN_FIXTURE_HTML = `
+  <div id="showDropdown">
+    <button id="showDropdownBtn" type="button" aria-expanded="false">
+      <span class="dropdown-trigger-label">Show</span>
+      <svg class="dropdown-caret"></svg>
+    </button>
+    <div id="showDropdownPanel" class="hidden">
+      <div id="showDropdownOptions"></div>
+      <button id="showDropdownFooterBtn" type="button">Show</button>
+    </div>
+  </div>
+`;

@@ -14,6 +14,7 @@ import {
   updateDiscoveryBtn,
 } from './discoveryForm';
 import { getElement } from './domUtils';
+import { handleEscapeKey, handleOutsideClick } from './dropdownPanel';
 import { handleListingCardKeydown, resolveListingCardOpenArea } from './listingCardActivation';
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from './listingDetail';
 import { applyBrandTitle } from './pageTitle';
@@ -29,7 +30,6 @@ import {
   openSaveSearchModal,
 } from './searchSession';
 import {
-  applyShowSelectSelection,
   closeShowDropdownPanel,
   populateShowControls,
   renderShowControls,
@@ -41,11 +41,13 @@ import {
 } from './showDropdown';
 import { activateSidebarTab } from './sidebarTabs';
 import {
-  DEFAULT_SORT_OPTION,
-  populateSortSelect,
-  SORT_OPTIONS,
-  type SortOption,
-} from './sortListings';
+  closeSortDropdownPanel,
+  populateSortControls,
+  renderSortControls,
+  SORT_RADIO_ID_BY_OPTION,
+  toggleSortDropdownPanel,
+} from './sortDropdown';
+import { DEFAULT_SORT_OPTION, SORT_OPTIONS } from './sortListings';
 import { setSortBy } from './state';
 import { cancelGroupSearches, createUrlCard } from './urlCardRow';
 import { toggleUrlGroup } from './urlGroupsView';
@@ -57,6 +59,7 @@ function initApp(): void {
   getElement('discoveryBtn').textContent = DISCOVERY_BUTTON_LABEL;
   populateShowControls();
   updateShowSoldOptionVisibility();
+  populateSortControls(DEFAULT_SORT_OPTION);
   createUrlCard(searchUrlCardAsync);
   getElement<HTMLTextAreaElement>('discoveryPrompt').focus();
 
@@ -69,9 +72,7 @@ function initApp(): void {
   getElement<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearchAsync());
 
   getElement('showDropdownBtn').addEventListener('click', () => toggleShowDropdownPanel());
-  document.addEventListener('click', (mouseEvent: MouseEvent) => {
-    if (!getElement('showDropdown').contains(mouseEvent.target as Node)) closeShowDropdownPanel();
-  });
+  getElement('showDropdownFooterBtn').addEventListener('click', () => closeShowDropdownPanel());
   for (const { value } of SHOW_OPTIONS) {
     getElement<HTMLInputElement>(SHOW_CHECKBOX_ID_BY_CATEGORY[value]).addEventListener(
       'change',
@@ -82,21 +83,29 @@ function initApp(): void {
       }
     );
   }
-  getElement<HTMLSelectElement>('showNativeSelect').addEventListener('change', (changeEvent) => {
-    applyShowSelectSelection(changeEvent.target as HTMLSelectElement);
-    applyClientFilters();
-    renderShowControls();
-  });
   getElement<HTMLInputElement>('discoveryIncludeSoldItems').addEventListener(
     'change',
     updateShowSoldOptionVisibility
   );
 
-  populateSortSelect(getElement<HTMLSelectElement>('sortBy'), SORT_OPTIONS, DEFAULT_SORT_OPTION);
-  getElement<HTMLSelectElement>('sortBy').addEventListener('change', (changeEvent) => {
-    setSortBy((changeEvent.target as HTMLSelectElement).value as SortOption);
-    renderDerived();
-  });
+  getElement('sortDropdownBtn').addEventListener('click', () => toggleSortDropdownPanel());
+  getElement('sortDropdownFooterBtn').addEventListener('click', () => closeSortDropdownPanel());
+  for (const { value } of SORT_OPTIONS) {
+    getElement<HTMLInputElement>(SORT_RADIO_ID_BY_OPTION[value]).addEventListener('change', () => {
+      setSortBy(value);
+      renderSortControls(value);
+      renderDerived();
+    });
+  }
+
+  // Single shared dismiss wiring for both dropdown controls: opening one
+  // closes the other, and outside-click/Escape close whichever is open.
+  document.addEventListener('click', (mouseEvent: MouseEvent) =>
+    handleOutsideClick(mouseEvent.target as Node)
+  );
+  document.addEventListener('keydown', (keyboardEvent: KeyboardEvent) =>
+    handleEscapeKey(keyboardEvent.key)
+  );
 
   // Populate region dropdown and wire the allow-shipping checkbox
   fetch('/api/regions')

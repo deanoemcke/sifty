@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { handleDiscoverySubmitAsync, loadSavedSearchAsync } from './searchSession';
+import { populateShowControls, updateShowSoldOptionVisibility } from './showDropdown';
 import { resetState } from './state';
 import { createUrlCard } from './urlCardRow';
 import { resetUrlCardStore, urlCards } from './urlCardStore';
@@ -32,14 +33,16 @@ beforeEach(() => {
     <div id="listingsContainer"></div>
     <span id="resultCount"></span>
     <span id="totalCount"></span>
-    <input id="showAvailable" type="checkbox" checked />
-    <label id="showSoldRow" class="hidden"><input id="showSold" type="checkbox" checked /></label>
-    <input id="showFiltered" type="checkbox" checked />
-    <select id="showNativeSelect" multiple>
-      <option value="available" selected>Available</option>
-      <option value="sold" selected>Sold</option>
-      <option value="filtered" selected>Filtered</option>
-    </select>
+    <div id="showDropdown">
+      <button id="showDropdownBtn" type="button" aria-expanded="false">
+        <span class="dropdown-trigger-label">Show</span>
+        <svg class="dropdown-caret"></svg>
+      </button>
+      <div id="showDropdownPanel" class="hidden">
+        <div id="showDropdownOptions"></div>
+        <button id="showDropdownFooterBtn" type="button">Show</button>
+      </div>
+    </div>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
@@ -50,6 +53,8 @@ beforeEach(() => {
     <div id="savedSearchesPanel" class="hidden"></div>
     <button id="saveCurrentBtn" class="hidden"></button>
   `;
+  populateShowControls();
+  updateShowSoldOptionVisibility();
   // The app always seeds one blank URL card on init (see app.ts) — every
   // caller of handleDiscoverySubmitAsync relies on urlCards[0] existing.
   createUrlCard(async () => {});

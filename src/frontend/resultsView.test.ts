@@ -10,6 +10,7 @@ import {
   renderDerived,
   scheduleSortOrderUpdate,
 } from './resultsView';
+import { populateShowControls } from './showDropdown';
 import * as sortListingsModule from './sortListings';
 import {
   type ListingItem,
@@ -20,7 +21,7 @@ import {
   type UrlCardData,
   visibleListingCategories,
 } from './state';
-import { makeListing, makeListingItem } from './testFixtures';
+import { makeListing, makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from './urlCardStore';
 
 function makeListingItemAt(url: string): ListingItem {
@@ -57,7 +58,9 @@ beforeEach(() => {
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
     <div id="listingsContainer"></div>
+    ${SHOW_DROPDOWN_FIXTURE_HTML}
   `;
+  populateShowControls();
 });
 
 afterEach(() => {
@@ -95,6 +98,15 @@ describe('renderDerived', () => {
     renderDerived();
     expect(document.getElementById('resultCount')?.textContent).toBe('2');
     expect(document.getElementById('totalCount')?.textContent).toBe('2');
+  });
+
+  it('refreshes the Show dropdown counts and trigger label', () => {
+    addCardWithListings(['https://l/1', 'https://l/2']);
+    setAiFilterReason('https://l/2', 'too old');
+    renderDerived();
+    expect(document.getElementById('showAvailableCount')?.textContent).toBe('(1)');
+    expect(document.getElementById('showFilteredCount')?.textContent).toBe('(1)');
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Show 2 results');
   });
 
   it('disables the ai-filter button and shows the empty state when the prompt is blank', () => {

@@ -1,15 +1,26 @@
 // ── Show dropdown ─────────────────────────────────────────────────────────────
 // DOM wiring for the results header's "Show" control (Available/Sold/Filtered).
-// The control is hybrid: a custom button-and-checkbox popover on fine-pointer
-// devices, and a transparent native <select multiple> overlaid on the button on
-// coarse-pointer devices (see .show-native-select in styles.css). Both are
-// populated from SHOW_OPTIONS and derive their checked/selected state from
-// visibleListingCategories. Deriving a listing's category and applying
-// visibility to rendered cards is resultsView.ts's job
-// (getListingCategory / applyClientFilters).
+// Shares its open/close/dismiss mechanics with the Sort dropdown via
+// dropdownPanel.ts, so both behave identically — a desktop anchored panel or
+// (CSS breakpoint only) a mobile full-screen sheet. Deriving a listing's
+// category and applying visibility to rendered cards is resultsView.ts's job
+// (getListingCategory / applyClientFilters); this module only renders the
+// control from state it's handed.
 
 import { getElement } from './domUtils';
-import { type ListingVisibilityCategory, visibleListingCategories } from './state';
+import {
+  closeDropdownPanel,
+  type DropdownElements,
+  getDropdownElements,
+  setDropdownLabel,
+  toggleDropdownPanel,
+} from './dropdownPanel';
+import {
+  getListingCategory,
+  type ListingItem,
+  type ListingVisibilityCategory,
+  visibleListingCategories,
+} from './state';
 
 export const SHOW_OPTIONS: Array<{ value: ListingVisibilityCategory; label: string }> = [
   { value: 'available', label: 'Available' },
@@ -23,54 +34,74 @@ export const SHOW_CHECKBOX_ID_BY_CATEGORY: Record<ListingVisibilityCategory, str
   filtered: 'showFiltered',
 };
 
-// One-time init: builds the popover's checkbox rows and the native select's
-// options from SHOW_OPTIONS.
+const SHOW_DROPDOWN_IDS = {
+  root: 'showDropdown',
+  trigger: 'showDropdownBtn',
+  panel: 'showDropdownPanel',
+  footer: 'showDropdownFooterBtn',
+};
+
+function getShowDropdownElements(): DropdownElements {
+  return getDropdownElements(SHOW_DROPDOWN_IDS);
+}
+
+// One-time init: builds the panel's checkbox rows (each with a count span)
+// from SHOW_OPTIONS, and seeds the trigger/footer label.
 export function populateShowControls(): void {
-  const panel = getElement('showDropdownPanel');
-  const select = getElement<HTMLSelectElement>('showNativeSelect');
+  const optionsContainer = getElement('showDropdownOptions');
   for (const { value, label } of SHOW_OPTIONS) {
     const checkboxId = SHOW_CHECKBOX_ID_BY_CATEGORY[value];
     const row = document.createElement('label');
-    row.className = 'checkbox-row';
+    row.className = 'dropdown-option-row';
     row.id = `${checkboxId}Row`;
     row.htmlFor = checkboxId;
     const checkbox = document.createElement('input');
     checkbox.id = checkboxId;
     checkbox.type = 'checkbox';
-    row.append(checkbox, ` ${label}`);
-    panel.appendChild(row);
-
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    select.appendChild(option);
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = label;
+    const countSpan = document.createElement('span');
+    countSpan.className = 'dropdown-option-count';
+    countSpan.id = `${checkboxId}Count`;
+    row.append(checkbox, labelSpan, countSpan);
+    optionsContainer.appendChild(row);
   }
   renderShowControls();
+  renderShowOptions([], 0);
 }
 
-// Sole writer of the checkboxes' checked state and the select options'
-// selected state — derives both from state. Structure-preserving: never
-// creates or removes nodes, so it's safe to call while a native picker is
-// open. Option add/remove happens only in updateShowSoldOptionVisibility.
+// Sole writer of the checkboxes' checked state — derives it from state.
 export function renderShowControls(): void {
-  const select = getElement<HTMLSelectElement>('showNativeSelect');
   for (const [category, checkboxId] of Object.entries(SHOW_CHECKBOX_ID_BY_CATEGORY) as Array<
     [ListingVisibilityCategory, string]
   >) {
-    const isVisible = visibleListingCategories.has(category);
-    getElement<HTMLInputElement>(checkboxId).checked = isVisible;
-    const option = select.querySelector<HTMLOptionElement>(`option[value="${category}"]`);
-    if (option) option.selected = isVisible;
+    getElement<HTMLInputElement>(checkboxId).checked = visibleListingCategories.has(category);
   }
 }
 
-// Applies the native select's selection to state. Only categories with an
-// option present are touched, so a category whose option is removed (sold,
-// when include-sold is off) keeps its Set membership.
-export function applyShowSelectSelection(select: HTMLSelectElement): void {
-  for (const option of Array.from(select.options)) {
-    setListingCategoryVisible(option.value as ListingVisibilityCategory, option.selected);
+export function tallyListingCategories(
+  listings: ListingItem[]
+): Record<ListingVisibilityCategory, number> {
+  const tally: Record<ListingVisibilityCategory, number> = { available: 0, sold: 0, filtered: 0 };
+  for (const item of listings) tally[getListingCategory(item)]++;
+  return tally;
+}
+
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+// Sole writer of the per-category count spans and the trigger/footer label.
+// Called from resultsView.ts's renderDerived() with the listings/visibleCount
+// it already computed, so counts stay on a single update path.
+export function renderShowOptions(listings: ListingItem[], visibleCount: number): void {
+  const tally = tallyListingCategories(listings);
+  for (const [category, checkboxId] of Object.entries(SHOW_CHECKBOX_ID_BY_CATEGORY) as Array<
+    [ListingVisibilityCategory, string]
+  >) {
+    getElement(`${checkboxId}Count`).textContent = `(${tally[category]})`;
   }
+  setDropdownLabel(getShowDropdownElements(), `Show ${pluralize(visibleCount, 'result')}`);
 }
 
 export function setListingCategoryVisible(
@@ -83,35 +114,19 @@ export function setListingCategoryVisible(
 
 // The "Sold" choice only makes sense when the search can return sold items at
 // all, so it's hidden whenever the sidebar's "Include sold items" checkbox is
-// unchecked. The popover row is CSS-hidden, but the native option must be
-// removed outright — native pickers don't reliably honour CSS on <option>.
-// Neither path mutates visibleListingCategories.
+// unchecked. Never mutates visibleListingCategories.
 export function updateShowSoldOptionVisibility(): void {
   const includeSoldItems = getElement<HTMLInputElement>('discoveryIncludeSoldItems').checked;
-  getElement('showSoldRow').classList.toggle('hidden', !includeSoldItems);
-
-  const select = getElement<HTMLSelectElement>('showNativeSelect');
-  const soldOption = select.querySelector<HTMLOptionElement>('option[value="sold"]');
-  if (!includeSoldItems) {
-    soldOption?.remove();
-  } else if (!soldOption) {
-    const restoredOption = document.createElement('option');
-    restoredOption.value = 'sold';
-    restoredOption.textContent =
-      SHOW_OPTIONS.find((showOption) => showOption.value === 'sold')?.label ?? 'Sold';
-    restoredOption.selected = visibleListingCategories.has('sold');
-    select.insertBefore(restoredOption, select.querySelector('option[value="filtered"]'));
-  }
+  getElement(`${SHOW_CHECKBOX_ID_BY_CATEGORY.sold}Row`).classList.toggle(
+    'hidden',
+    !includeSoldItems
+  );
 }
 
 export function toggleShowDropdownPanel(): void {
-  const panel = getElement('showDropdownPanel');
-  const isOpen = !panel.classList.contains('hidden');
-  panel.classList.toggle('hidden', isOpen);
-  getElement<HTMLButtonElement>('showDropdownBtn').setAttribute('aria-expanded', String(!isOpen));
+  toggleDropdownPanel(getShowDropdownElements());
 }
 
 export function closeShowDropdownPanel(): void {
-  getElement('showDropdownPanel').classList.add('hidden');
-  getElement<HTMLButtonElement>('showDropdownBtn').setAttribute('aria-expanded', 'false');
+  closeDropdownPanel(getShowDropdownElements());
 }

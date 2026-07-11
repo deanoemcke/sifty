@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing } from '../lib/recipes/base';
 import { normalizeListingRelevance, searchUrlCardAsync } from './quickSearch';
 import { cardStatusText } from './searchStatusText';
+import { populateShowControls } from './showDropdown';
 import { listingsByUrl, resetState, type UrlCardData } from './state';
+import { SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
 import { cancelSearch, cardStatusSnapshot } from './urlCardRow';
 import {
   addUrlCard,
@@ -87,7 +89,9 @@ beforeEach(() => {
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
+    ${SHOW_DROPDOWN_FIXTURE_HTML}
   `;
+  populateShowControls();
 });
 
 afterEach(() => {
