@@ -177,26 +177,27 @@ describe('getListingCategory', () => {
     expect(getListingCategory(item)).toBe('used');
   });
 
-  it('returns new when isNew is true and not filtered or sold', () => {
+  it('returns new when isNewFromSearch is true and not filtered or sold', () => {
     const item = makeListingItem({
       aiFilterReason: null,
-      data: { ...makeListingItem().data, isNew: true },
+      isNewFromSearch: true,
     });
     expect(getListingCategory(item)).toBe('new');
   });
 
-  it('returns sold when both isNew and isSold are true', () => {
+  it('returns sold when both isNewFromSearch and isSold are true', () => {
     const item = makeListingItem({
       aiFilterReason: null,
-      data: { ...makeListingItem().data, isNew: true, isSold: true },
+      data: { ...makeListingItem().data, isSold: true },
+      isNewFromSearch: true,
     });
     expect(getListingCategory(item)).toBe('sold');
   });
 
-  it('returns filtered when isNew is true but aiFilterReason is set', () => {
+  it('returns filtered when isNewFromSearch is true but aiFilterReason is set', () => {
     const item = makeListingItem({
       aiFilterReason: 'too old',
-      data: { ...makeListingItem().data, isNew: true },
+      isNewFromSearch: true,
     });
     expect(getListingCategory(item)).toBe('filtered');
   });

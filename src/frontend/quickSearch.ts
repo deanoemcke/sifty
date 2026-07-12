@@ -84,7 +84,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
         }
       } else if (ev.type === 'listing') {
         const listing = normalizeListingRelevance(ev.data as Listing);
-        if (isNewConditionSearchUrl(url)) listing.isNew = true;
+        const isNewFromThisSearch = isNewConditionSearchUrl(url);
         const dedupeKey = listingDedupeKey(listing);
         const existingUrl = listingUrlByDedupeKey.get(dedupeKey);
         if (existingUrl === undefined) {
@@ -94,6 +94,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
             hasBeenDeepSearched: false,
             aiCheckedHash: null,
             aiFilterReason: null,
+            isNewFromSearch: isNewFromThisSearch,
           };
           addListingItem(item);
           renderCard(item);
@@ -104,11 +105,12 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           // (e.g. discovery's "used" and "new" cards racing on the same
           // item). Merge deterministically rather than first-write-wins: a
           // listing found by any condition=new search is new, regardless of
-          // which arrival happened to land first. An existing isNew: true
-          // is therefore never downgraded by a later, less-specific arrival.
+          // which arrival happened to land first. An existing
+          // isNewFromSearch: true is therefore never downgraded by a later,
+          // less-specific arrival.
           const existingItem = listingsByUrl.get(existingUrl);
-          if (existingItem && listing.isNew && !existingItem.data.isNew) {
-            existingItem.data.isNew = true;
+          if (existingItem && isNewFromThisSearch && !existingItem.isNewFromSearch) {
+            existingItem.isNewFromSearch = true;
             renderCard(existingItem);
             renderDerived();
           }

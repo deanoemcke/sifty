@@ -77,7 +77,7 @@ describe('tallyListingCategories', () => {
       makeListingItem(),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
-      makeListingItem({ data: { ...makeListingItem().data, isNew: true } }),
+      makeListingItem({ isNewFromSearch: true }),
       makeListingItem({ aiFilterReason: 'too expensive' }),
     ];
     expect(tallyListingCategories(listings)).toEqual({
@@ -98,7 +98,7 @@ describe('renderShowOptions', () => {
     const listings = [
       makeListingItem(),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
-      makeListingItem({ data: { ...makeListingItem().data, isNew: true } }),
+      makeListingItem({ isNewFromSearch: true }),
       makeListingItem({ aiFilterReason: 'too expensive' }),
     ];
     setListingCategoryVisible('filtered', false);
@@ -167,13 +167,13 @@ describe('renderShowOptions', () => {
   });
 
   it('shows the New row when the current results contain a new listing', () => {
-    const newItem = makeListingItem({ data: { ...makeListingItem().data, isNew: true } });
+    const newItem = makeListingItem({ isNewFromSearch: true });
     renderShowOptions([newItem]);
     expect(document.getElementById('showNewRow')?.classList.contains('hidden')).toBe(false);
   });
 
   it('re-hides the New row on a later render whose results have no new listings', () => {
-    const newItem = makeListingItem({ data: { ...makeListingItem().data, isNew: true } });
+    const newItem = makeListingItem({ isNewFromSearch: true });
     renderShowOptions([newItem]);
     expect(document.getElementById('showNewRow')?.classList.contains('hidden')).toBe(false);
 

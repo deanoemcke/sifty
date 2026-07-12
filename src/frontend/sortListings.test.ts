@@ -16,6 +16,7 @@ function makeListingItem(
     hasBeenDeepSearched: false,
     aiCheckedHash: null,
     aiFilterReason: null,
+    isNewFromSearch: false,
   };
 }
 

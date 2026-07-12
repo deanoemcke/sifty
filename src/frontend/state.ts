@@ -35,6 +35,11 @@ export interface ListingItem {
   hasBeenDeepSearched: boolean;
   aiCheckedHash: number | null;
   aiFilterReason: string | null;
+  // Client-side inference from the card's search URL (condition=new /
+  // itemCondition=new), never server-scraped data — kept off the shared
+  // `Listing` domain type for that reason. See isNewConditionSearchUrl in
+  // quickSearch.ts.
+  isNewFromSearch: boolean;
 }
 
 export interface DiscoverInputs {
@@ -73,7 +78,7 @@ export type ListingVisibilityCategory = 'used' | 'sold' | 'new' | 'filtered';
 export function getListingCategory(item: ListingItem): ListingVisibilityCategory {
   if (item.aiFilterReason !== null) return 'filtered';
   if (item.data.isSold) return 'sold';
-  if (item.data.isNew) return 'new';
+  if (item.isNewFromSearch) return 'new';
   return 'used';
 }
 

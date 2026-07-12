@@ -252,8 +252,8 @@ describe('isNewConditionSearchUrl', () => {
   });
 });
 
-describe('searchUrlCardAsync — isNew tagging', () => {
-  it('tags a listing isNew when its card URL has condition=new', async () => {
+describe('searchUrlCardAsync — isNewFromSearch tagging', () => {
+  it('tags a listing isNewFromSearch when its card URL has condition=new', async () => {
     const card = addSearchableCardWithUrl(
       'https://www.trademe.co.nz/a/marketplace/search?condition=new'
     );
@@ -264,10 +264,10 @@ describe('searchUrlCardAsync — isNew tagging', () => {
     await searchUrlCardAsync(card);
 
     const item = listingsByUrl.get('https://example.com/new-item');
-    expect(item?.data.isNew).toBe(true);
+    expect(item?.isNewFromSearch).toBe(true);
   });
 
-  it('leaves isNew unset for a listing from a card URL without condition=new', async () => {
+  it('leaves isNewFromSearch false for a listing from a card URL without condition=new', async () => {
     const card = addSearchableCard();
     stubQuickSearchStream([
       'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/normal-item","isAuction":false,"relevance":0}}\n',
@@ -276,16 +276,16 @@ describe('searchUrlCardAsync — isNew tagging', () => {
     await searchUrlCardAsync(card);
 
     const item = listingsByUrl.get('https://example.com/normal-item');
-    expect(item?.data.isNew).toBeUndefined();
+    expect(item?.isNewFromSearch).toBe(false);
   });
 });
 
-describe('searchUrlCardAsync — isNew merge across duplicate arrivals', () => {
+describe('searchUrlCardAsync — isNewFromSearch merge across duplicate arrivals', () => {
   // Discovery fires a "used" card and a "new" card concurrently for the same
   // prompt (cardSearch.ts's fireAllCardSearches), and both can surface the
   // same underlying listing under different URLs. listingDedupeKey collapses
   // them to one stored item — regardless of which card's SSE event lands
-  // first, the merged item must end up isNew: true, since one of the two
+  // first, the merged item must end up isNewFromSearch: true, since one of the two
   // matching searches confirmed it. A first-write-wins merge would make the
   // result depend on arrival order instead.
   const usedCardUrl = TRADEME_URL;
@@ -295,7 +295,7 @@ describe('searchUrlCardAsync — isNew merge across duplicate arrivals', () => {
   const newListingLine =
     'data: {"type":"listing","data":{"source":"trademe","title":"Widget","price":20,"location":"Auckland","url":"https://example.com/widget?ref=new","isAuction":false,"relevance":0}}\n';
 
-  it('ends up isNew: true when the used-condition arrival is processed first', async () => {
+  it('ends up isNewFromSearch: true when the used-condition arrival is processed first', async () => {
     const usedCard = addSearchableCardWithUrl(usedCardUrl);
     const newCard = addSearchableCardWithUrl(newCardUrl);
 
@@ -306,10 +306,10 @@ describe('searchUrlCardAsync — isNew merge across duplicate arrivals', () => {
 
     expect(listingUrlByDedupeKey.size).toBe(1);
     const storedUrl = listingUrlByDedupeKey.values().next().value as string;
-    expect(listingsByUrl.get(storedUrl)?.data.isNew).toBe(true);
+    expect(listingsByUrl.get(storedUrl)?.isNewFromSearch).toBe(true);
   });
 
-  it('ends up isNew: true when the new-condition arrival is processed first', async () => {
+  it('ends up isNewFromSearch: true when the new-condition arrival is processed first', async () => {
     const usedCard = addSearchableCardWithUrl(usedCardUrl);
     const newCard = addSearchableCardWithUrl(newCardUrl);
 
@@ -320,6 +320,6 @@ describe('searchUrlCardAsync — isNew merge across duplicate arrivals', () => {
 
     expect(listingUrlByDedupeKey.size).toBe(1);
     const storedUrl = listingUrlByDedupeKey.values().next().value as string;
-    expect(listingsByUrl.get(storedUrl)?.data.isNew).toBe(true);
+    expect(listingsByUrl.get(storedUrl)?.isNewFromSearch).toBe(true);
   });
 });
