@@ -96,34 +96,11 @@
         <button id="aiFilterBtn" class="btn btn-primary ai-filter-btn" type="button" disabled>Filter</button>
       </div>
       <div class="results-header-row sort-row">
+        <!-- Trigger/panel markup built by buildDropdownShell (dropdownPanel.ts) -->
         <label for="showDropdownBtn" class="dropdown-external-label">Show</label>
-        <div class="dropdown-control" id="showDropdown">
-          <button id="showDropdownBtn" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false">
-            <span class="dropdown-trigger-label">Show</span>
-            <svg class="dropdown-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-          </button>
-          <div id="showDropdownPanel" class="dropdown-panel hidden">
-            <div class="dropdown-panel-header">Show</div>
-            <div class="dropdown-panel-options" id="showDropdownOptions"></div>
-            <div class="dropdown-panel-footer">
-              <button id="showDropdownFooterBtn" class="dropdown-footer-btn" type="button">Show</button>
-            </div>
-          </div>
-        </div>
+        <div class="dropdown-control" id="showDropdown"></div>
         <label for="sortDropdownBtn" class="dropdown-external-label">Sort by</label>
-        <div class="dropdown-control" id="sortDropdown">
-          <button id="sortDropdownBtn" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false">
-            <span class="dropdown-trigger-label">Sort results</span>
-            <svg class="dropdown-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-          </button>
-          <div id="sortDropdownPanel" class="dropdown-panel hidden">
-            <div class="dropdown-panel-header">Sort by</div>
-            <div class="dropdown-panel-options" id="sortDropdownOptions"></div>
-            <div class="dropdown-panel-footer">
-              <button id="sortDropdownFooterBtn" class="dropdown-footer-btn" type="button">Sort results</button>
-            </div>
-          </div>
-        </div>
+        <div class="dropdown-control" id="sortDropdown"></div>
         <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
       </div>
   </div>

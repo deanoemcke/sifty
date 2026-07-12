@@ -8,6 +8,7 @@
 // one close the other.
 
 import { getElement, requireChild } from './domUtils';
+import { CHEVRON_ICON } from './icons';
 
 export interface DropdownElements {
   root: HTMLElement;
@@ -23,6 +24,13 @@ export interface DropdownElementIds {
   footer: string;
 }
 
+// Superset of DropdownElementIds used only by buildDropdownShell, since the
+// options container has no runtime element (open/close/focus mechanics never
+// touch it) and so has no place on DropdownElements/getDropdownElements.
+export interface DropdownShellIds extends DropdownElementIds {
+  options: string;
+}
+
 export function getDropdownElements(ids: DropdownElementIds): DropdownElements {
   return {
     root: getElement(ids.root),
@@ -30,6 +38,32 @@ export function getDropdownElements(ids: DropdownElementIds): DropdownElements {
     panel: getElement(ids.panel),
     footer: getElement<HTMLButtonElement>(ids.footer),
   };
+}
+
+// The dropdown caret is CHEVRON_ICON (icons.ts) plus the dropdown-specific
+// class that drives its muted colour and open/close rotation — derived once
+// here rather than hand-copied, so the SVG markup itself has one source.
+const DROPDOWN_CARET_ICON = CHEVRON_ICON.replace('<svg ', '<svg class="dropdown-caret" ');
+
+// Builds the full trigger-button + panel DOM for one dropdown into its mount
+// point (a bare `<div id="...">` in index.html), so the shell markup has a
+// single source instead of being hand-mirrored across index.html and test
+// fixtures. `title` seeds the trigger/footer text and the (mobile-only,
+// always-visible) panel header; populate*Controls() callers overwrite the
+// trigger/footer text via setDropdownLabel immediately after, so in practice
+// `title` only persists in the panel header.
+export function buildDropdownShell(ids: DropdownShellIds, title: string): void {
+  getElement(ids.root).innerHTML = `
+    <button id="${ids.trigger}" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false">
+      <span class="dropdown-trigger-label">${title}</span>${DROPDOWN_CARET_ICON}
+    </button>
+    <div id="${ids.panel}" class="dropdown-panel hidden">
+      <div class="dropdown-panel-header">${title}</div>
+      <div class="dropdown-panel-options" id="${ids.options}"></div>
+      <div class="dropdown-panel-footer">
+        <button id="${ids.footer}" class="dropdown-footer-btn" type="button">${title}</button>
+      </div>
+    </div>`;
 }
 
 let openDropdown: DropdownElements | null = null;

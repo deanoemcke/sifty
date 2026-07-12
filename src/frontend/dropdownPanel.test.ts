@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  buildDropdownShell,
   closeDropdownPanel,
   type DropdownElements,
   getDropdownElements,
@@ -197,6 +198,63 @@ describe('focus restore on close', () => {
     addRadioToPanel(a).focus();
     openDropdownPanel(b);
     expect(document.activeElement).toBe(a.trigger);
+  });
+});
+
+describe('buildDropdownShell', () => {
+  const ids = {
+    root: 'shellRoot',
+    trigger: 'shellBtn',
+    panel: 'shellPanel',
+    options: 'shellOptions',
+    footer: 'shellFooterBtn',
+  };
+
+  function buildShellFixture(): HTMLElement {
+    const root = document.createElement('div');
+    root.id = ids.root;
+    document.body.appendChild(root);
+    buildDropdownShell(ids, 'Show');
+    return root;
+  }
+
+  it('builds a trigger button, panel, options container and footer button with matching ids', () => {
+    buildShellFixture();
+    expect(document.getElementById(ids.trigger)?.tagName).toBe('BUTTON');
+    expect(document.getElementById(ids.panel)?.classList.contains('dropdown-panel')).toBe(true);
+    expect(document.getElementById(ids.panel)?.classList.contains('hidden')).toBe(true);
+    expect(document.getElementById(ids.options)?.classList.contains('dropdown-panel-options')).toBe(
+      true
+    );
+    expect(document.getElementById(ids.footer)?.tagName).toBe('BUTTON');
+  });
+
+  it('seeds the trigger label, panel header and footer text with the given title', () => {
+    buildShellFixture();
+    expect(
+      document.getElementById(ids.trigger)?.querySelector('.dropdown-trigger-label')?.textContent
+    ).toBe('Show');
+    expect(document.querySelector('.dropdown-panel-header')?.textContent).toBe('Show');
+    expect(document.getElementById(ids.footer)?.textContent).toBe('Show');
+  });
+
+  it('sets aria-haspopup/aria-expanded on the trigger', () => {
+    buildShellFixture();
+    const trigger = document.getElementById(ids.trigger);
+    expect(trigger?.getAttribute('aria-haspopup')).toBe('true');
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('gives the trigger a single caret icon carrying the dropdown-caret class', () => {
+    buildShellFixture();
+    const carets = document.getElementById(ids.trigger)?.querySelectorAll('svg.dropdown-caret');
+    expect(carets).toHaveLength(1);
+  });
+
+  it('is safe to call repeatedly on the same root (rebuilds the shell)', () => {
+    const root = buildShellFixture();
+    buildDropdownShell(ids, 'Show');
+    expect(root.querySelectorAll(`#${ids.trigger}`)).toHaveLength(1);
   });
 });
 

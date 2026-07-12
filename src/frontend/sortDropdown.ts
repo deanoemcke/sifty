@@ -6,8 +6,10 @@
 
 import { getElement } from './domUtils';
 import {
+  buildDropdownShell,
   closeDropdownPanel,
   type DropdownElements,
+  type DropdownShellIds,
   getDropdownElements,
   setDropdownLabel,
   toggleDropdownPanel,
@@ -28,10 +30,11 @@ function sortOptionLabel(value: SortOption): string {
   return option.label;
 }
 
-const SORT_DROPDOWN_IDS = {
+const SORT_DROPDOWN_IDS: DropdownShellIds = {
   root: 'sortDropdown',
   trigger: 'sortDropdownBtn',
   panel: 'sortDropdownPanel',
+  options: 'sortDropdownOptions',
   footer: 'sortDropdownFooterBtn',
 };
 
@@ -39,10 +42,12 @@ function getSortDropdownElements(): DropdownElements {
   return getDropdownElements(SORT_DROPDOWN_IDS);
 }
 
-// One-time init: builds the panel's radio rows from SORT_OPTIONS and seeds
-// the trigger/footer label to the default option's label.
+// One-time init: builds the dropdown shell (trigger/panel/footer) into its
+// mount point, then the panel's radio rows from SORT_OPTIONS, and seeds the
+// trigger/footer label to the default option's label.
 export function populateSortControls(defaultValue: SortOption): void {
-  const optionsContainer = getElement('sortDropdownOptions');
+  buildDropdownShell(SORT_DROPDOWN_IDS, 'Sort by');
+  const optionsContainer = getElement(SORT_DROPDOWN_IDS.options);
   for (const { value, label } of SORT_OPTIONS) {
     const radioId = SORT_RADIO_ID_BY_OPTION[value];
     const row = document.createElement('label');

@@ -9,8 +9,10 @@
 
 import { getElement } from './domUtils';
 import {
+  buildDropdownShell,
   closeDropdownPanel,
   type DropdownElements,
+  type DropdownShellIds,
   getDropdownElements,
   setDropdownLabel,
   toggleDropdownPanel,
@@ -38,10 +40,11 @@ export const SHOW_CHECKBOX_ID_BY_CATEGORY: Record<ListingVisibilityCategory, str
   filtered: 'showFiltered',
 };
 
-const SHOW_DROPDOWN_IDS = {
+const SHOW_DROPDOWN_IDS: DropdownShellIds = {
   root: 'showDropdown',
   trigger: 'showDropdownBtn',
   panel: 'showDropdownPanel',
+  options: 'showDropdownOptions',
   footer: 'showDropdownFooterBtn',
 };
 
@@ -49,10 +52,12 @@ function getShowDropdownElements(): DropdownElements {
   return getDropdownElements(SHOW_DROPDOWN_IDS);
 }
 
-// One-time init: builds the panel's checkbox rows (each with a count span)
-// from SHOW_OPTIONS, and seeds the trigger/footer label.
+// One-time init: builds the dropdown shell (trigger/panel/footer) into its
+// mount point, then the panel's checkbox rows (each with a count span) from
+// SHOW_OPTIONS, and seeds the trigger/footer label.
 export function populateShowControls(): void {
-  const optionsContainer = getElement('showDropdownOptions');
+  buildDropdownShell(SHOW_DROPDOWN_IDS, 'Show');
+  const optionsContainer = getElement(SHOW_DROPDOWN_IDS.options);
   for (const { value, label } of SHOW_OPTIONS) {
     const checkboxId = SHOW_CHECKBOX_ID_BY_CATEGORY[value];
     const row = document.createElement('label');

@@ -11,7 +11,7 @@ import {
 } from './aiFilter';
 import { populateShowControls } from './showDropdown';
 import { isAiFilterRunning, type ListingItem, listingsByUrl, resetState } from './state';
-import { makeListing, makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
+import { makeListing, makeListingItem } from './testFixtures';
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from './urlCardStore';
 
 function makeListingItemAt(url: string): ListingItem {
@@ -96,7 +96,7 @@ describe('runAiFilterAsync', () => {
       <button id="deepBtn"></button>
       <textarea id="aiFilter">laptop</textarea>
       <button id="aiFilterBtn"></button>
-      ${SHOW_DROPDOWN_FIXTURE_HTML}
+      <div id="showDropdown"></div>
     `;
     populateShowControls();
   });
@@ -162,7 +162,7 @@ describe('requestAiFilterRunIfPromptLongEnough', () => {
       <textarea id="aiFilter"></textarea>
       <button id="deepBtn"></button>
       <button id="aiFilterBtn"></button>
-      ${SHOW_DROPDOWN_FIXTURE_HTML}
+      <div id="showDropdown"></div>
     `;
     populateShowControls();
   });
@@ -224,7 +224,7 @@ describe('clearAiFilterResults', () => {
       <button id="deepBtn"></button>
       <textarea id="aiFilter"></textarea>
       <button id="aiFilterBtn"></button>
-      ${SHOW_DROPDOWN_FIXTURE_HTML}
+      <div id="showDropdown"></div>
     `;
     populateShowControls();
   });

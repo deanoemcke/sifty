@@ -21,7 +21,7 @@ import {
   setSortBy,
   type UrlCardData,
 } from './state';
-import { makeListing, makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
+import { makeListing, makeListingItem } from './testFixtures';
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from './urlCardStore';
 
 function makeListingItemAt(url: string): ListingItem {
@@ -56,7 +56,7 @@ beforeEach(() => {
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
     <div id="listingsContainer"></div>
-    ${SHOW_DROPDOWN_FIXTURE_HTML}
+    <div id="showDropdown"></div>
   `;
   populateShowControls();
 });

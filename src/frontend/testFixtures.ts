@@ -46,42 +46,8 @@ export function makeListingItem(overrides: Partial<ListingItem> = {}): ListingIt
 }
 
 // renderDerived() (resultsView.ts) always refreshes the Show dropdown, so any
-// test fixture that triggers it needs this Show DOM present or getElement()
-// throws. Append this markup and call populateShowControls() (from
-// ./showDropdown) in beforeEach, alongside the rest of a test file's
-// hand-built fixture.
-//
-// Both constants below are verbatim copies of the shells in index.html —
-// testFixtures.test.ts asserts they stay structurally identical, so unit
-// tests always exercise the DOM shape production actually renders.
-export const SHOW_DROPDOWN_FIXTURE_HTML = `
-  <div class="dropdown-control" id="showDropdown">
-    <button id="showDropdownBtn" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false">
-      <span class="dropdown-trigger-label">Show</span>
-      <svg class="dropdown-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
-    <div id="showDropdownPanel" class="dropdown-panel hidden">
-      <div class="dropdown-panel-header">Show</div>
-      <div class="dropdown-panel-options" id="showDropdownOptions"></div>
-      <div class="dropdown-panel-footer">
-        <button id="showDropdownFooterBtn" class="dropdown-footer-btn" type="button">Show</button>
-      </div>
-    </div>
-  </div>
-`;
-
-export const SORT_DROPDOWN_FIXTURE_HTML = `
-  <div class="dropdown-control" id="sortDropdown">
-    <button id="sortDropdownBtn" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false">
-      <span class="dropdown-trigger-label">Sort results</span>
-      <svg class="dropdown-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
-    <div id="sortDropdownPanel" class="dropdown-panel hidden">
-      <div class="dropdown-panel-header">Sort by</div>
-      <div class="dropdown-panel-options" id="sortDropdownOptions"></div>
-      <div class="dropdown-panel-footer">
-        <button id="sortDropdownFooterBtn" class="dropdown-footer-btn" type="button">Sort results</button>
-      </div>
-    </div>
-  </div>
-`;
+// test fixture that triggers it needs the Show mount point present or
+// getElement() throws. Append `<div id="showDropdown"></div>` and call
+// populateShowControls() (from ./showDropdown) in beforeEach — it calls
+// buildDropdownShell (dropdownPanel.ts) to fill the mount point, the same
+// function production uses, so unit tests always exercise the real shell.

@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { handleDiscoverySubmitAsync, loadSavedSearchAsync } from './searchSession';
 import { populateShowControls, updateShowSoldOptionVisibility } from './showDropdown';
 import { resetState } from './state';
-import { SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
 import { createUrlCard } from './urlCardRow';
 import { resetUrlCardStore, urlCards } from './urlCardStore';
 
@@ -32,7 +31,7 @@ beforeEach(() => {
 
     <div id="resultsSection" class="hidden"></div>
     <div id="listingsContainer"></div>
-    ${SHOW_DROPDOWN_FIXTURE_HTML}
+    <div id="showDropdown"></div>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>

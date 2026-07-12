@@ -12,7 +12,7 @@ import {
   updateShowSoldOptionVisibility,
 } from './showDropdown';
 import { resetState, setListingCategoryVisible, visibleListingCategories } from './state';
-import { makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
+import { makeListingItem } from './testFixtures';
 
 beforeEach(() => {
   resetState();
@@ -26,7 +26,7 @@ beforeEach(() => {
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
     <div id="listingsContainer"></div>
-    ${SHOW_DROPDOWN_FIXTURE_HTML}
+    <div id="showDropdown"></div>
   `;
   populateShowControls();
 });

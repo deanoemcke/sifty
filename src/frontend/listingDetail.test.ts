@@ -10,7 +10,7 @@ import {
   setOpenModalListingUrl,
   urlCardDataById,
 } from './state';
-import { makeListing, makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
+import { makeListing, makeListingItem } from './testFixtures';
 
 function makeItem(url: string): ListingItem {
   return makeListingItem({
@@ -53,7 +53,7 @@ beforeEach(() => {
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
     <div id="urlCardsContainer"></div>
-    ${SHOW_DROPDOWN_FIXTURE_HTML}
+    <div id="showDropdown"></div>
   `;
   populateShowControls();
 });
