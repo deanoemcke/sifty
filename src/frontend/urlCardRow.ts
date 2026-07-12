@@ -13,9 +13,10 @@ import { type CardStatusSnapshot, cardStatusText } from './searchStatusText';
 import {
   canCancelSearch,
   cardIdByUrl,
+  clearListings,
   isDeepSearchRunning,
   isSearchButtonDisabled,
-  listingsByUrl,
+  removeListingByUrl,
   setAiFilterPendingRun,
   setIsAiFilterRunning,
   type UrlCardData,
@@ -186,7 +187,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
 export function resetAllResults(): void {
   setIsAiFilterRunning(false);
   setAiFilterPendingRun(false);
-  listingsByUrl.clear();
+  clearListings();
   getElement('listingsContainer').innerHTML = '';
   getElement('resultsSection').classList.add('hidden');
   for (const card of urlCards) {
@@ -222,7 +223,7 @@ export function resetCardForResearch(card: UrlCard): void {
   for (const url of data.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
-      listingsByUrl.delete(url);
+      removeListingByUrl(url);
       cardIdByUrl.delete(url);
     }
   }
@@ -250,7 +251,7 @@ export function removeUrlCard(card: UrlCard): void {
   for (const url of urlCardData(card).listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
-      listingsByUrl.delete(url);
+      removeListingByUrl(url);
       cardIdByUrl.delete(url);
     }
   }

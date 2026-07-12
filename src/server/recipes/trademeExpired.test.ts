@@ -239,6 +239,58 @@ describe('parseLegacySearchResultsHtml', () => {
     expect(listings).toEqual([]);
     expect(reachedZeroBids).toBe(false);
   });
+
+  it('treats a card with bids and no reserve badge as a sold no-reserve auction', () => {
+    const html = `
+      <ul>
+        <li class="listingCard">
+          <div class="listingTitle"><a href="/listing-111.htm">No Reserve Item</a></div>
+          <div class="listingBidPrice">$50.00</div>
+          <div class="listingNumberOfBidsText">3 bids</div>
+          <div class="listingLocation">Auckland</div>
+        </li>
+      </ul>`;
+    const { listings } = parseLegacySearchResultsHtml(html);
+    expect(listings[0]).toMatchObject({ reserveStatus: 'NONE', isSold: true });
+  });
+
+  it('normalizes whitespace/casing in reserve text so "not met" still resolves correctly', () => {
+    const html = `
+      <ul>
+        <li class="listingCard">
+          <div class="listingTitle"><a href="/listing-222.htm">Whitespace Variant Item</a></div>
+          <div class="listingBidPrice">$50.00</div>
+          <div class="listingNumberOfBidsText">2 bids</div>
+          <div class="listingLocation">Auckland</div>
+          <div class="reserve-text">  reserve   NOT met  </div>
+        </li>
+      </ul>`;
+    const { listings } = parseLegacySearchResultsHtml(html);
+    expect(listings[0]).toMatchObject({ reserveStatus: 'NOT_MET', isSold: false });
+  });
+
+  it('fails safe (not sold) when reserve text is genuinely unrecognized, and warns so the drift is observable', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const html = `
+        <ul>
+          <li class="listingCard">
+            <div class="listingTitle"><a href="/listing-333.htm">Unrecognized Reserve Item</a></div>
+            <div class="listingBidPrice">$50.00</div>
+            <div class="listingNumberOfBidsText">1 bid</div>
+            <div class="listingLocation">Auckland</div>
+            <div class="reserve-text">Some Other Status</div>
+          </li>
+        </ul>`;
+      const { listings } = parseLegacySearchResultsHtml(html);
+      expect(listings[0]).toMatchObject({ reserveStatus: 'UNKNOWN', isSold: false });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/\[trademeExpired\].*Some Other Status/)
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // ── quickSearch MAX_RESULTS_PER_URL cap ───────────────────────────────────────

@@ -3,6 +3,7 @@
 // and so that tests can call resetState() for clean isolation.
 
 import type { Fulfillment, Listing, QuickSearchProgress } from '../lib/recipes/base';
+import { listingDedupeKey } from './listingDedup';
 import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -109,6 +110,15 @@ export let bulkDeepSearchUrls: Set<string> | null = null;
 // search, to dedupe re-clicks/re-opens of the same listing's modal.
 export const singleDeepSearchInFlightUrls = new Set<string>();
 export const listingsByUrl = new Map<string, ListingItem>();
+// Second index over the same listings, keyed by listingDedupeKey's raw
+// composite string (not a hash of it — see listingDedup.ts) rather than by
+// URL. Lets content-based duplicate detection (the same listing surfacing
+// under two different URLs) be an O(1) lookup instead of rescanning every
+// stored listing on every incoming SSE event. This mirrors listingsByUrl, so
+// it must only ever be written to via addListingItem/removeListingByUrl/
+// clearListings below — never listingsByUrl.set/delete/clear directly —
+// to keep the two maps from drifting apart.
+export const listingUrlByDedupeKey = new Map<string, string>();
 export const urlCardDataById = new Map<string, UrlCardData>();
 // Stable, collision-free DOM ids assigned at card insertion time via crypto.randomUUID().
 // Keyed by listing URL so callers can look up a card without re-deriving its id from the URL.
@@ -162,6 +172,26 @@ export function setBulkDeepSearchUrls(urls: Set<string> | null): void {
   bulkDeepSearchUrls = urls;
 }
 
+// ── Listing storage (keeps listingsByUrl and listingUrlByDedupeKey in sync) ─────
+// These are the only functions permitted to write to either map, so the two
+// indexes can never drift apart.
+
+export function addListingItem(item: ListingItem): void {
+  listingsByUrl.set(item.data.url, item);
+  listingUrlByDedupeKey.set(listingDedupeKey(item.data), item.data.url);
+}
+
+export function removeListingByUrl(url: string): void {
+  const item = listingsByUrl.get(url);
+  if (item) listingUrlByDedupeKey.delete(listingDedupeKey(item.data));
+  listingsByUrl.delete(url);
+}
+
+export function clearListings(): void {
+  listingsByUrl.clear();
+  listingUrlByDedupeKey.clear();
+}
+
 // ── Reset (for tests) ──────────────────────────────────────────────────────────
 
 export function resetState(): void {
@@ -178,7 +208,7 @@ export function resetState(): void {
   openModalListingUrl = null;
   bulkDeepSearchUrls = null;
   singleDeepSearchInFlightUrls.clear();
-  listingsByUrl.clear();
+  clearListings();
   urlCardDataById.clear();
   cardIdByUrl.clear();
 }
