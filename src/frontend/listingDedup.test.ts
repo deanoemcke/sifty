@@ -16,6 +16,16 @@ describe('baseUrl', () => {
   it('leaves a URL with no query or fragment untouched', () => {
     expect(baseUrl('https://example.com/listing/1')).toBe('https://example.com/listing/1');
   });
+
+  it('falls back to the raw string for a malformed URL instead of throwing', () => {
+    expect(() => baseUrl('not a url')).not.toThrow();
+    expect(baseUrl('not a url')).toBe('not a url');
+  });
+
+  it('falls back to the raw string for a relative URL instead of throwing', () => {
+    expect(() => baseUrl('/listing/1?ref=abc')).not.toThrow();
+    expect(baseUrl('/listing/1?ref=abc')).toBe('/listing/1?ref=abc');
+  });
 });
 
 describe('listingDedupeKey', () => {
@@ -74,5 +84,10 @@ describe('listingDedupeKey', () => {
   it('is deterministic for the same listing', () => {
     const listing = makeListing();
     expect(listingDedupeKey(listing)).toBe(listingDedupeKey(listing));
+  });
+
+  it('does not throw when the URL is malformed', () => {
+    const listing = makeListing({ url: 'not a url' });
+    expect(() => listingDedupeKey(listing)).not.toThrow();
   });
 });

@@ -7,9 +7,21 @@ import { djb2Hash } from './renderUtils';
 
 // Strips the query string and fragment, since those commonly vary between
 // two URLs that otherwise point at the same listing.
+//
+// Listing URLs originate from network responses (recipe scrapers), so a
+// malformed or relative URL is expected input, not a bug — `new URL()`
+// throws on those, and this is the only caller reached from
+// streamPostAsync's onData dispatch, whose blanket try/catch would
+// otherwise silently drop the whole listing. Falling back to the raw
+// string keeps the listing visible (deduping less aggressively) instead
+// of disappearing without explanation.
 export function baseUrl(url: string): string {
-  const parsed = new URL(url);
-  return `${parsed.origin}${parsed.pathname}`;
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
 }
 
 // A null-char separator keeps adjacent fields from colliding at their
