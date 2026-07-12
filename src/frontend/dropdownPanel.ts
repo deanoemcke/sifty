@@ -136,11 +136,10 @@ export function handleEscapeKey(key: string): void {
 
 // An ancestor (up to, but not including, `container`) carrying the `.hidden`
 // class means `element` isn't reachable — e.g. the Show panel's "Sold" row
-// when the sidebar's "Include sold items" is unchecked
-// (updateShowSoldOptionVisibility in showDropdown.ts hides the row itself,
-// not its checkbox). Walking classList rather than checking layout
-// (`offsetParent`/`checkVisibility`) keeps this correct under jsdom, which
-// never computes layout.
+// when the current results contain no sold listings (renderShowOptions in
+// showDropdown.ts hides the row itself, not its checkbox). Walking classList
+// rather than checking layout (`offsetParent`/`checkVisibility`) keeps this
+// correct under jsdom, which never computes layout.
 function isElementHiddenWithinContainer(element: HTMLElement, container: HTMLElement): boolean {
   for (
     let node: HTMLElement | null = element;

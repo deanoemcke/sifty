@@ -34,7 +34,6 @@ import {
   populateShowControls,
   renderShowControls,
   toggleShowDropdownPanel,
-  updateShowSoldOptionVisibility,
 } from './showDropdown';
 import { activateSidebarTab } from './sidebarTabs';
 import {
@@ -58,7 +57,6 @@ function initApp(): void {
     applyClientFilters();
     renderShowControls();
   });
-  updateShowSoldOptionVisibility();
   populateSortControls(DEFAULT_SORT_OPTION, (sortOption) => {
     setSortBy(sortOption);
     renderSortControls(sortOption);
@@ -77,10 +75,6 @@ function initApp(): void {
 
   getElement('showDropdownBtn').addEventListener('click', () => toggleShowDropdownPanel());
   getElement('showDropdownFooterBtn').addEventListener('click', () => closeShowDropdownPanel());
-  getElement<HTMLInputElement>('discoveryIncludeSoldItems').addEventListener(
-    'change',
-    updateShowSoldOptionVisibility
-  );
 
   getElement('sortDropdownBtn').addEventListener('click', () => toggleSortDropdownPanel());
   getElement('sortDropdownFooterBtn').addEventListener('click', () => closeSortDropdownPanel());

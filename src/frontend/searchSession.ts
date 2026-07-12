@@ -17,7 +17,6 @@ import { getElement } from './domUtils';
 import { esc } from './html';
 import { parseMaxPrice } from './parseUtils';
 import { searchUrlCardAsync } from './quickSearch';
-import { updateShowSoldOptionVisibility } from './showDropdown';
 import { activateSidebarTab } from './sidebarTabs';
 import { currentSearchName, type SavedSearch, setCurrentSearchName } from './state';
 import {
@@ -140,7 +139,6 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   setUrlsSectionState('ready');
   trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
-  updateShowSoldOptionVisibility();
   if (search.urls.length === 0) return;
   urlCards[0].dom.input.value = search.urls[0];
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {

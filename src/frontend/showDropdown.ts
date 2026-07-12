@@ -17,14 +17,10 @@ import {
   setDropdownLabel,
   toggleDropdownPanel,
 } from './dropdownPanel';
-// Circular with resultsView (it imports renderShowOptions) — safe because both
-// modules only reference each other inside functions called after load.
-import { applyClientFilters } from './resultsView';
 import {
   getListingCategory,
   type ListingItem,
   type ListingVisibilityCategory,
-  setListingCategoryVisible,
   visibleListingCategories,
 } from './state';
 
@@ -106,6 +102,17 @@ export function tallyListingCategories(
 // it already computed, so counts stay on a single update path. The label
 // format and literal "results" (never pluralized) match the header's former
 // "Showing N / X results" line, which this control now replaces.
+//
+// The "Sold" row is gated on whether the current results actually contain any
+// sold listings (tally.sold), rather than on the sidebar's "Include sold
+// items" checkbox: gating on the checkbox let a hidden row keep governing
+// 'sold' exclusion for listings already on screen, with no visible control to
+// restore them (see PR #32 review). Gating on the tally instead means the row
+// can only ever hide when there is nothing sold to strand, so no
+// visibleListingCategories reconciliation is needed here — the checkbox's own
+// checked state (and its effect on already-rendered cards) is left untouched
+// by row visibility, and simply reflects whichever way the user last set it
+// next time the row reappears.
 export function renderShowOptions(listings: ListingItem[], visibleCount: number): void {
   const tally = tallyListingCategories(listings);
   for (const [category, checkboxId] of Object.entries(SHOW_CHECKBOX_ID_BY_CATEGORY) as Array<
@@ -113,26 +120,11 @@ export function renderShowOptions(listings: ListingItem[], visibleCount: number)
   >) {
     getElement(`${checkboxId}Count`).textContent = `(${tally[category]})`;
   }
-  setDropdownLabel(getShowDropdownElements(), `${visibleCount} of ${listings.length} results`);
-}
-
-// The "Sold" choice only makes sense when the search can return sold items at
-// all, so it's hidden whenever the sidebar's "Include sold items" checkbox is
-// unchecked. A hidden control must not keep filtering: if 'sold' was excluded
-// when the row hides, the exclusion would be unreachable from the UI while
-// sold listings (which recipes can return regardless of the discovery flag)
-// stay invisibly hidden — so hiding reconciles state back to visible.
-export function updateShowSoldOptionVisibility(): void {
-  const includeSoldItems = getElement<HTMLInputElement>('discoveryIncludeSoldItems').checked;
   getElement(`${SHOW_CHECKBOX_ID_BY_CATEGORY.sold}Row`).classList.toggle(
     'hidden',
-    !includeSoldItems
+    tally.sold === 0
   );
-  if (!includeSoldItems && !visibleListingCategories.has('sold')) {
-    setListingCategoryVisible('sold', true);
-    renderShowControls();
-    applyClientFilters();
-  }
+  setDropdownLabel(getShowDropdownElements(), `${visibleCount} of ${listings.length} results`);
 }
 
 export function toggleShowDropdownPanel(): void {

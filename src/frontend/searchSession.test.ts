@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { handleDiscoverySubmitAsync, loadSavedSearchAsync } from './searchSession';
-import { populateShowControls, updateShowSoldOptionVisibility } from './showDropdown';
+import { populateShowControls } from './showDropdown';
 import { resetState } from './state';
 import { createUrlCard } from './urlCardRow';
 import { resetUrlCardStore, urlCards } from './urlCardStore';
@@ -43,7 +43,6 @@ beforeEach(() => {
     <button id="saveCurrentBtn" class="hidden"></button>
   `;
   populateShowControls();
-  updateShowSoldOptionVisibility();
   // The app always seeds one blank URL card on init (see app.ts) — every
   // caller of handleDiscoverySubmitAsync relies on urlCards[0] existing.
   createUrlCard(async () => {});
@@ -186,11 +185,12 @@ it('does not let a stale discovery response overwrite a saved search loaded whil
   expect(urlCards[0].dom.input.value).toBe('https://example.com/saved');
 });
 
-it('reveals the "Show > Sold" option when a loaded saved search included sold items', async () => {
-  // The row starts hidden (mirroring a fresh app load where "include sold
-  // items" is unchecked) — loading a saved search sets the checkbox via a
-  // property assignment, which fires no "change" event, so the row must be
-  // synced explicitly rather than relying on the checkbox's own listener.
+it('loading a saved search with includeSoldItems restores the checkbox, but the "Show > Sold" row stays hidden until results actually contain a sold listing', async () => {
+  // The Show > Sold row is gated on the current results' tally (see
+  // showDropdown.ts renderShowOptions), not on this checkbox — it's a
+  // search-time input restored here for the next search, and loading a saved
+  // search with no urls produces no results to search, so there is nothing
+  // sold to reveal the row pre-emptively for.
   expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
 
   await loadSavedSearchAsync({
@@ -210,5 +210,5 @@ it('reveals the "Show > Sold" option when a loaded saved search included sold it
   expect((document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked).toBe(
     true
   );
-  expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
+  expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
 });

@@ -364,7 +364,7 @@ describe('initApp() wiring', () => {
       ).map((checkbox) => checkbox.id);
       expect(checkboxIds).toEqual(['showAvailable', 'showSold', 'showFiltered']);
 
-      // "Include sold items" defaults to unchecked, so init hides the sold row.
+      // No results yet at init, so there are no sold listings to show — the row starts hidden.
       expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
       expect(document.querySelector('#showDropdown .dropdown-trigger-label')?.textContent).toBe(
         '0 of 0 results'
@@ -460,34 +460,13 @@ describe('initApp() wiring', () => {
       expect(state.visibleListingCategories.has('sold')).toBe(false);
     });
 
-    it('toggling "Include sold items" shows/hides the Sold row', async () => {
-      await import('./app');
-      const includeSoldItems = document.getElementById(
-        'discoveryIncludeSoldItems'
-      ) as HTMLInputElement;
-      const soldRow = document.getElementById('showSoldRow') as HTMLElement;
-
-      includeSoldItems.checked = false;
-      includeSoldItems.dispatchEvent(new Event('change'));
-      expect(soldRow.classList.contains('hidden')).toBe(true);
-
-      includeSoldItems.checked = true;
-      includeSoldItems.dispatchEvent(new Event('change'));
-      expect(soldRow.classList.contains('hidden')).toBe(false);
-    });
-
-    it('unticking "Include sold items" after unticking Show > Sold restores the hidden sold listings', async () => {
-      const { listingsByUrl, visibleListingCategories } = await import('./state');
+    it('the Sold row appears once results contain a sold listing, and hides again once they do not', async () => {
+      const { listingsByUrl } = await import('./state');
       const { urlCards, urlCardData } = await import('./urlCardStore');
-      const { getCardByUrl, renderCard } = await import('./resultsView');
+      const { renderCard, renderDerived } = await import('./resultsView');
       await import('./app');
-
-      // Sold results can only exist after searching with "Include sold items" on.
-      const includeSoldItems = document.getElementById(
-        'discoveryIncludeSoldItems'
-      ) as HTMLInputElement;
-      includeSoldItems.checked = true;
-      includeSoldItems.dispatchEvent(new Event('change'));
+      const soldRow = document.getElementById('showSoldRow') as HTMLElement;
+      expect(soldRow.classList.contains('hidden')).toBe(true);
 
       const url = 'https://example.com/listing/sold-1';
       const soldItem = makeListingItemAt(url);
@@ -495,20 +474,15 @@ describe('initApp() wiring', () => {
       listingsByUrl.set(url, soldItem);
       urlCardData(urlCards[0]).listingUrls = [url];
       renderCard(soldItem);
+      renderDerived();
 
-      // Untick Show > Sold — the sold card hides.
-      const soldCheckbox = document.getElementById('showSold') as HTMLInputElement;
-      soldCheckbox.checked = false;
-      soldCheckbox.dispatchEvent(new Event('change'));
-      expect((getCardByUrl(url) as HTMLElement).style.display).toBe('none');
+      expect(soldRow.classList.contains('hidden')).toBe(false);
 
-      // Untick "Include sold items" — hiding the Sold row must not leave its
-      // exclusion active, or the hidden listings become unreachable.
-      includeSoldItems.checked = false;
-      includeSoldItems.dispatchEvent(new Event('change'));
+      urlCardData(urlCards[0]).listingUrls = [];
+      listingsByUrl.delete(url);
+      renderDerived();
 
-      expect(visibleListingCategories.has('sold')).toBe(true);
-      expect((getCardByUrl(url) as HTMLElement).style.display).toBe('');
+      expect(soldRow.classList.contains('hidden')).toBe(true);
     });
   });
 

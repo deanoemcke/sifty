@@ -8,7 +8,6 @@ import {
   renderShowOptions,
   tallyListingCategories,
   toggleShowDropdownPanel,
-  updateShowSoldOptionVisibility,
 } from './showDropdown';
 import { resetState, setListingCategoryVisible, visibleListingCategories } from './state';
 import { makeListingItem } from './testFixtures';
@@ -16,15 +15,7 @@ import { makeListingItem } from './testFixtures';
 beforeEach(() => {
   resetState();
   resetOpenDropdown();
-  // deepBtn / aiFilter / aiFilterBtn / listingsContainer are needed because
-  // updateShowSoldOptionVisibility's reconciliation path calls
-  // applyClientFilters(), whose renderDerived() touches them.
   document.body.innerHTML = `
-    <input id="discoveryIncludeSoldItems" type="checkbox" />
-    <button id="deepBtn"></button>
-    <textarea id="aiFilter"></textarea>
-    <button id="aiFilterBtn"></button>
-    <div id="listingsContainer"></div>
     <div id="showDropdown"></div>
   `;
   populateShowControls();
@@ -116,45 +107,43 @@ describe('renderShowOptions', () => {
     renderShowOptions([], 0);
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('0 of 0 results');
   });
-});
 
-describe('updateShowSoldOptionVisibility', () => {
-  it('hides the sold row when include-sold-items is unchecked', () => {
-    (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = false;
-    updateShowSoldOptionVisibility();
+  // The Sold row is gated on whether the current results contain any sold
+  // listings, not on the sidebar's "Include sold items" checkbox — a hidden
+  // row can then never strand an active 'sold' exclusion, since there is
+  // nothing sold on screen to strand.
+  it('hides the Sold row when the current results contain no sold listings', () => {
+    renderShowOptions([makeListingItem()], 1);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
   });
 
-  it('re-adds sold to visibleListingCategories and re-checks the checkbox when hiding the row', () => {
-    // A hidden control must not keep filtering: unticking Show > Sold and then
-    // hiding the row would otherwise leave sold listings excluded with no
-    // visible control to restore them.
-    setListingCategoryVisible('sold', false);
-    renderShowControls();
-    (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = false;
-
-    updateShowSoldOptionVisibility();
-
-    expect(visibleListingCategories.has('sold')).toBe(true);
-    expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(true);
-  });
-
-  it('preserves an unticked Sold state while the row stays visible', () => {
-    setListingCategoryVisible('sold', false);
-    renderShowControls();
-    (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = true;
-
-    updateShowSoldOptionVisibility();
-
-    expect(visibleListingCategories.has('sold')).toBe(false);
-    expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(false);
-  });
-
-  it('shows the sold row when include-sold-items is checked', () => {
-    (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = true;
-    document.getElementById('showSoldRow')?.classList.add('hidden');
-    updateShowSoldOptionVisibility();
+  it('shows the Sold row when the current results contain a sold listing', () => {
+    const soldItem = makeListingItem({ data: { ...makeListingItem().data, isSold: true } });
+    renderShowOptions([soldItem], 1);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('re-hides the Sold row on a later render whose results have no sold listings', () => {
+    const soldItem = makeListingItem({ data: { ...makeListingItem().data, isSold: true } });
+    renderShowOptions([soldItem], 1);
+    expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
+
+    renderShowOptions([makeListingItem()], 1);
+    expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('leaves an unticked Sold preference untouched by row visibility changes', () => {
+    setListingCategoryVisible('sold', false);
+    renderShowControls();
+
+    renderShowOptions([makeListingItem()], 1);
+    expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+    expect(visibleListingCategories.has('sold')).toBe(false);
+
+    const soldItem = makeListingItem({ data: { ...makeListingItem().data, isSold: true } });
+    renderShowOptions([soldItem], 0);
+    expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
+    expect(visibleListingCategories.has('sold')).toBe(false);
   });
 });
 
