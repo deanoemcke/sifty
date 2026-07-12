@@ -14,7 +14,7 @@ import type {
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { MAX_RESULTS_PER_URL } from '../constants';
-import { getRegions } from '../services/regions';
+import { getRegions, type RegionEntry } from '../services/regions';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -705,15 +705,25 @@ const ITEM_CONDITION_PARAM_BY_CONDITION: Record<ListingCondition, string> = {
   new: 'new',
 };
 
-export function buildFacebookUrl(
-  searchTerm: string,
-  maxPrice: number,
-  fulfillment: Fulfillment,
-  regionValue: string | undefined,
-  includeSoldItems: boolean,
-  condition: ListingCondition,
-  regions = getRegions()
-): string {
+export type BuildFacebookUrlOptions = {
+  searchTerm: string;
+  maxPrice: number;
+  fulfillment: Fulfillment;
+  regionValue: string | undefined;
+  includeSoldItems: boolean;
+  condition: ListingCondition;
+  regions?: RegionEntry[];
+};
+
+export function buildFacebookUrl({
+  searchTerm,
+  maxPrice,
+  fulfillment,
+  regionValue,
+  includeSoldItems,
+  condition,
+  regions = getRegions(),
+}: BuildFacebookUrlOptions): string {
   const pickupOnly = !includeSoldItems && fulfillment === 'pickup' && !!regionValue;
   const fbParams = new URLSearchParams();
   fbParams.set('query', searchTerm);
@@ -738,37 +748,37 @@ export function buildFacebookUrl(
 async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
   const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.getAiConfig());
   const urls = [
-    buildFacebookUrl(
+    buildFacebookUrl({
       searchTerm,
-      context.maxPrice,
-      context.fulfillment,
-      context.regionValue,
-      false,
-      'used'
-    ),
+      maxPrice: context.maxPrice,
+      fulfillment: context.fulfillment,
+      regionValue: context.regionValue,
+      includeSoldItems: false,
+      condition: 'used',
+    }),
   ];
   if (context.includeNewItems) {
     urls.push(
-      buildFacebookUrl(
+      buildFacebookUrl({
         searchTerm,
-        context.maxPrice,
-        context.fulfillment,
-        context.regionValue,
-        false,
-        'new'
-      )
+        maxPrice: context.maxPrice,
+        fulfillment: context.fulfillment,
+        regionValue: context.regionValue,
+        includeSoldItems: false,
+        condition: 'new',
+      })
     );
   }
   if (context.includeSoldItems) {
     urls.push(
-      buildFacebookUrl(
+      buildFacebookUrl({
         searchTerm,
-        context.maxPrice,
-        context.fulfillment,
-        context.regionValue,
-        true,
-        'used'
-      )
+        maxPrice: context.maxPrice,
+        fulfillment: context.fulfillment,
+        regionValue: context.regionValue,
+        includeSoldItems: true,
+        condition: 'used',
+      })
     );
   }
   return { urls, warnings: [] as string[] };
