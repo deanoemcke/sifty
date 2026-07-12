@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildDropdownShell,
   closeDropdownPanel,
   type DropdownElements,
   getDropdownElements,
+  handleDropdownPopState,
   handleDropdownTabKey,
   handleEscapeKey,
   handleOutsideClick,
@@ -66,6 +67,11 @@ beforeEach(() => {
   document.body.innerHTML = '';
   document.body.className = '';
   resetOpenDropdown();
+  history.replaceState(null, '');
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('openDropdownPanel / closeDropdownPanel / toggleDropdownPanel', () => {
@@ -334,6 +340,57 @@ describe('scroll lock (mobile full-screen sheet)', () => {
     closeDropdownPanel(a);
     expect(document.body.classList.contains('scroll-locked')).toBe(false);
     restore();
+  });
+});
+
+describe('back-button history (mobile full-screen sheet)', () => {
+  it('pushes a history entry when opening while the mobile breakpoint is active', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    expect((history.state as { siftyModalOpen?: boolean } | null)?.siftyModalOpen).toBe(true);
+    restore();
+  });
+
+  it('does not push a history entry when opening at desktop width', () => {
+    const restore = stubMobileMatchMedia(false);
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    expect(history.state).toBeNull();
+    restore();
+  });
+
+  it('consumes the pushed entry via history.back() on a normal close', () => {
+    const restore = stubMobileMatchMedia(true);
+    const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    closeDropdownPanel(a);
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    restore();
+  });
+
+  it('does not call history.back() when closing with isPopStateTriggered', () => {
+    const restore = stubMobileMatchMedia(true);
+    const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    closeDropdownPanel(a, { isPopStateTriggered: true });
+    expect(backSpy).not.toHaveBeenCalled();
+    restore();
+  });
+
+  it('handleDropdownPopState closes the open panel', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    handleDropdownPopState();
+    expect(a.panel.classList.contains('hidden')).toBe(true);
+    restore();
+  });
+
+  it('handleDropdownPopState does nothing when no dropdown is open', () => {
+    expect(() => handleDropdownPopState()).not.toThrow();
   });
 });
 

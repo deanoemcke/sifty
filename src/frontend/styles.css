@@ -34,8 +34,9 @@ body {
   font-size: 14px;
 }
 
-/* Applied by dropdownPanel.ts while the mobile full-screen dropdown sheet is
-   open, so the page behind it can't be scrolled. */
+/* Applied by modalOverlay.ts while a modal-style overlay is open — the
+   listing detail modal, or the Show/Sort dropdowns' mobile full-screen sheet
+   — so the page behind it can't be scrolled. */
 body.scroll-locked {
   overflow: hidden;
 }

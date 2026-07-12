@@ -354,6 +354,17 @@ describe('initApp() wiring', () => {
 
       expect(document.getElementById('sortDropdownPanel')?.classList.contains('hidden')).toBe(true);
     });
+
+    it('a browser-back popstate event closes the open panel', async () => {
+      await import('./app');
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+      const panel = document.getElementById('sortDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
   });
 
   describe('Show dropdown control', () => {
@@ -422,6 +433,17 @@ describe('initApp() wiring', () => {
       expect(panel.classList.contains('hidden')).toBe(false);
 
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
+    it('a browser-back popstate event closes the open panel', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      window.dispatchEvent(new PopStateEvent('popstate'));
 
       expect(panel.classList.contains('hidden')).toBe(true);
     });

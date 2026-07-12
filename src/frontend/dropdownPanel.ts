@@ -9,6 +9,12 @@
 
 import { getElement, requireChild } from './domUtils';
 import { CHEVRON_ICON } from './icons';
+import {
+  lockBodyScroll,
+  popModalHistoryEntryIfPresent,
+  pushModalHistoryEntry,
+  unlockBodyScroll,
+} from './modalOverlay';
 
 export interface DropdownElements {
   root: HTMLElement;
@@ -82,28 +88,38 @@ function isMobileSheetActive(): boolean {
   );
 }
 
-// Applied to <body> while the mobile full-screen sheet is open, so the page
-// behind the (visually opaque, position: fixed) sheet can't be scrolled.
-const SCROLL_LOCK_CLASS = 'scroll-locked';
-
 let openDropdown: DropdownElements | null = null;
 
 export function openDropdownPanel(elements: DropdownElements): void {
   if (openDropdown && openDropdown.panel !== elements.panel) closeDropdownPanel(openDropdown);
   elements.panel.classList.remove('hidden');
   elements.trigger.setAttribute('aria-expanded', 'true');
-  if (isMobileSheetActive()) document.body.classList.add(SCROLL_LOCK_CLASS);
+  if (isMobileSheetActive()) {
+    lockBodyScroll();
+    pushModalHistoryEntry();
+  }
   openDropdown = elements;
 }
 
-export function closeDropdownPanel(elements: DropdownElements): void {
+export interface CloseDropdownPanelOptions {
+  // Set when this close is a reaction to a popstate event (the user pressed
+  // the browser back button), so we don't call history.back() again for an
+  // entry the back button has already consumed.
+  isPopStateTriggered?: boolean;
+}
+
+export function closeDropdownPanel(
+  elements: DropdownElements,
+  options: CloseDropdownPanelOptions = {}
+): void {
   // Hiding the panel while it contains focus would silently drop focus to
   // <body>; return it to the trigger instead. The guard means mouse
   // dismissals (which have already moved focus elsewhere) are left alone.
   const isFocusInsidePanel = elements.panel.contains(document.activeElement);
   elements.panel.classList.add('hidden');
   elements.trigger.setAttribute('aria-expanded', 'false');
-  document.body.classList.remove(SCROLL_LOCK_CLASS);
+  unlockBodyScroll();
+  if (!options.isPopStateTriggered) popModalHistoryEntryIfPresent();
   if (isFocusInsidePanel) elements.trigger.focus();
   if (openDropdown?.panel === elements.panel) openDropdown = null;
 }
@@ -111,6 +127,13 @@ export function closeDropdownPanel(elements: DropdownElements): void {
 export function toggleDropdownPanel(elements: DropdownElements): void {
   if (elements.panel.classList.contains('hidden')) openDropdownPanel(elements);
   else closeDropdownPanel(elements);
+}
+
+// Wired to the window's popstate event in app.ts, so pressing the browser
+// back button closes whichever dropdown sheet is open instead of navigating
+// away from the page.
+export function handleDropdownPopState(): void {
+  if (openDropdown) closeDropdownPanel(openDropdown, { isPopStateTriggered: true });
 }
 
 // The external <label for="…"> is part of the dropdown's operating surface

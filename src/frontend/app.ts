@@ -14,7 +14,12 @@ import {
   updateDiscoveryBtn,
 } from './discoveryForm';
 import { getElement } from './domUtils';
-import { handleDropdownTabKey, handleEscapeKey, handleOutsideClick } from './dropdownPanel';
+import {
+  handleDropdownPopState,
+  handleDropdownTabKey,
+  handleEscapeKey,
+  handleOutsideClick,
+} from './dropdownPanel';
 import { handleListingCardKeydown, resolveListingCardOpenArea } from './listingCardActivation';
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from './listingDetail';
 import { applyBrandTitle } from './pageTitle';
@@ -90,6 +95,16 @@ function initApp(): void {
   document.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
     handleEscapeKey(keyboardEvent.key);
     handleDropdownTabKey(keyboardEvent);
+  });
+
+  // The browser back button closes whichever modal-style overlay is open
+  // (the listing modal, or the Show/Sort dropdowns' mobile full-screen
+  // sheet) instead of navigating away — see modalOverlay.ts for the history
+  // push/pop half of this.
+  window.addEventListener('popstate', () => {
+    handleDropdownPopState();
+    if (!getElement('listingModal').classList.contains('hidden'))
+      closeListingModal({ isPopStateTriggered: true });
   });
 
   // Populate region dropdown and wire the allow-shipping checkbox
@@ -212,7 +227,7 @@ function initApp(): void {
     }
   );
 
-  getElement('listingModalCloseBtn').addEventListener('click', closeListingModal);
+  getElement('listingModalCloseBtn').addEventListener('click', () => closeListingModal());
 
   getElement('listingModal').addEventListener('click', (mouseEvent: MouseEvent) => {
     if (mouseEvent.target === getElement('listingModal')) closeListingModal();
