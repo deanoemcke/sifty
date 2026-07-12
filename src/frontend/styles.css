@@ -536,6 +536,14 @@ label {
    panel DOM becomes a full-screen sheet purely via this media query — no JS
    device detection, since that's what broke the previous native-select
    mobile attempt (browsers don't treat <select multiple> like a modal). */
+/* Keeps a label paired with its trigger so .sort-row's flex-wrap moves them
+   to the next line together, rather than wrapping the trigger alone. */
+.dropdown-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
 .dropdown-external-label {
   margin-bottom: 0;
   flex-shrink: 0;
