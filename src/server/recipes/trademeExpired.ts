@@ -108,6 +108,7 @@ function mapLegacyReserveText(text: string | undefined): ReserveStatus {
   const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
   if (normalized === 'reserve not met') return 'NOT_MET';
   if (normalized === 'reserve met') return 'MET';
+  console.warn(`[trademeExpired] unrecognized reserve text: ${JSON.stringify(text)}`);
   return 'UNKNOWN';
 }
 

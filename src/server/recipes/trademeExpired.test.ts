@@ -269,19 +269,27 @@ describe('parseLegacySearchResultsHtml', () => {
     expect(listings[0]).toMatchObject({ reserveStatus: 'NOT_MET', isSold: false });
   });
 
-  it('fails safe (not sold) when reserve text is genuinely unrecognized', () => {
-    const html = `
-      <ul>
-        <li class="listingCard">
-          <div class="listingTitle"><a href="/listing-333.htm">Unrecognized Reserve Item</a></div>
-          <div class="listingBidPrice">$50.00</div>
-          <div class="listingNumberOfBidsText">1 bid</div>
-          <div class="listingLocation">Auckland</div>
-          <div class="reserve-text">Some Other Status</div>
-        </li>
-      </ul>`;
-    const { listings } = parseLegacySearchResultsHtml(html);
-    expect(listings[0]).toMatchObject({ reserveStatus: 'UNKNOWN', isSold: false });
+  it('fails safe (not sold) when reserve text is genuinely unrecognized, and warns so the drift is observable', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const html = `
+        <ul>
+          <li class="listingCard">
+            <div class="listingTitle"><a href="/listing-333.htm">Unrecognized Reserve Item</a></div>
+            <div class="listingBidPrice">$50.00</div>
+            <div class="listingNumberOfBidsText">1 bid</div>
+            <div class="listingLocation">Auckland</div>
+            <div class="reserve-text">Some Other Status</div>
+          </li>
+        </ul>`;
+      const { listings } = parseLegacySearchResultsHtml(html);
+      expect(listings[0]).toMatchObject({ reserveStatus: 'UNKNOWN', isSold: false });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/\[trademeExpired\].*Some Other Status/)
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
