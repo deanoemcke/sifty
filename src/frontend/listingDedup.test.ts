@@ -55,6 +55,22 @@ describe('listingDedupeKey', () => {
     expect(listingDedupeKey(a)).toBe(listingDedupeKey(b));
   });
 
+  it('differs when the price differs, even with identical title/location/description', () => {
+    const a = makeListing({
+      title: 'Vintage lamp',
+      description: '',
+      location: 'Wellington',
+      price: 50,
+    });
+    const b = makeListing({
+      title: 'Vintage lamp',
+      description: '',
+      location: 'Wellington',
+      price: 75,
+    });
+    expect(listingDedupeKey(a)).not.toBe(listingDedupeKey(b));
+  });
+
   it('is deterministic for the same listing', () => {
     const listing = makeListing();
     expect(listingDedupeKey(listing)).toBe(listingDedupeKey(listing));

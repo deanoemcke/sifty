@@ -14,8 +14,19 @@ export function baseUrl(url: string): string {
 
 // A null-char separator keeps adjacent fields from colliding at their
 // boundary (e.g. title "ab" + description "c" vs title "a" + description "bc").
+//
+// price is included deliberately: two listings that share title/location/
+// description but differ in price are treated as distinct, not as the same
+// listing re-priced. String(price) keeps `null` (no price given) distinct
+// from any numeric price, including 0.
 export function listingDedupeKey(listing: Listing): number {
   return djb2Hash(
-    [baseUrl(listing.url), listing.title, listing.description ?? '', listing.location].join('\0')
+    [
+      baseUrl(listing.url),
+      listing.title,
+      listing.description ?? '',
+      listing.location,
+      String(listing.price),
+    ].join('\0')
   );
 }
