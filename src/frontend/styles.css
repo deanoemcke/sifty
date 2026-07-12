@@ -509,16 +509,6 @@ label {
 .results-header-row + .results-header-row {
   margin-top: 0.5rem;
 }
-/* All header text matches the 0.875rem input text */
-.results-status-row {
-  font-size: 0.875rem;
-  color: var(--text-muted);
-  gap: 0.5rem;
-}
-.results-status-row strong {
-  color: var(--text);
-  font-weight: 600;
-}
 .ai-filter-label {
   flex-shrink: 0;
   font-size: 0.875rem;
