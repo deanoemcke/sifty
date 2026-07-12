@@ -279,3 +279,47 @@ describe('searchUrlCardAsync — isNew tagging', () => {
     expect(item?.data.isNew).toBeUndefined();
   });
 });
+
+describe('searchUrlCardAsync — isNew merge across duplicate arrivals', () => {
+  // Discovery fires a "used" card and a "new" card concurrently for the same
+  // prompt (cardSearch.ts's fireAllCardSearches), and both can surface the
+  // same underlying listing under different URLs. listingDedupeKey collapses
+  // them to one stored item — regardless of which card's SSE event lands
+  // first, the merged item must end up isNew: true, since one of the two
+  // matching searches confirmed it. A first-write-wins merge would make the
+  // result depend on arrival order instead.
+  const usedCardUrl = TRADEME_URL;
+  const newCardUrl = 'https://www.trademe.co.nz/a/marketplace/search?condition=new';
+  const usedListingLine =
+    'data: {"type":"listing","data":{"source":"trademe","title":"Widget","price":20,"location":"Auckland","url":"https://example.com/widget?ref=used","isAuction":false,"relevance":0}}\n';
+  const newListingLine =
+    'data: {"type":"listing","data":{"source":"trademe","title":"Widget","price":20,"location":"Auckland","url":"https://example.com/widget?ref=new","isAuction":false,"relevance":0}}\n';
+
+  it('ends up isNew: true when the used-condition arrival is processed first', async () => {
+    const usedCard = addSearchableCardWithUrl(usedCardUrl);
+    const newCard = addSearchableCardWithUrl(newCardUrl);
+
+    stubQuickSearchStream([usedListingLine]);
+    await searchUrlCardAsync(usedCard);
+    stubQuickSearchStream([newListingLine]);
+    await searchUrlCardAsync(newCard);
+
+    expect(listingUrlByDedupeKey.size).toBe(1);
+    const storedUrl = listingUrlByDedupeKey.values().next().value as string;
+    expect(listingsByUrl.get(storedUrl)?.data.isNew).toBe(true);
+  });
+
+  it('ends up isNew: true when the new-condition arrival is processed first', async () => {
+    const usedCard = addSearchableCardWithUrl(usedCardUrl);
+    const newCard = addSearchableCardWithUrl(newCardUrl);
+
+    stubQuickSearchStream([newListingLine]);
+    await searchUrlCardAsync(newCard);
+    stubQuickSearchStream([usedListingLine]);
+    await searchUrlCardAsync(usedCard);
+
+    expect(listingUrlByDedupeKey.size).toBe(1);
+    const storedUrl = listingUrlByDedupeKey.values().next().value as string;
+    expect(listingsByUrl.get(storedUrl)?.data.isNew).toBe(true);
+  });
+});

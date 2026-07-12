@@ -86,8 +86,8 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
         const listing = normalizeListingRelevance(ev.data as Listing);
         if (isNewConditionSearchUrl(url)) listing.isNew = true;
         const dedupeKey = listingDedupeKey(listing);
-        const isDuplicate = listingUrlByDedupeKey.has(dedupeKey);
-        if (!isDuplicate) {
+        const existingUrl = listingUrlByDedupeKey.get(dedupeKey);
+        if (existingUrl === undefined) {
           data.listingUrls.push(listing.url);
           const item: ListingItem = {
             data: listing,
@@ -100,9 +100,20 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           renderDerived();
         } else {
           // Listing already known — either the exact URL, or the same
-          // underlying listing under a different URL from another card. The
-          // group count may still change, since it dedupes per group rather
-          // than globally.
+          // underlying listing under a different URL from another card
+          // (e.g. discovery's "used" and "new" cards racing on the same
+          // item). Merge deterministically rather than first-write-wins: a
+          // listing found by any condition=new search is new, regardless of
+          // which arrival happened to land first. An existing isNew: true
+          // is therefore never downgraded by a later, less-specific arrival.
+          const existingItem = listingsByUrl.get(existingUrl);
+          if (existingItem && listing.isNew && !existingItem.data.isNew) {
+            existingItem.data.isNew = true;
+            renderCard(existingItem);
+            renderDerived();
+          }
+          // The group count may still change, since it dedupes per group
+          // rather than globally.
           updateUrlGroupHeaders();
         }
       } else if (ev.type === 'error') {
