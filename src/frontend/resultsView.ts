@@ -141,6 +141,14 @@ export function renderAiFilterButton(): void {
   const filterBtn = getElement<HTMLButtonElement>('aiFilterBtn');
   const promptIsEmpty = getElement<HTMLTextAreaElement>('aiFilter').value.trim() === '';
   filterBtn.disabled = isAiFilterRunning || promptIsEmpty;
+  // The innerHTML below is fully determined by isAiFilterRunning, so skip the
+  // write when the rendered state hasn't changed: renderDerived() fires once
+  // per streamed listing, and recreating the spinner node on each call would
+  // restart its CSS animation mid-run. data-state is a render cache key, not
+  // business state — isAiFilterRunning in state.ts stays the source of truth.
+  const desiredButtonState = isAiFilterRunning ? 'running' : 'idle';
+  if (filterBtn.dataset.state === desiredButtonState) return;
+  filterBtn.dataset.state = desiredButtonState;
   filterBtn.innerHTML = isAiFilterRunning
     ? '<span class="spinner"></span><span>Filtering..</span>'
     : 'Filter';

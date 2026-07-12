@@ -131,6 +131,19 @@ describe('renderDerived', () => {
     expect(filterBtn.textContent).toContain('Filtering..');
   });
 
+  it('keeps the same spinner element across repeated renders while the ai filter is running', () => {
+    addCardWithListings(['https://l/1']);
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
+    setIsAiFilterRunning(true);
+    renderDerived();
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    const spinnerElement = filterBtn.querySelector('.spinner');
+    renderDerived();
+    // Recreating the spinner node restarts its CSS animation mid-run, so a
+    // repeated render in the same state must leave the existing node in place.
+    expect(filterBtn.querySelector('.spinner')).toBe(spinnerElement);
+  });
+
   it('re-enables the ai-filter button and restores its label once the run finishes', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
