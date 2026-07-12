@@ -1,10 +1,8 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireAllCardSearches } from './cardSearch';
 import type { ListingItem } from './state';
-import { makeListing, makeListingItem } from './testFixtures';
+import { loadIndexHtmlBodyFixture, makeListing, makeListingItem } from './testFixtures';
 
 describe('fireAllCardSearches', () => {
   it('calls the search function exactly once per card', () => {
@@ -47,6 +45,7 @@ vi.mock('./aiFilter', async (importOriginal) => {
   return {
     ...actual,
     requestAiFilterRunIfPromptLongEnough: vi.fn(actual.requestAiFilterRunIfPromptLongEnough),
+    requestAiFilterRun: vi.fn(actual.requestAiFilterRun),
   };
 });
 
@@ -58,20 +57,6 @@ vi.mock('./listingDetail', async (importOriginal) => {
 vi.mock('./streamPost', () => ({
   streamPostAsync: vi.fn().mockResolvedValue(undefined),
 }));
-
-// index.html is the real DOM initApp() is written against — reading it here
-// (rather than hand-rolling a fixture) keeps the test fixture from drifting
-// out of sync with the markup app.ts actually wires up in production.
-function loadIndexHtmlBodyFixture(): string {
-  // Deliberately __dirname (not import.meta.url): under "@vitest-environment
-  // jsdom" import.meta.url resolves to a fake http://localhost address rather
-  // than a file:// URL, which fileURLToPath rejects.
-  const indexHtmlPath = join(__dirname, '../../index.html');
-  const indexHtml = readFileSync(indexHtmlPath, 'utf-8');
-  const bodyMatch = indexHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (!bodyMatch) throw new Error('index.html fixture: <body> tag not found');
-  return bodyMatch[1].replace(/<script[\s\S]*?<\/script>/gi, '');
-}
 
 function appendListingCardFixture(): { openArea: HTMLElement; externalLink: HTMLElement } {
   const listingsContainer = document.getElementById('listingsContainer');
@@ -230,24 +215,106 @@ describe('initApp() wiring', () => {
     });
   });
 
-  describe('Sort by control', () => {
-    it('populates the sort select with all options, defaulting to source-url', async () => {
+  describe('AI filter button', () => {
+    it('clicks #aiFilterBtn on Enter in the AI filter textarea', async () => {
       await import('./app');
-      const sortSelect = document.getElementById('sortBy') as HTMLSelectElement;
-      expect(Array.from(sortSelect.options).map((option) => option.value)).toEqual([
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      const clickSpy = vi.spyOn(aiFilterBtn, 'click');
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+
+      aiFilterInput.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      );
+
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not click #aiFilterBtn on Shift+Enter (newline in the prompt)', async () => {
+      await import('./app');
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      const clickSpy = vi.spyOn(aiFilterBtn, 'click');
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+
+      aiFilterInput.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+
+      expect(clickSpy).not.toHaveBeenCalled();
+    });
+
+    it('runs the ai filter immediately on click, bypassing the debounce/min-length guard', async () => {
+      const { requestAiFilterRun } = await import('./aiFilter');
+      await import('./app');
+
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      // Shorter than MIN_AI_FILTER_PROMPT_LENGTH — the debounced auto-run
+      // would ignore this, but an explicit click must still run it.
+      aiFilterInput.value = 'old';
+      aiFilterInput.dispatchEvent(new Event('input'));
+
+      aiFilterBtn.click();
+
+      expect(vi.mocked(requestAiFilterRun)).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables the button while a run is in flight and re-enables it once done', async () => {
+      const { streamPostAsync } = await import('./streamPost');
+      let resolveStream: () => void = () => {};
+      vi.mocked(streamPostAsync).mockReturnValue(
+        new Promise((resolve) => {
+          resolveStream = () => resolve(undefined);
+        })
+      );
+      await import('./app');
+
+      const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+      aiFilterInput.value = 'good condition only please';
+      aiFilterInput.dispatchEvent(new Event('input'));
+
+      aiFilterBtn.click();
+      await Promise.resolve();
+
+      expect(aiFilterBtn.disabled).toBe(true);
+      expect(aiFilterBtn.querySelector('.spinner')).not.toBeNull();
+
+      resolveStream();
+      await vi.waitFor(() => expect(aiFilterBtn.disabled).toBe(false));
+      expect(aiFilterBtn.textContent).toBe('Filter');
+    });
+  });
+
+  describe('Sort dropdown control', () => {
+    it('populates the sort panel with all options, defaulting to source-url', async () => {
+      await import('./app');
+      const radios = Array.from(
+        document.querySelectorAll<HTMLInputElement>('#sortDropdownOptions input[type="radio"]')
+      );
+      expect(radios.map((radio) => radio.value)).toEqual([
         'source-url',
         'best-match',
         'worst-match',
         'lowest-price',
         'highest-price',
       ]);
-      expect(sortSelect.value).toBe('source-url');
+      expect(radios.filter((radio) => radio.checked).map((radio) => radio.value)).toEqual([
+        'source-url',
+      ]);
+      expect(document.querySelector('#sortDropdown .dropdown-trigger-label')?.textContent).toBe(
+        'Source URL'
+      );
     });
 
-    it('updates state.sortBy when the select changes', async () => {
+    it('updates state.sortBy, the checked radio, and the trigger label when an option changes', async () => {
       await import('./app');
       const state = await import('./state');
-      const sortSelect = document.getElementById('sortBy') as HTMLSelectElement;
+      const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
 
       // renderDerived() schedules the non-default-sort DOM reorder via
       // requestAnimationFrame (see resultsView.ts's scheduleSortOrderUpdate).
@@ -256,11 +323,188 @@ describe('initApp() wiring', () => {
       // already-torn-down DOM and surfaces as an unhandled error.
       vi.useFakeTimers();
 
-      sortSelect.value = 'best-match';
-      sortSelect.dispatchEvent(new Event('change'));
+      bestMatchRadio.checked = true;
+      bestMatchRadio.dispatchEvent(new Event('change'));
 
       expect(state.sortBy).toBe('best-match');
+      expect((document.getElementById('sortSourceUrl') as HTMLInputElement).checked).toBe(false);
+      expect(document.querySelector('#sortDropdown .dropdown-trigger-label')?.textContent).toBe(
+        'Best match'
+      );
       vi.advanceTimersByTime(20);
+    });
+
+    it('clicking the Sort button opens the panel and sets aria-expanded', async () => {
+      await import('./app');
+      const panel = document.getElementById('sortDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(true);
+
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+
+      expect(panel.classList.contains('hidden')).toBe(false);
+      expect(document.getElementById('sortDropdownBtn')?.getAttribute('aria-expanded')).toBe(
+        'true'
+      );
+    });
+
+    it('clicking the footer button closes the panel', async () => {
+      await import('./app');
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+      document.getElementById('sortDropdownFooterBtn')?.dispatchEvent(new Event('click'));
+
+      expect(document.getElementById('sortDropdownPanel')?.classList.contains('hidden')).toBe(true);
+    });
+
+    it('a browser-back popstate event closes the open panel', async () => {
+      await import('./app');
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+      const panel = document.getElementById('sortDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+  });
+
+  describe('Show dropdown control', () => {
+    it('init populates the checkbox panel from SHOW_OPTIONS, hiding Sold by default', async () => {
+      await import('./app');
+      const checkboxIds = Array.from(
+        document.querySelectorAll('#showDropdownOptions input[type="checkbox"]')
+      ).map((checkbox) => checkbox.id);
+      expect(checkboxIds).toEqual(['showAvailable', 'showSold', 'showFiltered']);
+
+      // No results yet at init, so there are no sold listings to show — the row starts hidden.
+      expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+      expect(document.querySelector('#showDropdown .dropdown-trigger-label')?.textContent).toBe(
+        '0 of 0 results'
+      );
+    });
+
+    it('clicking the Show button opens the panel and sets aria-expanded', async () => {
+      await import('./app');
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(true);
+
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+
+      expect(panel.classList.contains('hidden')).toBe(false);
+      expect(document.getElementById('showDropdownBtn')?.getAttribute('aria-expanded')).toBe(
+        'true'
+      );
+    });
+
+    // jsdom mirrors the browser's label activation: the label's own click
+    // bubbles to the document first, then a forwarded click fires on the
+    // associated button. Regression test for the external label click
+    // closing-then-reopening the panel instead of toggling it closed.
+    it('clicking the external Show label toggles the panel open and closed', async () => {
+      await import('./app');
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      const externalLabel = document.querySelector(
+        'label[for="showDropdownBtn"]'
+      ) as HTMLLabelElement;
+
+      externalLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      externalLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
+    it('a click outside the dropdown closes the panel', async () => {
+      await import('./app');
+      document
+        .getElementById('showDropdownBtn')
+        ?.dispatchEvent(new Event('click', { bubbles: true }));
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      document.body.dispatchEvent(new Event('click', { bubbles: true }));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
+    it('pressing Escape closes the open panel', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
+    it('a browser-back popstate event closes the open panel', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
+    it('clicking the footer button closes the panel', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      document.getElementById('showDropdownFooterBtn')?.dispatchEvent(new Event('click'));
+
+      expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(true);
+    });
+
+    it('opening the Sort panel closes an open Show panel, and vice versa', async () => {
+      await import('./app');
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(
+        false
+      );
+
+      document.getElementById('sortDropdownBtn')?.dispatchEvent(new Event('click'));
+
+      expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(true);
+      expect(document.getElementById('sortDropdownPanel')?.classList.contains('hidden')).toBe(
+        false
+      );
+    });
+
+    it('toggling the Sold checkbox updates state and re-applies client filters', async () => {
+      await import('./app');
+      const state = await import('./state');
+      const soldCheckbox = document.getElementById('showSold') as HTMLInputElement;
+
+      soldCheckbox.checked = false;
+      soldCheckbox.dispatchEvent(new Event('change'));
+
+      expect(state.visibleListingCategories.has('sold')).toBe(false);
+    });
+
+    it('the Sold row appears once results contain a sold listing, and hides again once they do not', async () => {
+      const { listingsByUrl } = await import('./state');
+      const { urlCards, urlCardData } = await import('./urlCardStore');
+      const { renderCard, renderDerived } = await import('./resultsView');
+      await import('./app');
+      const soldRow = document.getElementById('showSoldRow') as HTMLElement;
+      expect(soldRow.classList.contains('hidden')).toBe(true);
+
+      const url = 'https://example.com/listing/sold-1';
+      const soldItem = makeListingItemAt(url);
+      soldItem.data.isSold = true;
+      listingsByUrl.set(url, soldItem);
+      urlCardData(urlCards[0]).listingUrls = [url];
+      renderCard(soldItem);
+      renderDerived();
+
+      expect(soldRow.classList.contains('hidden')).toBe(false);
+
+      urlCardData(urlCards[0]).listingUrls = [];
+      listingsByUrl.delete(url);
+      renderDerived();
+
+      expect(soldRow.classList.contains('hidden')).toBe(true);
     });
   });
 

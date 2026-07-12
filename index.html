@@ -90,20 +90,18 @@
 <main class="main-pane">
   <!-- Results header — sticky above the listings -->
   <div id="resultsSection" class="results-header hidden">
-      <div class="results-header-row results-status-row">
-        <span>Showing <strong id="resultCount">0</strong> / <strong id="totalCount">0</strong> results</span>
-        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
-      </div>
       <div class="results-header-row ai-filter-row">
-        <button id="toggleFilteredBtn" class="icon-btn filter-toggle-btn" type="button" aria-pressed="true" title="Hide filtered listings" aria-label="Hide filtered listings">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-        </button>
+        <label for="aiFilter" class="ai-filter-label">AI filter</label>
         <textarea id="aiFilter" rows="1" placeholder="Add more detail to filter your search results.."></textarea>
-        <span id="aiFilterStatus" class="ai-filter-status"></span>
+        <button id="aiFilterBtn" class="btn btn-primary ai-filter-btn" type="button" disabled>Filter</button>
       </div>
       <div class="results-header-row sort-row">
-        <label for="sortBy">Sort by</label>
-        <select id="sortBy"></select>
+        <!-- Trigger/panel markup built by buildDropdownShell (dropdownPanel.ts) -->
+        <label for="showDropdownBtn" class="dropdown-external-label">Showing</label>
+        <div class="dropdown-control" id="showDropdown"></div>
+        <label for="sortDropdownBtn" class="dropdown-external-label">Sort by</label>
+        <div class="dropdown-control" id="sortDropdown"></div>
+        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
       </div>
   </div>
   <div id="listingsContainer"></div>

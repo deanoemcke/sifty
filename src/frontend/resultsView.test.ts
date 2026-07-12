@@ -2,20 +2,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requireChild } from './domUtils';
 import {
+  applyClientFilters,
   applySortOrder,
+  getCardByUrl,
   getOrderedListings,
   renderCard,
   renderDerived,
-  renderFilteredToggle,
   scheduleSortOrderUpdate,
 } from './resultsView';
+import { populateShowControls } from './showDropdown';
 import * as sortListingsModule from './sortListings';
 import {
   type ListingItem,
   listingsByUrl,
   resetState,
   setIsAiFilterRunning,
-  setShowFilteredListings,
+  setListingCategoryVisible,
   setSortBy,
   type UrlCardData,
 } from './state';
@@ -50,13 +52,13 @@ beforeEach(() => {
   resetState();
   resetUrlCardStore();
   document.body.innerHTML = `
-    <button id="toggleFilteredBtn"></button>
-    <span id="resultCount"></span>
-    <span id="totalCount"></span>
     <button id="deepBtn"></button>
-    <span id="aiFilterStatus"></span>
+    <textarea id="aiFilter"></textarea>
+    <button id="aiFilterBtn"></button>
     <div id="listingsContainer"></div>
+    <div id="showDropdown"></div>
   `;
+  populateShowControls();
 });
 
 afterEach(() => {
@@ -82,52 +84,76 @@ describe('renderDerived', () => {
   it('counts only passing listings as visible when filtered listings are hidden', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
-    setShowFilteredListings(false);
+    setListingCategoryVisible('filtered', false);
     renderDerived();
-    expect(document.getElementById('resultCount')?.textContent).toBe('1');
-    expect(document.getElementById('totalCount')?.textContent).toBe('2');
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('1 of 2 results');
   });
 
   it('counts all listings as visible when filtered listings are shown', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
-    setShowFilteredListings(true);
     renderDerived();
-    expect(document.getElementById('resultCount')?.textContent).toBe('2');
-    expect(document.getElementById('totalCount')?.textContent).toBe('2');
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('2 of 2 results');
   });
 
-  it('shows a zero count before any listing has been excluded', () => {
+  it('refreshes the Show dropdown per-category counts', () => {
+    addCardWithListings(['https://l/1', 'https://l/2']);
+    setAiFilterReason('https://l/2', 'too old');
+    renderDerived();
+    expect(document.getElementById('showAvailableCount')?.textContent).toBe('(1)');
+    expect(document.getElementById('showFilteredCount')?.textContent).toBe('(1)');
+  });
+
+  it('disables the ai-filter button and shows the empty state when the prompt is blank', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     renderDerived();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 0 results');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(true);
+    expect(filterBtn.textContent).toBe('Filter');
   });
 
-  it('counts excluded listings in the ai-filter status line', () => {
-    addCardWithListings(['https://l/1', 'https://l/2', 'https://l/3']);
-    setAiFilterReason('https://l/2', 'too old');
-    setAiFilterReason('https://l/3', 'wrong colour');
+  it('enables the ai-filter button once a prompt is entered', () => {
+    addCardWithListings(['https://l/1', 'https://l/2']);
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
     renderDerived();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 2 results');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(false);
   });
 
-  it('shows a spinner and filtering message while the ai filter is running', () => {
+  it('shows a spinner and disables the ai-filter button while the ai filter is running', () => {
     addCardWithListings(['https://l/1']);
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
     setIsAiFilterRunning(true);
     renderDerived();
-    const status = document.getElementById('aiFilterStatus') as HTMLElement;
-    expect(status.querySelector('.spinner')).not.toBeNull();
-    expect(status.textContent).toContain('Filtering results...');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(true);
+    expect(filterBtn.querySelector('.spinner')).not.toBeNull();
+    expect(filterBtn.textContent).toContain('Filtering..');
   });
 
-  it('reverts to the filtered count once the ai filter run finishes', () => {
+  it('keeps the same spinner element across repeated renders while the ai filter is running', () => {
+    addCardWithListings(['https://l/1']);
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
+    setIsAiFilterRunning(true);
+    renderDerived();
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    const spinnerElement = filterBtn.querySelector('.spinner');
+    renderDerived();
+    // Recreating the spinner node restarts its CSS animation mid-run, so a
+    // repeated render in the same state must leave the existing node in place.
+    expect(filterBtn.querySelector('.spinner')).toBe(spinnerElement);
+  });
+
+  it('re-enables the ai-filter button and restores its label once the run finishes', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
-    setAiFilterReason('https://l/2', 'too old');
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
     setIsAiFilterRunning(true);
     renderDerived();
     setIsAiFilterRunning(false);
     renderDerived();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 1 results');
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.disabled).toBe(false);
+    expect(filterBtn.textContent).toBe('Filter');
   });
 
   it('builds the ordered listing list only once per render tick', () => {
@@ -389,17 +415,51 @@ describe('renderCard', () => {
   });
 });
 
-describe('renderFilteredToggle', () => {
-  it('derives the pressed state and label from showFilteredListings state', () => {
-    setShowFilteredListings(true);
-    renderFilteredToggle();
-    const toggleBtn = document.getElementById('toggleFilteredBtn') as HTMLButtonElement;
-    expect(toggleBtn.getAttribute('aria-pressed')).toBe('true');
-    expect(toggleBtn.title).toBe('Hide filtered listings');
+describe('applyClientFilters', () => {
+  function renderListing(url: string, overrides: Partial<ListingItem> = {}): void {
+    const item = makeListingItem({
+      data: makeListing({ url, title: url, price: null, location: '' }),
+      ...overrides,
+    });
+    listingsByUrl.set(url, item);
+    addCardWithListings([url]);
+    renderCard(item);
+  }
 
-    setShowFilteredListings(false);
-    renderFilteredToggle();
-    expect(toggleBtn.getAttribute('aria-pressed')).toBe('false');
-    expect(toggleBtn.title).toBe('Show filtered listings');
+  it('hides sold listings when "sold" is removed from visibleListingCategories', () => {
+    renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
+    setListingCategoryVisible('sold', false);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
+  });
+
+  it('hides filtered listings when "filtered" is removed', () => {
+    renderListing('https://l/1', { aiFilterReason: 'too old' });
+    setListingCategoryVisible('filtered', false);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
+  });
+
+  it('hides available listings when "available" is removed', () => {
+    renderListing('https://l/1');
+    setListingCategoryVisible('available', false);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
+  });
+
+  it('restores display when the category is re-added', () => {
+    renderListing('https://l/1', { aiFilterReason: 'too old' });
+    setListingCategoryVisible('filtered', false);
+    applyClientFilters();
+    setListingCategoryVisible('filtered', true);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
+  });
+
+  it('does not hide a sold listing when only "filtered" is removed', () => {
+    renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
+    setListingCategoryVisible('filtered', false);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
   });
 });

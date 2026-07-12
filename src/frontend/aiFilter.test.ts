@@ -9,6 +9,7 @@ import {
   scheduleAiFilterRun,
   shouldAutoRunAiFilter,
 } from './aiFilter';
+import { populateShowControls } from './showDropdown';
 import { isAiFilterRunning, type ListingItem, listingsByUrl, resetState } from './state';
 import { makeListing, makeListingItem } from './testFixtures';
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from './urlCardStore';
@@ -92,13 +93,12 @@ describe('runAiFilterAsync', () => {
     document.body.innerHTML = `
       <div id="resultsSection" class="hidden"></div>
       <div id="listingsContainer"></div>
-      <span id="resultCount"></span>
-      <span id="totalCount"></span>
       <button id="deepBtn"></button>
-      <span id="aiFilterStatus"></span>
       <textarea id="aiFilter">laptop</textarea>
-      <button id="applyAiFilterBtn"></button>
+      <button id="aiFilterBtn"></button>
+      <div id="showDropdown"></div>
     `;
+    populateShowControls();
   });
 
   afterEach(() => {
@@ -160,11 +160,11 @@ describe('requestAiFilterRunIfPromptLongEnough', () => {
     resetUrlCardStore();
     document.body.innerHTML = `
       <textarea id="aiFilter"></textarea>
-      <span id="resultCount"></span>
-      <span id="totalCount"></span>
       <button id="deepBtn"></button>
-      <span id="aiFilterStatus"></span>
+      <button id="aiFilterBtn"></button>
+      <div id="showDropdown"></div>
     `;
+    populateShowControls();
   });
 
   it('does not start a run when the prompt is shorter than the minimum length', () => {
@@ -201,7 +201,6 @@ describe('requestAiFilterRunIfPromptLongEnough', () => {
     requestAiFilterRunIfPromptLongEnough();
 
     expect(listingsByUrl.get('https://l/1')?.aiFilterReason).toBeNull();
-    expect(document.getElementById('aiFilterStatus')?.textContent).toBe('Filtered 0 results');
   });
 
   it('does not clear an existing filtered-out listing while the prompt is short but non-empty', () => {
@@ -222,11 +221,12 @@ describe('clearAiFilterResults', () => {
     resetState();
     resetUrlCardStore();
     document.body.innerHTML = `
-      <span id="resultCount"></span>
-      <span id="totalCount"></span>
       <button id="deepBtn"></button>
-      <span id="aiFilterStatus"></span>
+      <textarea id="aiFilter"></textarea>
+      <button id="aiFilterBtn"></button>
+      <div id="showDropdown"></div>
     `;
+    populateShowControls();
   });
 
   it('resets aiFilterReason and aiCheckedHash to null for every listing', () => {
