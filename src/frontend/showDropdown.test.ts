@@ -12,7 +12,7 @@ import {
   updateShowSoldOptionVisibility,
 } from './showDropdown';
 import { resetState, setListingCategoryVisible, visibleListingCategories } from './state';
-import { makeListingItem } from './testFixtures';
+import { makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
 
 beforeEach(() => {
   resetState();
@@ -26,16 +26,7 @@ beforeEach(() => {
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
     <div id="listingsContainer"></div>
-    <div class="dropdown-control" id="showDropdown">
-      <button id="showDropdownBtn" type="button" aria-expanded="false">
-        <span class="dropdown-trigger-label">Show</span>
-        <svg class="dropdown-caret"></svg>
-      </button>
-      <div id="showDropdownPanel" class="hidden">
-        <div id="showDropdownOptions"></div>
-        <button id="showDropdownFooterBtn" type="button">Show</button>
-      </div>
-    </div>
+    ${SHOW_DROPDOWN_FIXTURE_HTML}
   `;
   populateShowControls();
 });

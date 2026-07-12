@@ -8,21 +8,11 @@ import {
   SORT_RADIO_ID_BY_OPTION,
   toggleSortDropdownPanel,
 } from './sortDropdown';
+import { SORT_DROPDOWN_FIXTURE_HTML } from './testFixtures';
 
 beforeEach(() => {
   resetOpenDropdown();
-  document.body.innerHTML = `
-    <div class="dropdown-control" id="sortDropdown">
-      <button id="sortDropdownBtn" type="button" aria-expanded="false">
-        <span class="dropdown-trigger-label">Sort</span>
-        <svg class="dropdown-caret"></svg>
-      </button>
-      <div id="sortDropdownPanel" class="hidden">
-        <div id="sortDropdownOptions"></div>
-        <button id="sortDropdownFooterBtn" type="button">Sort</button>
-      </div>
-    </div>
-  `;
+  document.body.innerHTML = SORT_DROPDOWN_FIXTURE_HTML;
 });
 
 describe('populateSortControls', () => {

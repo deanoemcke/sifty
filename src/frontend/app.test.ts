@@ -1,10 +1,8 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireAllCardSearches } from './cardSearch';
 import type { ListingItem } from './state';
-import { makeListing, makeListingItem } from './testFixtures';
+import { loadIndexHtmlBodyFixture, makeListing, makeListingItem } from './testFixtures';
 
 describe('fireAllCardSearches', () => {
   it('calls the search function exactly once per card', () => {
@@ -59,20 +57,6 @@ vi.mock('./listingDetail', async (importOriginal) => {
 vi.mock('./streamPost', () => ({
   streamPostAsync: vi.fn().mockResolvedValue(undefined),
 }));
-
-// index.html is the real DOM initApp() is written against — reading it here
-// (rather than hand-rolling a fixture) keeps the test fixture from drifting
-// out of sync with the markup app.ts actually wires up in production.
-function loadIndexHtmlBodyFixture(): string {
-  // Deliberately __dirname (not import.meta.url): under "@vitest-environment
-  // jsdom" import.meta.url resolves to a fake http://localhost address rather
-  // than a file:// URL, which fileURLToPath rejects.
-  const indexHtmlPath = join(__dirname, '../../index.html');
-  const indexHtml = readFileSync(indexHtmlPath, 'utf-8');
-  const bodyMatch = indexHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (!bodyMatch) throw new Error('index.html fixture: <body> tag not found');
-  return bodyMatch[1].replace(/<script[\s\S]*?<\/script>/gi, '');
-}
 
 function appendListingCardFixture(): { openArea: HTMLElement; externalLink: HTMLElement } {
   const listingsContainer = document.getElementById('listingsContainer');
