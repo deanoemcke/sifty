@@ -42,8 +42,13 @@ export function openDropdownPanel(elements: DropdownElements): void {
 }
 
 export function closeDropdownPanel(elements: DropdownElements): void {
+  // Hiding the panel while it contains focus would silently drop focus to
+  // <body>; return it to the trigger instead. The guard means mouse
+  // dismissals (which have already moved focus elsewhere) are left alone.
+  const isFocusInsidePanel = elements.panel.contains(document.activeElement);
   elements.panel.classList.add('hidden');
   elements.trigger.setAttribute('aria-expanded', 'false');
+  if (isFocusInsidePanel) elements.trigger.focus();
   if (openDropdown?.panel === elements.panel) openDropdown = null;
 }
 

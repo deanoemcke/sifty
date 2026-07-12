@@ -118,6 +118,51 @@ describe('handleEscapeKey', () => {
   });
 });
 
+describe('focus restore on close', () => {
+  function addRadioToPanel(elements: DropdownElements): HTMLInputElement {
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    elements.panel.appendChild(radio);
+    return radio;
+  }
+
+  it('restores focus to the trigger when Escape closes a panel containing focus', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    addRadioToPanel(a).focus();
+    handleEscapeKey('Escape');
+    expect(document.activeElement).toBe(a.trigger);
+  });
+
+  it('restores focus to the trigger when closing directly while focus is inside the panel', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    addRadioToPanel(a).focus();
+    closeDropdownPanel(a);
+    expect(document.activeElement).toBe(a.trigger);
+  });
+
+  it('does not steal focus on outside-click close when focus is already outside the panel', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    const outsideButton = document.createElement('button');
+    document.body.appendChild(outsideButton);
+    outsideButton.focus();
+    handleOutsideClick(outsideButton);
+    expect(a.panel.classList.contains('hidden')).toBe(true);
+    expect(document.activeElement).toBe(outsideButton);
+  });
+
+  it('restores focus to the first trigger when opening a second dropdown while focus is inside the first panel', () => {
+    const a = buildDropdownFixture('a');
+    const b = buildDropdownFixture('b');
+    openDropdownPanel(a);
+    addRadioToPanel(a).focus();
+    openDropdownPanel(b);
+    expect(document.activeElement).toBe(a.trigger);
+  });
+});
+
 describe('setDropdownLabel', () => {
   it('writes only the trigger label span text and the footer text, leaving siblings intact', () => {
     const a = buildDropdownFixture('a');
