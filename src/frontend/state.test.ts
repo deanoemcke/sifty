@@ -172,9 +172,9 @@ describe('getListingCategory', () => {
     expect(getListingCategory(item)).toBe('sold');
   });
 
-  it('returns available when neither filtered nor sold nor new', () => {
+  it('returns used when neither filtered nor sold nor new', () => {
     const item = makeListingItem({ aiFilterReason: null });
-    expect(getListingCategory(item)).toBe('available');
+    expect(getListingCategory(item)).toBe('used');
   });
 
   it('returns new when isNew is true and not filtered or sold', () => {

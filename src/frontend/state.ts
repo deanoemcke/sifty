@@ -68,17 +68,17 @@ export interface SavedSearch {
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
-export type ListingVisibilityCategory = 'available' | 'sold' | 'new' | 'filtered';
+export type ListingVisibilityCategory = 'used' | 'sold' | 'new' | 'filtered';
 
 export function getListingCategory(item: ListingItem): ListingVisibilityCategory {
   if (item.aiFilterReason !== null) return 'filtered';
   if (item.data.isSold) return 'sold';
   if (item.data.isNew) return 'new';
-  return 'available';
+  return 'used';
 }
 
 export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
-  'available',
+  'used',
   'sold',
   'new',
   'filtered',

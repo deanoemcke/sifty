@@ -1,5 +1,5 @@
 // ── Show dropdown ─────────────────────────────────────────────────────────────
-// DOM wiring for the results header's "Show" control (Available/Sold/Filtered).
+// DOM wiring for the results header's "Show" control (Used/Sold/New/Filtered).
 // Shares its open/close/dismiss mechanics with the Sort dropdown via
 // dropdownPanel.ts, so both behave identically — a desktop anchored panel or
 // (CSS breakpoint only) a mobile full-screen sheet. Deriving a listing's
@@ -26,14 +26,14 @@ import {
 } from './state';
 
 export const SHOW_OPTIONS: Array<{ value: ListingVisibilityCategory; label: string }> = [
-  { value: 'available', label: 'Available' },
+  { value: 'used', label: 'Used' },
   { value: 'sold', label: 'Sold' },
   { value: 'new', label: 'New' },
   { value: 'filtered', label: 'Filtered' },
 ];
 
 const SHOW_CHECKBOX_ID_BY_CATEGORY: Record<ListingVisibilityCategory, string> = {
-  available: 'showAvailable',
+  used: 'showUsed',
   sold: 'showSold',
   new: 'showNew',
   filtered: 'showFiltered',
@@ -96,7 +96,7 @@ export function tallyListingCategories(
   listings: ListingItem[]
 ): Record<ListingVisibilityCategory, number> {
   const tally: Record<ListingVisibilityCategory, number> = {
-    available: 0,
+    used: 0,
     sold: 0,
     new: 0,
     filtered: 0,

@@ -23,7 +23,7 @@ beforeEach(() => {
 
 describe('populateShowControls', () => {
   it('builds a checkbox row with a label and a count span per category', () => {
-    for (const id of ['showAvailable', 'showSold', 'showNew', 'showFiltered']) {
+    for (const id of ['showUsed', 'showSold', 'showNew', 'showFiltered']) {
       const checkbox = document.getElementById(id) as HTMLInputElement;
       expect(checkbox.type).toBe('checkbox');
       expect(checkbox.checked).toBe(true);
@@ -32,7 +32,7 @@ describe('populateShowControls', () => {
     const rowLabels = Array.from(document.querySelectorAll('#showDropdownOptions label')).map(
       (row) => row.querySelector('span:not(.dropdown-option-count)')?.textContent
     );
-    expect(rowLabels).toEqual(['Available', 'Sold', 'New', 'Filtered']);
+    expect(rowLabels).toEqual(['Used', 'Sold', 'New', 'Filtered']);
   });
 
   it('seeds the trigger label to "0 of 0 results" and the footer label to "Show 0 of 0 results"', () => {
@@ -55,8 +55,8 @@ describe('populateShowControls', () => {
   });
 
   it('does not throw when no callback is given and a checkbox changes', () => {
-    const availableCheckbox = document.getElementById('showAvailable') as HTMLInputElement;
-    expect(() => availableCheckbox.dispatchEvent(new Event('change'))).not.toThrow();
+    const usedCheckbox = document.getElementById('showUsed') as HTMLInputElement;
+    expect(() => usedCheckbox.dispatchEvent(new Event('change'))).not.toThrow();
   });
 });
 
@@ -64,7 +64,7 @@ describe('renderShowControls', () => {
   it('syncs checkbox checked state from visibleListingCategories', () => {
     setListingCategoryVisible('sold', false);
     renderShowControls();
-    expect((document.getElementById('showAvailable') as HTMLInputElement).checked).toBe(true);
+    expect((document.getElementById('showUsed') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(false);
     expect((document.getElementById('showNew') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('showFiltered') as HTMLInputElement).checked).toBe(true);
@@ -81,7 +81,7 @@ describe('tallyListingCategories', () => {
       makeListingItem({ aiFilterReason: 'too expensive' }),
     ];
     expect(tallyListingCategories(listings)).toEqual({
-      available: 1,
+      used: 1,
       sold: 2,
       new: 1,
       filtered: 1,
@@ -89,7 +89,7 @@ describe('tallyListingCategories', () => {
   });
 
   it('returns all zeros for an empty array', () => {
-    expect(tallyListingCategories([])).toEqual({ available: 0, sold: 0, new: 0, filtered: 0 });
+    expect(tallyListingCategories([])).toEqual({ used: 0, sold: 0, new: 0, filtered: 0 });
   });
 });
 
@@ -104,7 +104,7 @@ describe('renderShowOptions', () => {
     setListingCategoryVisible('filtered', false);
     renderShowOptions(listings);
     for (const [category, count] of [
-      ['showAvailable', 1],
+      ['showUsed', 1],
       ['showSold', 1],
       ['showNew', 1],
       ['showFiltered', 1],

@@ -373,7 +373,7 @@ describe('initApp() wiring', () => {
       const checkboxIds = Array.from(
         document.querySelectorAll('#showDropdownOptions input[type="checkbox"]')
       ).map((checkbox) => checkbox.id);
-      expect(checkboxIds).toEqual(['showAvailable', 'showSold', 'showNew', 'showFiltered']);
+      expect(checkboxIds).toEqual(['showUsed', 'showSold', 'showNew', 'showFiltered']);
 
       // No results yet at init, so there are no sold/new listings to show — the rows start hidden.
       expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
