@@ -447,7 +447,8 @@ export function buildTrademeUrl(
   entry: DiscoverEntry,
   maxPrice: number,
   fulfillment: Fulfillment,
-  regionValue: string | undefined
+  regionValue: string | undefined,
+  condition: 'used' | 'new'
 ): string {
   const topLevel = entry.slug.split('/')[0];
   const urlSlug = TRADEME_SECTIONS.has(topLevel) ? entry.slug : `marketplace/${entry.slug}`;
@@ -458,6 +459,7 @@ export function buildTrademeUrl(
     params.set('user_region', regionValue);
     params.set('shipping_method', 'pickup');
   }
+  params.set('condition', condition);
   const qs = params.toString();
   return `https://www.trademe.co.nz/a/${urlSlug}/search${qs ? `?${qs}` : ''}`;
 }
@@ -468,9 +470,17 @@ async function buildDiscoverUrlsAsync(
 ): Promise<RecipeDiscoverResult> {
   const { entries, warnings } = await resolveDiscoverCategoriesAsync(prompt, context.getAiConfig);
   const urls = entries.map((entry) =>
-    buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue)
+    buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue, 'used')
   );
   const allWarnings = [...warnings];
+
+  if (context.includeNewItems) {
+    for (const entry of entries) {
+      urls.push(
+        buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue, 'new')
+      );
+    }
+  }
 
   if (context.includeSoldItems) {
     const stmt = stmtGetCategoryLegacyPath(getDb());

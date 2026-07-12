@@ -158,6 +158,32 @@ describe('discoverCategoriesAsync', () => {
     expect(captured[0].includeSoldItems).toBe(false);
   });
 
+  it('passes includeNewItems through to the DiscoverContext', async () => {
+    const captured: DiscoverContext[] = [];
+    vi.mocked(getAllRecipes).mockReturnValue([
+      withBuildDiscover(makeStubRecipe(['https://www.trademe.co.nz/a/x']), async (_p, ctx) => {
+        captured.push(ctx);
+        return { urls: ['https://www.trademe.co.nz/a/x'], warnings: [] };
+      }),
+    ]);
+
+    await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE, false, true);
+    expect(captured[0].includeNewItems).toBe(true);
+  });
+
+  it('defaults includeNewItems to false when omitted', async () => {
+    const captured: DiscoverContext[] = [];
+    vi.mocked(getAllRecipes).mockReturnValue([
+      withBuildDiscover(makeStubRecipe(['https://www.trademe.co.nz/a/x']), async (_p, ctx) => {
+        captured.push(ctx);
+        return { urls: ['https://www.trademe.co.nz/a/x'], warnings: [] };
+      }),
+    ]);
+
+    await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE);
+    expect(captured[0].includeNewItems).toBe(false);
+  });
+
   it('returns URLs from successful recipes even when another recipe throws', async () => {
     vi.mocked(getAllRecipes).mockReturnValue([
       withBuildDiscover(makeStubRecipe([]), async () => {

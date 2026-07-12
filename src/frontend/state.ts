@@ -41,6 +41,7 @@ export interface DiscoverInputs {
   maxPrice?: number;
   fulfillment: Fulfillment;
   includeSoldItems?: boolean;
+  includeNewItems?: boolean;
   region?: string;
 }
 
@@ -66,16 +67,19 @@ export interface SavedSearch {
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
-export type ListingVisibilityCategory = 'available' | 'sold' | 'filtered';
+export type ListingVisibilityCategory = 'available' | 'sold' | 'new' | 'filtered';
 
 export function getListingCategory(item: ListingItem): ListingVisibilityCategory {
   if (item.aiFilterReason !== null) return 'filtered';
-  return item.data.isSold ? 'sold' : 'available';
+  if (item.data.isSold) return 'sold';
+  if (item.data.isNew) return 'new';
+  return 'available';
 }
 
 export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
   'available',
   'sold',
+  'new',
   'filtered',
 ];
 

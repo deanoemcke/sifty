@@ -23,6 +23,7 @@ export interface DiscoveryFormElements {
   maxPriceInput: HTMLInputElement;
   allowShippingCheckbox: HTMLInputElement;
   includeSoldItemsCheckbox: HTMLInputElement;
+  includeNewItemsCheckbox: HTMLInputElement;
   regionSelect: HTMLSelectElement;
   discoveryButton: HTMLButtonElement;
 }
@@ -39,6 +40,7 @@ export function readDiscoverInputs(): DiscoverInputs {
       getElement<HTMLInputElement>('discoveryAllowShipping').checked
     ),
     includeSoldItems: getElement<HTMLInputElement>('discoveryIncludeSoldItems').checked,
+    includeNewItems: getElement<HTMLInputElement>('discoveryIncludeNewItems').checked,
     region: getElement<HTMLSelectElement>('discoveryRegion').value || undefined,
   };
 }
@@ -49,6 +51,7 @@ export function discoveryFormElements(): DiscoveryFormElements {
     maxPriceInput: getElement<HTMLInputElement>('discoveryMaxPrice'),
     allowShippingCheckbox: getElement<HTMLInputElement>('discoveryAllowShipping'),
     includeSoldItemsCheckbox: getElement<HTMLInputElement>('discoveryIncludeSoldItems'),
+    includeNewItemsCheckbox: getElement<HTMLInputElement>('discoveryIncludeNewItems'),
     regionSelect: getElement<HTMLSelectElement>('discoveryRegion'),
     discoveryButton: getElement<HTMLButtonElement>('discoveryBtn'),
   };
@@ -88,6 +91,7 @@ export function applyLoadedDiscoverInputs(
   elements.maxPriceInput.value = inputs.maxPrice != null ? String(inputs.maxPrice) : '';
   elements.allowShippingCheckbox.checked = allowShippingFromFulfillment(inputs.fulfillment);
   elements.includeSoldItemsCheckbox.checked = inputs.includeSoldItems ?? false;
+  elements.includeNewItemsCheckbox.checked = inputs.includeNewItems ?? false;
   // No region in the saved inputs keeps the current selection (Wellington default).
   if (inputs.region) elements.regionSelect.value = inputs.region;
 }

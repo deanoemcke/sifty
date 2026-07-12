@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing } from '../lib/recipes/base';
-import { normalizeListingRelevance, searchUrlCardAsync } from './quickSearch';
+import {
+  isNewConditionSearchUrl,
+  normalizeListingRelevance,
+  searchUrlCardAsync,
+} from './quickSearch';
 import { cardStatusText } from './searchStatusText';
 import { populateShowControls } from './showDropdown';
 import { listingsByUrl, resetState, type UrlCardData } from './state';
@@ -75,6 +79,10 @@ function stubQuickSearchStream(chunks: string[], onBeforeRead?: (callIndex: numb
 
 function addSearchableCard(): UrlCard {
   return addUrlCard(makeCardDom(TRADEME_URL), makeCardData());
+}
+
+function addSearchableCardWithUrl(url: string): UrlCard {
+  return addUrlCard(makeCardDom(url), makeCardData());
 }
 
 beforeEach(() => {
@@ -155,5 +163,61 @@ describe('searchUrlCardAsync — stale cached listing data', () => {
 
     const item = listingsByUrl.get('https://example.com/stale');
     expect(item?.data.relevance).toBe(0);
+  });
+});
+
+describe('isNewConditionSearchUrl', () => {
+  it('returns true for a TradeMe URL with condition=new', () => {
+    expect(
+      isNewConditionSearchUrl('https://www.trademe.co.nz/a/marketplace/search?condition=new')
+    ).toBe(true);
+  });
+
+  it('returns true for a Facebook URL with itemCondition=new', () => {
+    expect(
+      isNewConditionSearchUrl('https://www.facebook.com/marketplace/search?itemCondition=new')
+    ).toBe(true);
+  });
+
+  it('returns false for a TradeMe URL with condition=used', () => {
+    expect(
+      isNewConditionSearchUrl('https://www.trademe.co.nz/a/marketplace/search?condition=used')
+    ).toBe(false);
+  });
+
+  it('returns false for a URL with no condition param', () => {
+    expect(isNewConditionSearchUrl(TRADEME_URL)).toBe(false);
+  });
+
+  it('returns false for an invalid URL', () => {
+    expect(isNewConditionSearchUrl('not a url')).toBe(false);
+  });
+});
+
+describe('searchUrlCardAsync — isNew tagging', () => {
+  it('tags a listing isNew when its card URL has condition=new', async () => {
+    const card = addSearchableCardWithUrl(
+      'https://www.trademe.co.nz/a/marketplace/search?condition=new'
+    );
+    stubQuickSearchStream([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/new-item","isAuction":false,"relevance":0}}\n',
+    ]);
+
+    await searchUrlCardAsync(card);
+
+    const item = listingsByUrl.get('https://example.com/new-item');
+    expect(item?.data.isNew).toBe(true);
+  });
+
+  it('leaves isNew unset for a listing from a card URL without condition=new', async () => {
+    const card = addSearchableCard();
+    stubQuickSearchStream([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/normal-item","isAuction":false,"relevance":0}}\n',
+    ]);
+
+    await searchUrlCardAsync(card);
+
+    const item = listingsByUrl.get('https://example.com/normal-item');
+    expect(item?.data.isNew).toBeUndefined();
   });
 });

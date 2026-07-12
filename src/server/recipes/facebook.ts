@@ -699,12 +699,18 @@ export async function buildFacebookSearchQueryAsync(
   return result.query.trim();
 }
 
+const ITEM_CONDITION_PARAM_BY_CONDITION: Record<'used' | 'new', string> = {
+  used: 'used_like_new,used_good,used_fair',
+  new: 'new',
+};
+
 export function buildFacebookUrl(
   searchTerm: string,
   maxPrice: number,
   fulfillment: Fulfillment,
   regionValue: string | undefined,
   includeSoldItems: boolean,
+  condition: 'used' | 'new',
   regions = getRegions()
 ): string {
   const pickupOnly = !includeSoldItems && fulfillment === 'pickup' && !!regionValue;
@@ -716,6 +722,7 @@ export function buildFacebookUrl(
     if (maxPrice > 0) fbParams.set('maxPrice', String(maxPrice));
     if (fulfillment === 'pickup') fbParams.set('deliveryMethod', 'local_pick_up');
     else if (fulfillment === 'shipping') fbParams.set('deliveryMethod', 'shipping');
+    fbParams.set('itemCondition', ITEM_CONDITION_PARAM_BY_CONDITION[condition]);
   }
   fbParams.set('exact', 'false');
   fbParams.set('sortBy', 'creation_time_descend');
@@ -730,11 +737,37 @@ export function buildFacebookUrl(
 async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
   const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.getAiConfig());
   const urls = [
-    buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, false),
+    buildFacebookUrl(
+      searchTerm,
+      context.maxPrice,
+      context.fulfillment,
+      context.regionValue,
+      false,
+      'used'
+    ),
   ];
+  if (context.includeNewItems) {
+    urls.push(
+      buildFacebookUrl(
+        searchTerm,
+        context.maxPrice,
+        context.fulfillment,
+        context.regionValue,
+        false,
+        'new'
+      )
+    );
+  }
   if (context.includeSoldItems) {
     urls.push(
-      buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, true)
+      buildFacebookUrl(
+        searchTerm,
+        context.maxPrice,
+        context.fulfillment,
+        context.regionValue,
+        true,
+        'used'
+      )
     );
   }
   return { urls, warnings: [] as string[] };

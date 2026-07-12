@@ -14,6 +14,7 @@ beforeEach(() => {
     <input id="discoveryMaxPrice" />
     <input id="discoveryAllowShipping" type="checkbox" />
     <input id="discoveryIncludeSoldItems" type="checkbox" />
+    <input id="discoveryIncludeNewItems" type="checkbox" />
     <select id="discoveryRegion"><option value="">Any</option></select>
     <button id="discoveryBtn"></button>
 
@@ -142,6 +143,21 @@ it('clears any existing URL card value immediately when a new discovery is submi
     json: async () => ({ urls: ['https://www.trademe.co.nz/x'], name: 'lamp' }),
   });
   await submitPromise;
+});
+
+it('includes includeNewItems, read from the checkbox, in the /api/discover request body', async () => {
+  (document.getElementById('discoveryIncludeNewItems') as HTMLInputElement).checked = true;
+
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ urls: ['https://www.trademe.co.nz/x'], name: 'lamp' }),
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  await handleDiscoverySubmitAsync();
+
+  const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(requestBody.includeNewItems).toBe(true);
 });
 
 it('does not let a stale discovery response overwrite a saved search loaded while it was in flight', async () => {

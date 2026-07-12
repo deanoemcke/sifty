@@ -166,9 +166,33 @@ describe('getListingCategory', () => {
     expect(getListingCategory(item)).toBe('sold');
   });
 
-  it('returns available when neither filtered nor sold', () => {
+  it('returns available when neither filtered nor sold nor new', () => {
     const item = makeListingItem({ aiFilterReason: null });
     expect(getListingCategory(item)).toBe('available');
+  });
+
+  it('returns new when isNew is true and not filtered or sold', () => {
+    const item = makeListingItem({
+      aiFilterReason: null,
+      data: { ...makeListingItem().data, isNew: true },
+    });
+    expect(getListingCategory(item)).toBe('new');
+  });
+
+  it('returns sold when both isNew and isSold are true', () => {
+    const item = makeListingItem({
+      aiFilterReason: null,
+      data: { ...makeListingItem().data, isNew: true, isSold: true },
+    });
+    expect(getListingCategory(item)).toBe('sold');
+  });
+
+  it('returns filtered when isNew is true but aiFilterReason is set', () => {
+    const item = makeListingItem({
+      aiFilterReason: 'too old',
+      data: { ...makeListingItem().data, isNew: true },
+    });
+    expect(getListingCategory(item)).toBe('filtered');
   });
 });
 

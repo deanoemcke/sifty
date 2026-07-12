@@ -869,45 +869,57 @@ function entry(slug: string, searchString: string | null = null): DiscoverEntry 
 
 describe('buildTrademeUrl', () => {
   it('wraps a non-section slug in "marketplace/"', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
     expect(url).toContain('/a/marketplace/computers/laptops/search');
   });
 
   it('does not prefix a section slug with "marketplace/"', () => {
-    const url = buildTrademeUrl(entry('motors/cars'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('motors/cars'), 0, 'any', undefined, 'used');
     expect(url).toContain('/a/motors/cars/search');
     expect(url).not.toContain('marketplace');
   });
 
   it('appends search_string when set', () => {
-    const url = buildTrademeUrl(entry('computers/laptops', 'macbook'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops', 'macbook'), 0, 'any', undefined, 'used');
     expect(url).toContain('search_string=macbook');
   });
 
   it('appends price_max when maxPrice > 0', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 500, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 500, 'any', undefined, 'used');
     expect(url).toContain('price_max=500');
   });
 
   it('omits price_max when maxPrice is 0', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
     expect(url).not.toContain('price_max');
   });
 
   it('adds pickup params when fulfillment is "pickup" and regionValue is set', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', '2');
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', '2', 'used');
     expect(url).toContain('user_region=2');
     expect(url).toContain('shipping_method=pickup');
   });
 
   it('does not add pickup params when fulfillment is "pickup" but regionValue is missing', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', undefined, 'used');
     expect(url).not.toContain('shipping_method');
   });
 
-  it('produces a bare search URL when no params apply', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined);
-    expect(url).toBe('https://www.trademe.co.nz/a/marketplace/computers/laptops/search');
+  it('sets condition=used when condition is "used"', () => {
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
+    expect(url).toContain('condition=used');
+  });
+
+  it('sets condition=new when condition is "new"', () => {
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'new');
+    expect(url).toContain('condition=new');
+  });
+
+  it('produces a search URL with only the condition param when no other params apply', () => {
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
+    expect(url).toBe(
+      'https://www.trademe.co.nz/a/marketplace/computers/laptops/search?condition=used'
+    );
   });
 });
 
@@ -979,6 +991,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls.length).toBeGreaterThan(0);
@@ -1003,6 +1016,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 800,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls[0]).toContain('price_max=800');
@@ -1025,6 +1039,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toEqual([]);
@@ -1046,6 +1061,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1083,6 +1099,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1107,6 +1124,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1144,6 +1162,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1166,6 +1185,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid broad categories');
@@ -1209,6 +1229,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig,
     });
 
@@ -1236,6 +1257,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step1)');
@@ -1270,6 +1292,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step2:electronics/electronics)');
@@ -1297,6 +1320,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       });
       expect(result.urls).toHaveLength(1);
@@ -1312,6 +1336,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: true,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       });
 
@@ -1332,11 +1357,75 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: true,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       });
 
       expect(result.urls).toHaveLength(1); // modern URL only
       expect(result.warnings.some((w) => w.includes('no legacy category mapping'))).toBe(true);
+    });
+  });
+
+  describe('includeNewItems', () => {
+    beforeEach(() => {
+      vi.mocked(aiJSON)
+        .mockResolvedValueOnce(
+          aiJsonOk({
+            categories: ['Electronics'],
+            searchLabel: 'laptops',
+            searchQuery: 'laptop',
+          })
+        )
+        .mockResolvedValueOnce(
+          aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
+        );
+    });
+
+    it('builds a single condition=used URL per resolved category when false', async () => {
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+      expect(result.urls).toHaveLength(1);
+      expect(result.urls[0]).toContain('condition=used');
+    });
+
+    it('also builds a condition=new URL per resolved category when true', async () => {
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      const usedUrl = result.urls.find((u) => u.includes('condition=used'));
+      const newUrl = result.urls.find((u) => u.includes('condition=new'));
+      expect(usedUrl).toContain('electronics/laptops');
+      expect(newUrl).toContain('electronics/laptops');
+    });
+
+    it('combines with includeSoldItems: builds used, new, and legacy sold URLs when both true', async () => {
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(3);
+      expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('Browse/SearchResults.aspx'))).toBe(true);
     });
   });
 });

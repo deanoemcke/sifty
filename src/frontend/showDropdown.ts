@@ -28,12 +28,14 @@ import {
 export const SHOW_OPTIONS: Array<{ value: ListingVisibilityCategory; label: string }> = [
   { value: 'available', label: 'Available' },
   { value: 'sold', label: 'Sold' },
+  { value: 'new', label: 'New' },
   { value: 'filtered', label: 'Filtered' },
 ];
 
 const SHOW_CHECKBOX_ID_BY_CATEGORY: Record<ListingVisibilityCategory, string> = {
   available: 'showAvailable',
   sold: 'showSold',
+  new: 'showNew',
   filtered: 'showFiltered',
 };
 
@@ -93,7 +95,12 @@ export function renderShowControls(): void {
 export function tallyListingCategories(
   listings: ListingItem[]
 ): Record<ListingVisibilityCategory, number> {
-  const tally: Record<ListingVisibilityCategory, number> = { available: 0, sold: 0, filtered: 0 };
+  const tally: Record<ListingVisibilityCategory, number> = {
+    available: 0,
+    sold: 0,
+    new: 0,
+    filtered: 0,
+  };
   for (const item of listings) tally[getListingCategory(item)]++;
   return tally;
 }
@@ -129,6 +136,7 @@ export function renderShowOptions(listings: ListingItem[]): void {
     'hidden',
     tally.sold === 0
   );
+  getElement(`${SHOW_CHECKBOX_ID_BY_CATEGORY.new}Row`).classList.toggle('hidden', tally.new === 0);
   setDropdownLabel(
     getShowDropdownElements(),
     `${visibleCount} of ${listings.length} results`,

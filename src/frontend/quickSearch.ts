@@ -26,6 +26,20 @@ export function normalizeListingRelevance(listing: Listing): Listing {
   return { ...listing, relevance: listing.relevance ?? 0 };
 }
 
+// Condition (new vs used) is never present in a listing's quick-search data on
+// either platform — TradeMe's search API and Facebook's grid-card scrape both
+// only surface it via a per-listing detail fetch (deep search), which quick
+// search never runs. So the only signal available at ingestion time is which
+// condition the card's own search URL queried for.
+export function isNewConditionSearchUrl(searchUrl: string): boolean {
+  try {
+    const params = new URL(searchUrl).searchParams;
+    return params.get('condition') === 'new' || params.get('itemCondition') === 'new';
+  } catch {
+    return false;
+  }
+}
+
 export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   const data = urlCardData(card);
   const url = card.dom.input.value.trim();
@@ -67,6 +81,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
         }
       } else if (ev.type === 'listing') {
         const listing = normalizeListingRelevance(ev.data as Listing);
+        if (isNewConditionSearchUrl(url)) listing.isNew = true;
         data.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = {

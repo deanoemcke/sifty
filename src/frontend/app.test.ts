@@ -368,15 +368,16 @@ describe('initApp() wiring', () => {
   });
 
   describe('Show dropdown control', () => {
-    it('init populates the checkbox panel from SHOW_OPTIONS, hiding Sold by default', async () => {
+    it('init populates the checkbox panel from SHOW_OPTIONS, hiding Sold and New by default', async () => {
       await import('./app');
       const checkboxIds = Array.from(
         document.querySelectorAll('#showDropdownOptions input[type="checkbox"]')
       ).map((checkbox) => checkbox.id);
-      expect(checkboxIds).toEqual(['showAvailable', 'showSold', 'showFiltered']);
+      expect(checkboxIds).toEqual(['showAvailable', 'showSold', 'showNew', 'showFiltered']);
 
-      // No results yet at init, so there are no sold listings to show — the row starts hidden.
+      // No results yet at init, so there are no sold/new listings to show — the rows start hidden.
       expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+      expect(document.getElementById('showNewRow')?.classList.contains('hidden')).toBe(true);
       expect(document.querySelector('#showDropdown .dropdown-trigger-label')?.textContent).toBe(
         '0 of 0 results'
       );

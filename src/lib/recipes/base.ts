@@ -25,6 +25,7 @@ export interface Listing {
   isAuction: boolean;
   thumbnailUrl?: string;
   isSold?: boolean;
+  isNew?: boolean;
 
   // Best-effort from quick search's own per-item JSON; deep search overwrites
   // with the authoritative value when it re-derives them.
@@ -143,6 +144,7 @@ export type DiscoverContext = {
   fulfillment: Fulfillment;
   regionValue?: string;
   includeSoldItems: boolean;
+  includeNewItems: boolean;
   getAiConfig: () => AiConfig;
 };
 
