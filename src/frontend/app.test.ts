@@ -473,6 +473,41 @@ describe('initApp() wiring', () => {
       includeSoldItems.dispatchEvent(new Event('change'));
       expect(soldRow.classList.contains('hidden')).toBe(false);
     });
+
+    it('unticking "Include sold items" after unticking Show > Sold restores the hidden sold listings', async () => {
+      const { listingsByUrl, visibleListingCategories } = await import('./state');
+      const { urlCards, urlCardData } = await import('./urlCardStore');
+      const { getCardByUrl, renderCard } = await import('./resultsView');
+      await import('./app');
+
+      // Sold results can only exist after searching with "Include sold items" on.
+      const includeSoldItems = document.getElementById(
+        'discoveryIncludeSoldItems'
+      ) as HTMLInputElement;
+      includeSoldItems.checked = true;
+      includeSoldItems.dispatchEvent(new Event('change'));
+
+      const url = 'https://example.com/listing/sold-1';
+      const soldItem = makeListingItemAt(url);
+      soldItem.data.isSold = true;
+      listingsByUrl.set(url, soldItem);
+      urlCardData(urlCards[0]).listingUrls = [url];
+      renderCard(soldItem);
+
+      // Untick Show > Sold — the sold card hides.
+      const soldCheckbox = document.getElementById('showSold') as HTMLInputElement;
+      soldCheckbox.checked = false;
+      soldCheckbox.dispatchEvent(new Event('change'));
+      expect((getCardByUrl(url) as HTMLElement).style.display).toBe('none');
+
+      // Untick "Include sold items" — hiding the Sold row must not leave its
+      // exclusion active, or the hidden listings become unreachable.
+      includeSoldItems.checked = false;
+      includeSoldItems.dispatchEvent(new Event('change'));
+
+      expect(visibleListingCategories.has('sold')).toBe(true);
+      expect((getCardByUrl(url) as HTMLElement).style.display).toBe('');
+    });
   });
 
   describe('listing card open-area vs. external-link click routing', () => {

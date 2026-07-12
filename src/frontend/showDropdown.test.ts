@@ -18,8 +18,15 @@ import { makeListingItem } from './testFixtures';
 beforeEach(() => {
   resetState();
   resetOpenDropdown();
+  // deepBtn / aiFilter / aiFilterBtn / listingsContainer are needed because
+  // updateShowSoldOptionVisibility's reconciliation path calls
+  // applyClientFilters(), whose renderDerived() touches them.
   document.body.innerHTML = `
     <input id="discoveryIncludeSoldItems" type="checkbox" />
+    <button id="deepBtn"></button>
+    <textarea id="aiFilter"></textarea>
+    <button id="aiFilterBtn"></button>
+    <div id="listingsContainer"></div>
     <div class="dropdown-control" id="showDropdown">
       <button id="showDropdownBtn" type="button" aria-expanded="false">
         <span class="dropdown-trigger-label">Show</span>
@@ -127,6 +134,31 @@ describe('updateShowSoldOptionVisibility', () => {
         .getElementById(`${SHOW_CHECKBOX_ID_BY_CATEGORY.sold}Row`)
         ?.classList.contains('hidden')
     ).toBe(true);
+  });
+
+  it('re-adds sold to visibleListingCategories and re-checks the checkbox when hiding the row', () => {
+    // A hidden control must not keep filtering: unticking Show > Sold and then
+    // hiding the row would otherwise leave sold listings excluded with no
+    // visible control to restore them.
+    setListingCategoryVisible('sold', false);
+    renderShowControls();
+    (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = false;
+
+    updateShowSoldOptionVisibility();
+
+    expect(visibleListingCategories.has('sold')).toBe(true);
+    expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('preserves an unticked Sold state while the row stays visible', () => {
+    setListingCategoryVisible('sold', false);
+    renderShowControls();
+    (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = true;
+
+    updateShowSoldOptionVisibility();
+
+    expect(visibleListingCategories.has('sold')).toBe(false);
+    expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(false);
   });
 
   it('shows the sold row when include-sold-items is checked', () => {

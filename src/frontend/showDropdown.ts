@@ -15,6 +15,9 @@ import {
   setDropdownLabel,
   toggleDropdownPanel,
 } from './dropdownPanel';
+// Circular with resultsView (it imports renderShowOptions) — safe because both
+// modules only reference each other inside functions called after load.
+import { applyClientFilters } from './resultsView';
 import {
   getListingCategory,
   type ListingItem,
@@ -112,13 +115,21 @@ export function setListingCategoryVisible(
 
 // The "Sold" choice only makes sense when the search can return sold items at
 // all, so it's hidden whenever the sidebar's "Include sold items" checkbox is
-// unchecked. Never mutates visibleListingCategories.
+// unchecked. A hidden control must not keep filtering: if 'sold' was excluded
+// when the row hides, the exclusion would be unreachable from the UI while
+// sold listings (which recipes can return regardless of the discovery flag)
+// stay invisibly hidden — so hiding reconciles state back to visible.
 export function updateShowSoldOptionVisibility(): void {
   const includeSoldItems = getElement<HTMLInputElement>('discoveryIncludeSoldItems').checked;
   getElement(`${SHOW_CHECKBOX_ID_BY_CATEGORY.sold}Row`).classList.toggle(
     'hidden',
     !includeSoldItems
   );
+  if (!includeSoldItems && !visibleListingCategories.has('sold')) {
+    setListingCategoryVisible('sold', true);
+    renderShowControls();
+    applyClientFilters();
+  }
 }
 
 export function toggleShowDropdownPanel(): void {
