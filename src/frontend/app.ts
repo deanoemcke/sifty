@@ -47,26 +47,30 @@ import {
   renderSortControls,
   toggleSortDropdownPanel,
 } from './sortDropdown';
-import { DEFAULT_SORT_OPTION } from './sortListings';
-import { setListingCategoryVisible, setSortBy } from './state';
+import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
+import { type ListingVisibilityCategory, setListingCategoryVisible, setSortBy } from './state';
 import { cancelGroupSearches, createUrlCard } from './urlCardRow';
 import { toggleUrlGroup } from './urlGroupsView';
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
 
+function handleShowCategoryToggle(category: ListingVisibilityCategory, isVisible: boolean): void {
+  setListingCategoryVisible(category, isVisible);
+  applyClientFilters();
+  renderShowControls();
+}
+
+function handleSortOptionChange(sortOption: SortOption): void {
+  setSortBy(sortOption);
+  renderSortControls(sortOption);
+  renderDerived();
+}
+
 function initApp(): void {
   applyBrandTitle(__WORKTREE_LABEL__);
   getElement('discoveryBtn').textContent = DISCOVERY_BUTTON_LABEL;
-  populateShowControls((category, isVisible) => {
-    setListingCategoryVisible(category, isVisible);
-    applyClientFilters();
-    renderShowControls();
-  });
-  populateSortControls(DEFAULT_SORT_OPTION, (sortOption) => {
-    setSortBy(sortOption);
-    renderSortControls(sortOption);
-    renderDerived();
-  });
+  populateShowControls(handleShowCategoryToggle);
+  populateSortControls(DEFAULT_SORT_OPTION, handleSortOptionChange);
   createUrlCard(searchUrlCardAsync);
   getElement<HTMLTextAreaElement>('discoveryPrompt').focus();
 
