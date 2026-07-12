@@ -140,6 +140,33 @@ describe('normalizeListingRelevance', () => {
   });
 });
 
+describe('searchUrlCardAsync — content-based duplicate suppression', () => {
+  it('does not add a second listing whose base URL, title, and location match one already seen', async () => {
+    const card = addSearchableCard();
+    stubQuickSearchStream([
+      'data: {"type":"listing","data":{"source":"trademe","title":"Vintage lamp","price":10,"location":"Wellington","url":"https://example.com/listing/1?ref=facebook","isAuction":false}}\n',
+      'data: {"type":"listing","data":{"source":"trademe","title":"Vintage lamp","price":10,"location":"Wellington","url":"https://example.com/listing/1?ref=trademe","isAuction":false}}\n',
+    ]);
+
+    await searchUrlCardAsync(card);
+
+    expect(listingsByUrl.size).toBe(1);
+    expect(listingsByUrl.has('https://example.com/listing/1?ref=facebook')).toBe(true);
+  });
+
+  it('still adds a second listing whose title differs, even with the same base URL', async () => {
+    const card = addSearchableCard();
+    stubQuickSearchStream([
+      'data: {"type":"listing","data":{"source":"trademe","title":"Vintage lamp","price":10,"location":"Wellington","url":"https://example.com/listing/1?ref=facebook","isAuction":false}}\n',
+      'data: {"type":"listing","data":{"source":"trademe","title":"Modern lamp","price":10,"location":"Wellington","url":"https://example.com/listing/1?ref=trademe","isAuction":false}}\n',
+    ]);
+
+    await searchUrlCardAsync(card);
+
+    expect(listingsByUrl.size).toBe(2);
+  });
+});
+
 describe('searchUrlCardAsync — stale cached listing data', () => {
   it('defaults relevance to 0 for a listing event replaying a pre-deploy cache row', async () => {
     const card = addSearchableCard();
