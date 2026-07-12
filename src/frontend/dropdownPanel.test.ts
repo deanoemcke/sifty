@@ -95,6 +95,43 @@ describe('handleOutsideClick', () => {
     document.body.appendChild(outsideNode);
     expect(() => handleOutsideClick(outsideNode)).not.toThrow();
   });
+
+  // The external <label for="…"> sits outside the dropdown root, but the
+  // browser forwards its click to the trigger button. If handleOutsideClick
+  // treated the label as outside, it would close the panel a beat before the
+  // forwarded click toggles it straight back open — so the label could open
+  // the panel but never close it.
+  it('leaves the panel open when the target is a label for the open trigger', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    const externalLabel = document.createElement('label');
+    externalLabel.htmlFor = a.trigger.id;
+    document.body.appendChild(externalLabel);
+    handleOutsideClick(externalLabel);
+    expect(a.panel.classList.contains('hidden')).toBe(false);
+  });
+
+  it('treats a click on an element nested inside the trigger label as inside', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    const externalLabel = document.createElement('label');
+    externalLabel.htmlFor = a.trigger.id;
+    const nestedSpan = document.createElement('span');
+    externalLabel.appendChild(nestedSpan);
+    document.body.appendChild(externalLabel);
+    handleOutsideClick(nestedSpan);
+    expect(a.panel.classList.contains('hidden')).toBe(false);
+  });
+
+  it('closes the panel when the target is a label for an unrelated control', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    const unrelatedLabel = document.createElement('label');
+    unrelatedLabel.htmlFor = 'someUnrelatedControl';
+    document.body.appendChild(unrelatedLabel);
+    handleOutsideClick(unrelatedLabel);
+    expect(a.panel.classList.contains('hidden')).toBe(true);
+  });
 });
 
 describe('handleEscapeKey', () => {

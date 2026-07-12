@@ -57,8 +57,21 @@ export function toggleDropdownPanel(elements: DropdownElements): void {
   else closeDropdownPanel(elements);
 }
 
+// The external <label for="…"> is part of the dropdown's operating surface
+// even though it sits outside the root: the browser forwards its click to the
+// trigger button. Treating it as an outside click would close the panel a
+// beat before that forwarded click toggles it straight back open, so the
+// label could open the panel but never close it.
+function isLabelForOpenTrigger(target: Node, trigger: HTMLButtonElement): boolean {
+  const targetElement = target instanceof Element ? target : target.parentElement;
+  return targetElement?.closest('label')?.htmlFor === trigger.id;
+}
+
 export function handleOutsideClick(target: Node): void {
-  if (openDropdown && !openDropdown.root.contains(target)) closeDropdownPanel(openDropdown);
+  if (!openDropdown) return;
+  if (openDropdown.root.contains(target)) return;
+  if (isLabelForOpenTrigger(target, openDropdown.trigger)) return;
+  closeDropdownPanel(openDropdown);
 }
 
 export function handleEscapeKey(key: string): void {

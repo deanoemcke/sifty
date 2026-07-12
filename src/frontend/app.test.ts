@@ -400,6 +400,24 @@ describe('initApp() wiring', () => {
       );
     });
 
+    // jsdom mirrors the browser's label activation: the label's own click
+    // bubbles to the document first, then a forwarded click fires on the
+    // associated button. Regression test for the external label click
+    // closing-then-reopening the panel instead of toggling it closed.
+    it('clicking the external Show label toggles the panel open and closed', async () => {
+      await import('./app');
+      const panel = document.getElementById('showDropdownPanel') as HTMLElement;
+      const externalLabel = document.querySelector(
+        'label[for="showDropdownBtn"]'
+      ) as HTMLLabelElement;
+
+      externalLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(panel.classList.contains('hidden')).toBe(false);
+
+      externalLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(panel.classList.contains('hidden')).toBe(true);
+    });
+
     it('a click outside the dropdown closes the panel', async () => {
       await import('./app');
       document
