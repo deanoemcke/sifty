@@ -5,6 +5,7 @@ import {
   closeDropdownPanel,
   type DropdownElements,
   getDropdownElements,
+  handleDropdownTabKey,
   handleEscapeKey,
   handleOutsideClick,
   openDropdownPanel,
@@ -12,6 +13,34 @@ import {
   setDropdownLabel,
   toggleDropdownPanel,
 } from './dropdownPanel';
+
+// Stubs window.matchMedia, which jsdom doesn't implement, so tests can
+// exercise the mobile full-screen-sheet branch of dropdownPanel.ts without a
+// real viewport. Returns a restore function to undo the stub.
+function stubMobileMatchMedia(matches: boolean): () => void {
+  const originalMatchMedia = window.matchMedia;
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+  return () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: originalMatchMedia,
+    });
+  };
+}
 
 function buildDropdownFixture(prefix: string): DropdownElements {
   const root = document.createElement('div');
@@ -35,6 +64,7 @@ function buildDropdownFixture(prefix: string): DropdownElements {
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  document.body.className = '';
   resetOpenDropdown();
 });
 
@@ -245,6 +275,18 @@ describe('buildDropdownShell', () => {
     expect(trigger?.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('points the trigger aria-controls at the panel id', () => {
+    buildShellFixture();
+    expect(document.getElementById(ids.trigger)?.getAttribute('aria-controls')).toBe(ids.panel);
+  });
+
+  it('gives the panel role="group" and an aria-label matching the title', () => {
+    buildShellFixture();
+    const panel = document.getElementById(ids.panel);
+    expect(panel?.getAttribute('role')).toBe('group');
+    expect(panel?.getAttribute('aria-label')).toBe('Show');
+  });
+
   it('gives the trigger a single caret icon carrying the dropdown-caret class', () => {
     buildShellFixture();
     const carets = document.getElementById(ids.trigger)?.querySelectorAll('svg.dropdown-caret');
@@ -265,5 +307,120 @@ describe('setDropdownLabel', () => {
     expect(a.trigger.querySelector('.dropdown-trigger-label')?.textContent).toBe('Show 47 results');
     expect(a.trigger.querySelector('.dropdown-caret')).not.toBeNull();
     expect(a.footer.textContent).toBe('Show 47 results');
+  });
+});
+
+describe('scroll lock (mobile full-screen sheet)', () => {
+  it('locks body scroll when opening while the mobile breakpoint is active', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    expect(document.body.classList.contains('scroll-locked')).toBe(true);
+    restore();
+  });
+
+  it('does not lock body scroll when opening at desktop width', () => {
+    const restore = stubMobileMatchMedia(false);
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    expect(document.body.classList.contains('scroll-locked')).toBe(false);
+    restore();
+  });
+
+  it('unlocks body scroll when the panel closes', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    closeDropdownPanel(a);
+    expect(document.body.classList.contains('scroll-locked')).toBe(false);
+    restore();
+  });
+});
+
+describe('handleDropdownTabKey (focus trap on the mobile sheet)', () => {
+  function buildFixtureWithFocusableRows(prefix: string): DropdownElements {
+    const elements = buildDropdownFixture(prefix);
+    const first = document.createElement('input');
+    first.type = 'checkbox';
+    const second = document.createElement('input');
+    second.type = 'checkbox';
+    elements.panel.append(first, second);
+    return elements;
+  }
+
+  function makeTabEvent(shiftKey: boolean): KeyboardEvent {
+    return new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true });
+  }
+
+  it('wraps Tab from the last focusable element back to the first when the mobile sheet is active', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildFixtureWithFocusableRows('a');
+    openDropdownPanel(a);
+    const focusableElements = a.panel.querySelectorAll('input, button');
+    (focusableElements[focusableElements.length - 1] as HTMLElement).focus();
+    handleDropdownTabKey(makeTabEvent(false));
+    expect(document.activeElement).toBe(focusableElements[0]);
+    restore();
+  });
+
+  it('wraps Shift+Tab from the first focusable element back to the last when the mobile sheet is active', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildFixtureWithFocusableRows('a');
+    openDropdownPanel(a);
+    const focusableElements = a.panel.querySelectorAll('input, button');
+    (focusableElements[0] as HTMLElement).focus();
+    handleDropdownTabKey(makeTabEvent(true));
+    expect(document.activeElement).toBe(focusableElements[focusableElements.length - 1]);
+    restore();
+  });
+
+  it('does not trap Tab on the desktop popover', () => {
+    const restore = stubMobileMatchMedia(false);
+    const a = buildFixtureWithFocusableRows('a');
+    openDropdownPanel(a);
+    const focusableElements = a.panel.querySelectorAll('input, button');
+    const lastFocusable = focusableElements[focusableElements.length - 1] as HTMLElement;
+    lastFocusable.focus();
+    const event = makeTabEvent(false);
+    handleDropdownTabKey(event);
+    expect(document.activeElement).toBe(lastFocusable);
+    expect(event.defaultPrevented).toBe(false);
+    restore();
+  });
+
+  it('does nothing when no dropdown is open', () => {
+    const restore = stubMobileMatchMedia(true);
+    expect(() => handleDropdownTabKey(makeTabEvent(false))).not.toThrow();
+    restore();
+  });
+
+  it('ignores non-Tab keys', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildFixtureWithFocusableRows('a');
+    openDropdownPanel(a);
+    const focusableElements = a.panel.querySelectorAll('input, button');
+    const lastFocusable = focusableElements[focusableElements.length - 1] as HTMLElement;
+    lastFocusable.focus();
+    handleDropdownTabKey(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(document.activeElement).toBe(lastFocusable);
+    restore();
+  });
+
+  it('skips focusable elements inside a hidden ancestor within the panel', () => {
+    const restore = stubMobileMatchMedia(true);
+    const a = buildFixtureWithFocusableRows('a');
+    const rows = a.panel.querySelectorAll('input');
+    const hiddenWrapper = document.createElement('div');
+    hiddenWrapper.className = 'hidden';
+    rows[1].replaceWith(hiddenWrapper);
+    hiddenWrapper.appendChild(rows[1]);
+    openDropdownPanel(a);
+    rows[0].focus();
+    handleDropdownTabKey(makeTabEvent(false));
+    // The second row is hidden, so the first row is both first and last —
+    // Tab forward from it wraps back to itself rather than reaching the
+    // hidden row.
+    expect(document.activeElement).toBe(rows[0]);
+    restore();
   });
 });

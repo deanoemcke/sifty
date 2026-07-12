@@ -34,6 +34,12 @@ body {
   font-size: 14px;
 }
 
+/* Applied by dropdownPanel.ts while the mobile full-screen dropdown sheet is
+   open, so the page behind it can't be scrolled. */
+body.scroll-locked {
+  overflow: hidden;
+}
+
 /* ── Layout ── */
 .app-layout {
   display: flex;

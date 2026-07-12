@@ -54,10 +54,10 @@ const DROPDOWN_CARET_ICON = CHEVRON_ICON.replace('<svg ', '<svg class="dropdown-
 // `title` only persists in the panel header.
 export function buildDropdownShell(ids: DropdownShellIds, title: string): void {
   getElement(ids.root).innerHTML = `
-    <button id="${ids.trigger}" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false">
+    <button id="${ids.trigger}" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="${ids.panel}">
       <span class="dropdown-trigger-label">${title}</span>${DROPDOWN_CARET_ICON}
     </button>
-    <div id="${ids.panel}" class="dropdown-panel hidden">
+    <div id="${ids.panel}" class="dropdown-panel hidden" role="group" aria-label="${title}">
       <div class="dropdown-panel-header">${title}</div>
       <div class="dropdown-panel-options" id="${ids.options}"></div>
       <div class="dropdown-panel-footer">
@@ -66,12 +66,33 @@ export function buildDropdownShell(ids: DropdownShellIds, title: string): void {
     </div>`;
 }
 
+// Mirrors the `@media (max-width: 640px)` breakpoint in styles.css that turns
+// the panel into a full-screen sheet (see the comment above that rule). CSS
+// remains the single source of truth for the breakpoint value itself; this is
+// the one place JS needs to know the layout has switched, to decide whether
+// the sheet should behave like a modal (focus-trapped, scroll-locked) or stay
+// a non-modal anchored popover. `window.matchMedia` isn't implemented by
+// jsdom, so this degrades to "not mobile" outside a real browser — tests
+// stub `window.matchMedia` to exercise the mobile branch.
+const MOBILE_SHEET_MEDIA_QUERY = '(max-width: 640px)';
+
+function isMobileSheetActive(): boolean {
+  return (
+    typeof window.matchMedia === 'function' && window.matchMedia(MOBILE_SHEET_MEDIA_QUERY).matches
+  );
+}
+
+// Applied to <body> while the mobile full-screen sheet is open, so the page
+// behind the (visually opaque, position: fixed) sheet can't be scrolled.
+const SCROLL_LOCK_CLASS = 'scroll-locked';
+
 let openDropdown: DropdownElements | null = null;
 
 export function openDropdownPanel(elements: DropdownElements): void {
   if (openDropdown && openDropdown.panel !== elements.panel) closeDropdownPanel(openDropdown);
   elements.panel.classList.remove('hidden');
   elements.trigger.setAttribute('aria-expanded', 'true');
+  if (isMobileSheetActive()) document.body.classList.add(SCROLL_LOCK_CLASS);
   openDropdown = elements;
 }
 
@@ -82,6 +103,7 @@ export function closeDropdownPanel(elements: DropdownElements): void {
   const isFocusInsidePanel = elements.panel.contains(document.activeElement);
   elements.panel.classList.add('hidden');
   elements.trigger.setAttribute('aria-expanded', 'false');
+  document.body.classList.remove(SCROLL_LOCK_CLASS);
   if (isFocusInsidePanel) elements.trigger.focus();
   if (openDropdown?.panel === elements.panel) openDropdown = null;
 }
@@ -110,6 +132,55 @@ export function handleOutsideClick(target: Node): void {
 
 export function handleEscapeKey(key: string): void {
   if (key === 'Escape' && openDropdown) closeDropdownPanel(openDropdown);
+}
+
+// An ancestor (up to, but not including, `container`) carrying the `.hidden`
+// class means `element` isn't reachable — e.g. the Show panel's "Sold" row
+// when the sidebar's "Include sold items" is unchecked
+// (updateShowSoldOptionVisibility in showDropdown.ts hides the row itself,
+// not its checkbox). Walking classList rather than checking layout
+// (`offsetParent`/`checkVisibility`) keeps this correct under jsdom, which
+// never computes layout.
+function isElementHiddenWithinContainer(element: HTMLElement, container: HTMLElement): boolean {
+  for (
+    let node: HTMLElement | null = element;
+    node && node !== container;
+    node = node.parentElement
+  ) {
+    if (node.classList.contains('hidden')) return true;
+  }
+  return false;
+}
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  const candidates = container.querySelectorAll<HTMLElement>(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  return Array.from(candidates).filter(
+    (element) =>
+      !element.hasAttribute('disabled') && !isElementHiddenWithinContainer(element, container)
+  );
+}
+
+// Modal-style focus trap: on the mobile full-screen sheet the page behind the
+// panel is invisible and scroll-locked, so Tab must not be allowed to escape
+// into it — Tab/Shift+Tab instead cycle within the panel's own focusable
+// elements. The desktop anchored popover is non-modal (the rest of the page
+// stays visible and reachable), so it deliberately keeps native Tab-out
+// behaviour and this is a no-op there.
+export function handleDropdownTabKey(event: KeyboardEvent): void {
+  if (event.key !== 'Tab' || !openDropdown || !isMobileSheetActive()) return;
+  const focusableElements = getFocusableElements(openDropdown.panel);
+  if (focusableElements.length === 0) return;
+  const first = focusableElements[0];
+  const last = focusableElements[focusableElements.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 // Sole writer of the trigger/footer text. Writes into the trigger's label

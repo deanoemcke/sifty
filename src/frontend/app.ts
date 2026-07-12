@@ -14,7 +14,7 @@ import {
   updateDiscoveryBtn,
 } from './discoveryForm';
 import { getElement } from './domUtils';
-import { handleEscapeKey, handleOutsideClick } from './dropdownPanel';
+import { handleDropdownTabKey, handleEscapeKey, handleOutsideClick } from './dropdownPanel';
 import { handleListingCardKeydown, resolveListingCardOpenArea } from './listingCardActivation';
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from './listingDetail';
 import { applyBrandTitle } from './pageTitle';
@@ -99,12 +99,16 @@ function initApp(): void {
 
   // Single shared dismiss wiring for both dropdown controls: opening one
   // closes the other, and outside-click/Escape close whichever is open.
+  // handleDropdownTabKey additionally traps Tab/Shift+Tab within the open
+  // panel while it's the mobile full-screen sheet (no-op on the desktop
+  // popover, and a no-op whenever no dropdown is open).
   document.addEventListener('click', (mouseEvent: MouseEvent) =>
     handleOutsideClick(mouseEvent.target as Node)
   );
-  document.addEventListener('keydown', (keyboardEvent: KeyboardEvent) =>
-    handleEscapeKey(keyboardEvent.key)
-  );
+  document.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
+    handleEscapeKey(keyboardEvent.key);
+    handleDropdownTabKey(keyboardEvent);
+  });
 
   // Populate region dropdown and wire the allow-shipping checkbox
   fetch('/api/regions')
