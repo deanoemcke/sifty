@@ -88,17 +88,34 @@ function isMobileSheetActive(): boolean {
   );
 }
 
-let openDropdown: DropdownElements | null = null;
+// Tracks which dropdown is open as plain, serializable ids rather than the
+// live DropdownElements themselves — see CLAUDE.md's "State is data, not
+// DOM" principle. Elements are re-resolved via getDropdownElements() on
+// demand, so this can never hold a stale reference to a detached node (e.g.
+// if a future call site rebuilt the shell via buildDropdownShell while a
+// panel was open).
+function toDropdownElementIds(elements: DropdownElements): DropdownElementIds {
+  return {
+    root: elements.root.id,
+    trigger: elements.trigger.id,
+    panel: elements.panel.id,
+    footer: elements.footer.id,
+  };
+}
+
+let openDropdownIds: DropdownElementIds | null = null;
 
 export function openDropdownPanel(elements: DropdownElements): void {
-  if (openDropdown && openDropdown.panel !== elements.panel) closeDropdownPanel(openDropdown);
+  if (openDropdownIds && openDropdownIds.panel !== elements.panel.id) {
+    closeDropdownPanel(getDropdownElements(openDropdownIds));
+  }
   elements.panel.classList.remove('hidden');
   elements.trigger.setAttribute('aria-expanded', 'true');
   if (isMobileSheetActive()) {
     lockBodyScroll();
     pushModalHistoryEntry();
   }
-  openDropdown = elements;
+  openDropdownIds = toDropdownElementIds(elements);
 }
 
 export interface CloseDropdownPanelOptions {
@@ -121,7 +138,7 @@ export function closeDropdownPanel(
   unlockBodyScroll();
   if (!options.isPopStateTriggered) popModalHistoryEntryIfPresent();
   if (isFocusInsidePanel) elements.trigger.focus();
-  if (openDropdown?.panel === elements.panel) openDropdown = null;
+  if (openDropdownIds?.panel === elements.panel.id) openDropdownIds = null;
 }
 
 export function toggleDropdownPanel(elements: DropdownElements): void {
@@ -133,7 +150,9 @@ export function toggleDropdownPanel(elements: DropdownElements): void {
 // back button closes whichever dropdown sheet is open instead of navigating
 // away from the page.
 export function handleDropdownPopState(): void {
-  if (openDropdown) closeDropdownPanel(openDropdown, { isPopStateTriggered: true });
+  if (openDropdownIds) {
+    closeDropdownPanel(getDropdownElements(openDropdownIds), { isPopStateTriggered: true });
+  }
 }
 
 // The external <label for="…"> is part of the dropdown's operating surface
@@ -147,14 +166,15 @@ function isLabelForOpenTrigger(target: Node, trigger: HTMLButtonElement): boolea
 }
 
 export function handleOutsideClick(target: Node): void {
-  if (!openDropdown) return;
-  if (openDropdown.root.contains(target)) return;
-  if (isLabelForOpenTrigger(target, openDropdown.trigger)) return;
-  closeDropdownPanel(openDropdown);
+  if (!openDropdownIds) return;
+  const elements = getDropdownElements(openDropdownIds);
+  if (elements.root.contains(target)) return;
+  if (isLabelForOpenTrigger(target, elements.trigger)) return;
+  closeDropdownPanel(elements);
 }
 
 export function handleEscapeKey(key: string): void {
-  if (key === 'Escape' && openDropdown) closeDropdownPanel(openDropdown);
+  if (key === 'Escape' && openDropdownIds) closeDropdownPanel(getDropdownElements(openDropdownIds));
 }
 
 // An ancestor (up to, but not including, `container`) carrying the `.hidden`
@@ -191,8 +211,8 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
 // stays visible and reachable), so it deliberately keeps native Tab-out
 // behaviour and this is a no-op there.
 export function handleDropdownTabKey(event: KeyboardEvent): void {
-  if (event.key !== 'Tab' || !openDropdown || !isMobileSheetActive()) return;
-  const focusableElements = getFocusableElements(openDropdown.panel);
+  if (event.key !== 'Tab' || !openDropdownIds || !isMobileSheetActive()) return;
+  const focusableElements = getFocusableElements(getDropdownElements(openDropdownIds).panel);
   if (focusableElements.length === 0) return;
   const first = focusableElements[0];
   const last = focusableElements[focusableElements.length - 1];
@@ -222,5 +242,5 @@ export function setDropdownLabel(
 }
 
 export function resetOpenDropdown(): void {
-  openDropdown = null;
+  openDropdownIds = null;
 }
