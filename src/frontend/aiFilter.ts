@@ -1,6 +1,6 @@
 import { getElement } from './domUtils';
 import { formatListingPrice } from './priceFormat';
-import { promptHash } from './renderUtils';
+import { djb2Hash } from './renderUtils';
 import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
 import {
   aiFilterPendingRun,
@@ -104,7 +104,7 @@ export async function runAiFilterAsync(): Promise<void> {
 
   const prompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
   if (!prompt) return;
-  const hash = promptHash(prompt);
+  const hash = djb2Hash(prompt);
   const toCheck = getOrderedListings().filter((item) => item.aiCheckedHash !== hash);
   if (toCheck.length === 0) return;
 

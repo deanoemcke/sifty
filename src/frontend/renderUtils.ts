@@ -1,6 +1,7 @@
-// DJB2-style hash of the AI-filter prompt; listings remember the hash they
-// were last checked against so stale filter results can be detected.
-export function promptHash(inputString: string): number {
+// DJB2-style string hash — used to fingerprint the AI-filter prompt (so
+// listings can remember which prompt text they were last checked against)
+// and, separately, to build a content-based dedupe key for listings.
+export function djb2Hash(inputString: string): number {
   let h = 5381;
   for (let charIndex = 0; charIndex < inputString.length; charIndex++)
     h = ((h * 33) ^ inputString.charCodeAt(charIndex)) >>> 0;
