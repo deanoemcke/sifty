@@ -4,7 +4,7 @@ import type { Listing } from '../lib/recipes/base';
 import { normalizeListingRelevance, searchUrlCardAsync } from './quickSearch';
 import { cardStatusText } from './searchStatusText';
 import { populateShowControls } from './showDropdown';
-import { listingsByUrl, resetState, type UrlCardData } from './state';
+import { listingsByUrl, listingUrlByDedupeKey, resetState, type UrlCardData } from './state';
 import { cancelSearch, cardStatusSnapshot } from './urlCardRow';
 import {
   addUrlCard,
@@ -153,6 +153,11 @@ describe('searchUrlCardAsync — content-based duplicate suppression', () => {
 
     expect(listingsByUrl.size).toBe(1);
     expect(listingsByUrl.has('https://example.com/listing/1?ref=facebook')).toBe(true);
+    // The O(1) dedupe index (listingUrlByDedupeKey) must stay in lockstep
+    // with listingsByUrl — it's what searchUrlCardAsync's isDuplicate check
+    // actually reads, so a stale/missing entry here would let a real
+    // duplicate re-appear as "new" on the next matching listing event.
+    expect(listingUrlByDedupeKey.size).toBe(1);
   });
 
   it('still adds a second listing whose title differs, even with the same base URL', async () => {
@@ -165,6 +170,32 @@ describe('searchUrlCardAsync — content-based duplicate suppression', () => {
     await searchUrlCardAsync(card);
 
     expect(listingsByUrl.size).toBe(2);
+    expect(listingUrlByDedupeKey.size).toBe(2);
+  });
+
+  it('detects a duplicate arriving many listings later without rescanning stale keys', async () => {
+    // Regression guard for the O(n)/O(n²) rescan this refactor replaces: the
+    // duplicate below only matches the *first* listing seen, so a stale or
+    // incomplete index (e.g. one that dropped earlier entries) would fail to
+    // flag it as a duplicate.
+    const card = addSearchableCard();
+    const chunks = [
+      'data: {"type":"listing","data":{"source":"trademe","title":"Vintage lamp","price":10,"location":"Wellington","url":"https://example.com/listing/1","isAuction":false}}\n',
+    ];
+    for (let i = 2; i <= 20; i++) {
+      chunks.push(
+        `data: {"type":"listing","data":{"source":"trademe","title":"Item ${i}","price":10,"location":"Wellington","url":"https://example.com/listing/${i}","isAuction":false}}\n`
+      );
+    }
+    chunks.push(
+      'data: {"type":"listing","data":{"source":"trademe","title":"Vintage lamp","price":10,"location":"Wellington","url":"https://example.com/listing/1?ref=other","isAuction":false}}\n'
+    );
+    stubQuickSearchStream(chunks);
+
+    await searchUrlCardAsync(card);
+
+    expect(listingsByUrl.size).toBe(20);
+    expect(listingsByUrl.has('https://example.com/listing/1?ref=other')).toBe(false);
   });
 });
 

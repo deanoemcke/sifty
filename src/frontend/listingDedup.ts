@@ -3,7 +3,6 @@
 // same item appearing via two different category searches), which exact-URL
 // comparison misses.
 import type { Listing } from '../lib/recipes/base';
-import { djb2Hash } from './renderUtils';
 
 // Strips the query string and fragment, since those commonly vary between
 // two URLs that otherwise point at the same listing.
@@ -31,14 +30,18 @@ export function baseUrl(url: string): string {
 // description but differ in price are treated as distinct, not as the same
 // listing re-priced. String(price) keeps `null` (no price given) distinct
 // from any numeric price, including 0.
-export function listingDedupeKey(listing: Listing): number {
-  return djb2Hash(
-    [
-      baseUrl(listing.url),
-      listing.title,
-      listing.description ?? '',
-      listing.location,
-      String(listing.price),
-    ].join('\0')
-  );
+//
+// Returned as the raw composite string rather than a hash: callers use it as
+// a Map key, and hashing it down to a 32-bit int first would only add
+// collision risk (two distinct listings mapping to the same hash and being
+// wrongly treated as duplicates) for no benefit — string keys are just as
+// fast to look up.
+export function listingDedupeKey(listing: Listing): string {
+  return [
+    baseUrl(listing.url),
+    listing.title,
+    listing.description ?? '',
+    listing.location,
+    String(listing.price),
+  ].join('\0');
 }

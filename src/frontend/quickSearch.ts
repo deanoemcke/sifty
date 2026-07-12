@@ -10,9 +10,11 @@ import { listingDedupeKey } from './listingDedup';
 import { applyClientFilters, renderCard, renderDerived } from './resultsView';
 import { parseQuickSearchProgress } from './searchStatusText';
 import {
+  addListingItem,
   canCancelSearch,
   type ListingItem,
   listingsByUrl,
+  listingUrlByDedupeKey,
   type UrlCardSearchStatus,
 } from './state';
 import { streamPostAsync } from './streamPost';
@@ -69,9 +71,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
       } else if (ev.type === 'listing') {
         const listing = normalizeListingRelevance(ev.data as Listing);
         const dedupeKey = listingDedupeKey(listing);
-        const isDuplicate = [...listingsByUrl.values()].some(
-          (item) => listingDedupeKey(item.data) === dedupeKey
-        );
+        const isDuplicate = listingUrlByDedupeKey.has(dedupeKey);
         if (!isDuplicate) {
           data.listingUrls.push(listing.url);
           const item: ListingItem = {
@@ -80,7 +80,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
             aiCheckedHash: null,
             aiFilterReason: null,
           };
-          listingsByUrl.set(listing.url, item);
+          addListingItem(item);
           renderCard(item);
           renderDerived();
         } else {

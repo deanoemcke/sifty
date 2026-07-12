@@ -1,14 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { listingDedupeKey } from './listingDedup';
 import {
   ALL_LISTING_VISIBILITY_CATEGORIES,
+  addListingItem,
   aiFilterPendingRun,
   bulkDeepSearchUrls,
   canCancelSearch,
+  clearListings,
   getListingCategory,
   isAiFilterRunning,
   isCardSearchActive,
   isSearchButtonDisabled,
+  listingsByUrl,
+  listingUrlByDedupeKey,
   openModalListingUrl,
+  removeListingByUrl,
   resetState,
   setAiFilterPendingRun,
   setBulkDeepSearchUrls,
@@ -205,6 +211,55 @@ describe('singleDeepSearchInFlightUrls', () => {
     singleDeepSearchInFlightUrls.add('https://trademe.co.nz/listing/1');
     resetState();
     expect(singleDeepSearchInFlightUrls.size).toBe(0);
+  });
+});
+
+describe('addListingItem / removeListingByUrl / clearListings', () => {
+  beforeEach(() => resetState());
+
+  it('addListingItem populates both listingsByUrl and listingUrlByDedupeKey', () => {
+    const item = makeListingItem();
+    addListingItem(item);
+
+    expect(listingsByUrl.get(item.data.url)).toBe(item);
+    expect(listingUrlByDedupeKey.get(listingDedupeKey(item.data))).toBe(item.data.url);
+  });
+
+  it('removeListingByUrl removes the entry from both maps', () => {
+    const item = makeListingItem();
+    addListingItem(item);
+
+    removeListingByUrl(item.data.url);
+
+    expect(listingsByUrl.has(item.data.url)).toBe(false);
+    expect(listingUrlByDedupeKey.has(listingDedupeKey(item.data))).toBe(false);
+  });
+
+  it('removeListingByUrl on an unknown URL is a no-op, not a throw', () => {
+    expect(() => removeListingByUrl('https://example.com/never-added')).not.toThrow();
+  });
+
+  it('clearListings empties both maps', () => {
+    addListingItem(
+      makeListingItem({ data: { ...makeListingItem().data, url: 'https://example.com/a' } })
+    );
+    addListingItem(
+      makeListingItem({ data: { ...makeListingItem().data, url: 'https://example.com/b' } })
+    );
+
+    clearListings();
+
+    expect(listingsByUrl.size).toBe(0);
+    expect(listingUrlByDedupeKey.size).toBe(0);
+  });
+
+  it('resetState clears listingUrlByDedupeKey along with listingsByUrl', () => {
+    addListingItem(makeListingItem());
+
+    resetState();
+
+    expect(listingsByUrl.size).toBe(0);
+    expect(listingUrlByDedupeKey.size).toBe(0);
   });
 });
 
