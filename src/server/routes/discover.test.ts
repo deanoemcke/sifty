@@ -130,7 +130,9 @@ describe('discoverCategoriesAsync', () => {
       }),
     ]);
 
-    await discoverCategoriesAsync('  macbook  ', 800, 'pickup', '2', STUB_COOLDOWN_STORE, true);
+    await discoverCategoriesAsync('  macbook  ', 800, 'pickup', '2', STUB_COOLDOWN_STORE, {
+      includeSoldItems: true,
+    });
     expect(captured).toHaveLength(1);
     expect(captured[0].prompt).toBe('  macbook  ');
     const context = captured[0].context as DiscoverContext;
@@ -167,7 +169,9 @@ describe('discoverCategoriesAsync', () => {
       }),
     ]);
 
-    await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE, false, true);
+    await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE, {
+      includeNewItems: true,
+    });
     expect(captured[0].includeNewItems).toBe(true);
   });
 

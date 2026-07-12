@@ -24,14 +24,21 @@ type DiscoverResult = {
   warnings: string[];
 };
 
+type DiscoverCategoriesOptions = {
+  includeSoldItems?: boolean;
+  includeNewItems?: boolean;
+};
+
 export async function discoverCategoriesAsync(
   discoveryPrompt: string,
   discoveryMaxPrice: number,
   discoveryFulfillment: Fulfillment,
   discoveryRegion: string | undefined,
   cooldownStore: ProviderCooldownStore,
-  discoveryIncludeSoldItems = false,
-  discoveryIncludeNewItems = false
+  {
+    includeSoldItems: discoveryIncludeSoldItems = false,
+    includeNewItems: discoveryIncludeNewItems = false,
+  }: DiscoverCategoriesOptions = {}
 ): Promise<DiscoverResult> {
   getAIConfig(cooldownStore); // fail fast before running any recipe if no provider is configured at all
   const context: DiscoverContext = {
@@ -99,8 +106,7 @@ export async function handleDiscover(
       discoveryFulfillment,
       discoveryRegion,
       cooldownStore,
-      discoveryIncludeSoldItems,
-      discoveryIncludeNewItems
+      { includeSoldItems: discoveryIncludeSoldItems, includeNewItems: discoveryIncludeNewItems }
     );
     sendJSON(response, 200, result);
   } catch (err) {
