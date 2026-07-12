@@ -33,8 +33,6 @@ import {
   closeShowDropdownPanel,
   populateShowControls,
   renderShowControls,
-  SHOW_CHECKBOX_ID_BY_CATEGORY,
-  SHOW_OPTIONS,
   toggleShowDropdownPanel,
   updateShowSoldOptionVisibility,
 } from './showDropdown';
@@ -43,10 +41,9 @@ import {
   closeSortDropdownPanel,
   populateSortControls,
   renderSortControls,
-  SORT_RADIO_ID_BY_OPTION,
   toggleSortDropdownPanel,
 } from './sortDropdown';
-import { DEFAULT_SORT_OPTION, SORT_OPTIONS } from './sortListings';
+import { DEFAULT_SORT_OPTION } from './sortListings';
 import { setListingCategoryVisible, setSortBy } from './state';
 import { cancelGroupSearches, createUrlCard } from './urlCardRow';
 import { toggleUrlGroup } from './urlGroupsView';
@@ -56,9 +53,17 @@ import { toggleUrlGroup } from './urlGroupsView';
 function initApp(): void {
   applyBrandTitle(__WORKTREE_LABEL__);
   getElement('discoveryBtn').textContent = DISCOVERY_BUTTON_LABEL;
-  populateShowControls();
+  populateShowControls((category, isVisible) => {
+    setListingCategoryVisible(category, isVisible);
+    applyClientFilters();
+    renderShowControls();
+  });
   updateShowSoldOptionVisibility();
-  populateSortControls(DEFAULT_SORT_OPTION);
+  populateSortControls(DEFAULT_SORT_OPTION, (sortOption) => {
+    setSortBy(sortOption);
+    renderSortControls(sortOption);
+    renderDerived();
+  });
   createUrlCard(searchUrlCardAsync);
   getElement<HTMLTextAreaElement>('discoveryPrompt').focus();
 
@@ -72,16 +77,6 @@ function initApp(): void {
 
   getElement('showDropdownBtn').addEventListener('click', () => toggleShowDropdownPanel());
   getElement('showDropdownFooterBtn').addEventListener('click', () => closeShowDropdownPanel());
-  for (const { value } of SHOW_OPTIONS) {
-    getElement<HTMLInputElement>(SHOW_CHECKBOX_ID_BY_CATEGORY[value]).addEventListener(
-      'change',
-      (changeEvent) => {
-        setListingCategoryVisible(value, (changeEvent.target as HTMLInputElement).checked);
-        applyClientFilters();
-        renderShowControls();
-      }
-    );
-  }
   getElement<HTMLInputElement>('discoveryIncludeSoldItems').addEventListener(
     'change',
     updateShowSoldOptionVisibility
@@ -89,13 +84,6 @@ function initApp(): void {
 
   getElement('sortDropdownBtn').addEventListener('click', () => toggleSortDropdownPanel());
   getElement('sortDropdownFooterBtn').addEventListener('click', () => closeSortDropdownPanel());
-  for (const { value } of SORT_OPTIONS) {
-    getElement<HTMLInputElement>(SORT_RADIO_ID_BY_OPTION[value]).addEventListener('change', () => {
-      setSortBy(value);
-      renderSortControls(value);
-      renderDerived();
-    });
-  }
 
   // Single shared dismiss wiring for both dropdown controls: opening one
   // closes the other, and outside-click/Escape close whichever is open.

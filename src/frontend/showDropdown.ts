@@ -34,7 +34,7 @@ export const SHOW_OPTIONS: Array<{ value: ListingVisibilityCategory; label: stri
   { value: 'filtered', label: 'Filtered' },
 ];
 
-export const SHOW_CHECKBOX_ID_BY_CATEGORY: Record<ListingVisibilityCategory, string> = {
+const SHOW_CHECKBOX_ID_BY_CATEGORY: Record<ListingVisibilityCategory, string> = {
   available: 'showAvailable',
   sold: 'showSold',
   filtered: 'showFiltered',
@@ -54,8 +54,12 @@ function getShowDropdownElements(): DropdownElements {
 
 // One-time init: builds the dropdown shell (trigger/panel/footer) into its
 // mount point, then the panel's checkbox rows (each with a count span) from
-// SHOW_OPTIONS, and seeds the trigger/footer label.
-export function populateShowControls(): void {
+// SHOW_OPTIONS, and seeds the trigger/footer label. Wires each checkbox's
+// `change` event to onCategoryToggle so callers never need to know the
+// per-category checkbox ids — those stay private to this module.
+export function populateShowControls(
+  onCategoryToggle: (category: ListingVisibilityCategory, isVisible: boolean) => void = () => {}
+): void {
   buildDropdownShell(SHOW_DROPDOWN_IDS, 'Show');
   const optionsContainer = getElement(SHOW_DROPDOWN_IDS.options);
   for (const { value, label } of SHOW_OPTIONS) {
@@ -67,6 +71,7 @@ export function populateShowControls(): void {
     const checkbox = document.createElement('input');
     checkbox.id = checkboxId;
     checkbox.type = 'checkbox';
+    checkbox.addEventListener('change', () => onCategoryToggle(value, checkbox.checked));
     const labelSpan = document.createElement('span');
     labelSpan.textContent = label;
     const countSpan = document.createElement('span');

@@ -16,7 +16,7 @@ import {
 } from './dropdownPanel';
 import { SORT_OPTIONS, type SortOption } from './sortListings';
 
-export const SORT_RADIO_ID_BY_OPTION: Record<SortOption, string> = {
+const SORT_RADIO_ID_BY_OPTION: Record<SortOption, string> = {
   'source-url': 'sortSourceUrl',
   'best-match': 'sortBestMatch',
   'worst-match': 'sortWorstMatch',
@@ -44,8 +44,13 @@ function getSortDropdownElements(): DropdownElements {
 
 // One-time init: builds the dropdown shell (trigger/panel/footer) into its
 // mount point, then the panel's radio rows from SORT_OPTIONS, and seeds the
-// trigger/footer label to the default option's label.
-export function populateSortControls(defaultValue: SortOption): void {
+// trigger/footer label to the default option's label. Wires each radio's
+// `change` event to onSortOptionChange so callers never need to know the
+// per-option radio ids — those stay private to this module.
+export function populateSortControls(
+  defaultValue: SortOption,
+  onSortOptionChange: (option: SortOption) => void = () => {}
+): void {
   buildDropdownShell(SORT_DROPDOWN_IDS, 'Sort by');
   const optionsContainer = getElement(SORT_DROPDOWN_IDS.options);
   for (const { value, label } of SORT_OPTIONS) {
@@ -59,6 +64,7 @@ export function populateSortControls(defaultValue: SortOption): void {
     radio.id = radioId;
     radio.value = value;
     radio.checked = value === defaultValue;
+    radio.addEventListener('change', () => onSortOptionChange(value));
     const labelSpan = document.createElement('span');
     labelSpan.textContent = label;
     row.append(radio, labelSpan);

@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetOpenDropdown } from './dropdownPanel';
 import {
   closeShowDropdownPanel,
   populateShowControls,
   renderShowControls,
   renderShowOptions,
-  SHOW_CHECKBOX_ID_BY_CATEGORY,
   tallyListingCategories,
   toggleShowDropdownPanel,
   updateShowSoldOptionVisibility,
@@ -48,6 +47,23 @@ describe('populateShowControls', () => {
   it('seeds the trigger and footer labels to "0 of 0 results"', () => {
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('0 of 0 results');
     expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe('0 of 0 results');
+  });
+
+  it('invokes onCategoryToggle with the category and checked state when a checkbox changes', () => {
+    const onCategoryToggle = vi.fn();
+    populateShowControls(onCategoryToggle);
+
+    const soldCheckbox = document.getElementById('showSold') as HTMLInputElement;
+    soldCheckbox.checked = false;
+    soldCheckbox.dispatchEvent(new Event('change'));
+
+    expect(onCategoryToggle).toHaveBeenCalledTimes(1);
+    expect(onCategoryToggle).toHaveBeenCalledWith('sold', false);
+  });
+
+  it('does not throw when no callback is given and a checkbox changes', () => {
+    const availableCheckbox = document.getElementById('showAvailable') as HTMLInputElement;
+    expect(() => availableCheckbox.dispatchEvent(new Event('change'))).not.toThrow();
   });
 });
 
@@ -106,11 +122,7 @@ describe('updateShowSoldOptionVisibility', () => {
   it('hides the sold row when include-sold-items is unchecked', () => {
     (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = false;
     updateShowSoldOptionVisibility();
-    expect(
-      document
-        .getElementById(`${SHOW_CHECKBOX_ID_BY_CATEGORY.sold}Row`)
-        ?.classList.contains('hidden')
-    ).toBe(true);
+    expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
   });
 
   it('re-adds sold to visibleListingCategories and re-checks the checkbox when hiding the row', () => {
@@ -140,13 +152,9 @@ describe('updateShowSoldOptionVisibility', () => {
 
   it('shows the sold row when include-sold-items is checked', () => {
     (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = true;
-    document.getElementById(`${SHOW_CHECKBOX_ID_BY_CATEGORY.sold}Row`)?.classList.add('hidden');
+    document.getElementById('showSoldRow')?.classList.add('hidden');
     updateShowSoldOptionVisibility();
-    expect(
-      document
-        .getElementById(`${SHOW_CHECKBOX_ID_BY_CATEGORY.sold}Row`)
-        ?.classList.contains('hidden')
-    ).toBe(false);
+    expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
   });
 });
 

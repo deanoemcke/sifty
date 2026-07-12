@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetOpenDropdown } from './dropdownPanel';
 import {
   closeSortDropdownPanel,
   populateSortControls,
   renderSortControls,
-  SORT_RADIO_ID_BY_OPTION,
   toggleSortDropdownPanel,
 } from './sortDropdown';
 
@@ -36,15 +35,36 @@ describe('populateSortControls', () => {
     populateSortControls('best-match');
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Best match');
   });
+
+  it('invokes onSortOptionChange with the selected option when a radio changes', () => {
+    const onSortOptionChange = vi.fn();
+    populateSortControls('source-url', onSortOptionChange);
+
+    const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
+    bestMatchRadio.checked = true;
+    bestMatchRadio.dispatchEvent(new Event('change'));
+
+    expect(onSortOptionChange).toHaveBeenCalledTimes(1);
+    expect(onSortOptionChange).toHaveBeenCalledWith('best-match');
+  });
+
+  it('does not throw when no callback is given and a radio changes', () => {
+    populateSortControls('source-url');
+    const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
+    bestMatchRadio.checked = true;
+    expect(() => bestMatchRadio.dispatchEvent(new Event('change'))).not.toThrow();
+  });
 });
 
 describe('renderSortControls', () => {
   it('checks only the matching radio', () => {
     populateSortControls('source-url');
     renderSortControls('lowest-price');
-    for (const [value, radioId] of Object.entries(SORT_RADIO_ID_BY_OPTION)) {
-      const radio = document.getElementById(radioId) as HTMLInputElement;
-      expect(radio.checked).toBe(value === 'lowest-price');
+    const radios = Array.from(
+      document.querySelectorAll<HTMLInputElement>('#sortDropdownOptions input[type="radio"]')
+    );
+    for (const radio of radios) {
+      expect(radio.checked).toBe(radio.value === 'lowest-price');
     }
   });
 
