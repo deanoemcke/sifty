@@ -105,8 +105,9 @@ const BID_COUNT_PATTERN = /(\d+)\s*bids?/i;
 
 function mapLegacyReserveText(text: string | undefined): ReserveStatus {
   if (text === undefined) return 'NONE';
-  if (text === 'Reserve Met') return 'MET';
-  if (text === 'Reserve Not Met') return 'NOT_MET';
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (normalized === 'reserve not met') return 'NOT_MET';
+  if (normalized === 'reserve met') return 'MET';
   return 'UNKNOWN';
 }
 
@@ -145,7 +146,10 @@ export function parseLegacySearchResultsHtml(html: string): {
       url: href.startsWith('http') ? href : `${TRADEME_ORIGIN}${href}`,
       isAuction: true,
       thumbnailUrl,
-      isSold: reserveStatus !== 'NOT_MET',
+      // Positive allowlist, not an exclusion of NOT_MET: an unrecognized reserve
+      // badge (UNKNOWN) must fail safe as not-sold rather than silently reporting
+      // a sale that may not have happened.
+      isSold: reserveStatus === 'MET' || reserveStatus === 'NONE',
       reserveStatus,
       relevance: 0,
     });
