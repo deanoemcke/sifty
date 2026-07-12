@@ -1,6 +1,6 @@
 // ── Result sorting ────────────────────────────────────────────────────────────
-// Pure sort logic for the results grid — no DOM access except populateSortSelect,
-// which only builds <option> elements.
+// Pure sort logic for the results grid — no DOM access. DOM building for the
+// Sort dropdown control lives in sortDropdown.ts.
 
 import { requirePattern } from '../lib/recipes/metadata';
 import type { ListingItem } from './state';
@@ -50,18 +50,4 @@ export function sortListings(listings: ListingItem[], sortBy: SortOption): Listi
     sorted.sort((a, b) => comparePrice(a.data.price, b.data.price, false));
   }
   return sorted;
-}
-
-export function populateSortSelect(
-  select: HTMLSelectElement,
-  options: Array<{ value: SortOption; label: string }>,
-  defaultValue: SortOption
-): void {
-  for (const option of options) {
-    const optionElement = select.ownerDocument.createElement('option');
-    optionElement.value = option.value;
-    optionElement.textContent = option.label;
-    optionElement.selected = option.value === defaultValue;
-    select.appendChild(optionElement);
-  }
 }

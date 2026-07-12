@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { handleDiscoverySubmitAsync, loadSavedSearchAsync } from './searchSession';
+import { populateShowControls } from './showDropdown';
 import { resetState } from './state';
 import { createUrlCard } from './urlCardRow';
 import { resetUrlCardStore, urlCards } from './urlCardStore';
@@ -30,12 +31,10 @@ beforeEach(() => {
 
     <div id="resultsSection" class="hidden"></div>
     <div id="listingsContainer"></div>
-    <span id="resultCount"></span>
-    <span id="totalCount"></span>
-    <button id="toggleFilteredBtn"></button>
+    <div id="showDropdown"></div>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
-    <span id="aiFilterStatus"></span>
+    <button id="aiFilterBtn"></button>
 
     <button id="searchTabBtn" class="active"></button>
     <button id="favouritesTabBtn"></button>
@@ -43,6 +42,7 @@ beforeEach(() => {
     <div id="savedSearchesPanel" class="hidden"></div>
     <button id="saveCurrentBtn" class="hidden"></button>
   `;
+  populateShowControls();
   // The app always seeds one blank URL card on init (see app.ts) — every
   // caller of handleDiscoverySubmitAsync relies on urlCards[0] existing.
   createUrlCard(async () => {});
@@ -183,4 +183,32 @@ it('does not let a stale discovery response overwrite a saved search loaded whil
 
   // It must not clobber the saved search the user is now looking at.
   expect(urlCards[0].dom.input.value).toBe('https://example.com/saved');
+});
+
+it('loading a saved search with includeSoldItems restores the checkbox, but the "Show > Sold" row stays hidden until results actually contain a sold listing', async () => {
+  // The Show > Sold row is gated on the current results' tally (see
+  // showDropdown.ts renderShowOptions), not on this checkbox — it's a
+  // search-time input restored here for the next search, and loading a saved
+  // search with no urls produces no results to search, so there is nothing
+  // sold to reveal the row pre-emptively for.
+  expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+
+  await loadSavedSearchAsync({
+    id: 'saved-2',
+    name: 'saved search with sold items',
+    urls: [],
+    aiFilter: null,
+    createdAt: 0,
+    discoverInputs: {
+      prompt: 'lamp',
+      maxPrice: 50,
+      fulfillment: 'any',
+      includeSoldItems: true,
+    },
+  });
+
+  expect((document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked).toBe(
+    true
+  );
+  expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
 });

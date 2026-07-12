@@ -10,28 +10,21 @@ import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
 import { rafSchedule } from './rafSchedule';
 import { sourceBadgeHtml } from './recipeDisplay';
+import { renderShowOptions } from './showDropdown';
 import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
 import {
   cardIdByUrl,
+  getListingCategory,
   isAiFilterRunning,
   isCardSearchActive,
   isDeepSearchRunning,
   type ListingItem,
   listingsByUrl,
-  showFilteredListings,
   sortBy,
   urlCardDataById,
+  visibleListingCategories,
 } from './state';
 import { updateUrlGroupHeaders } from './urlGroupsView';
-
-// Sole writer of the filtered-results toggle button state — derives it from state.
-export function renderFilteredToggle(): void {
-  const toggleBtn = getElement<HTMLButtonElement>('toggleFilteredBtn');
-  const label = showFilteredListings ? 'Hide filtered listings' : 'Show filtered listings';
-  toggleBtn.setAttribute('aria-pressed', String(showFilteredListings));
-  toggleBtn.title = label;
-  toggleBtn.setAttribute('aria-label', label);
-}
 
 export function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
@@ -124,9 +117,7 @@ export function scheduleSortOrderUpdate(listings: ListingItem[]): void {
 export function renderDerived(): void {
   const listings = getOrderedListings();
   const passing = listings.filter((listingItem) => listingItem.aiFilterReason === null);
-  const visibleCount = showFilteredListings ? listings.length : passing.length;
-  getElement('resultCount').textContent = String(visibleCount);
-  getElement('totalCount').textContent = String(listings.length);
+  renderShowOptions(listings);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
     isCardSearchActive(data.searchStatus)
   );
@@ -135,33 +126,38 @@ export function renderDerived(): void {
     'hidden',
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped
   );
-  renderAiFilterStatus(listings);
+  renderAiFilterButton();
   scheduleSortOrderUpdate(listings);
   updateUrlGroupHeaders();
 }
 
-// Sole writer of the ai-filter status line — shows a spinner while a run is
-// in flight, otherwise the count of listings the filter has excluded.
-export function renderAiFilterStatus(listings: ListingItem[]): void {
-  const status = getElement('aiFilterStatus');
-  if (isAiFilterRunning) {
-    status.innerHTML = `<span class="spinner"></span><span>Filtering results...</span>`;
-    return;
-  }
-  const excludedCount = listings.filter(
-    (listingItem) => listingItem.aiFilterReason !== null
-  ).length;
-  status.textContent = `Filtered ${excludedCount} results`;
+// Sole writer of the ai-filter button's disabled/label state — disabled with
+// a spinner while a run is in flight, disabled with no criteria typed yet,
+// otherwise enabled and ready to submit.
+export function renderAiFilterButton(): void {
+  const filterBtn = getElement<HTMLButtonElement>('aiFilterBtn');
+  const promptIsEmpty = getElement<HTMLTextAreaElement>('aiFilter').value.trim() === '';
+  filterBtn.disabled = isAiFilterRunning || promptIsEmpty;
+  // The innerHTML below is fully determined by isAiFilterRunning, so skip the
+  // write when the rendered state hasn't changed: renderDerived() fires once
+  // per streamed listing, and recreating the spinner node on each call would
+  // restart its CSS animation mid-run. data-state is a render cache key, not
+  // business state — isAiFilterRunning in state.ts stays the source of truth.
+  const desiredButtonState = isAiFilterRunning ? 'running' : 'idle';
+  if (filterBtn.dataset.state === desiredButtonState) return;
+  filterBtn.dataset.state = desiredButtonState;
+  filterBtn.innerHTML = isAiFilterRunning
+    ? '<span class="spinner"></span><span>Filtering..</span>'
+    : 'Filter';
 }
 
 export function applyClientFilters(): void {
   for (const item of getOrderedListings()) {
-    const passes = item.aiFilterReason === null;
+    const category = getListingCategory(item);
     const card = getCardByUrl(item.data.url);
     if (card) {
       const banner = requireChild<HTMLElement>(card, '.filter-banner');
-      if (passes) {
-        card.style.display = '';
+      if (category !== 'filtered') {
         card.classList.remove('filtered-out');
         banner.textContent = '';
         banner.classList.add('hidden');
@@ -169,8 +165,8 @@ export function applyClientFilters(): void {
         card.classList.add('filtered-out');
         banner.textContent = filterBannerText(item);
         banner.classList.remove('hidden');
-        card.style.display = showFilteredListings ? '' : 'none';
       }
+      card.style.display = visibleListingCategories.has(category) ? '' : 'none';
     }
   }
   renderDerived();

@@ -66,8 +66,27 @@ export interface SavedSearch {
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
+export type ListingVisibilityCategory = 'available' | 'sold' | 'filtered';
+
+export function getListingCategory(item: ListingItem): ListingVisibilityCategory {
+  if (item.aiFilterReason !== null) return 'filtered';
+  return item.data.isSold ? 'sold' : 'available';
+}
+
+export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
+  'available',
+  'sold',
+  'filtered',
+];
+
 export let currentSearchName: string | null = null;
-export let showFilteredListings = true;
+// The mutable set stays private so every write goes through
+// setListingCategoryVisible — importers only see a ReadonlySet.
+const mutableVisibleListingCategories = new Set<ListingVisibilityCategory>(
+  ALL_LISTING_VISIBILITY_CATEGORIES
+);
+export const visibleListingCategories: ReadonlySet<ListingVisibilityCategory> =
+  mutableVisibleListingCategories;
 export let isDeepSearchRunning = false;
 export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
@@ -99,10 +118,6 @@ export function setCurrentSearchName(name: string | null): void {
   currentSearchName = name;
 }
 
-export function setShowFilteredListings(value: boolean): void {
-  showFilteredListings = value;
-}
-
 export function setIsDeepSearchRunning(value: boolean): void {
   isDeepSearchRunning = value;
 }
@@ -127,6 +142,14 @@ export function setSortBy(value: SortOption): void {
   sortBy = value;
 }
 
+export function setListingCategoryVisible(
+  category: ListingVisibilityCategory,
+  isVisible: boolean
+): void {
+  if (isVisible) mutableVisibleListingCategories.add(category);
+  else mutableVisibleListingCategories.delete(category);
+}
+
 export function setOpenModalListingUrl(url: string | null): void {
   openModalListingUrl = url;
 }
@@ -139,7 +162,9 @@ export function setBulkDeepSearchUrls(urls: Set<string> | null): void {
 
 export function resetState(): void {
   currentSearchName = null;
-  showFilteredListings = true;
+  mutableVisibleListingCategories.clear();
+  for (const category of ALL_LISTING_VISIBILITY_CATEGORIES)
+    mutableVisibleListingCategories.add(category);
   isDeepSearchRunning = false;
   deepSearchId = null;
   deepSearchCancellationRequested = false;

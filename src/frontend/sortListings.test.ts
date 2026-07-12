@@ -2,13 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Listing } from '../lib/recipes/base';
 import type { RecipeSource } from '../lib/recipes/metadata';
-import {
-  DEFAULT_SORT_OPTION,
-  populateSortSelect,
-  SORT_OPTIONS,
-  type SortOption,
-  sortListings,
-} from './sortListings';
+import { DEFAULT_SORT_OPTION, SORT_OPTIONS, sortListings } from './sortListings';
 import type { ListingItem } from './state';
 
 function makeListingItem(
@@ -142,15 +136,5 @@ describe('SORT_OPTIONS / DEFAULT_SORT_OPTION', () => {
       'lowest-price',
       'highest-price',
     ]);
-  });
-});
-
-describe('populateSortSelect', () => {
-  it('appends an option per entry and selects the default', () => {
-    const select = document.createElement('select');
-    populateSortSelect(select, SORT_OPTIONS, 'best-match' as SortOption);
-    expect(select.options.length).toBe(SORT_OPTIONS.length);
-    expect(select.value).toBe('best-match');
-    expect(select.options[1].textContent).toBe('Best match');
   });
 });

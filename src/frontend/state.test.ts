@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  ALL_LISTING_VISIBILITY_CATEGORIES,
   aiFilterPendingRun,
   bulkDeepSearchUrls,
   canCancelSearch,
+  getListingCategory,
   isAiFilterRunning,
   isCardSearchActive,
   isSearchButtonDisabled,
@@ -11,11 +13,12 @@ import {
   setAiFilterPendingRun,
   setBulkDeepSearchUrls,
   setIsAiFilterRunning,
+  setListingCategoryVisible,
   setOpenModalListingUrl,
-  setShowFilteredListings,
-  showFilteredListings,
   singleDeepSearchInFlightUrls,
+  visibleListingCategories,
 } from './state';
+import { makeListingItem } from './testFixtures';
 
 describe('isSearchButtonDisabled', () => {
   it('returns false when idle and URL is fresh', () => {
@@ -112,24 +115,60 @@ describe('openModalListingUrl', () => {
   });
 });
 
-describe('showFilteredListings', () => {
+describe('visibleListingCategories', () => {
   beforeEach(() => resetState());
 
-  it('defaults to true', () => {
-    expect(showFilteredListings).toBe(true);
+  it('defaults to all three categories', () => {
+    expect([...visibleListingCategories].sort()).toEqual(
+      [...ALL_LISTING_VISIBILITY_CATEGORIES].sort()
+    );
   });
 
-  it('setShowFilteredListings updates the value', () => {
-    setShowFilteredListings(false);
-    expect(showFilteredListings).toBe(false);
-    setShowFilteredListings(true);
-    expect(showFilteredListings).toBe(true);
-  });
-
-  it('resetState resets it back to true', () => {
-    setShowFilteredListings(false);
+  it('resetState refills it after entries are removed', () => {
+    setListingCategoryVisible('sold', false);
+    setListingCategoryVisible('filtered', false);
     resetState();
-    expect(showFilteredListings).toBe(true);
+    expect([...visibleListingCategories].sort()).toEqual(
+      [...ALL_LISTING_VISIBILITY_CATEGORIES].sort()
+    );
+  });
+});
+
+describe('setListingCategoryVisible', () => {
+  beforeEach(() => resetState());
+
+  it('adds the category when visible', () => {
+    setListingCategoryVisible('sold', false);
+    setListingCategoryVisible('sold', true);
+    expect(visibleListingCategories.has('sold')).toBe(true);
+  });
+
+  it('removes the category when not visible', () => {
+    setListingCategoryVisible('filtered', false);
+    expect(visibleListingCategories.has('filtered')).toBe(false);
+  });
+});
+
+describe('getListingCategory', () => {
+  it('returns filtered when aiFilterReason is set, even when isSold is true', () => {
+    const item = makeListingItem({
+      aiFilterReason: 'too old',
+      data: { ...makeListingItem().data, isSold: true },
+    });
+    expect(getListingCategory(item)).toBe('filtered');
+  });
+
+  it('returns sold when isSold is true and not filtered', () => {
+    const item = makeListingItem({
+      aiFilterReason: null,
+      data: { ...makeListingItem().data, isSold: true },
+    });
+    expect(getListingCategory(item)).toBe('sold');
+  });
+
+  it('returns available when neither filtered nor sold', () => {
+    const item = makeListingItem({ aiFilterReason: null });
+    expect(getListingCategory(item)).toBe('available');
   });
 });
 

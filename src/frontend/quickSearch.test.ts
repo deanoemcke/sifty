@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing } from '../lib/recipes/base';
 import { normalizeListingRelevance, searchUrlCardAsync } from './quickSearch';
 import { cardStatusText } from './searchStatusText';
+import { populateShowControls } from './showDropdown';
 import { listingsByUrl, resetState, type UrlCardData } from './state';
 import { cancelSearch, cardStatusSnapshot } from './urlCardRow';
 import {
@@ -82,12 +83,12 @@ beforeEach(() => {
   document.body.innerHTML = `
     <div id="resultsSection" class="hidden"></div>
     <div id="urlCardsContainer"></div>
-    <span id="resultCount"></span>
-    <span id="totalCount"></span>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
-    <span id="aiFilterStatus"></span>
+    <button id="aiFilterBtn"></button>
+    <div id="showDropdown"></div>
   `;
+  populateShowControls();
 });
 
 afterEach(() => {
