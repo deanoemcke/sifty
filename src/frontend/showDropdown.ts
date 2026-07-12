@@ -18,6 +18,7 @@ import {
   toggleDropdownPanel,
 } from './dropdownPanel';
 import {
+  ALL_LISTING_VISIBILITY_CATEGORIES,
   getListingCategory,
   type ListingItem,
   type ListingVisibilityCategory,
@@ -77,7 +78,7 @@ export function populateShowControls(
     optionsContainer.appendChild(row);
   }
   renderShowControls();
-  renderShowOptions([], 0);
+  renderShowOptions([]);
 }
 
 // Sole writer of the checkboxes' checked state — derives it from state.
@@ -98,9 +99,10 @@ export function tallyListingCategories(
 }
 
 // Sole writer of the per-category count spans and the trigger/footer label.
-// Called from resultsView.ts's renderDerived() with the listings/visibleCount
-// it already computed, so counts stay on a single update path. The label
-// format and literal "results" (never pluralized) match the header's former
+// Called from resultsView.ts's renderDerived() with the listings it already
+// computed; visibleCount is derived here from the same tally rather than
+// being passed in, so there is a single computation of it. The label format
+// and literal "results" (never pluralized) match the header's former
 // "Showing N / X results" line, which this control now replaces.
 //
 // The "Sold" row is gated on whether the current results actually contain any
@@ -113,8 +115,11 @@ export function tallyListingCategories(
 // checked state (and its effect on already-rendered cards) is left untouched
 // by row visibility, and simply reflects whichever way the user last set it
 // next time the row reappears.
-export function renderShowOptions(listings: ListingItem[], visibleCount: number): void {
+export function renderShowOptions(listings: ListingItem[]): void {
   const tally = tallyListingCategories(listings);
+  const visibleCount = ALL_LISTING_VISIBILITY_CATEGORIES.filter((category) =>
+    visibleListingCategories.has(category)
+  ).reduce((sum, category) => sum + tally[category], 0);
   for (const [category, checkboxId] of Object.entries(SHOW_CHECKBOX_ID_BY_CATEGORY) as Array<
     [ListingVisibilityCategory, string]
   >) {

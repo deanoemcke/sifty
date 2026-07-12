@@ -93,7 +93,8 @@ describe('renderShowOptions', () => {
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
       makeListingItem({ aiFilterReason: 'too expensive' }),
     ];
-    renderShowOptions(listings, 2);
+    setListingCategoryVisible('filtered', false);
+    renderShowOptions(listings);
     for (const [category, count] of [
       ['showAvailable', 1],
       ['showSold', 1],
@@ -108,7 +109,7 @@ describe('renderShowOptions', () => {
   });
 
   it('does not pluralize — "results" is always literal, matching the old header phrasing', () => {
-    renderShowOptions([], 0);
+    renderShowOptions([]);
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('0 of 0 results');
   });
 
@@ -117,22 +118,22 @@ describe('renderShowOptions', () => {
   // row can then never strand an active 'sold' exclusion, since there is
   // nothing sold on screen to strand.
   it('hides the Sold row when the current results contain no sold listings', () => {
-    renderShowOptions([makeListingItem()], 1);
+    renderShowOptions([makeListingItem()]);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
   });
 
   it('shows the Sold row when the current results contain a sold listing', () => {
     const soldItem = makeListingItem({ data: { ...makeListingItem().data, isSold: true } });
-    renderShowOptions([soldItem], 1);
+    renderShowOptions([soldItem]);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
   });
 
   it('re-hides the Sold row on a later render whose results have no sold listings', () => {
     const soldItem = makeListingItem({ data: { ...makeListingItem().data, isSold: true } });
-    renderShowOptions([soldItem], 1);
+    renderShowOptions([soldItem]);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
 
-    renderShowOptions([makeListingItem()], 1);
+    renderShowOptions([makeListingItem()]);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
   });
 
@@ -140,12 +141,12 @@ describe('renderShowOptions', () => {
     setListingCategoryVisible('sold', false);
     renderShowControls();
 
-    renderShowOptions([makeListingItem()], 1);
+    renderShowOptions([makeListingItem()]);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
     expect(visibleListingCategories.has('sold')).toBe(false);
 
     const soldItem = makeListingItem({ data: { ...makeListingItem().data, isSold: true } });
-    renderShowOptions([soldItem], 0);
+    renderShowOptions([soldItem]);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
     expect(visibleListingCategories.has('sold')).toBe(false);
   });

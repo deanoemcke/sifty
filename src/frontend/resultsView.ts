@@ -117,10 +117,7 @@ export function scheduleSortOrderUpdate(listings: ListingItem[]): void {
 export function renderDerived(): void {
   const listings = getOrderedListings();
   const passing = listings.filter((listingItem) => listingItem.aiFilterReason === null);
-  const visibleCount = listings.filter((listingItem) =>
-    visibleListingCategories.has(getListingCategory(listingItem))
-  ).length;
-  renderShowOptions(listings, visibleCount);
+  renderShowOptions(listings);
   const isAnyCardSearching = [...urlCardDataById.values()].some((data) =>
     isCardSearchActive(data.searchStatus)
   );
