@@ -40,8 +40,19 @@ vi.mock('../db', () => ({
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
-const { getNextPage, resetPageQueue, makeDetailPage } = vi.hoisted(() => {
+const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker } = vi.hoisted(() => {
   const queue: unknown[] = [];
+
+  // Tracks how many mocked Chromium instances are live at once, so tests can
+  // assert that concurrent quick searches do (or don't) stack browser sessions.
+  const browserSessionTracker = {
+    activeCount: 0,
+    maxActiveCount: 0,
+    reset() {
+      this.activeCount = 0;
+      this.maxActiveCount = 0;
+    },
+  };
 
   function makePage(data: unknown) {
     const handlers: Array<(r: unknown) => void> = [];
@@ -101,21 +112,45 @@ const { getNextPage, resetPageQueue, makeDetailPage } = vi.hoisted(() => {
       queue.splice(0, queue.length, ...items);
     },
     makeDetailPage,
+    browserSessionTracker,
   };
 });
 
 vi.mock('playwright', () => ({
   chromium: {
-    launch: async () => ({
-      newContext: async () => ({ newPage: async () => getNextPage() }),
-      close: async () => {},
-    }),
+    launch: async () => {
+      browserSessionTracker.activeCount++;
+      browserSessionTracker.maxActiveCount = Math.max(
+        browserSessionTracker.maxActiveCount,
+        browserSessionTracker.activeCount
+      );
+      return {
+        newContext: async () => ({ newPage: async () => getNextPage() }),
+        close: async () => {
+          browserSessionTracker.activeCount--;
+        },
+      };
+    },
   },
 }));
 
-vi.mock('../../lib/queue', () => ({
-  enqueue: (_: string, fn: () => Promise<unknown>) => fn(),
-}));
+// The real `enqueue` (per-domain `ConcurrencyQueue`, trademe.co.nz capped at 3 —
+// see `src/lib/queue.ts`) is used as-is, wrapped only to record which URLs are
+// routed through it. A plain passthrough mock would make a bypassed limiter
+// indistinguishable from a working one, and pagination already nests enqueue
+// calls inside the outer quick-search task, so a hand-rolled full-serialization
+// mock (concurrency 1) would deadlock — the real bounded queue handles that
+// nesting correctly because it isn't a hand-rolled chain of ordering.
+const { enqueuedUrls } = vi.hoisted(() => ({ enqueuedUrls: [] as string[] }));
+
+vi.mock('../../lib/queue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/queue')>();
+  function trackingEnqueue<T>(url: string, asyncTask: () => Promise<T>): Promise<T> {
+    enqueuedUrls.push(url);
+    return actual.enqueue(url, asyncTask);
+  }
+  return { ...actual, enqueue: trackingEnqueue };
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1483,5 +1518,45 @@ describe('quickSearch', () => {
     );
 
     expect(collected).toHaveLength(100);
+  });
+});
+
+// ── quickSearchAsync (domain concurrency limiting) ────────────────────────────
+//
+// A discover request can fan out several concurrent TradeMe search URLs per
+// category (used/new/sold), and adding "include new items" pushes the
+// worst-case concurrent-launch count higher still — so the initial browser
+// launch must be routed through the same per-domain limiter that pagination
+// already uses, exactly like Facebook's quickSearchAsync.
+
+describe('trademeRecipe.quickSearchAsync — domain concurrency limiting', () => {
+  beforeEach(() => {
+    resetPageQueue();
+    browserSessionTracker.reset();
+    enqueuedUrls.length = 0;
+  });
+
+  it('routes the browser launch through the domain limiter, keyed by the search URL', async () => {
+    const searchUrl = 'https://www.trademe.co.nz/a/marketplace/computers/search?search_string=lamp';
+
+    await trademeRecipe.quickSearchAsync(searchUrl, () => {});
+
+    expect(enqueuedUrls).toContain(searchUrl);
+  });
+
+  it('never exceeds the trademe.co.nz domain concurrency limit across concurrent searches', async () => {
+    // trademe.co.nz's domain limit is 3 (src/lib/queue.ts). Fire 5 concurrent
+    // single-page searches — comfortably more than the limit — and verify the
+    // limiter, not just pagination, is what gates the launches. Before the
+    // fix, chromium.launch() ran outside enqueue entirely, so all 5 would
+    // launch at once (maxActiveCount === 5).
+    const searchUrls = Array.from(
+      { length: 5 },
+      (_, i) => `https://www.trademe.co.nz/a/marketplace/computers/search?search_string=item${i}`
+    );
+
+    await Promise.all(searchUrls.map((url) => trademeRecipe.quickSearchAsync(url, () => {})));
+
+    expect(browserSessionTracker.maxActiveCount).toBe(3);
   });
 });

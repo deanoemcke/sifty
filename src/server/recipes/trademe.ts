@@ -506,6 +506,21 @@ async function quickSearchAsync(
 ): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
+  // A discover request can fan out several concurrent TradeMe search URLs per
+  // category (used/new/sold), and this PR adds another multiplier on top of
+  // that. Route the launch through the per-domain concurrency limiter — the
+  // same one pagination already uses below — so concurrent searches can't
+  // stack unbounded headless browsers. The criteria event is emitted before
+  // queueing so the card gets its filter chips immediately, even while the
+  // search waits for a slot.
+  await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));
+}
+
+async function runQuickSearchAsync(
+  searchUrl: string,
+  onEvent: (event: QuickSearchEvent) => void,
+  isCancelled?: () => boolean
+): Promise<void> {
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
