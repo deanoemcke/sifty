@@ -6,12 +6,15 @@ import { isValidRecipeUrl } from '../lib/recipes/matcher';
 import { requestAiFilterRun } from './aiFilter';
 import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
+import { listingDedupeKey } from './listingDedup';
 import { applyClientFilters, renderCard, renderDerived } from './resultsView';
 import { parseQuickSearchProgress } from './searchStatusText';
 import {
+  addListingItem,
   canCancelSearch,
   type ListingItem,
   listingsByUrl,
+  listingUrlByDedupeKey,
   type UrlCardSearchStatus,
 } from './state';
 import { streamPostAsync } from './streamPost';
@@ -67,20 +70,24 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
         }
       } else if (ev.type === 'listing') {
         const listing = normalizeListingRelevance(ev.data as Listing);
-        data.listingUrls.push(listing.url);
-        if (!listingsByUrl.has(listing.url)) {
+        const dedupeKey = listingDedupeKey(listing);
+        const isDuplicate = listingUrlByDedupeKey.has(dedupeKey);
+        if (!isDuplicate) {
+          data.listingUrls.push(listing.url);
           const item: ListingItem = {
             data: listing,
             hasBeenDeepSearched: false,
             aiCheckedHash: null,
             aiFilterReason: null,
           };
-          listingsByUrl.set(listing.url, item);
+          addListingItem(item);
           renderCard(item);
           renderDerived();
         } else {
-          // Listing already known from another card — the group count may
-          // still change, since it dedupes per group rather than globally.
+          // Listing already known — either the exact URL, or the same
+          // underlying listing under a different URL from another card. The
+          // group count may still change, since it dedupes per group rather
+          // than globally.
           updateUrlGroupHeaders();
         }
       } else if (ev.type === 'error') {
