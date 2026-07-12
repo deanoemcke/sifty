@@ -549,7 +549,7 @@ label {
   margin-bottom: 0;
   flex-shrink: 0;
   font-size: 0.875rem;
-  color: var(--text);
+  color: var(--text-muted);
   cursor: pointer;
 }
 .dropdown-control {
@@ -806,7 +806,7 @@ label {
 .listing-title {
   flex: 1;
   min-width: 0;
-  font-size: 0.82rem;
+  font-size: 1rem;
   font-weight: 600;
   line-height: 1.35;
   white-space: nowrap;
