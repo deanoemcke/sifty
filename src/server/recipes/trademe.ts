@@ -7,6 +7,7 @@ import type {
   DiscoverContext,
   Fulfillment,
   Listing,
+  ListingCondition,
   ListingPhoto,
   QuickSearchEvent,
   RecipeDiscoverResult,
@@ -448,7 +449,7 @@ export function buildTrademeUrl(
   maxPrice: number,
   fulfillment: Fulfillment,
   regionValue: string | undefined,
-  condition: 'used' | 'new'
+  condition: ListingCondition
 ): string {
   const topLevel = entry.slug.split('/')[0];
   const urlSlug = TRADEME_SECTIONS.has(topLevel) ? entry.slug : `marketplace/${entry.slug}`;

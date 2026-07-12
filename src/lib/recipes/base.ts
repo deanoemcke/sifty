@@ -106,6 +106,8 @@ export type DeepSearchEvent =
 
 export type Fulfillment = 'any' | 'pickup' | 'shipping';
 
+export type ListingCondition = 'used' | 'new';
+
 export type RecipeDiscoverResult = {
   urls: string[];
   warnings: string[];

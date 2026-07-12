@@ -8,6 +8,7 @@ import type {
   DiscoverContext,
   Fulfillment,
   Listing,
+  ListingCondition,
   QuickSearchEvent,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
@@ -699,7 +700,7 @@ export async function buildFacebookSearchQueryAsync(
   return result.query.trim();
 }
 
-const ITEM_CONDITION_PARAM_BY_CONDITION: Record<'used' | 'new', string> = {
+const ITEM_CONDITION_PARAM_BY_CONDITION: Record<ListingCondition, string> = {
   used: 'used_like_new,used_good,used_fair',
   new: 'new',
 };
@@ -710,7 +711,7 @@ export function buildFacebookUrl(
   fulfillment: Fulfillment,
   regionValue: string | undefined,
   includeSoldItems: boolean,
-  condition: 'used' | 'new',
+  condition: ListingCondition,
   regions = getRegions()
 ): string {
   const pickupOnly = !includeSoldItems && fulfillment === 'pickup' && !!regionValue;
