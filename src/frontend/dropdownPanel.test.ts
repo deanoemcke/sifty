@@ -307,10 +307,10 @@ describe('buildDropdownShell', () => {
 });
 
 describe('setDropdownLabel', () => {
-  it('writes only the trigger label span text and the footer text, leaving siblings intact', () => {
+  it('writes the trigger label span text and a separate footer text, leaving siblings intact', () => {
     const a = buildDropdownFixture('a');
-    setDropdownLabel(a, 'Show 47 results');
-    expect(a.trigger.querySelector('.dropdown-trigger-label')?.textContent).toBe('Show 47 results');
+    setDropdownLabel(a, '47 results', 'Show 47 results');
+    expect(a.trigger.querySelector('.dropdown-trigger-label')?.textContent).toBe('47 results');
     expect(a.trigger.querySelector('.dropdown-caret')).not.toBeNull();
     expect(a.footer.textContent).toBe('Show 47 results');
   });

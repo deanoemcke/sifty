@@ -70,7 +70,11 @@ export function populateSortControls(
     row.append(radio, labelSpan);
     optionsContainer.appendChild(row);
   }
-  setDropdownLabel(getSortDropdownElements(), sortOptionLabel(defaultValue));
+  setDropdownLabel(
+    getSortDropdownElements(),
+    sortOptionLabel(defaultValue),
+    `Sort by ${sortOptionLabel(defaultValue)}`
+  );
 }
 
 // Sole writer of the radios' checked state and the trigger/footer label —
@@ -81,7 +85,11 @@ export function renderSortControls(sortBy: SortOption): void {
   >) {
     getElement<HTMLInputElement>(radioId).checked = value === sortBy;
   }
-  setDropdownLabel(getSortDropdownElements(), sortOptionLabel(sortBy));
+  setDropdownLabel(
+    getSortDropdownElements(),
+    sortOptionLabel(sortBy),
+    `Sort by ${sortOptionLabel(sortBy)}`
+  );
 }
 
 export function toggleSortDropdownPanel(): void {

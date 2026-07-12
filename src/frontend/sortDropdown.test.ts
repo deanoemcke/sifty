@@ -25,10 +25,12 @@ describe('populateSortControls', () => {
     expect(checkedValues).toEqual(['best-match']);
   });
 
-  it("sets the trigger and footer label to the default option's label", () => {
+  it('sets the trigger label to the default option\'s label and the footer label to "Sort by" it', () => {
     populateSortControls('source-url');
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Source URL');
-    expect(document.getElementById('sortDropdownFooterBtn')?.textContent).toBe('Source URL');
+    expect(document.getElementById('sortDropdownFooterBtn')?.textContent).toBe(
+      'Sort by Source URL'
+    );
   });
 
   it('seeds the label for a non-default default value too', () => {
@@ -68,11 +70,13 @@ describe('renderSortControls', () => {
     }
   });
 
-  it('updates the trigger and footer label to the newly selected option', () => {
+  it('updates the trigger label to the newly selected option and the footer label to "Sort by" it', () => {
     populateSortControls('source-url');
     renderSortControls('highest-price');
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('Highest price');
-    expect(document.getElementById('sortDropdownFooterBtn')?.textContent).toBe('Highest price');
+    expect(document.getElementById('sortDropdownFooterBtn')?.textContent).toBe(
+      'Sort by Highest price'
+    );
   });
 });
 

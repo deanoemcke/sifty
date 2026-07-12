@@ -124,7 +124,11 @@ export function renderShowOptions(listings: ListingItem[], visibleCount: number)
     'hidden',
     tally.sold === 0
   );
-  setDropdownLabel(getShowDropdownElements(), `${visibleCount} of ${listings.length} results`);
+  setDropdownLabel(
+    getShowDropdownElements(),
+    `${visibleCount} of ${listings.length} results`,
+    `Show ${visibleCount} of ${listings.length} results`
+  );
 }
 
 export function toggleShowDropdownPanel(): void {
