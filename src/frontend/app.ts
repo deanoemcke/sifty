@@ -35,7 +35,6 @@ import {
   renderShowControls,
   SHOW_CHECKBOX_ID_BY_CATEGORY,
   SHOW_OPTIONS,
-  setListingCategoryVisible,
   toggleShowDropdownPanel,
   updateShowSoldOptionVisibility,
 } from './showDropdown';
@@ -48,7 +47,7 @@ import {
   toggleSortDropdownPanel,
 } from './sortDropdown';
 import { DEFAULT_SORT_OPTION, SORT_OPTIONS } from './sortListings';
-import { setSortBy } from './state';
+import { setListingCategoryVisible, setSortBy } from './state';
 import { cancelGroupSearches, createUrlCard } from './urlCardRow';
 import { toggleUrlGroup } from './urlGroupsView';
 

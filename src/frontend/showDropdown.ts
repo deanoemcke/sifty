@@ -22,6 +22,7 @@ import {
   getListingCategory,
   type ListingItem,
   type ListingVisibilityCategory,
+  setListingCategoryVisible,
   visibleListingCategories,
 } from './state';
 
@@ -103,14 +104,6 @@ export function renderShowOptions(listings: ListingItem[], visibleCount: number)
     getElement(`${checkboxId}Count`).textContent = `(${tally[category]})`;
   }
   setDropdownLabel(getShowDropdownElements(), `${visibleCount} of ${listings.length} results`);
-}
-
-export function setListingCategoryVisible(
-  category: ListingVisibilityCategory,
-  isVisible: boolean
-): void {
-  if (isVisible) visibleListingCategories.add(category);
-  else visibleListingCategories.delete(category);
 }
 
 // The "Sold" choice only makes sense when the search can return sold items at

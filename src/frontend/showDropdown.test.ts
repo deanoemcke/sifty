@@ -7,12 +7,11 @@ import {
   renderShowControls,
   renderShowOptions,
   SHOW_CHECKBOX_ID_BY_CATEGORY,
-  setListingCategoryVisible,
   tallyListingCategories,
   toggleShowDropdownPanel,
   updateShowSoldOptionVisibility,
 } from './showDropdown';
-import { resetState, visibleListingCategories } from './state';
+import { resetState, setListingCategoryVisible, visibleListingCategories } from './state';
 import { makeListingItem } from './testFixtures';
 
 beforeEach(() => {
@@ -63,7 +62,7 @@ describe('populateShowControls', () => {
 
 describe('renderShowControls', () => {
   it('syncs checkbox checked state from visibleListingCategories', () => {
-    visibleListingCategories.delete('sold');
+    setListingCategoryVisible('sold', false);
     renderShowControls();
     expect((document.getElementById('showAvailable') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(false);
@@ -109,19 +108,6 @@ describe('renderShowOptions', () => {
   it('does not pluralize — "results" is always literal, matching the old header phrasing', () => {
     renderShowOptions([], 0);
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('0 of 0 results');
-  });
-});
-
-describe('setListingCategoryVisible', () => {
-  it('adds the category when visible', () => {
-    visibleListingCategories.delete('sold');
-    setListingCategoryVisible('sold', true);
-    expect(visibleListingCategories.has('sold')).toBe(true);
-  });
-
-  it('removes the category when not visible', () => {
-    setListingCategoryVisible('filtered', false);
-    expect(visibleListingCategories.has('filtered')).toBe(false);
   });
 });
 

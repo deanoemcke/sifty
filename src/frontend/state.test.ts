@@ -13,6 +13,7 @@ import {
   setAiFilterPendingRun,
   setBulkDeepSearchUrls,
   setIsAiFilterRunning,
+  setListingCategoryVisible,
   setOpenModalListingUrl,
   singleDeepSearchInFlightUrls,
   visibleListingCategories,
@@ -124,12 +125,27 @@ describe('visibleListingCategories', () => {
   });
 
   it('resetState refills it after entries are removed', () => {
-    visibleListingCategories.delete('sold');
-    visibleListingCategories.delete('filtered');
+    setListingCategoryVisible('sold', false);
+    setListingCategoryVisible('filtered', false);
     resetState();
     expect([...visibleListingCategories].sort()).toEqual(
       [...ALL_LISTING_VISIBILITY_CATEGORIES].sort()
     );
+  });
+});
+
+describe('setListingCategoryVisible', () => {
+  beforeEach(() => resetState());
+
+  it('adds the category when visible', () => {
+    setListingCategoryVisible('sold', false);
+    setListingCategoryVisible('sold', true);
+    expect(visibleListingCategories.has('sold')).toBe(true);
+  });
+
+  it('removes the category when not visible', () => {
+    setListingCategoryVisible('filtered', false);
+    expect(visibleListingCategories.has('filtered')).toBe(false);
   });
 });
 

@@ -80,9 +80,13 @@ export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
 ];
 
 export let currentSearchName: string | null = null;
-export const visibleListingCategories = new Set<ListingVisibilityCategory>(
+// The mutable set stays private so every write goes through
+// setListingCategoryVisible — importers only see a ReadonlySet.
+const mutableVisibleListingCategories = new Set<ListingVisibilityCategory>(
   ALL_LISTING_VISIBILITY_CATEGORIES
 );
+export const visibleListingCategories: ReadonlySet<ListingVisibilityCategory> =
+  mutableVisibleListingCategories;
 export let isDeepSearchRunning = false;
 export let deepSearchId: string | null = null;
 export let deepSearchCancellationRequested = false;
@@ -138,6 +142,14 @@ export function setSortBy(value: SortOption): void {
   sortBy = value;
 }
 
+export function setListingCategoryVisible(
+  category: ListingVisibilityCategory,
+  isVisible: boolean
+): void {
+  if (isVisible) mutableVisibleListingCategories.add(category);
+  else mutableVisibleListingCategories.delete(category);
+}
+
 export function setOpenModalListingUrl(url: string | null): void {
   openModalListingUrl = url;
 }
@@ -150,8 +162,9 @@ export function setBulkDeepSearchUrls(urls: Set<string> | null): void {
 
 export function resetState(): void {
   currentSearchName = null;
-  visibleListingCategories.clear();
-  for (const category of ALL_LISTING_VISIBILITY_CATEGORIES) visibleListingCategories.add(category);
+  mutableVisibleListingCategories.clear();
+  for (const category of ALL_LISTING_VISIBILITY_CATEGORIES)
+    mutableVisibleListingCategories.add(category);
   isDeepSearchRunning = false;
   deepSearchId = null;
   deepSearchCancellationRequested = false;

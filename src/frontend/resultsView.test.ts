@@ -17,9 +17,9 @@ import {
   listingsByUrl,
   resetState,
   setIsAiFilterRunning,
+  setListingCategoryVisible,
   setSortBy,
   type UrlCardData,
-  visibleListingCategories,
 } from './state';
 import { makeListing, makeListingItem, SHOW_DROPDOWN_FIXTURE_HTML } from './testFixtures';
 import { addUrlCard, resetUrlCardStore, type UrlCardDom } from './urlCardStore';
@@ -84,7 +84,7 @@ describe('renderDerived', () => {
   it('counts only passing listings as visible when filtered listings are hidden', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
-    visibleListingCategories.delete('filtered');
+    setListingCategoryVisible('filtered', false);
     renderDerived();
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('1 of 2 results');
   });
@@ -415,37 +415,37 @@ describe('applyClientFilters', () => {
 
   it('hides sold listings when "sold" is removed from visibleListingCategories', () => {
     renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
-    visibleListingCategories.delete('sold');
+    setListingCategoryVisible('sold', false);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
   });
 
   it('hides filtered listings when "filtered" is removed', () => {
     renderListing('https://l/1', { aiFilterReason: 'too old' });
-    visibleListingCategories.delete('filtered');
+    setListingCategoryVisible('filtered', false);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
   });
 
   it('hides available listings when "available" is removed', () => {
     renderListing('https://l/1');
-    visibleListingCategories.delete('available');
+    setListingCategoryVisible('available', false);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
   });
 
   it('restores display when the category is re-added', () => {
     renderListing('https://l/1', { aiFilterReason: 'too old' });
-    visibleListingCategories.delete('filtered');
+    setListingCategoryVisible('filtered', false);
     applyClientFilters();
-    visibleListingCategories.add('filtered');
+    setListingCategoryVisible('filtered', true);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
   });
 
   it('does not hide a sold listing when only "filtered" is removed', () => {
     renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
-    visibleListingCategories.delete('filtered');
+    setListingCategoryVisible('filtered', false);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
   });
