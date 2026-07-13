@@ -459,7 +459,11 @@ async function runQuickSearchAsync(
             return phrases.some((phrase) => lower.includes(phrase));
           },
           { phrases: EMPTY_RESULTS_PHRASES, shellSelector: MARKETPLACE_SHELL_SELECTOR },
-          { timeout: 15000 }
+          // polling: 500 — the default 'raf' mode would re-read body.innerText
+          // (forcing a layout pass) every animation frame for the full 15s even
+          // after losing the Promise.any race; the empty-state marker is static
+          // once rendered, so 500ms granularity costs nothing.
+          { timeout: 15000, polling: 500 }
         )
         .then(() => 'empty' as const),
     ]).catch(() => 'none' as const);
