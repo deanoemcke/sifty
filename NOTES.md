@@ -1,31 +1,13 @@
 # Sifty Notes
 
-## Bugs
-- facebook query string does not get simplified (claude session exists: i want to investigate ho...)
-
-## Refactoring
-- change variable/method names to 'screaming architecture (worktree and claude session exists)
-
 ## Feature Ideas
-- change discovery UX. location is compulsary. include sources to search (toggleable). for each have a dropdown: pickup only. shipping only. pickup or shipping.
-- remove include/exclude keywords from filter. find a way to add them to the url generation before quickScrape
-- create a new parent container called search parameters. it includes the urls and the filters all prepopulated from the discovery card. should also include location etc. Can all be edited and saved as a future search.
-- move 'apply ai filter' (rename to filter with AI) next to deepSearch button (and copy cancelation functionality)
 - add deep search hires images?
-- add source to results
-- add combining of pickup and location data in results (ie. if you choose pickup, filter on location of pickup)
-- do not allow shipping from facebook (or define pickup and shipping at a 'scraping source' level)
 
 ## Exploratory
 - ai filtering of images
 - integrating with Browser Use
 - explore playwright anti fingerprinting patches 
-- improved workflow. what do you want. why? what do you need it for. here's a listing im looking at. how does it compare?
-
-## Tooling
-- find a way to diff and comment after claude has made changes (pre commit)
-
-
+- testing for sql injection etc.
 
 ## Test Cases
 ### Laptop
