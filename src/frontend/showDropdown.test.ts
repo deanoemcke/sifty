@@ -23,7 +23,7 @@ beforeEach(() => {
 
 describe('populateShowControls', () => {
   it('builds a checkbox row with a label and a count span per category', () => {
-    for (const id of ['showAvailable', 'showSold', 'showFiltered']) {
+    for (const id of ['showUsed', 'showSold', 'showNew', 'showFiltered']) {
       const checkbox = document.getElementById(id) as HTMLInputElement;
       expect(checkbox.type).toBe('checkbox');
       expect(checkbox.checked).toBe(true);
@@ -32,7 +32,7 @@ describe('populateShowControls', () => {
     const rowLabels = Array.from(document.querySelectorAll('#showDropdownOptions label')).map(
       (row) => row.querySelector('span:not(.dropdown-option-count)')?.textContent
     );
-    expect(rowLabels).toEqual(['Available', 'Sold', 'Filtered']);
+    expect(rowLabels).toEqual(['Used', 'Sold', 'New', 'Filtered']);
   });
 
   it('seeds the trigger label to "0 of 0 results" and the footer label to "Show 0 of 0 results"', () => {
@@ -55,8 +55,8 @@ describe('populateShowControls', () => {
   });
 
   it('does not throw when no callback is given and a checkbox changes', () => {
-    const availableCheckbox = document.getElementById('showAvailable') as HTMLInputElement;
-    expect(() => availableCheckbox.dispatchEvent(new Event('change'))).not.toThrow();
+    const usedCheckbox = document.getElementById('showUsed') as HTMLInputElement;
+    expect(() => usedCheckbox.dispatchEvent(new Event('change'))).not.toThrow();
   });
 });
 
@@ -64,8 +64,9 @@ describe('renderShowControls', () => {
   it('syncs checkbox checked state from visibleListingCategories', () => {
     setListingCategoryVisible('sold', false);
     renderShowControls();
-    expect((document.getElementById('showAvailable') as HTMLInputElement).checked).toBe(true);
+    expect((document.getElementById('showUsed') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(false);
+    expect((document.getElementById('showNew') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('showFiltered') as HTMLInputElement).checked).toBe(true);
   });
 });
@@ -76,13 +77,19 @@ describe('tallyListingCategories', () => {
       makeListingItem(),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
+      makeListingItem({ isNewFromSearch: true }),
       makeListingItem({ aiFilterReason: 'too expensive' }),
     ];
-    expect(tallyListingCategories(listings)).toEqual({ available: 1, sold: 2, filtered: 1 });
+    expect(tallyListingCategories(listings)).toEqual({
+      used: 1,
+      sold: 2,
+      new: 1,
+      filtered: 1,
+    });
   });
 
   it('returns all zeros for an empty array', () => {
-    expect(tallyListingCategories([])).toEqual({ available: 0, sold: 0, filtered: 0 });
+    expect(tallyListingCategories([])).toEqual({ used: 0, sold: 0, new: 0, filtered: 0 });
   });
 });
 
@@ -91,20 +98,22 @@ describe('renderShowOptions', () => {
     const listings = [
       makeListingItem(),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
+      makeListingItem({ isNewFromSearch: true }),
       makeListingItem({ aiFilterReason: 'too expensive' }),
     ];
     setListingCategoryVisible('filtered', false);
     renderShowOptions(listings);
     for (const [category, count] of [
-      ['showAvailable', 1],
+      ['showUsed', 1],
       ['showSold', 1],
+      ['showNew', 1],
       ['showFiltered', 1],
     ] as const) {
       expect(document.getElementById(`${category}Count`)?.textContent).toBe(`(${count})`);
     }
-    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('2 of 3 results');
+    expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('3 of 4 results');
     expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe(
-      'Show 2 of 3 results'
+      'Show 3 of 4 results'
     );
   });
 
@@ -149,6 +158,27 @@ describe('renderShowOptions', () => {
     renderShowOptions([soldItem]);
     expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(false);
     expect(visibleListingCategories.has('sold')).toBe(false);
+  });
+
+  // Same tally-gated pattern as the Sold row (see above).
+  it('hides the New row when the current results contain no new listings', () => {
+    renderShowOptions([makeListingItem()]);
+    expect(document.getElementById('showNewRow')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows the New row when the current results contain a new listing', () => {
+    const newItem = makeListingItem({ isNewFromSearch: true });
+    renderShowOptions([newItem]);
+    expect(document.getElementById('showNewRow')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('re-hides the New row on a later render whose results have no new listings', () => {
+    const newItem = makeListingItem({ isNewFromSearch: true });
+    renderShowOptions([newItem]);
+    expect(document.getElementById('showNewRow')?.classList.contains('hidden')).toBe(false);
+
+    renderShowOptions([makeListingItem()]);
+    expect(document.getElementById('showNewRow')?.classList.contains('hidden')).toBe(true);
   });
 });
 

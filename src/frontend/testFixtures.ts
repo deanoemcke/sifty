@@ -41,6 +41,7 @@ export function makeListingItem(overrides: Partial<ListingItem> = {}): ListingIt
     hasBeenDeepSearched: false,
     aiCheckedHash: null,
     aiFilterReason: null,
+    isNewFromSearch: false,
     ...overrides,
   };
 }

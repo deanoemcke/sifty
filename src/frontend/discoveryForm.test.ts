@@ -72,11 +72,14 @@ function buildDiscoveryForm(): DiscoveryFormElements {
   allowShippingCheckbox.type = 'checkbox';
   const includeSoldItemsCheckbox = document.createElement('input');
   includeSoldItemsCheckbox.type = 'checkbox';
+  const includeNewItemsCheckbox = document.createElement('input');
+  includeNewItemsCheckbox.type = 'checkbox';
   return {
     promptInput: document.createElement('textarea'),
     maxPriceInput: document.createElement('input'),
     allowShippingCheckbox,
     includeSoldItemsCheckbox,
+    includeNewItemsCheckbox,
     regionSelect,
     discoveryButton,
   };
@@ -115,6 +118,26 @@ describe('applyLoadedDiscoverInputs', () => {
       fulfillment: 'any',
     });
     expect(elements.includeSoldItemsCheckbox.checked).toBe(false);
+  });
+
+  it('restores the include-new-items checkbox from the saved inputs', () => {
+    const elements = buildDiscoveryForm();
+    applyLoadedDiscoverInputs(elements, {
+      prompt: 'mid-century sideboard',
+      fulfillment: 'any',
+      includeNewItems: true,
+    });
+    expect(elements.includeNewItemsCheckbox.checked).toBe(true);
+  });
+
+  it('defaults the include-new-items checkbox to unticked when the saved inputs omit it', () => {
+    const elements = buildDiscoveryForm();
+    elements.includeNewItemsCheckbox.checked = true;
+    applyLoadedDiscoverInputs(elements, {
+      prompt: 'mid-century sideboard',
+      fulfillment: 'any',
+    });
+    expect(elements.includeNewItemsCheckbox.checked).toBe(false);
   });
 
   it('disables the discovery button even when the loaded inputs are valid', () => {
@@ -161,6 +184,7 @@ function mountDiscoveryFormFixture(): void {
     <input id="discoveryMaxPrice" />
     <input id="discoveryAllowShipping" type="checkbox" checked />
     <input id="discoveryIncludeSoldItems" type="checkbox" />
+    <input id="discoveryIncludeNewItems" type="checkbox" />
     <select id="discoveryRegion"><option value="">Any</option><option value="12">Wellington</option></select>
     <button id="discoveryBtn"></button>
   `;
@@ -177,6 +201,7 @@ describe('readDiscoverInputs', () => {
       maxPrice: 50,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       region: '12',
     });
   });
@@ -193,6 +218,12 @@ describe('readDiscoverInputs', () => {
     mountDiscoveryFormFixture();
     (document.getElementById('discoveryIncludeSoldItems') as HTMLInputElement).checked = true;
     expect(readDiscoverInputs().includeSoldItems).toBe(true);
+  });
+
+  it('reads the include-new-items checkbox', () => {
+    mountDiscoveryFormFixture();
+    (document.getElementById('discoveryIncludeNewItems') as HTMLInputElement).checked = true;
+    expect(readDiscoverInputs().includeNewItems).toBe(true);
   });
 });
 
