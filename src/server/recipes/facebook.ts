@@ -375,6 +375,73 @@ export function processRawListing(
   });
 }
 
+// ── Initial search state classification ───────────────────────────────────────
+
+export type InitialSearchOutcome = 'listings' | 'empty' | 'blocked';
+
+// Races listings-appear vs. empty-state vs. neither, then resolves the outcome
+// down to a single tri-state result. Pure classification — no events, no login
+// wall handling (that stays in the caller, which already has its own tested
+// `detectLoginWallAsync` helper and decides which error message to emit).
+export async function classifyInitialSearchStateAsync(page: Page): Promise<InitialSearchOutcome> {
+  // Wait for whichever renders first: listing anchors, or the empty-state
+  // marker (Marketplace shell + empty-state sentence). Promise.any resolves
+  // with the first *fulfilled* wait — a timed-out loser's rejection is
+  // absorbed — and rejects only when both time out ('none').
+  const firstSignal = await Promise.any([
+    page
+      .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 15000 })
+      .then(() => 'listings' as const),
+    page
+      .waitForFunction(
+        ({ phrases, shellSelector }) => {
+          if (!document.querySelector(shellSelector)) return false;
+          const lower = (document.body.innerText || '').toLowerCase();
+          return phrases.some((phrase) => lower.includes(phrase));
+        },
+        { phrases: EMPTY_RESULTS_PHRASES, shellSelector: MARKETPLACE_SHELL_SELECTOR },
+        // polling: 500 — the default 'raf' mode would re-read body.innerText
+        // (forcing a layout pass) every animation frame for the full 15s even
+        // after losing the Promise.any race; the empty-state marker is static
+        // once rendered, so 500ms granularity costs nothing.
+        { timeout: 15000, polling: 500 }
+      )
+      .then(() => 'empty' as const),
+  ]).catch(() => 'none' as const);
+
+  let outcome: InitialSearchOutcome;
+  if (firstSignal === 'listings') {
+    outcome = 'listings';
+  } else if (firstSignal === 'empty') {
+    // The empty marker won the race — give late-rendering listings a short
+    // grace window before trusting it, in case a page variant shows the
+    // sentence alongside (still-loading) suggestion listings. Listings win.
+    const listingsAppearedLate = await page
+      .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    outcome = listingsAppearedLate ? 'listings' : 'empty';
+  } else {
+    // Both waits timed out — re-check once on the settled page: covers the
+    // marker rendering exactly as both waits timed out, and supplies the body
+    // snippet for diagnostics if this turns out to be a genuine block.
+    const { shellRendered, bodyText } = await evaluateEmptyStateSignals(page);
+    if (shellRendered && isEmptyResultsText(bodyText)) {
+      outcome = 'empty';
+    } else {
+      console.log(
+        `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.slice(0, 300)}`
+      );
+      outcome = 'blocked';
+    }
+  }
+
+  console.log(
+    `[facebook] first signal: ${firstSignal}, classified as: ${outcome} — url: ${page.url()}`
+  );
+  return outcome;
+}
+
 // ── Quick search ──────────────────────────────────────────────────────────────
 
 async function quickSearchAsync(
@@ -441,61 +508,18 @@ async function runQuickSearchAsync(
       return;
     }
 
-    // Wait for whichever renders first: listing anchors, or the empty-state
-    // marker (Marketplace shell + empty-state sentence). Promise.any resolves
-    // with the first *fulfilled* wait — a timed-out loser's rejection is
-    // absorbed — and rejects only when both time out ('none').
-    const firstSignal = await Promise.any([
-      page
-        .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 15000 })
-        .then(() => 'listings' as const),
-      page
-        .waitForFunction(
-          ({ phrases, shellSelector }) => {
-            if (!document.querySelector(shellSelector)) return false;
-            const lower = (document.body.innerText || '').toLowerCase();
-            return phrases.some((phrase) => lower.includes(phrase));
-          },
-          { phrases: EMPTY_RESULTS_PHRASES, shellSelector: MARKETPLACE_SHELL_SELECTOR },
-          // polling: 500 — the default 'raf' mode would re-read body.innerText
-          // (forcing a layout pass) every animation frame for the full 15s even
-          // after losing the Promise.any race; the empty-state marker is static
-          // once rendered, so 500ms granularity costs nothing.
-          { timeout: 15000, polling: 500 }
-        )
-        .then(() => 'empty' as const),
-    ]).catch(() => 'none' as const);
+    const initialSearchState = await classifyInitialSearchStateAsync(page);
 
-    let listingsAppeared = firstSignal === 'listings';
-    if (firstSignal === 'empty') {
-      // The empty marker won the race — give late-rendering listings a short
-      // grace window before trusting it, in case a page variant shows the
-      // sentence alongside (still-loading) suggestion listings. Listings win.
-      listingsAppeared = await page
-        .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 2000 })
-        .then(() => true)
-        .catch(() => false);
-    }
-    console.log(
-      `[facebook] first signal: ${firstSignal}, listingsAppeared: ${listingsAppeared} — url: ${page.url()}`
-    );
-
-    if (!listingsAppeared) {
+    if (initialSearchState !== 'listings') {
       if (await detectLoginWallAsync(page)) {
         onEvent({ type: 'error', message: LOGIN_REQUIRED_MESSAGE });
         return;
       }
-      // Re-check once on the settled page: covers the marker rendering exactly
-      // as both waits timed out, and supplies the body snippet for diagnostics.
-      const { shellRendered, bodyText } = await evaluateEmptyStateSignals(page);
-      if (firstSignal === 'empty' || (shellRendered && isEmptyResultsText(bodyText))) {
+      if (initialSearchState === 'empty') {
         console.log('[facebook] empty results — the search genuinely matched no listings');
         onEvent({ type: 'complete' });
         return;
       }
-      console.log(
-        `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.slice(0, 300)}`
-      );
       onEvent({
         type: 'error',
         message:

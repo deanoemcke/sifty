@@ -6,6 +6,7 @@ import {
   buildFacebookListing,
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
+  classifyInitialSearchStateAsync,
   detectLoginWallAsync,
   extractImplicitFilters,
   facebookRecipe,
@@ -1246,6 +1247,103 @@ describe('isEmptyResultsText', () => {
 
   it('does not match an empty string', () => {
     expect(isEmptyResultsText('')).toBe(false);
+  });
+});
+
+// ── classifyInitialSearchStateAsync ───────────────────────────────────────────
+//
+// A minimal page stub distinct from `makeFacebookPage` above — it fakes only
+// the handful of Page methods this function actually reads (`waitForSelector`,
+// `waitForFunction`, `evaluate`, `url`), so these tests exercise the
+// classification seam directly instead of paying the full quickSearchAsync
+// mock-browser harness for every new signal combination.
+describe('classifyInitialSearchStateAsync', () => {
+  type ClassifyPageStubOptions = {
+    listingsSelectorTimesOut?: boolean;
+    listingsAppearOnRetry?: boolean;
+    emptyStateAppears?: boolean;
+    shellRendered?: boolean;
+    bodyText?: string;
+  };
+
+  function makeClassifyPageStub(options: ClassifyPageStubOptions = {}) {
+    const {
+      listingsSelectorTimesOut = false,
+      listingsAppearOnRetry = false,
+      emptyStateAppears = false,
+      shellRendered = false,
+      bodyText = '',
+    } = options;
+
+    const listingsSelectorAttemptCounts = { count: 0 };
+
+    return {
+      url: () => 'https://www.facebook.com/marketplace/search?query=lamp',
+      waitForSelector: async (selector: string) => {
+        if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
+        listingsSelectorAttemptCounts.count++;
+        const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
+        if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
+          throw new Error('timeout');
+      },
+      waitForFunction: async () => {
+        if (!emptyStateAppears) throw new Error('timeout');
+      },
+      evaluate: async () => ({ shellRendered, bodyText }),
+      // biome-ignore lint/suspicious/noExplicitAny: minimal duck-typed Page stub for unit testing
+    } as any;
+  }
+
+  it('returns "listings" when the listings selector resolves first', async () => {
+    const page = makeClassifyPageStub({ listingsSelectorTimesOut: false });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('listings');
+  });
+
+  it('returns "empty" when the empty-state marker wins the race and no late listings appear', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: true,
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('empty');
+  });
+
+  it('returns "listings" when listings appear on the grace re-check after the empty marker wins the race', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      listingsAppearOnRetry: true,
+      emptyStateAppears: true,
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('listings');
+  });
+
+  it('returns "empty" when both waits time out but the settled page shows the shell and the empty-state sentence', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      bodyText: 'No listings found for "lamp" within 60 kilometres',
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('empty');
+  });
+
+  it('returns "blocked" when both waits time out and the shell renders without the empty-state sentence', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      bodyText: 'Marketplace\nSearch results\nFilters',
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
+  });
+
+  it('returns "blocked" when both waits time out and the shell never renders', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: false,
+      bodyText: '',
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
   });
 });
 
