@@ -190,7 +190,45 @@ export async function detectLoginWallAsync(page: Page): Promise<boolean> {
   return domMatch || isLoginWallText(textSnippet);
 }
 
+// ── Empty-results detection ─────────────────────────────────────────────────
+//
+// A genuine zero-result search is distinguishable from a block/interstitial: it
+// renders the full Marketplace shell plus an explicit empty-state sentence
+// (captured live, en-NZ locale: `No listings found for "<query>" within 60
+// kilometres` / `Try a new search. Check the spelling, change your filters or
+// try a less specific search term.`). Both the shell AND a sentence are
+// required — a soft-block where the shell renders but the results pane never
+// populates must keep falling through to the blocking error rather than being
+// misreported as zero results. The locale is forced to en-NZ at context
+// creation, so the English wording is stable.
+
+const EMPTY_RESULTS_PHRASES = ['no listings found', 'try a new search'];
+const MARKETPLACE_SHELL_SELECTOR = 'input[aria-label="Search Marketplace" i]';
+
+export function isEmptyResultsText(bodyText: string): boolean {
+  const lower = bodyText.toLowerCase();
+  return EMPTY_RESULTS_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
+async function evaluateEmptyStateSignals(
+  page: Page
+): Promise<{ shellRendered: boolean; bodyText: string }> {
+  return page
+    .evaluate(
+      (shellSelector: string) => ({
+        shellRendered: !!document.querySelector(shellSelector),
+        bodyText: document.body.innerText,
+      }),
+      MARKETPLACE_SHELL_SELECTOR
+    )
+    .catch(() => ({ shellRendered: false, bodyText: '' }));
+}
+
 // ── Listing extraction via MutationObserver ───────────────────────────────────
+
+// Also inlined inside the browser-side MutationObserver script, which cannot
+// reference Node-scope constants.
+const LISTING_ANCHOR_SELECTOR = 'a[href*="/marketplace/item/"]';
 
 export const PRICE_REGEX = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
 
@@ -404,20 +442,61 @@ async function runQuickSearchAsync(
       return;
     }
 
-    // Wait for listings to render, or detect a login/block state
-    const listingsAppeared = await page
-      .waitForSelector('a[href*="/marketplace/item/"]', { timeout: 15000 })
-      .then(() => true)
-      .catch(() => false);
-    console.log(`[facebook] listingsAppeared: ${listingsAppeared} — url: ${page.url()}`);
+    // Wait for whichever renders first: listing anchors, or the empty-state
+    // marker (Marketplace shell + empty-state sentence). Promise.any resolves
+    // with the first *fulfilled* wait — a timed-out loser's rejection is
+    // absorbed — and rejects only when both time out ('none').
+    const firstSignal = await Promise.any([
+      page
+        .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 15000 })
+        .then(() => 'listings' as const),
+      page
+        .waitForFunction(
+          ({ phrases, shellSelector }) => {
+            if (!document.querySelector(shellSelector)) return false;
+            const lower = (document.body.innerText || '').toLowerCase();
+            return phrases.some((phrase) => lower.includes(phrase));
+          },
+          { phrases: EMPTY_RESULTS_PHRASES, shellSelector: MARKETPLACE_SHELL_SELECTOR },
+          { timeout: 15000 }
+        )
+        .then(() => 'empty' as const),
+    ]).catch(() => 'none' as const);
+
+    let listingsAppeared = firstSignal === 'listings';
+    if (firstSignal === 'empty') {
+      // The empty marker won the race — give late-rendering listings a short
+      // grace window before trusting it, in case a page variant shows the
+      // sentence alongside (still-loading) suggestion listings. Listings win.
+      listingsAppeared = await page
+        .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 2000 })
+        .then(() => true)
+        .catch(() => false);
+    }
+    console.log(
+      `[facebook] first signal: ${firstSignal}, listingsAppeared: ${listingsAppeared} — url: ${page.url()}`
+    );
 
     if (!listingsAppeared) {
-      const isLoginWall = await detectLoginWallAsync(page);
+      if (await detectLoginWallAsync(page)) {
+        onEvent({ type: 'error', message: LOGIN_REQUIRED_MESSAGE });
+        return;
+      }
+      // Re-check once on the settled page: covers the marker rendering exactly
+      // as both waits timed out, and supplies the body snippet for diagnostics.
+      const { shellRendered, bodyText } = await evaluateEmptyStateSignals(page);
+      if (firstSignal === 'empty' || (shellRendered && isEmptyResultsText(bodyText))) {
+        console.log('[facebook] empty results — the search genuinely matched no listings');
+        onEvent({ type: 'complete' });
+        return;
+      }
+      console.log(
+        `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.slice(0, 300)}`
+      );
       onEvent({
         type: 'error',
-        message: isLoginWall
-          ? LOGIN_REQUIRED_MESSAGE
-          : 'No listings found. Facebook may be blocking access or the search returned no results.',
+        message:
+          'No listings found. Facebook may be blocking access or the search returned no results.',
       });
       return;
     }
