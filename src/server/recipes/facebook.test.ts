@@ -351,90 +351,259 @@ describe('parseFacebookPriceLines', () => {
 
 describe('buildFacebookUrl', () => {
   it('always sets query, exact, and sortBy', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('query=macbook');
     expect(url).toContain('exact=false');
     expect(url).toContain('sortBy=creation_time_descend');
   });
 
   it('adds maxPrice when > 0', () => {
-    const url = buildFacebookUrl('macbook', 800, 'any', undefined, false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 800,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('maxPrice=800');
   });
 
   it('omits maxPrice when 0', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).not.toContain('maxPrice');
   });
 
   it('sets deliveryMethod=local_pick_up for pickup fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'pickup',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('deliveryMethod=local_pick_up');
   });
 
   it('sets deliveryMethod=shipping for shipping fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'shipping',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('deliveryMethod=shipping');
   });
 
   it('omits deliveryMethod for "any" fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).not.toContain('deliveryMethod');
   });
 
   it('injects location segment when pickup and regionValue matches a region', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('/marketplace/auckland/search');
   });
 
   it('omits location segment when pickup but regionValue is undefined', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'pickup',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('/marketplace/search');
     expect(url).not.toContain('/marketplace/auckland/');
   });
 
   it('omits location segment when fulfillment is "any" even with regionValue', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', '2', false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: '2',
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).not.toContain('/marketplace/auckland/');
   });
 
   it('omits location segment when regionValue does not match any region', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', '999', false, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'pickup',
+      regionValue: '999',
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('/marketplace/search');
     expect(url).not.toContain('/marketplace/undefined/');
   });
 
   it('adds availability=out of stock when includeSoldItems is true', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, true, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: true,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(new URL(url).searchParams.get('availability')).toBe('out of stock');
   });
 
   it('omits maxPrice when includeSoldItems is true even if maxPrice > 0', () => {
-    const url = buildFacebookUrl('macbook', 800, 'any', undefined, true, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 800,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: true,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).not.toContain('maxPrice');
   });
 
   it('omits deliveryMethod when includeSoldItems is true even for pickup fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', undefined, true, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'pickup',
+      regionValue: undefined,
+      includeSoldItems: true,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).not.toContain('deliveryMethod');
   });
 
   it('omits deliveryMethod when includeSoldItems is true even for shipping fulfillment', () => {
-    const url = buildFacebookUrl('macbook', 0, 'shipping', undefined, true, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'shipping',
+      regionValue: undefined,
+      includeSoldItems: true,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).not.toContain('deliveryMethod');
   });
 
   it('omits location segment when includeSoldItems is true even for pickup with a matching region', () => {
-    const url = buildFacebookUrl('macbook', 0, 'pickup', '2', true, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'pickup',
+      regionValue: '2',
+      includeSoldItems: true,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).not.toContain('/marketplace/auckland/');
     expect(url).toContain('/marketplace/search');
   });
 
   it('still sets query, exact, and sortBy when includeSoldItems is true', () => {
-    const url = buildFacebookUrl('macbook', 0, 'any', undefined, true, TEST_REGIONS);
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: true,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
     expect(url).toContain('query=macbook');
     expect(url).toContain('exact=false');
     expect(url).toContain('sortBy=creation_time_descend');
+  });
+
+  it('sets itemCondition=used_like_new,used_good,used_fair when condition is "used"', () => {
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'used',
+      regions: TEST_REGIONS,
+    });
+    expect(new URL(url).searchParams.get('itemCondition')).toBe(
+      'used_like_new,used_good,used_fair'
+    );
+  });
+
+  it('sets itemCondition=new when condition is "new"', () => {
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: false,
+      condition: 'new',
+      regions: TEST_REGIONS,
+    });
+    expect(new URL(url).searchParams.get('itemCondition')).toBe('new');
+  });
+
+  it('omits itemCondition when includeSoldItems is true, regardless of condition', () => {
+    const url = buildFacebookUrl({
+      searchTerm: 'macbook',
+      maxPrice: 0,
+      fulfillment: 'any',
+      regionValue: undefined,
+      includeSoldItems: true,
+      condition: 'new',
+      regions: TEST_REGIONS,
+    });
+    expect(url).not.toContain('itemCondition');
   });
 });
 
@@ -526,6 +695,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls).toHaveLength(1);
@@ -540,6 +710,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI_CONFIG,
       }
     );
@@ -552,6 +723,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 500,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain('maxPrice=500');
@@ -563,6 +735,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'pickup',
       includeSoldItems: false,
+      includeNewItems: false,
       regionValue: '2',
       getAiConfig: () => MOCK_AI_CONFIG,
     });
@@ -575,6 +748,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.warnings).toEqual([]);
@@ -586,6 +760,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(vi.mocked(aiJSON)).toHaveBeenCalledWith(
@@ -604,6 +779,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI_CONFIG,
       })
     ).rejects.toThrow('AI unavailable');
@@ -616,6 +792,7 @@ describe('buildDiscoverUrlsAsync', () => {
       fulfillment: 'pickup',
       regionValue: '2',
       includeSoldItems: true,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls).toHaveLength(2);
@@ -629,6 +806,7 @@ describe('buildDiscoverUrlsAsync', () => {
       fulfillment: 'pickup',
       regionValue: '2',
       includeSoldItems: true,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls[1]).not.toContain('maxPrice');
@@ -643,10 +821,56 @@ describe('buildDiscoverUrlsAsync', () => {
       fulfillment: 'pickup',
       regionValue: '2',
       includeSoldItems: true,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain('maxPrice=500');
     expect(result.urls[0]).toContain('/marketplace/auckland/search');
+  });
+
+  it('the base URL restricts to used-condition items by default', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 0,
+      fulfillment: 'any',
+      includeSoldItems: false,
+      includeNewItems: false,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls).toHaveLength(1);
+    expect(new URL(result.urls[0]).searchParams.get('itemCondition')).toBe(
+      'used_like_new,used_good,used_fair'
+    );
+  });
+
+  it('adds a second new-condition URL when includeNewItems is true', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 0,
+      fulfillment: 'any',
+      includeSoldItems: false,
+      includeNewItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls).toHaveLength(2);
+    expect(new URL(result.urls[1]).searchParams.get('itemCondition')).toBe('new');
+  });
+
+  it('combines with includeSoldItems: builds used, new, and sold URLs when both true', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ query: 'macbook pro' }));
+    const result = await facebookRecipe.buildDiscoverUrlsAsync('macbook pro', {
+      maxPrice: 0,
+      fulfillment: 'any',
+      includeSoldItems: true,
+      includeNewItems: true,
+      getAiConfig: () => MOCK_AI_CONFIG,
+    });
+    expect(result.urls).toHaveLength(3);
+    expect(new URL(result.urls[0]).searchParams.get('itemCondition')).toBe(
+      'used_like_new,used_good,used_fair'
+    );
+    expect(new URL(result.urls[1]).searchParams.get('itemCondition')).toBe('new');
+    expect(new URL(result.urls[2]).searchParams.get('availability')).toBe('out of stock');
   });
 });
 

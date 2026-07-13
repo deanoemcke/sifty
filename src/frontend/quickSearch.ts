@@ -29,6 +29,20 @@ export function normalizeListingRelevance(listing: Listing): Listing {
   return { ...listing, relevance: listing.relevance ?? 0 };
 }
 
+// Condition (new vs used) is never present in a listing's quick-search data on
+// either platform — TradeMe's search API and Facebook's grid-card scrape both
+// only surface it via a per-listing detail fetch (deep search), which quick
+// search never runs. So the only signal available at ingestion time is which
+// condition the card's own search URL queried for.
+export function isNewConditionSearchUrl(searchUrl: string): boolean {
+  try {
+    const params = new URL(searchUrl).searchParams;
+    return params.get('condition') === 'new' || params.get('itemCondition') === 'new';
+  } catch {
+    return false;
+  }
+}
+
 export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   const data = urlCardData(card);
   const url = card.dom.input.value.trim();
@@ -70,24 +84,38 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
         }
       } else if (ev.type === 'listing') {
         const listing = normalizeListingRelevance(ev.data as Listing);
+        const isNewFromThisSearch = isNewConditionSearchUrl(url);
         const dedupeKey = listingDedupeKey(listing);
-        const isDuplicate = listingUrlByDedupeKey.has(dedupeKey);
-        if (!isDuplicate) {
+        const existingUrl = listingUrlByDedupeKey.get(dedupeKey);
+        if (existingUrl === undefined) {
           data.listingUrls.push(listing.url);
           const item: ListingItem = {
             data: listing,
             hasBeenDeepSearched: false,
             aiCheckedHash: null,
             aiFilterReason: null,
+            isNewFromSearch: isNewFromThisSearch,
           };
           addListingItem(item);
           renderCard(item);
           renderDerived();
         } else {
           // Listing already known — either the exact URL, or the same
-          // underlying listing under a different URL from another card. The
-          // group count may still change, since it dedupes per group rather
-          // than globally.
+          // underlying listing under a different URL from another card
+          // (e.g. discovery's "used" and "new" cards racing on the same
+          // item). Merge deterministically rather than first-write-wins: a
+          // listing found by any condition=new search is new, regardless of
+          // which arrival happened to land first. An existing
+          // isNewFromSearch: true is therefore never downgraded by a later,
+          // less-specific arrival.
+          const existingItem = listingsByUrl.get(existingUrl);
+          if (existingItem && isNewFromThisSearch && !existingItem.isNewFromSearch) {
+            existingItem.isNewFromSearch = true;
+            renderCard(existingItem);
+            renderDerived();
+          }
+          // The group count may still change, since it dedupes per group
+          // rather than globally.
           updateUrlGroupHeaders();
         }
       } else if (ev.type === 'error') {

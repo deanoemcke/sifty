@@ -8,12 +8,13 @@ import type {
   DiscoverContext,
   Fulfillment,
   Listing,
+  ListingCondition,
   QuickSearchEvent,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { MAX_RESULTS_PER_URL } from '../constants';
-import { getRegions } from '../services/regions';
+import { getRegions, type RegionEntry } from '../services/regions';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -699,14 +700,30 @@ export async function buildFacebookSearchQueryAsync(
   return result.query.trim();
 }
 
-export function buildFacebookUrl(
-  searchTerm: string,
-  maxPrice: number,
-  fulfillment: Fulfillment,
-  regionValue: string | undefined,
-  includeSoldItems: boolean,
-  regions = getRegions()
-): string {
+const ITEM_CONDITION_PARAM_BY_CONDITION: Record<ListingCondition, string> = {
+  used: 'used_like_new,used_good,used_fair',
+  new: 'new',
+};
+
+export type BuildFacebookUrlOptions = {
+  searchTerm: string;
+  maxPrice: number;
+  fulfillment: Fulfillment;
+  regionValue: string | undefined;
+  includeSoldItems: boolean;
+  condition: ListingCondition;
+  regions?: RegionEntry[];
+};
+
+export function buildFacebookUrl({
+  searchTerm,
+  maxPrice,
+  fulfillment,
+  regionValue,
+  includeSoldItems,
+  condition,
+  regions = getRegions(),
+}: BuildFacebookUrlOptions): string {
   const pickupOnly = !includeSoldItems && fulfillment === 'pickup' && !!regionValue;
   const fbParams = new URLSearchParams();
   fbParams.set('query', searchTerm);
@@ -716,6 +733,7 @@ export function buildFacebookUrl(
     if (maxPrice > 0) fbParams.set('maxPrice', String(maxPrice));
     if (fulfillment === 'pickup') fbParams.set('deliveryMethod', 'local_pick_up');
     else if (fulfillment === 'shipping') fbParams.set('deliveryMethod', 'shipping');
+    fbParams.set('itemCondition', ITEM_CONDITION_PARAM_BY_CONDITION[condition]);
   }
   fbParams.set('exact', 'false');
   fbParams.set('sortBy', 'creation_time_descend');
@@ -730,11 +748,37 @@ export function buildFacebookUrl(
 async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) {
   const searchTerm = await buildFacebookSearchQueryAsync(prompt, context.getAiConfig());
   const urls = [
-    buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, false),
+    buildFacebookUrl({
+      searchTerm,
+      maxPrice: context.maxPrice,
+      fulfillment: context.fulfillment,
+      regionValue: context.regionValue,
+      includeSoldItems: false,
+      condition: 'used',
+    }),
   ];
+  if (context.includeNewItems) {
+    urls.push(
+      buildFacebookUrl({
+        searchTerm,
+        maxPrice: context.maxPrice,
+        fulfillment: context.fulfillment,
+        regionValue: context.regionValue,
+        includeSoldItems: false,
+        condition: 'new',
+      })
+    );
+  }
   if (context.includeSoldItems) {
     urls.push(
-      buildFacebookUrl(searchTerm, context.maxPrice, context.fulfillment, context.regionValue, true)
+      buildFacebookUrl({
+        searchTerm,
+        maxPrice: context.maxPrice,
+        fulfillment: context.fulfillment,
+        regionValue: context.regionValue,
+        includeSoldItems: true,
+        condition: 'used',
+      })
     );
   }
   return { urls, warnings: [] as string[] };

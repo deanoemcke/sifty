@@ -40,8 +40,19 @@ vi.mock('../db', () => ({
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
-const { getNextPage, resetPageQueue, makeDetailPage } = vi.hoisted(() => {
+const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker } = vi.hoisted(() => {
   const queue: unknown[] = [];
+
+  // Tracks how many mocked Chromium instances are live at once, so tests can
+  // assert that concurrent quick searches do (or don't) stack browser sessions.
+  const browserSessionTracker = {
+    activeCount: 0,
+    maxActiveCount: 0,
+    reset() {
+      this.activeCount = 0;
+      this.maxActiveCount = 0;
+    },
+  };
 
   function makePage(data: unknown) {
     const handlers: Array<(r: unknown) => void> = [];
@@ -101,21 +112,45 @@ const { getNextPage, resetPageQueue, makeDetailPage } = vi.hoisted(() => {
       queue.splice(0, queue.length, ...items);
     },
     makeDetailPage,
+    browserSessionTracker,
   };
 });
 
 vi.mock('playwright', () => ({
   chromium: {
-    launch: async () => ({
-      newContext: async () => ({ newPage: async () => getNextPage() }),
-      close: async () => {},
-    }),
+    launch: async () => {
+      browserSessionTracker.activeCount++;
+      browserSessionTracker.maxActiveCount = Math.max(
+        browserSessionTracker.maxActiveCount,
+        browserSessionTracker.activeCount
+      );
+      return {
+        newContext: async () => ({ newPage: async () => getNextPage() }),
+        close: async () => {
+          browserSessionTracker.activeCount--;
+        },
+      };
+    },
   },
 }));
 
-vi.mock('../../lib/queue', () => ({
-  enqueue: (_: string, fn: () => Promise<unknown>) => fn(),
-}));
+// The real `enqueue` (per-domain `ConcurrencyQueue`, trademe.co.nz capped at 3 —
+// see `src/lib/queue.ts`) is used as-is, wrapped only to record which URLs are
+// routed through it. A plain passthrough mock would make a bypassed limiter
+// indistinguishable from a working one, and pagination already nests enqueue
+// calls inside the outer quick-search task, so a hand-rolled full-serialization
+// mock (concurrency 1) would deadlock — the real bounded queue handles that
+// nesting correctly because it isn't a hand-rolled chain of ordering.
+const { enqueuedUrls } = vi.hoisted(() => ({ enqueuedUrls: [] as string[] }));
+
+vi.mock('../../lib/queue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/queue')>();
+  function trackingEnqueue<T>(url: string, asyncTask: () => Promise<T>): Promise<T> {
+    enqueuedUrls.push(url);
+    return actual.enqueue(url, asyncTask);
+  }
+  return { ...actual, enqueue: trackingEnqueue };
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -869,45 +904,57 @@ function entry(slug: string, searchString: string | null = null): DiscoverEntry 
 
 describe('buildTrademeUrl', () => {
   it('wraps a non-section slug in "marketplace/"', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
     expect(url).toContain('/a/marketplace/computers/laptops/search');
   });
 
   it('does not prefix a section slug with "marketplace/"', () => {
-    const url = buildTrademeUrl(entry('motors/cars'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('motors/cars'), 0, 'any', undefined, 'used');
     expect(url).toContain('/a/motors/cars/search');
     expect(url).not.toContain('marketplace');
   });
 
   it('appends search_string when set', () => {
-    const url = buildTrademeUrl(entry('computers/laptops', 'macbook'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops', 'macbook'), 0, 'any', undefined, 'used');
     expect(url).toContain('search_string=macbook');
   });
 
   it('appends price_max when maxPrice > 0', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 500, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 500, 'any', undefined, 'used');
     expect(url).toContain('price_max=500');
   });
 
   it('omits price_max when maxPrice is 0', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
     expect(url).not.toContain('price_max');
   });
 
   it('adds pickup params when fulfillment is "pickup" and regionValue is set', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', '2');
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', '2', 'used');
     expect(url).toContain('user_region=2');
     expect(url).toContain('shipping_method=pickup');
   });
 
   it('does not add pickup params when fulfillment is "pickup" but regionValue is missing', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', undefined);
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'pickup', undefined, 'used');
     expect(url).not.toContain('shipping_method');
   });
 
-  it('produces a bare search URL when no params apply', () => {
-    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined);
-    expect(url).toBe('https://www.trademe.co.nz/a/marketplace/computers/laptops/search');
+  it('sets condition=used when condition is "used"', () => {
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
+    expect(url).toContain('condition=used');
+  });
+
+  it('sets condition=new when condition is "new"', () => {
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'new');
+    expect(url).toContain('condition=new');
+  });
+
+  it('produces a search URL with only the condition param when no other params apply', () => {
+    const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
+    expect(url).toBe(
+      'https://www.trademe.co.nz/a/marketplace/computers/laptops/search?condition=used'
+    );
   });
 });
 
@@ -979,6 +1026,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls.length).toBeGreaterThan(0);
@@ -1003,6 +1051,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 800,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.urls[0]).toContain('price_max=800');
@@ -1025,6 +1074,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toEqual([]);
@@ -1046,6 +1096,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1083,6 +1134,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1107,6 +1159,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid specific categories');
@@ -1144,6 +1197,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
@@ -1166,6 +1220,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
     ).rejects.toThrow('AI returned no valid broad categories');
@@ -1209,6 +1264,7 @@ describe('buildDiscoverUrlsAsync', () => {
       maxPrice: 0,
       fulfillment: 'any',
       includeSoldItems: false,
+      includeNewItems: false,
       getAiConfig,
     });
 
@@ -1236,6 +1292,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step1)');
@@ -1270,6 +1327,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
     ).rejects.toThrow('AI rate limited (step2:electronics/electronics)');
@@ -1297,6 +1355,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       });
       expect(result.urls).toHaveLength(1);
@@ -1312,6 +1371,7 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: true,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       });
 
@@ -1332,11 +1392,75 @@ describe('buildDiscoverUrlsAsync', () => {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: true,
+        includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       });
 
       expect(result.urls).toHaveLength(1); // modern URL only
       expect(result.warnings.some((w) => w.includes('no legacy category mapping'))).toBe(true);
+    });
+  });
+
+  describe('includeNewItems', () => {
+    beforeEach(() => {
+      vi.mocked(aiJSON)
+        .mockResolvedValueOnce(
+          aiJsonOk({
+            categories: ['Electronics'],
+            searchLabel: 'laptops',
+            searchQuery: 'laptop',
+          })
+        )
+        .mockResolvedValueOnce(
+          aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
+        );
+    });
+
+    it('builds a single condition=used URL per resolved category when false', async () => {
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+      expect(result.urls).toHaveLength(1);
+      expect(result.urls[0]).toContain('condition=used');
+    });
+
+    it('also builds a condition=new URL per resolved category when true', async () => {
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      const usedUrl = result.urls.find((u) => u.includes('condition=used'));
+      const newUrl = result.urls.find((u) => u.includes('condition=new'));
+      expect(usedUrl).toContain('electronics/laptops');
+      expect(newUrl).toContain('electronics/laptops');
+    });
+
+    it('combines with includeSoldItems: builds used, new, and legacy sold URLs when both true', async () => {
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(3);
+      expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('Browse/SearchResults.aspx'))).toBe(true);
     });
   });
 });
@@ -1394,5 +1518,45 @@ describe('quickSearch', () => {
     );
 
     expect(collected).toHaveLength(100);
+  });
+});
+
+// ── quickSearchAsync (domain concurrency limiting) ────────────────────────────
+//
+// A discover request can fan out several concurrent TradeMe search URLs per
+// category (used/new/sold), and adding "include new items" pushes the
+// worst-case concurrent-launch count higher still — so the initial browser
+// launch must be routed through the same per-domain limiter that pagination
+// already uses, exactly like Facebook's quickSearchAsync.
+
+describe('trademeRecipe.quickSearchAsync — domain concurrency limiting', () => {
+  beforeEach(() => {
+    resetPageQueue();
+    browserSessionTracker.reset();
+    enqueuedUrls.length = 0;
+  });
+
+  it('routes the browser launch through the domain limiter, keyed by the search URL', async () => {
+    const searchUrl = 'https://www.trademe.co.nz/a/marketplace/computers/search?search_string=lamp';
+
+    await trademeRecipe.quickSearchAsync(searchUrl, () => {});
+
+    expect(enqueuedUrls).toContain(searchUrl);
+  });
+
+  it('never exceeds the trademe.co.nz domain concurrency limit across concurrent searches', async () => {
+    // trademe.co.nz's domain limit is 3 (src/lib/queue.ts). Fire 5 concurrent
+    // single-page searches — comfortably more than the limit — and verify the
+    // limiter, not just pagination, is what gates the launches. Before the
+    // fix, chromium.launch() ran outside enqueue entirely, so all 5 would
+    // launch at once (maxActiveCount === 5).
+    const searchUrls = Array.from(
+      { length: 5 },
+      (_, i) => `https://www.trademe.co.nz/a/marketplace/computers/search?search_string=item${i}`
+    );
+
+    await Promise.all(searchUrls.map((url) => trademeRecipe.quickSearchAsync(url, () => {})));
+
+    expect(browserSessionTracker.maxActiveCount).toBe(3);
   });
 });

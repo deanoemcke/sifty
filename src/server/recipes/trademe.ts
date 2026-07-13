@@ -7,6 +7,7 @@ import type {
   DiscoverContext,
   Fulfillment,
   Listing,
+  ListingCondition,
   ListingPhoto,
   QuickSearchEvent,
   RecipeDiscoverResult,
@@ -447,7 +448,8 @@ export function buildTrademeUrl(
   entry: DiscoverEntry,
   maxPrice: number,
   fulfillment: Fulfillment,
-  regionValue: string | undefined
+  regionValue: string | undefined,
+  condition: ListingCondition
 ): string {
   const topLevel = entry.slug.split('/')[0];
   const urlSlug = TRADEME_SECTIONS.has(topLevel) ? entry.slug : `marketplace/${entry.slug}`;
@@ -458,6 +460,7 @@ export function buildTrademeUrl(
     params.set('user_region', regionValue);
     params.set('shipping_method', 'pickup');
   }
+  params.set('condition', condition);
   const qs = params.toString();
   return `https://www.trademe.co.nz/a/${urlSlug}/search${qs ? `?${qs}` : ''}`;
 }
@@ -468,9 +471,17 @@ async function buildDiscoverUrlsAsync(
 ): Promise<RecipeDiscoverResult> {
   const { entries, warnings } = await resolveDiscoverCategoriesAsync(prompt, context.getAiConfig);
   const urls = entries.map((entry) =>
-    buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue)
+    buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue, 'used')
   );
   const allWarnings = [...warnings];
+
+  if (context.includeNewItems) {
+    for (const entry of entries) {
+      urls.push(
+        buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue, 'new')
+      );
+    }
+  }
 
   if (context.includeSoldItems) {
     const stmt = stmtGetCategoryLegacyPath(getDb());
@@ -496,6 +507,21 @@ async function quickSearchAsync(
 ): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
+  // A discover request can fan out several concurrent TradeMe search URLs per
+  // category (used/new/sold), and this PR adds another multiplier on top of
+  // that. Route the launch through the per-domain concurrency limiter — the
+  // same one pagination already uses below — so concurrent searches can't
+  // stack unbounded headless browsers. The criteria event is emitted before
+  // queueing so the card gets its filter chips immediately, even while the
+  // search waits for a slot.
+  await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));
+}
+
+async function runQuickSearchAsync(
+  searchUrl: string,
+  onEvent: (event: QuickSearchEvent) => void,
+  isCancelled?: () => boolean
+): Promise<void> {
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });

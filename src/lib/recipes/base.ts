@@ -105,6 +105,8 @@ export type DeepSearchEvent =
 
 export type Fulfillment = 'any' | 'pickup' | 'shipping';
 
+export type ListingCondition = 'used' | 'new';
+
 export type RecipeDiscoverResult = {
   urls: string[];
   warnings: string[];
@@ -143,6 +145,7 @@ export type DiscoverContext = {
   fulfillment: Fulfillment;
   regionValue?: string;
   includeSoldItems: boolean;
+  includeNewItems: boolean;
   getAiConfig: () => AiConfig;
 };
 

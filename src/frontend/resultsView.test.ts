@@ -100,7 +100,7 @@ describe('renderDerived', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
     renderDerived();
-    expect(document.getElementById('showAvailableCount')?.textContent).toBe('(1)');
+    expect(document.getElementById('showUsedCount')?.textContent).toBe('(1)');
     expect(document.getElementById('showFilteredCount')?.textContent).toBe('(1)');
   });
 
@@ -440,9 +440,9 @@ describe('applyClientFilters', () => {
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
   });
 
-  it('hides available listings when "available" is removed', () => {
+  it('hides used listings when "used" is removed', () => {
     renderListing('https://l/1');
-    setListingCategoryVisible('available', false);
+    setListingCategoryVisible('used', false);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
   });

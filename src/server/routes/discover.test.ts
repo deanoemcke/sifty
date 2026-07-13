@@ -130,7 +130,9 @@ describe('discoverCategoriesAsync', () => {
       }),
     ]);
 
-    await discoverCategoriesAsync('  macbook  ', 800, 'pickup', '2', STUB_COOLDOWN_STORE, true);
+    await discoverCategoriesAsync('  macbook  ', 800, 'pickup', '2', STUB_COOLDOWN_STORE, {
+      includeSoldItems: true,
+    });
     expect(captured).toHaveLength(1);
     expect(captured[0].prompt).toBe('  macbook  ');
     const context = captured[0].context as DiscoverContext;
@@ -156,6 +158,34 @@ describe('discoverCategoriesAsync', () => {
 
     await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE);
     expect(captured[0].includeSoldItems).toBe(false);
+  });
+
+  it('passes includeNewItems through to the DiscoverContext', async () => {
+    const captured: DiscoverContext[] = [];
+    vi.mocked(getAllRecipes).mockReturnValue([
+      withBuildDiscover(makeStubRecipe(['https://www.trademe.co.nz/a/x']), async (_p, ctx) => {
+        captured.push(ctx);
+        return { urls: ['https://www.trademe.co.nz/a/x'], warnings: [] };
+      }),
+    ]);
+
+    await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE, {
+      includeNewItems: true,
+    });
+    expect(captured[0].includeNewItems).toBe(true);
+  });
+
+  it('defaults includeNewItems to false when omitted', async () => {
+    const captured: DiscoverContext[] = [];
+    vi.mocked(getAllRecipes).mockReturnValue([
+      withBuildDiscover(makeStubRecipe(['https://www.trademe.co.nz/a/x']), async (_p, ctx) => {
+        captured.push(ctx);
+        return { urls: ['https://www.trademe.co.nz/a/x'], warnings: [] };
+      }),
+    ]);
+
+    await discoverCategoriesAsync('macbook', 0, 'any', undefined, STUB_COOLDOWN_STORE);
+    expect(captured[0].includeNewItems).toBe(false);
   });
 
   it('returns URLs from successful recipes even when another recipe throws', async () => {

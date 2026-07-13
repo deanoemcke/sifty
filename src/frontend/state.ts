@@ -35,6 +35,11 @@ export interface ListingItem {
   hasBeenDeepSearched: boolean;
   aiCheckedHash: number | null;
   aiFilterReason: string | null;
+  // Client-side inference from the card's search URL (condition=new /
+  // itemCondition=new), never server-scraped data — kept off the shared
+  // `Listing` domain type for that reason. See isNewConditionSearchUrl in
+  // quickSearch.ts.
+  isNewFromSearch: boolean;
 }
 
 export interface DiscoverInputs {
@@ -42,6 +47,7 @@ export interface DiscoverInputs {
   maxPrice?: number;
   fulfillment: Fulfillment;
   includeSoldItems?: boolean;
+  includeNewItems?: boolean;
   region?: string;
 }
 
@@ -67,16 +73,19 @@ export interface SavedSearch {
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
-export type ListingVisibilityCategory = 'available' | 'sold' | 'filtered';
+export type ListingVisibilityCategory = 'used' | 'sold' | 'new' | 'filtered';
 
 export function getListingCategory(item: ListingItem): ListingVisibilityCategory {
   if (item.aiFilterReason !== null) return 'filtered';
-  return item.data.isSold ? 'sold' : 'available';
+  if (item.data.isSold) return 'sold';
+  if (item.isNewFromSearch) return 'new';
+  return 'used';
 }
 
 export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
-  'available',
+  'used',
   'sold',
+  'new',
   'filtered',
 ];
 
