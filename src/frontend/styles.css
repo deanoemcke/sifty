@@ -531,6 +531,14 @@ label {
   font-size: 0.72rem;
   font-weight: 700;
 }
+/* Keeps a label paired with its trigger so .sort-row's flex-wrap moves them
+   to the next line together, rather than wrapping the trigger alone. */
+.dropdown-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
 /* Shared Show/Sort dropdown control: a select-styled trigger button opening
    an anchored panel on desktop. On coarse phone-width viewports the SAME
    panel DOM becomes a full-screen sheet purely via this media query — no JS

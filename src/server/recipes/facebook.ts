@@ -191,7 +191,43 @@ export async function detectLoginWallAsync(page: Page): Promise<boolean> {
   return domMatch || isLoginWallText(textSnippet);
 }
 
+// ── Empty-results detection ─────────────────────────────────────────────────
+//
+// A genuine zero-result search is distinguishable from a block/interstitial: it
+// renders the full Marketplace shell plus an explicit empty-state sentence
+// (captured live, en-NZ locale: `No listings found for "<query>" within 60
+// kilometres` / `Try a new search. Check the spelling, change your filters or
+// try a less specific search term.`). Both the shell AND a sentence are
+// required — a soft-block where the shell renders but the results pane never
+// populates must keep falling through to the blocking error rather than being
+// misreported as zero results. The locale is forced to en-NZ at context
+// creation, so the English wording is stable.
+
+const EMPTY_RESULTS_PHRASES = ['no listings found', 'try a new search'];
+const MARKETPLACE_SHELL_SELECTOR = 'input[aria-label="Search Marketplace" i]';
+
+export function isEmptyResultsText(bodyText: string): boolean {
+  const lower = bodyText.toLowerCase();
+  return EMPTY_RESULTS_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
+async function evaluateEmptyStateSignals(
+  page: Page
+): Promise<{ shellRendered: boolean; bodyText: string }> {
+  return page
+    .evaluate(
+      (shellSelector: string) => ({
+        shellRendered: !!document.querySelector(shellSelector),
+        bodyText: document.body.innerText,
+      }),
+      MARKETPLACE_SHELL_SELECTOR
+    )
+    .catch(() => ({ shellRendered: false, bodyText: '' }));
+}
+
 // ── Listing extraction via MutationObserver ───────────────────────────────────
+
+const LISTING_ANCHOR_SELECTOR = 'a[href*="/marketplace/item/"]';
 
 export const PRICE_REGEX = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
 
@@ -339,6 +375,73 @@ export function processRawListing(
   });
 }
 
+// ── Initial search state classification ───────────────────────────────────────
+
+export type InitialSearchOutcome = 'listings' | 'empty' | 'blocked';
+
+// Races listings-appear vs. empty-state vs. neither, then resolves the outcome
+// down to a single tri-state result. Pure classification — no events, no login
+// wall handling (that stays in the caller, which already has its own tested
+// `detectLoginWallAsync` helper and decides which error message to emit).
+export async function classifyInitialSearchStateAsync(page: Page): Promise<InitialSearchOutcome> {
+  // Wait for whichever renders first: listing anchors, or the empty-state
+  // marker (Marketplace shell + empty-state sentence). Promise.any resolves
+  // with the first *fulfilled* wait — a timed-out loser's rejection is
+  // absorbed — and rejects only when both time out ('none').
+  const firstSignal = await Promise.any([
+    page
+      .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 15000 })
+      .then(() => 'listings' as const),
+    page
+      .waitForFunction(
+        ({ phrases, shellSelector }) => {
+          if (!document.querySelector(shellSelector)) return false;
+          const lower = (document.body.innerText || '').toLowerCase();
+          return phrases.some((phrase) => lower.includes(phrase));
+        },
+        { phrases: EMPTY_RESULTS_PHRASES, shellSelector: MARKETPLACE_SHELL_SELECTOR },
+        // polling: 500 — the default 'raf' mode would re-read body.innerText
+        // (forcing a layout pass) every animation frame for the full 15s even
+        // after losing the Promise.any race; the empty-state marker is static
+        // once rendered, so 500ms granularity costs nothing.
+        { timeout: 15000, polling: 500 }
+      )
+      .then(() => 'empty' as const),
+  ]).catch(() => 'none' as const);
+
+  let outcome: InitialSearchOutcome;
+  if (firstSignal === 'listings') {
+    outcome = 'listings';
+  } else if (firstSignal === 'empty') {
+    // The empty marker won the race — give late-rendering listings a short
+    // grace window before trusting it, in case a page variant shows the
+    // sentence alongside (still-loading) suggestion listings. Listings win.
+    const listingsAppearedLate = await page
+      .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    outcome = listingsAppearedLate ? 'listings' : 'empty';
+  } else {
+    // Both waits timed out — re-check once on the settled page: covers the
+    // marker rendering exactly as both waits timed out, and supplies the body
+    // snippet for diagnostics if this turns out to be a genuine block.
+    const { shellRendered, bodyText } = await evaluateEmptyStateSignals(page);
+    if (shellRendered && isEmptyResultsText(bodyText)) {
+      outcome = 'empty';
+    } else {
+      console.log(
+        `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.slice(0, 300)}`
+      );
+      outcome = 'blocked';
+    }
+  }
+
+  console.log(
+    `[facebook] first signal: ${firstSignal}, classified as: ${outcome} — url: ${page.url()}`
+  );
+  return outcome;
+}
+
 // ── Quick search ──────────────────────────────────────────────────────────────
 
 async function quickSearchAsync(
@@ -405,55 +508,62 @@ async function runQuickSearchAsync(
       return;
     }
 
-    // Wait for listings to render, or detect a login/block state
-    const listingsAppeared = await page
-      .waitForSelector('a[href*="/marketplace/item/"]', { timeout: 15000 })
-      .then(() => true)
-      .catch(() => false);
-    console.log(`[facebook] listingsAppeared: ${listingsAppeared} — url: ${page.url()}`);
+    const initialSearchState = await classifyInitialSearchStateAsync(page);
 
-    if (!listingsAppeared) {
-      const isLoginWall = await detectLoginWallAsync(page);
+    if (initialSearchState !== 'listings') {
+      if (await detectLoginWallAsync(page)) {
+        onEvent({ type: 'error', message: LOGIN_REQUIRED_MESSAGE });
+        return;
+      }
+      if (initialSearchState === 'empty') {
+        console.log('[facebook] empty results — the search genuinely matched no listings');
+        onEvent({ type: 'complete' });
+        return;
+      }
       onEvent({
         type: 'error',
-        message: isLoginWall
-          ? LOGIN_REQUIRED_MESSAGE
-          : 'No listings found. Facebook may be blocking access or the search returned no results.',
+        message:
+          'No listings found. Facebook may be blocking access or the search returned no results.',
       });
       return;
     }
 
     // Inject MutationObserver — captures every listing link the moment it enters the DOM,
     // before virtualisation can remove it. Also processes all already-rendered links.
-    await page.evaluate((base: string) => {
-      function processLink(link: Element) {
-        const href = link.getAttribute('href') ?? '';
-        const match = href.match(/\/marketplace\/item\/(\d+)\//);
-        if (!match) return;
-        const img = link.querySelector('img');
-        // biome-ignore lint/suspicious/noExplicitAny: Playwright-evaluated script; window is the browser's window, not typed
-        (window as any).fbListingFound({
-          id: match[1],
-          url: `${base}/marketplace/item/${match[1]}/`,
-          ariaLabel: link.getAttribute('aria-label') ?? '',
-          innerText: (link as HTMLElement).innerText ?? '',
-          thumbnailUrl: img ? (img as HTMLImageElement).src : '',
-        });
-      }
-
-      document.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
-
-      new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType !== 1) continue;
-            const addedElement = node as Element;
-            if (addedElement.matches('a[href*="/marketplace/item/"]')) processLink(addedElement);
-            addedElement.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
-          }
+    await page.evaluate(
+      ({ base, anchorSelector }: { base: string; anchorSelector: string }) => {
+        function processLink(link: Element) {
+          const href = link.getAttribute('href') ?? '';
+          // Same URL shape as `anchorSelector` above; kept as a regex here because the
+          // selector only matches, it doesn't capture the id.
+          const match = href.match(/\/marketplace\/item\/(\d+)\//);
+          if (!match) return;
+          const img = link.querySelector('img');
+          // biome-ignore lint/suspicious/noExplicitAny: Playwright-evaluated script; window is the browser's window, not typed
+          (window as any).fbListingFound({
+            id: match[1],
+            url: `${base}/marketplace/item/${match[1]}/`,
+            ariaLabel: link.getAttribute('aria-label') ?? '',
+            innerText: (link as HTMLElement).innerText ?? '',
+            thumbnailUrl: img ? (img as HTMLImageElement).src : '',
+          });
         }
-      }).observe(document.body, { childList: true, subtree: true });
-    }, FACEBOOK_BASE);
+
+        document.querySelectorAll(anchorSelector).forEach(processLink);
+
+        new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+              if (node.nodeType !== 1) continue;
+              const addedElement = node as Element;
+              if (addedElement.matches(anchorSelector)) processLink(addedElement);
+              addedElement.querySelectorAll(anchorSelector).forEach(processLink);
+            }
+          }
+        }).observe(document.body, { childList: true, subtree: true });
+      },
+      { base: FACEBOOK_BASE, anchorSelector: LISTING_ANCHOR_SELECTOR }
+    );
 
     console.log(`[facebook] observer injected — initial: ${counter.total} listings`);
     if (counter.total > 0)

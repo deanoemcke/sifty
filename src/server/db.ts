@@ -80,7 +80,7 @@ export function getDb(): Database.Database {
 
 // ── Prepared statement types ──────────────────────────────────────────────────
 
-export type SearchRow = { data: string; cached_at: number };
+export type SearchRow = { data: string; cached_at: number; listing_count: number };
 export type DetailRow = { data: string; cached_at: number };
 export type SavedSearchRow = {
   id: string;
@@ -101,7 +101,7 @@ export type CountRow = { n: number };
 
 export function stmtGetSearch(database: Database.Database) {
   return database.prepare<[string], SearchRow>(
-    'SELECT data, cached_at FROM quick_searches WHERE url = ?'
+    'SELECT data, cached_at, listing_count FROM quick_searches WHERE url = ?'
   );
 }
 export function stmtSetSearch(database: Database.Database) {
@@ -174,8 +174,26 @@ export function stmtGetCategoryByLegacyPath(database: Database.Database) {
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-export function isFresh(cachedAt: number): boolean {
-  return Date.now() - cachedAt < CACHE_TTL_MS;
+// A genuine zero-result search (see `classifyInitialSearchStateAsync` in
+// facebook.ts) is a legitimate success and gets cached like any other result —
+// but the empty-state classifier is a heuristic, and a misclassified soft-block
+// would otherwise get pinned as a false "genuinely empty" answer for the whole
+// cache window. A shorter TTL bounds how long a wrong classification can
+// persist, while still absorbing same-search repeats (e.g. a sold-items
+// discover firing the same URL twice, or a user re-running a niche search)
+// without relaunching a full authenticated browser session each time.
+export const EMPTY_RESULT_CACHE_TTL_MS = CACHE_TTL_MS / 6; // 10 minutes
+
+// Single source of truth for which TTL applies to a cache row — read side
+// (isFresh check) and write side (deciding whether a row counts as "empty")
+// both derive from the same listing count rather than tracking freshness two
+// different ways.
+export function ttlForListingCount(listingCount: number): number {
+  return listingCount > 0 ? CACHE_TTL_MS : EMPTY_RESULT_CACHE_TTL_MS;
+}
+
+export function isFresh(cachedAt: number, ttlMs: number = CACHE_TTL_MS): boolean {
+  return Date.now() - cachedAt < ttlMs;
 }
 
 export function cacheAge(cachedAt: number): string {

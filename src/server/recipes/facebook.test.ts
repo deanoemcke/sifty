@@ -6,10 +6,12 @@ import {
   buildFacebookListing,
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
+  classifyInitialSearchStateAsync,
   detectLoginWallAsync,
   extractImplicitFilters,
   facebookRecipe,
   fetchFacebookListingDetailAsync,
+  isEmptyResultsText,
   isLoginWallText,
   isLoginWallUrl,
   MissingFacebookCookiesError,
@@ -42,11 +44,19 @@ vi.mock('../ai', async (importOriginal) => {
 // callback (identified by its source containing "login_popup_cta_form") from every
 // other `page.evaluate(...)` call site (MutationObserver injection, body-text
 // extraction), which all just need a plain string back.
+//
+// Deliberately NOT imported from facebook.ts: keeping an independent literal here
+// means an accidental change to the production selector fails this suite loudly,
+// instead of the mock silently tracking whatever the source now exports.
+const LISTINGS_SELECTOR_IN_TEST = 'a[href*="/marketplace/item/"]';
 type FacebookPageOptions = {
   url?: string;
   domLoginWall?: boolean;
   textSnippet?: string;
   listingsSelectorTimesOut?: boolean;
+  listingsAppearOnRetry?: boolean;
+  emptyStateAppears?: boolean;
+  shellRendered?: boolean;
   cookieBannerVisible?: boolean;
   bodyText?: string;
 };
@@ -71,11 +81,16 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
       domLoginWall = false,
       textSnippet = '',
       listingsSelectorTimesOut = false,
+      listingsAppearOnRetry = false,
+      emptyStateAppears = false,
+      shellRendered = false,
       cookieBannerVisible = false,
       bodyText = '',
     } = options;
 
     const waitForSelectorCalls: string[] = [];
+    const wheelCalls = { count: 0 };
+    const listingsSelectorAttemptCounts = { count: 0 };
 
     return {
       goto: async () => {},
@@ -97,18 +112,40 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
       waitForTimeout: async () => {},
       waitForSelector: async (selector: string) => {
         waitForSelectorCalls.push(selector);
-        if (listingsSelectorTimesOut) throw new Error('timeout');
+        // Model page state ("listings selector starts matching after N asks"),
+        // keyed on the selector actually requested — not on the position of this
+        // call among all waitForSelector calls of any kind. A future unrelated
+        // waitForSelector (e.g. for the Marketplace shell) must not shift which
+        // call this mock treats as the listings grace re-check.
+        if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
+        listingsSelectorAttemptCounts.count++;
+        const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
+        if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
+          throw new Error('timeout');
+      },
+      // Stands in for the empty-state marker wait: resolves when the mocked page
+      // "renders" the empty-state, rejects (as a Playwright timeout would) otherwise.
+      waitForFunction: async () => {
+        if (!emptyStateAppears) throw new Error('timeout');
       },
       evaluate: async (fn: (...args: unknown[]) => unknown) => {
         if (fn.toString().includes('login_popup_cta_form')) {
           return { domMatch: domLoginWall, textSnippet };
         }
+        if (fn.toString().includes('shellRendered')) {
+          return { shellRendered, bodyText };
+        }
         return bodyText;
       },
-      mouse: { wheel: async () => {} },
+      mouse: {
+        wheel: async () => {
+          wheelCalls.count++;
+        },
+      },
       keyboard: { press: async () => {} },
       close: async () => {},
       waitForSelectorCalls,
+      wheelCalls,
     };
   }
 
@@ -1181,6 +1218,135 @@ describe('processRawListing', () => {
   });
 });
 
+// ── Empty-results text detection ──────────────────────────────────────────────
+
+describe('isEmptyResultsText', () => {
+  it('matches the captured real empty-state sentence', () => {
+    expect(
+      isEmptyResultsText('No listings found for "fisher price record player" within 60 kilometres')
+    ).toBe(true);
+  });
+
+  it('matches the secondary "try a new search" sentence', () => {
+    expect(
+      isEmptyResultsText(
+        'Try a new search. Check the spelling, change your filters or try a less specific search term.'
+      )
+    ).toBe(true);
+  });
+
+  it('is case-insensitive', () => {
+    expect(isEmptyResultsText('NO LISTINGS FOUND FOR "lamp"')).toBe(true);
+  });
+
+  it('does not match ordinary Marketplace shell text', () => {
+    expect(
+      isEmptyResultsText('Marketplace\nSearch results\nFilters\nSort by: Date listed: Newest first')
+    ).toBe(false);
+  });
+
+  it('does not match an empty string', () => {
+    expect(isEmptyResultsText('')).toBe(false);
+  });
+});
+
+// ── classifyInitialSearchStateAsync ───────────────────────────────────────────
+//
+// A minimal page stub distinct from `makeFacebookPage` above — it fakes only
+// the handful of Page methods this function actually reads (`waitForSelector`,
+// `waitForFunction`, `evaluate`, `url`), so these tests exercise the
+// classification seam directly instead of paying the full quickSearchAsync
+// mock-browser harness for every new signal combination.
+describe('classifyInitialSearchStateAsync', () => {
+  type ClassifyPageStubOptions = {
+    listingsSelectorTimesOut?: boolean;
+    listingsAppearOnRetry?: boolean;
+    emptyStateAppears?: boolean;
+    shellRendered?: boolean;
+    bodyText?: string;
+  };
+
+  function makeClassifyPageStub(options: ClassifyPageStubOptions = {}) {
+    const {
+      listingsSelectorTimesOut = false,
+      listingsAppearOnRetry = false,
+      emptyStateAppears = false,
+      shellRendered = false,
+      bodyText = '',
+    } = options;
+
+    const listingsSelectorAttemptCounts = { count: 0 };
+
+    return {
+      url: () => 'https://www.facebook.com/marketplace/search?query=lamp',
+      waitForSelector: async (selector: string) => {
+        if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
+        listingsSelectorAttemptCounts.count++;
+        const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
+        if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
+          throw new Error('timeout');
+      },
+      waitForFunction: async () => {
+        if (!emptyStateAppears) throw new Error('timeout');
+      },
+      evaluate: async () => ({ shellRendered, bodyText }),
+      // biome-ignore lint/suspicious/noExplicitAny: minimal duck-typed Page stub for unit testing
+    } as any;
+  }
+
+  it('returns "listings" when the listings selector resolves first', async () => {
+    const page = makeClassifyPageStub({ listingsSelectorTimesOut: false });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('listings');
+  });
+
+  it('returns "empty" when the empty-state marker wins the race and no late listings appear', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: true,
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('empty');
+  });
+
+  it('returns "listings" when listings appear on the grace re-check after the empty marker wins the race', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      listingsAppearOnRetry: true,
+      emptyStateAppears: true,
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('listings');
+  });
+
+  it('returns "empty" when both waits time out but the settled page shows the shell and the empty-state sentence', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      bodyText: 'No listings found for "lamp" within 60 kilometres',
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('empty');
+  });
+
+  it('returns "blocked" when both waits time out and the shell renders without the empty-state sentence', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      bodyText: 'Marketplace\nSearch results\nFilters',
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
+  });
+
+  it('returns "blocked" when both waits time out and the shell never renders', async () => {
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: false,
+      bodyText: '',
+    });
+    expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
+  });
+});
+
 // ── quickSearchAsync (login wall paths) ───────────────────────────────────────
 
 describe('facebookRecipe.quickSearchAsync', () => {
@@ -1230,6 +1396,108 @@ describe('facebookRecipe.quickSearchAsync', () => {
         'No listings found. Facebook may be blocking access or the search returned no results.',
     });
     expect(page.waitForSelectorCalls.length).toBeGreaterThan(0);
+  });
+
+  it('completes with zero listings when the empty-state marker renders instead of listings', async () => {
+    const page = makeFacebookPage({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: true,
+      shellRendered: true,
+      bodyText: 'No listings found for "fisher price record player" within 60 kilometres',
+    });
+    resetPageQueue(page);
+
+    const events: Array<{ type: string }> = [];
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=fisher+price+record+player',
+      (event) => events.push(event)
+    );
+
+    expect(events).toContainEqual({ type: 'complete' });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'error' }));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'listing' }));
+    // Returned before the scroll loop — no scrolling on an empty page.
+    expect(page.wheelCalls.count).toBe(0);
+  });
+
+  it('completes with zero listings when both waits time out but the shell and marker are present', async () => {
+    const page = makeFacebookPage({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      bodyText: 'No listings found for "lamp" within 60 kilometres',
+    });
+    resetPageQueue(page);
+
+    const events: Array<{ type: string }> = [];
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=lamp',
+      (event) => events.push(event)
+    );
+
+    expect(events).toContainEqual({ type: 'complete' });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'error' }));
+  });
+
+  it('still reports the blocking error when the shell renders without the empty-state marker', async () => {
+    const page = makeFacebookPage({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      bodyText: 'Marketplace\nSearch results\nFilters',
+    });
+    resetPageQueue(page);
+
+    const events: Array<{ type: string }> = [];
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=lamp',
+      (event) => events.push(event)
+    );
+
+    expect(events).toContainEqual({
+      type: 'error',
+      message:
+        'No listings found. Facebook may be blocking access or the search returned no results.',
+    });
+    expect(events).not.toContainEqual({ type: 'complete' });
+  });
+
+  it('prefers listings when both the listings selector and the empty marker fire', async () => {
+    const page = makeFacebookPage({
+      listingsSelectorTimesOut: false,
+      emptyStateAppears: true,
+    });
+    resetPageQueue(page);
+
+    const events: Array<{ type: string }> = [];
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=lamp',
+      (event) => events.push(event)
+    );
+
+    expect(events).toContainEqual({ type: 'complete' });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'error' }));
+    // Normal listings flow ran: the scroll loop drove the page.
+    expect(page.wheelCalls.count).toBeGreaterThan(0);
+  });
+
+  it('prefers late-rendering listings over an early empty-state marker (grace re-check)', async () => {
+    const page = makeFacebookPage({
+      listingsSelectorTimesOut: true,
+      listingsAppearOnRetry: true,
+      emptyStateAppears: true,
+    });
+    resetPageQueue(page);
+
+    const events: Array<{ type: string }> = [];
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=lamp',
+      (event) => events.push(event)
+    );
+
+    expect(events).toContainEqual({ type: 'complete' });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'error' }));
+    expect(page.wheelCalls.count).toBeGreaterThan(0);
   });
 });
 
