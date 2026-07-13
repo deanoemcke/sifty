@@ -43,6 +43,11 @@ vi.mock('../ai', async (importOriginal) => {
 // callback (identified by its source containing "login_popup_cta_form") from every
 // other `page.evaluate(...)` call site (MutationObserver injection, body-text
 // extraction), which all just need a plain string back.
+//
+// Deliberately NOT imported from facebook.ts: keeping an independent literal here
+// means an accidental change to the production selector fails this suite loudly,
+// instead of the mock silently tracking whatever the source now exports.
+const LISTINGS_SELECTOR_IN_TEST = 'a[href*="/marketplace/item/"]';
 type FacebookPageOptions = {
   url?: string;
   domLoginWall?: boolean;
@@ -84,6 +89,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
 
     const waitForSelectorCalls: string[] = [];
     const wheelCalls = { count: 0 };
+    const listingsSelectorAttemptCounts = { count: 0 };
 
     return {
       goto: async () => {},
@@ -105,8 +111,15 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
       waitForTimeout: async () => {},
       waitForSelector: async (selector: string) => {
         waitForSelectorCalls.push(selector);
-        const isRetryCall = waitForSelectorCalls.length > 1;
-        if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryCall))
+        // Model page state ("listings selector starts matching after N asks"),
+        // keyed on the selector actually requested — not on the position of this
+        // call among all waitForSelector calls of any kind. A future unrelated
+        // waitForSelector (e.g. for the Marketplace shell) must not shift which
+        // call this mock treats as the listings grace re-check.
+        if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
+        listingsSelectorAttemptCounts.count++;
+        const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
+        if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
           throw new Error('timeout');
       },
       // Stands in for the empty-state marker wait: resolves when the mocked page
