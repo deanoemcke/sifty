@@ -227,8 +227,6 @@ async function evaluateEmptyStateSignals(
 
 // ── Listing extraction via MutationObserver ───────────────────────────────────
 
-// Also inlined inside the browser-side MutationObserver script, which cannot
-// reference Node-scope constants.
 const LISTING_ANCHOR_SELECTOR = 'a[href*="/marketplace/item/"]';
 
 export const PRICE_REGEX = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
@@ -508,35 +506,40 @@ async function runQuickSearchAsync(
 
     // Inject MutationObserver — captures every listing link the moment it enters the DOM,
     // before virtualisation can remove it. Also processes all already-rendered links.
-    await page.evaluate((base: string) => {
-      function processLink(link: Element) {
-        const href = link.getAttribute('href') ?? '';
-        const match = href.match(/\/marketplace\/item\/(\d+)\//);
-        if (!match) return;
-        const img = link.querySelector('img');
-        // biome-ignore lint/suspicious/noExplicitAny: Playwright-evaluated script; window is the browser's window, not typed
-        (window as any).fbListingFound({
-          id: match[1],
-          url: `${base}/marketplace/item/${match[1]}/`,
-          ariaLabel: link.getAttribute('aria-label') ?? '',
-          innerText: (link as HTMLElement).innerText ?? '',
-          thumbnailUrl: img ? (img as HTMLImageElement).src : '',
-        });
-      }
-
-      document.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
-
-      new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType !== 1) continue;
-            const addedElement = node as Element;
-            if (addedElement.matches('a[href*="/marketplace/item/"]')) processLink(addedElement);
-            addedElement.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
-          }
+    await page.evaluate(
+      ({ base, anchorSelector }: { base: string; anchorSelector: string }) => {
+        function processLink(link: Element) {
+          const href = link.getAttribute('href') ?? '';
+          // Same URL shape as `anchorSelector` above; kept as a regex here because the
+          // selector only matches, it doesn't capture the id.
+          const match = href.match(/\/marketplace\/item\/(\d+)\//);
+          if (!match) return;
+          const img = link.querySelector('img');
+          // biome-ignore lint/suspicious/noExplicitAny: Playwright-evaluated script; window is the browser's window, not typed
+          (window as any).fbListingFound({
+            id: match[1],
+            url: `${base}/marketplace/item/${match[1]}/`,
+            ariaLabel: link.getAttribute('aria-label') ?? '',
+            innerText: (link as HTMLElement).innerText ?? '',
+            thumbnailUrl: img ? (img as HTMLImageElement).src : '',
+          });
         }
-      }).observe(document.body, { childList: true, subtree: true });
-    }, FACEBOOK_BASE);
+
+        document.querySelectorAll(anchorSelector).forEach(processLink);
+
+        new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+              if (node.nodeType !== 1) continue;
+              const addedElement = node as Element;
+              if (addedElement.matches(anchorSelector)) processLink(addedElement);
+              addedElement.querySelectorAll(anchorSelector).forEach(processLink);
+            }
+          }
+        }).observe(document.body, { childList: true, subtree: true });
+      },
+      { base: FACEBOOK_BASE, anchorSelector: LISTING_ANCHOR_SELECTOR }
+    );
 
     console.log(`[facebook] observer injected — initial: ${counter.total} listings`);
     if (counter.total > 0)
