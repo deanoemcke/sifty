@@ -12,6 +12,7 @@ import {
   extractImplicitFilters,
   facebookRecipe,
   fetchFacebookListingDetailAsync,
+  installNameShim,
   isEmptyResultsText,
   isLoginWallText,
   isLoginWallUrl,
@@ -54,6 +55,25 @@ describe('facebookRecipe.computeAlertFingerprint', () => {
     expect(facebookRecipe.computeAlertFingerprint(a)).toBe(
       facebookRecipe.computeAlertFingerprint(b)
     );
+  });
+});
+
+describe('installNameShim', () => {
+  afterEach(() => {
+    delete (globalThis as { __name?: unknown }).__name;
+  });
+
+  it('defines a passthrough __name so an esbuild-injected __name(fn, "fn") call resolves', () => {
+    installNameShim();
+    const marker = () => 'marker';
+    expect((globalThis as { __name?: (fn: unknown) => unknown }).__name?.(marker)).toBe(marker);
+  });
+
+  it('does not clobber an existing __name', () => {
+    const sentinel = () => 'sentinel';
+    (globalThis as { __name?: unknown }).__name = sentinel;
+    installNameShim();
+    expect((globalThis as { __name?: unknown }).__name).toBe(sentinel);
   });
 });
 
