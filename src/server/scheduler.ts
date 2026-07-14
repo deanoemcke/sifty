@@ -14,8 +14,8 @@ import {
   stmtListAlertEnabledSavedSearches,
 } from './db';
 import { getRecipeForUrl } from './recipes/registry';
-import { type AiFilterListing, runAiFilterBatchesAsync } from './routes/aiFilter';
-import { runQuickSearchForUrlAsync } from './routes/quickSearch';
+import { type AiFilterListing, runAiFilterBatchesAsync } from './services/aiFilter';
+import { runQuickSearchForUrlAsync } from './services/quickSearch';
 
 export type SchedulerNotifier = (message: string) => Promise<void>;
 
