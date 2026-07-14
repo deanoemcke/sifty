@@ -649,6 +649,52 @@ describe('runSchedulerAsync', () => {
     }
   });
 
+  it('logs progress and error events reported by the recipe during quick search, tagged with the recipe name', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const recipe: Recipe = {
+      name: 'trademe',
+      matches: () => true,
+      extractImplicitFilters: () => [],
+      quickSearchAsync: async (_url, onEvent) => {
+        onEvent({ type: 'progress', phase: 'paging', page: 1, totalPages: 3 });
+        onEvent({ type: 'error', message: 'boom' });
+        onEvent({ type: 'complete' });
+      },
+      deepSearchAsync: async () => {},
+      computeAlertFingerprint: stubComputeAlertFingerprint,
+    };
+    vi.mocked(getRecipeForUrl).mockReturnValue(recipe);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: vi.fn(),
+      });
+
+      expect(
+        logSpy.mock.calls.some(
+          ([message]) =>
+            typeof message === 'string' &&
+            message.includes('[trademe]') &&
+            message.includes('page 1')
+        )
+      ).toBe(true);
+      expect(
+        errorSpy.mock.calls.some(
+          ([message]) =>
+            typeof message === 'string' && message.includes('[trademe]') && message.includes('boom')
+        )
+      ).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
   it('times out a stalled AI filter run instead of hanging forever, recording an error and completing the run', async () => {
     vi.useFakeTimers();
     try {

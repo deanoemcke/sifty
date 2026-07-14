@@ -5,7 +5,7 @@
 // listing it hasn't alerted on before.
 
 import type Database from 'better-sqlite3';
-import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
+import type { Listing, ProviderCooldownStore, QuickSearchProgress } from '../lib/recipes/base';
 import {
   type SavedSearchRow,
   stmtGetOldestAlertEnabledSavedSearch,
@@ -20,7 +20,7 @@ import {
   type FilterResultEntry,
   runAiFilterBatchesAsync,
 } from './services/aiFilter';
-import { runQuickSearchForUrlAsync } from './services/quickSearch';
+import { type QuickSearchCacheEvent, runQuickSearchForUrlAsync } from './services/quickSearch';
 
 // Upper bound on a single URL's quick search. The scheduler runs unattended
 // via cron with no human to notice a hang — a stalled recipe (login wall,
@@ -85,6 +85,32 @@ export function formatAlertMessage(savedSearchName: string, listing: Listing): s
   return `${savedSearchName}: ${listing.title} — ${price} — ${listing.url}`;
 }
 
+function describeQuickSearchProgress(progress: QuickSearchProgress): string {
+  switch (progress.phase) {
+    case 'loading':
+      return 'loading';
+    case 'counted':
+      return `${progress.totalResults} result(s) across ${progress.totalPages} page(s)`;
+    case 'paging':
+      return progress.totalPages === undefined
+        ? `fetching page ${progress.page}`
+        : `fetching page ${progress.page}/${progress.totalPages}`;
+    case 'collecting':
+      return `found ${progress.foundSoFar} so far${progress.isLoadingMore ? ', loading more' : ''}`;
+  }
+}
+
+// The scheduler previously discarded every recipe's onEvent callback, so a
+// recipe that only ever reported progress/errors through onEvent (rather
+// than its own direct console.log calls) was silently invisible in scheduler
+// output — logging this generically here fixes that for every recipe at
+// once, rather than relying on each recipe author to hand-add console calls.
+function logQuickSearchEvent(recipeName: string, event: QuickSearchCacheEvent): void {
+  if (event.type === 'progress')
+    console.log(`[${recipeName}] ${describeQuickSearchProgress(event)}`);
+  if (event.type === 'error') console.error(`[${recipeName}] ${event.message}`);
+}
+
 function toAiFilterListing(listing: Listing): AiFilterListing {
   return {
     url: listing.url,
@@ -140,7 +166,9 @@ async function processSavedSearchAsync(
     }
     try {
       const { listings } = await withTimeoutAsync(
-        runQuickSearchForUrlAsync(url, recipe, database, () => {}),
+        runQuickSearchForUrlAsync(url, recipe, database, (event) =>
+          logQuickSearchEvent(recipe.name, event)
+        ),
         SCRAPE_TIMEOUT_MS,
         `Quick search for ${url}`
       );
