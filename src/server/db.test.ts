@@ -6,11 +6,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   configureDatabaseConnection,
   initSchema,
+  stmtClearDetailsForUrl,
+  stmtClearSearchForUrl,
   stmtCountAlertsForSavedSearch,
+  stmtGetDetail,
   stmtGetOldestAlertEnabledSavedSearch,
+  stmtGetSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtInsertSavedSearch,
+  stmtSetDetail,
+  stmtSetSearch,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 
@@ -168,6 +174,52 @@ describe('alerted_listings statements', () => {
       stmtInsertAlertedListing(db).run('search-1', 'hash-a', 2000);
     }).not.toThrow();
     expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(1);
+  });
+});
+
+describe('scoped cache-clear statements', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('stmtClearSearchForUrl deletes only the matching quick_searches row', () => {
+    const db = freshDb();
+    stmtSetSearch(db).run('https://example.com/a', '[]', 1000, 0);
+    stmtSetSearch(db).run('https://example.com/b', '[]', 1000, 0);
+
+    stmtClearSearchForUrl(db).run('https://example.com/a');
+
+    expect(stmtGetSearch(db).get('https://example.com/a')).toBeUndefined();
+    expect(stmtGetSearch(db).get('https://example.com/b')).toBeDefined();
+  });
+
+  it('stmtClearDetailsForUrl deletes only the matching deep_details row', () => {
+    const db = freshDb();
+    stmtSetDetail(db).run('https://example.com/a', '{}', 1000);
+    stmtSetDetail(db).run('https://example.com/b', '{}', 1000);
+
+    stmtClearDetailsForUrl(db).run('https://example.com/a');
+
+    expect(stmtGetDetail(db).get('https://example.com/a')).toBeUndefined();
+    expect(stmtGetDetail(db).get('https://example.com/b')).toBeDefined();
+  });
+
+  it('stmtClearSearchForUrl reports 1 change when a row matched and 0 when it did not', () => {
+    const db = freshDb();
+    stmtSetSearch(db).run('https://example.com/a', '[]', 1000, 0);
+
+    expect(stmtClearSearchForUrl(db).run('https://example.com/a').changes).toBe(1);
+    expect(stmtClearSearchForUrl(db).run('https://example.com/a').changes).toBe(0);
+  });
+
+  it('stmtClearDetailsForUrl reports 1 change when a row matched and 0 when it did not', () => {
+    const db = freshDb();
+    stmtSetDetail(db).run('https://example.com/a', '{}', 1000);
+
+    expect(stmtClearDetailsForUrl(db).run('https://example.com/a').changes).toBe(1);
+    expect(stmtClearDetailsForUrl(db).run('https://example.com/a').changes).toBe(0);
   });
 });
 

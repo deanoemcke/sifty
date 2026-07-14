@@ -18,7 +18,7 @@ import {
   type UrlCardSearchStatus,
 } from './state';
 import { streamPostAsync } from './streamPost';
-import { renderCardStatus, resetAllResults, resetCardForResearch } from './urlCardRow';
+import { clearCardCacheBadge, renderCardStatus, resetCardForResearch } from './urlCardRow';
 import { type UrlCard, urlCardData } from './urlCardStore';
 import { updateUrlGroupHeaders } from './urlGroupsView';
 
@@ -145,7 +145,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
     requireChild<HTMLButtonElement>(
       card.dom.cacheStatusElement,
       '.cache-clear-btn'
-    ).addEventListener('click', clearQuickSearchCacheAsync);
+    ).addEventListener('click', () => clearQuickSearchCacheAsync(card));
   }
 
   renderCardStatus(card);
@@ -158,11 +158,12 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   }
 }
 
-export async function clearQuickSearchCacheAsync(): Promise<void> {
+export async function clearQuickSearchCacheAsync(card: UrlCard): Promise<void> {
+  const url = urlCardData(card).searchedUrl;
   await fetch('/api/cache/clear', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'quick-search' }),
+    body: JSON.stringify({ type: 'quick-search', url }),
   }).catch(() => null);
-  resetAllResults();
+  clearCardCacheBadge(card);
 }

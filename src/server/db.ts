@@ -151,6 +151,9 @@ export function stmtSetSearch(database: Database.Database) {
 export function stmtClearSearch(database: Database.Database) {
   return database.prepare('DELETE FROM quick_searches');
 }
+export function stmtClearSearchForUrl(database: Database.Database) {
+  return database.prepare<[string]>('DELETE FROM quick_searches WHERE url = ?');
+}
 export function stmtGetDetail(database: Database.Database) {
   return database.prepare<[string], DetailRow>(
     'SELECT data, cached_at FROM deep_details WHERE url = ?'
@@ -164,11 +167,8 @@ export function stmtSetDetail(database: Database.Database) {
 export function stmtClearDetails(database: Database.Database) {
   return database.prepare('DELETE FROM deep_details');
 }
-export function stmtCountSearch(database: Database.Database) {
-  return database.prepare<[], CountRow>('SELECT COUNT(*) as n FROM quick_searches');
-}
-export function stmtCountDetails(database: Database.Database) {
-  return database.prepare<[], CountRow>('SELECT COUNT(*) as n FROM deep_details');
+export function stmtClearDetailsForUrl(database: Database.Database) {
+  return database.prepare<[string]>('DELETE FROM deep_details WHERE url = ?');
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing } from '../lib/recipes/base';
+import { getElement } from './domUtils';
 import {
+  clearQuickSearchCacheAsync,
   isNewConditionSearchUrl,
   normalizeListingRelevance,
   searchUrlCardAsync,
@@ -221,6 +223,85 @@ describe('searchUrlCardAsync — stale cached listing data', () => {
 
     const item = listingsByUrl.get('https://example.com/stale');
     expect(item?.data.relevance).toBe(0);
+  });
+});
+
+describe('clearQuickSearchCacheAsync', () => {
+  function stubFetch(): Array<{ url: string; body: unknown }> {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, body: init?.body ? JSON.parse(init.body as string) : undefined });
+        return Promise.resolve({ ok: true } as Response);
+      })
+    );
+    return calls;
+  }
+
+  async function setUpCachedCard(url: string, listingUrl: string): Promise<UrlCard> {
+    const card = addSearchableCardWithUrl(url);
+    stubQuickSearchStream([
+      'data: {"type":"cached","age":"5m"}\n',
+      `data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"${listingUrl}","isAuction":false,"relevance":0}}\n`,
+    ]);
+    await searchUrlCardAsync(card);
+    return card;
+  }
+
+  it('posts { type: "quick-search", url: <searchedUrl> } for the clicked card', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    const calls = stubFetch();
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('/api/cache/clear');
+    expect(calls[0].body).toEqual({ type: 'quick-search', url: TRADEME_URL });
+  });
+
+  it("clearing card A leaves card B's searchedUrl, listingUrls, and cache badge untouched", async () => {
+    const cardA = await setUpCachedCard(
+      'https://www.trademe.co.nz/search/a',
+      'https://example.com/item-a'
+    );
+    const cardB = await setUpCachedCard(
+      'https://www.trademe.co.nz/search/b',
+      'https://example.com/item-b'
+    );
+    stubFetch();
+
+    await clearQuickSearchCacheAsync(cardA);
+
+    const dataB = urlCardData(cardB);
+    expect(dataB.searchedUrl).toBe('https://www.trademe.co.nz/search/b');
+    expect(dataB.listingUrls).toEqual(['https://example.com/item-b']);
+    expect(cardB.dom.cacheStatusElement.classList.contains('hidden')).toBe(false);
+  });
+
+  it("does not reset the clicked card's own searchStatus/listingUrls/criteria — only its cache badge disappears", async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    stubFetch();
+
+    await clearQuickSearchCacheAsync(card);
+
+    const data = urlCardData(card);
+    expect(data.searchStatus).toBe('done');
+    expect(data.listingUrls).toEqual(['https://example.com/item-a']);
+    expect(card.dom.cacheStatusElement.classList.contains('hidden')).toBe(true);
+    expect(card.dom.cacheStatusElement.innerHTML).toBe('');
+  });
+
+  it('leaves listingsByUrl size and resultsSection visibility unchanged', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    stubFetch();
+    const sizeBefore = listingsByUrl.size;
+    const resultsHiddenBefore = getElement('resultsSection').classList.contains('hidden');
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(listingsByUrl.size).toBe(sizeBefore);
+    expect(getElement('resultsSection').classList.contains('hidden')).toBe(resultsHiddenBefore);
   });
 });
 

@@ -215,6 +215,11 @@ export function updateRemoveButtons(): void {
   for (const card of urlCards) card.dom.removeButton.classList.toggle('hidden', !show);
 }
 
+export function clearCardCacheBadge(card: UrlCard): void {
+  card.dom.cacheStatusElement.classList.add('hidden');
+  card.dom.cacheStatusElement.innerHTML = '';
+}
+
 export function resetCardForResearch(card: UrlCard): void {
   const data = urlCardData(card);
   const otherUrls = new Set(
