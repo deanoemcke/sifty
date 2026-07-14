@@ -39,6 +39,12 @@ export function initSchema(database: Database.Database): void {
       top2        TEXT NOT NULL,
       legacy_path TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS alerted_listings (
+      saved_search_id TEXT NOT NULL,
+      listing_hash     TEXT NOT NULL,
+      created_at       INTEGER NOT NULL,
+      PRIMARY KEY (saved_search_id, listing_hash)
+    );
   `);
 }
 
@@ -95,6 +101,7 @@ export type SavedSearchRow = {
 export type CategoryRow = { slug: string; display: string };
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
+export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
 
 // ── Statement accessors ───────────────────────────────────────────────────────
 // Each function prepares the statement fresh against the live db instance.
@@ -154,6 +161,21 @@ export function stmtDeleteSavedSearch(database: Database.Database) {
 export function stmtUpdateSavedSearchAlert(database: Database.Database) {
   return database.prepare(
     'UPDATE saved_searches SET should_alert_on_new_listings = ? WHERE id = ?'
+  );
+}
+export function stmtCountAlertsForSavedSearch(database: Database.Database) {
+  return database.prepare<[string], CountRow>(
+    'SELECT COUNT(*) as n FROM alerted_listings WHERE saved_search_id = ?'
+  );
+}
+export function stmtHasAlertedListing(database: Database.Database) {
+  return database.prepare<[string, string], AlertedListingRow>(
+    'SELECT saved_search_id, listing_hash FROM alerted_listings WHERE saved_search_id = ? AND listing_hash = ?'
+  );
+}
+export function stmtInsertAlertedListing(database: Database.Database) {
+  return database.prepare(
+    'INSERT OR IGNORE INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
   );
 }
 export function stmtGetCategoriesAtDepth2(database: Database.Database) {

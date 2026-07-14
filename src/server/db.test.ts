@@ -3,7 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
-import { configureDatabaseConnection, initSchema } from './db';
+import {
+  configureDatabaseConnection,
+  initSchema,
+  stmtCountAlertsForSavedSearch,
+  stmtHasAlertedListing,
+  stmtInsertAlertedListing,
+} from './db';
 
 function columnNames(db: Database.Database, table: string): string[] {
   return db
@@ -20,6 +26,7 @@ describe('initSchema', () => {
     expect(columnNames(db, 'deep_details')).toContain('url');
     expect(columnNames(db, 'saved_searches')).toContain('id');
     expect(columnNames(db, 'trademe_categories')).toContain('slug');
+    expect(columnNames(db, 'alerted_listings')).toContain('listing_hash');
   });
 
   it('saved_searches has discover_inputs column, not filters', () => {
@@ -54,6 +61,52 @@ describe('initSchema', () => {
       .prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories')
       .get()?.n;
     expect(count).toBe(1);
+  });
+});
+
+describe('alerted_listings statements', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('counts zero alerts for a saved search with no rows', () => {
+    const db = freshDb();
+    expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(0);
+  });
+
+  it('counts only rows for the given saved search id', () => {
+    const db = freshDb();
+    stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+    stmtInsertAlertedListing(db).run('search-2', 'hash-b', 1000);
+    expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(1);
+  });
+
+  it('reports no existing alert for an unseen (saved search, hash) pair', () => {
+    const db = freshDb();
+    expect(stmtHasAlertedListing(db).get('search-1', 'hash-a')).toBeUndefined();
+  });
+
+  it('reports an existing alert after insertion', () => {
+    const db = freshDb();
+    stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+    expect(stmtHasAlertedListing(db).get('search-1', 'hash-a')).toBeDefined();
+  });
+
+  it('the same hash is independent across two different saved searches', () => {
+    const db = freshDb();
+    stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+    expect(stmtHasAlertedListing(db).get('search-2', 'hash-a')).toBeUndefined();
+  });
+
+  it('inserting the same (saved search, hash) pair twice does not throw or duplicate', () => {
+    const db = freshDb();
+    expect(() => {
+      stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+      stmtInsertAlertedListing(db).run('search-1', 'hash-a', 2000);
+    }).not.toThrow();
+    expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(1);
   });
 });
 
