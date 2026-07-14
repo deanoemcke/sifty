@@ -3,6 +3,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing } from '../../lib/recipes/base';
+import { makeListing } from '../../lib/testFixtures';
 import { MAX_RESULTS_PER_URL } from '../constants';
 import { getDb, stmtGetCategoryByLegacyPath } from '../db';
 import {
@@ -178,6 +179,32 @@ describe('extractImplicitFilters', () => {
       'https://www.trademe.co.nz/Browse/SearchResults.aspx?searchstring=macbook+pro&cid=356&rptpath=2-356-'
     );
     expect(filters).toContainEqual(['Availability', 'SOLD']);
+  });
+});
+
+describe('trademeExpiredRecipe.computeAlertFingerprint', () => {
+  it('is the same when only the price differs', () => {
+    const a = makeListing({ price: 50 });
+    const b = makeListing({ price: 75 });
+    expect(trademeExpiredRecipe.computeAlertFingerprint(a)).toBe(
+      trademeExpiredRecipe.computeAlertFingerprint(b)
+    );
+  });
+
+  it('differs when thumbnailUrl differs', () => {
+    const a = makeListing({ thumbnailUrl: 'https://trademe.tmcdn.co.nz/photoserver/full/1.jpg' });
+    const b = makeListing({ thumbnailUrl: 'https://trademe.tmcdn.co.nz/photoserver/full/2.jpg' });
+    expect(trademeExpiredRecipe.computeAlertFingerprint(a)).not.toBe(
+      trademeExpiredRecipe.computeAlertFingerprint(b)
+    );
+  });
+
+  it('is the same for a listing relisted under a different URL id', () => {
+    const original = makeListing({ url: 'https://example.com/marketplace/listing/111' });
+    const relisted = makeListing({ url: 'https://example.com/marketplace/listing/999' });
+    expect(trademeExpiredRecipe.computeAlertFingerprint(original)).toBe(
+      trademeExpiredRecipe.computeAlertFingerprint(relisted)
+    );
   });
 });
 

@@ -1,12 +1,12 @@
 // ── Quick search ──────────────────────────────────────────────────────────────
 // Streams /api/quick-search results into a URL card row and the results grid.
 
+import { listingDedupeKey } from '../lib/listingDedup';
 import type { Listing } from '../lib/recipes/base';
 import { isValidRecipeUrl } from '../lib/recipes/matcher';
 import { requestAiFilterRun } from './aiFilter';
 import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
-import { listingDedupeKey } from './listingDedup';
 import { applyClientFilters, renderCard, renderDerived } from './resultsView';
 import { parseQuickSearchProgress } from './searchStatusText';
 import {

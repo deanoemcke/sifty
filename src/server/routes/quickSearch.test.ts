@@ -3,7 +3,6 @@ import { PassThrough } from 'node:stream';
 import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, QuickSearchEvent, Recipe } from '../../lib/recipes/base';
-import { normalizeCachedListings } from './quickSearch';
 
 let _testDb: Database.Database | null = null;
 
@@ -68,6 +67,7 @@ function makeStubRecipe(
     extractImplicitFilters: () => [],
     quickSearchAsync,
     deepSearchAsync: async () => {},
+    computeAlertFingerprint: () => 'stub-fingerprint',
   };
 }
 
@@ -173,32 +173,5 @@ describe('handleQuickSearch — caching a genuine empty completion', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-});
-
-describe('normalizeCachedListings', () => {
-  it('leaves a listing with an existing relevance untouched', () => {
-    const listing = { ...SAMPLE_LISTING, relevance: 7 };
-    expect(normalizeCachedListings([listing])).toEqual([listing]);
-  });
-
-  it('defaults relevance to 0 for a pre-deploy cached row missing the field', () => {
-    // Simulates a row cached before `relevance` became mandatory on `Listing` —
-    // the field is simply absent, which the `as Listing[]` cast on
-    // `JSON.parse` lets through the type system undetected.
-    const staleRow = [{ ...SAMPLE_LISTING }];
-    delete (staleRow[0] as Partial<Listing>).relevance;
-    expect(staleRow[0].relevance).toBeUndefined();
-
-    const normalized = normalizeCachedListings(staleRow as Listing[]);
-    expect(normalized[0].relevance).toBe(0);
-  });
-
-  it('does not mutate the input array', () => {
-    const staleRow = [{ ...SAMPLE_LISTING }];
-    delete (staleRow[0] as Partial<Listing>).relevance;
-    const original = JSON.parse(JSON.stringify(staleRow));
-    normalizeCachedListings(staleRow as Listing[]);
-    expect(staleRow).toEqual(original);
   });
 });

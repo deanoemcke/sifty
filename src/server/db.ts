@@ -23,12 +23,14 @@ export function initSchema(database: Database.Database): void {
       cached_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS saved_searches (
-      id              TEXT PRIMARY KEY,
-      name            TEXT NOT NULL,
-      urls            TEXT NOT NULL,
-      discover_inputs TEXT,
-      ai_filter       TEXT,
-      created_at      INTEGER NOT NULL
+      id                          TEXT PRIMARY KEY,
+      name                        TEXT NOT NULL,
+      urls                        TEXT NOT NULL,
+      discover_inputs             TEXT,
+      ai_filter                   TEXT,
+      created_at                  INTEGER NOT NULL,
+      should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0,
+      has_completed_population_run INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS trademe_categories (
       slug        TEXT PRIMARY KEY,
@@ -38,7 +40,40 @@ export function initSchema(database: Database.Database): void {
       top2        TEXT NOT NULL,
       legacy_path TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS alerted_listings (
+      saved_search_id TEXT NOT NULL,
+      listing_hash     TEXT NOT NULL,
+      created_at       INTEGER NOT NULL,
+      PRIMARY KEY (saved_search_id, listing_hash)
+    );
   `);
+
+  // CREATE TABLE IF NOT EXISTS doesn't retroactively add columns to an
+  // existing on-disk saved_searches table, so new columns need an explicit,
+  // idempotency-checked ALTER TABLE (this SQLite build doesn't support
+  // ADD COLUMN IF NOT EXISTS).
+  const savedSearchColumns = database
+    .prepare<[], { name: string }>('PRAGMA table_info(saved_searches)')
+    .all();
+  if (!savedSearchColumns.some((column) => column.name === 'last_run_at')) {
+    database.exec('ALTER TABLE saved_searches ADD COLUMN last_run_at INTEGER');
+  }
+  if (!savedSearchColumns.some((column) => column.name === 'has_completed_population_run')) {
+    database.exec(
+      'ALTER TABLE saved_searches ADD COLUMN has_completed_population_run INTEGER NOT NULL DEFAULT 0'
+    );
+    // Backfill: a pre-migration row that already has alert history has, by
+    // definition, already been through (the old, derived version of) a
+    // population run — mark it done so existing installs keep notifying
+    // normally instead of every history-bearing search silently re-entering
+    // population mode (and swallowing its next genuinely new listing) the
+    // moment this column defaults everyone to 0.
+    database.exec(`
+      UPDATE saved_searches
+      SET has_completed_population_run = 1
+      WHERE id IN (SELECT DISTINCT saved_search_id FROM alerted_listings)
+    `);
+  }
 }
 
 function logDbStats(database: Database.Database): void {
@@ -89,10 +124,14 @@ export type SavedSearchRow = {
   discover_inputs: string | null;
   ai_filter: string | null;
   created_at: number;
+  should_alert_on_new_listings: number;
+  last_run_at: number | null;
+  has_completed_population_run: number;
 };
 export type CategoryRow = { slug: string; display: string };
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
+export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
 
 // ── Statement accessors ───────────────────────────────────────────────────────
 // Each function prepares the statement fresh against the live db instance.
@@ -133,21 +172,59 @@ export function stmtCountDetails(database: Database.Database) {
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches ORDER BY created_at DESC'
   );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at FROM saved_searches WHERE id = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches WHERE id = ?'
   );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
   return database.prepare(
-    'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+}
+// NULL last_run_at sorts before any timestamp in SQLite's ASC ordering, so a
+// never-run saved search is always picked over one that has run before; rowid
+// (insertion order) breaks ties between rows with equal last_run_at.
+export function stmtGetOldestAlertEnabledSavedSearch(database: Database.Database) {
+  return database.prepare<[], SavedSearchRow>(
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run ' +
+      'FROM saved_searches WHERE should_alert_on_new_listings = 1 ' +
+      'ORDER BY last_run_at ASC, rowid ASC LIMIT 1'
   );
 }
 export function stmtDeleteSavedSearch(database: Database.Database) {
   return database.prepare('DELETE FROM saved_searches WHERE id = ?');
+}
+export function stmtUpdateSavedSearchAlert(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET should_alert_on_new_listings = ? WHERE id = ?'
+  );
+}
+export function stmtUpdateSavedSearchLastRunAt(database: Database.Database) {
+  return database.prepare('UPDATE saved_searches SET last_run_at = ? WHERE id = ?');
+}
+export function stmtMarkPopulationRunComplete(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET has_completed_population_run = 1 WHERE id = ?'
+  );
+}
+export function stmtCountAlertsForSavedSearch(database: Database.Database) {
+  return database.prepare<[string], CountRow>(
+    'SELECT COUNT(*) as n FROM alerted_listings WHERE saved_search_id = ?'
+  );
+}
+export function stmtHasAlertedListing(database: Database.Database) {
+  return database.prepare<[string, string], AlertedListingRow>(
+    'SELECT saved_search_id, listing_hash FROM alerted_listings WHERE saved_search_id = ? AND listing_hash = ?'
+  );
+}
+export function stmtInsertAlertedListing(database: Database.Database) {
+  return database.prepare(
+    'INSERT OR IGNORE INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
+  );
 }
 export function stmtGetCategoriesAtDepth2(database: Database.Database) {
   return database.prepare<[], CategoryRow>(

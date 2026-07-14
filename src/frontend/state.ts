@@ -2,8 +2,8 @@
 // Owns all mutable frontend state so that app.ts can import rather than declare it,
 // and so that tests can call resetState() for clean isolation.
 
+import { listingDedupeKey } from '../lib/listingDedup';
 import type { Fulfillment, Listing, QuickSearchProgress } from '../lib/recipes/base';
-import { listingDedupeKey } from './listingDedup';
 import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -69,6 +69,7 @@ export interface SavedSearch {
   discoverInputs?: DiscoverInputs;
   aiFilter: string | null;
   createdAt: number;
+  shouldAlertOnNewListings: boolean;
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────

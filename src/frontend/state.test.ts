@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { listingDedupeKey } from './listingDedup';
+import { listingDedupeKey } from '../lib/listingDedup';
 import {
   ALL_LISTING_VISIBILITY_CATEGORIES,
   addListingItem,

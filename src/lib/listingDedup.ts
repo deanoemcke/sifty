@@ -2,7 +2,7 @@
 // surfacing under two different URLs (e.g. a tracking query param, or the
 // same item appearing via two different category searches), which exact-URL
 // comparison misses.
-import type { Listing } from '../lib/recipes/base';
+import type { Listing } from './recipes/base';
 
 // Strips the query string and fragment, since those commonly vary between
 // two URLs that otherwise point at the same listing.

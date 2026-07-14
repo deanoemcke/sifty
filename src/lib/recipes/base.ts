@@ -163,6 +163,15 @@ export interface Recipe {
     onEvent: (event: DeepSearchEvent) => void,
     isCancelled?: () => boolean
   ): Promise<void>;
+  // Identity fingerprint for the alert scheduler's "have I seen this listing
+  // before" check. Deliberately platform-specific: each recipe knows which of
+  // its own fields are stable for the same physical listing across runs and
+  // which are volatile (e.g. TradeMe's price is a live auction bid that
+  // changes without the listing being new; Facebook Marketplace's is fixed).
+  // Must exclude `url` — a relisted item gets a brand new URL/path, and
+  // re-alerting on the same physical item every time it's relisted is
+  // exactly the spam this fingerprint exists to prevent.
+  computeAlertFingerprint(listing: Listing): string;
 }
 
 export interface DiscoverableRecipe extends Recipe {

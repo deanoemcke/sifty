@@ -14,6 +14,7 @@ import type {
   ReserveStatus,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
+import { hashFingerprintParts } from '../alerts';
 import { MAX_PAGES_PER_SEARCH, MAX_RESULTS_PER_URL } from '../constants';
 import { getDb, stmtGetCategoryLegacyPath } from '../db';
 import { type DiscoverEntry, resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
@@ -639,6 +640,19 @@ async function deepSearchAsync(
   }
 }
 
+// Excludes price: TradeMe listings can be live auctions where price is the
+// current bid, changing without the listing being new. thumbnailUrl is used
+// instead — TradeMe's CDN serves a bare, stable path per photo (no signed
+// query params), confirmed by buildListing above.
+function computeAlertFingerprint(listing: Listing): string {
+  return hashFingerprintParts([
+    listing.title,
+    listing.location,
+    listing.description,
+    listing.thumbnailUrl,
+  ]);
+}
+
 export const trademeRecipe: DiscoverableRecipe = {
   name: TRADEME_PATTERN.name,
   matches(url: string): boolean {
@@ -652,4 +666,5 @@ export const trademeRecipe: DiscoverableRecipe = {
   quickSearchAsync,
   deepSearchAsync,
   buildDiscoverUrlsAsync,
+  computeAlertFingerprint,
 };

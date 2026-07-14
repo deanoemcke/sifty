@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
+import { makeListing } from '../../lib/testFixtures';
 import { aiJSON } from '../ai';
 import {
   buildFacebookDeepSearchDetail,
@@ -20,6 +21,41 @@ import {
   processRawListing,
   type RawListingMsg,
 } from './facebook';
+
+describe('facebookRecipe.computeAlertFingerprint', () => {
+  it('differs when the price differs — Facebook Marketplace is fixed-price, so this is safe', () => {
+    const a = makeListing({ source: 'facebook', price: 50 });
+    const b = makeListing({ source: 'facebook', price: 75 });
+    expect(facebookRecipe.computeAlertFingerprint(a)).not.toBe(
+      facebookRecipe.computeAlertFingerprint(b)
+    );
+  });
+
+  it('is the same for a listing relisted under a different URL id', () => {
+    const original = makeListing({
+      source: 'facebook',
+      url: 'https://example.com/marketplace/item/111',
+    });
+    const relisted = makeListing({
+      source: 'facebook',
+      url: 'https://example.com/marketplace/item/999',
+    });
+    expect(facebookRecipe.computeAlertFingerprint(original)).toBe(
+      facebookRecipe.computeAlertFingerprint(relisted)
+    );
+  });
+
+  it('ignores the URL entirely', () => {
+    const a = makeListing({
+      source: 'facebook',
+      url: 'https://trademe.co.nz/a/marketplace/for-sale/listing/1',
+    });
+    const b = makeListing({ source: 'facebook', url: 'https://facebook.com/marketplace/item/999' });
+    expect(facebookRecipe.computeAlertFingerprint(a)).toBe(
+      facebookRecipe.computeAlertFingerprint(b)
+    );
+  });
+});
 
 const TEST_REGIONS = [
   { name: 'Auckland', tradeMeRegionId: 2, facebookLocation: 'auckland' },

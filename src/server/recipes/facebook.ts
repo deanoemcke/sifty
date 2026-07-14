@@ -13,6 +13,7 @@ import type {
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
+import { hashFingerprintParts } from '../alerts';
 import { MAX_RESULTS_PER_URL } from '../constants';
 import { getRegions, type RegionEntry } from '../services/regions';
 
@@ -896,6 +897,21 @@ async function buildDiscoverUrlsAsync(prompt: string, context: DiscoverContext) 
 
 // ── Recipe ────────────────────────────────────────────────────────────────────
 
+// Includes price, unlike TradeMe: Facebook Marketplace listings are
+// fixed-price (no bidding), so price is stable for the same physical
+// listing across runs. thumbnailUrl is deliberately NOT used here — it's a
+// raw, unmodified img.src off Facebook's DOM, and Facebook CDN image URLs
+// are commonly per-request signed with expiring tokens, which would make the
+// same listing never match a previous alert.
+function computeAlertFingerprint(listing: Listing): string {
+  return hashFingerprintParts([
+    listing.title,
+    listing.location,
+    listing.description,
+    listing.price,
+  ]);
+}
+
 export const facebookRecipe: DiscoverableRecipe = {
   name: FACEBOOK_PATTERN.name,
   matches(url: string): boolean {
@@ -913,4 +929,5 @@ export const facebookRecipe: DiscoverableRecipe = {
   quickSearchAsync,
   deepSearchAsync,
   buildDiscoverUrlsAsync,
+  computeAlertFingerprint,
 };

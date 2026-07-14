@@ -1,13 +1,19 @@
 // Server-side only — /api/saved-searches route handlers (GET list, GET one, POST, DELETE).
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { parseDiscoverInputs, requireArray, requireString } from '../../lib/validate';
+import {
+  parseDiscoverInputs,
+  requireArray,
+  requireBoolean,
+  requireString,
+} from '../../lib/validate';
 import {
   getDb,
   stmtDeleteSavedSearch,
   stmtGetSavedSearch,
   stmtInsertSavedSearch,
   stmtListSavedSearches,
+  stmtUpdateSavedSearchAlert,
 } from '../db';
 import { readBody, sendJSON } from '../helpers';
 
@@ -22,6 +28,7 @@ export function handleListSavedSearches(_req: unknown, response: ServerResponse)
       discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
       aiFilter: row.ai_filter,
       createdAt: row.created_at,
+      shouldAlertOnNewListings: !!row.should_alert_on_new_listings,
     }));
     sendJSON(response, 200, { searches });
   } catch (err) {
@@ -45,6 +52,7 @@ export function handleGetSavedSearch(_req: unknown, response: ServerResponse, id
         discoverInputs: row.discover_inputs ? JSON.parse(row.discover_inputs) : null,
         aiFilter: row.ai_filter,
         createdAt: row.created_at,
+        shouldAlertOnNewListings: !!row.should_alert_on_new_listings,
       },
     });
   } catch (err) {
@@ -73,10 +81,15 @@ export async function handleCreateSavedSearch(
   let name: string;
   let urls: unknown[];
   let discoverInputsSerialized: string | null;
+  let shouldAlertOnNewListings: boolean;
   try {
     name = requireString(rawBody.name, 'name');
     urls = requireArray(rawBody.urls, 'urls');
     discoverInputsSerialized = parseDiscoverInputs(rawBody.discoverInputs);
+    shouldAlertOnNewListings =
+      rawBody.shouldAlertOnNewListings === undefined
+        ? false
+        : requireBoolean(rawBody.shouldAlertOnNewListings, 'shouldAlertOnNewListings');
   } catch (err) {
     sendJSON(response, 400, { error: (err as Error).message });
     return;
@@ -92,10 +105,41 @@ export async function handleCreateSavedSearch(
       JSON.stringify(urls),
       discoverInputsSerialized,
       typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null,
-      Date.now()
+      Date.now(),
+      shouldAlertOnNewListings ? 1 : 0
     );
     sendJSON(response, 200, { ok: true, id });
   } catch (err) {
     sendJSON(response, 500, { error: (err as Error).message });
   }
+}
+
+export async function handlePatchSavedSearch(
+  request: IncomingMessage,
+  response: ServerResponse,
+  id: string
+): Promise<void> {
+  const database = getDb();
+  const row = stmtGetSavedSearch(database).get(id);
+  if (!row) {
+    sendJSON(response, 404, { error: 'Not found' });
+    return;
+  }
+
+  const body = await readBody(request).catch(() => null);
+  const rawBody = (body ?? {}) as Record<string, unknown>;
+
+  let shouldAlertOnNewListings: boolean;
+  try {
+    shouldAlertOnNewListings = requireBoolean(
+      rawBody.shouldAlertOnNewListings,
+      'shouldAlertOnNewListings'
+    );
+  } catch (err) {
+    sendJSON(response, 400, { error: (err as Error).message });
+    return;
+  }
+
+  stmtUpdateSavedSearchAlert(database).run(shouldAlertOnNewListings ? 1 : 0, id);
+  sendJSON(response, 200, { ok: true });
 }

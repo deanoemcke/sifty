@@ -3,7 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
-import { configureDatabaseConnection, initSchema } from './db';
+import {
+  configureDatabaseConnection,
+  initSchema,
+  stmtCountAlertsForSavedSearch,
+  stmtGetOldestAlertEnabledSavedSearch,
+  stmtHasAlertedListing,
+  stmtInsertAlertedListing,
+  stmtInsertSavedSearch,
+  stmtUpdateSavedSearchLastRunAt,
+} from './db';
 
 function columnNames(db: Database.Database, table: string): string[] {
   return db
@@ -20,6 +29,7 @@ describe('initSchema', () => {
     expect(columnNames(db, 'deep_details')).toContain('url');
     expect(columnNames(db, 'saved_searches')).toContain('id');
     expect(columnNames(db, 'trademe_categories')).toContain('slug');
+    expect(columnNames(db, 'alerted_listings')).toContain('listing_hash');
   });
 
   it('saved_searches has discover_inputs column, not filters', () => {
@@ -43,6 +53,64 @@ describe('initSchema', () => {
     expect(columnNames(db, 'saved_searches')).toContain('discover_inputs');
   });
 
+  it('saved_searches has a last_run_at column, added idempotently', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    expect(columnNames(db, 'saved_searches')).toContain('last_run_at');
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'saved_searches')).toContain('last_run_at');
+  });
+
+  it('saved_searches has a has_completed_population_run column, added idempotently', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    expect(columnNames(db, 'saved_searches')).toContain('has_completed_population_run');
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'saved_searches')).toContain('has_completed_population_run');
+  });
+
+  it('backfills has_completed_population_run = 1 for existing rows with alert history, and 0 for rows without, when migrating an existing on-disk database', () => {
+    // Simulates a pre-migration on-disk schema — no has_completed_population_run column yet.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE saved_searches (
+        id                          TEXT PRIMARY KEY,
+        name                        TEXT NOT NULL,
+        urls                        TEXT NOT NULL,
+        discover_inputs             TEXT,
+        ai_filter                   TEXT,
+        created_at                  INTEGER NOT NULL,
+        should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0,
+        last_run_at                 INTEGER
+      );
+      CREATE TABLE alerted_listings (
+        saved_search_id TEXT NOT NULL,
+        listing_hash     TEXT NOT NULL,
+        created_at       INTEGER NOT NULL,
+        PRIMARY KEY (saved_search_id, listing_hash)
+      );
+    `);
+    db.prepare(
+      'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('has-history', 'Has history', '[]', null, null, 1000, 1);
+    db.prepare(
+      'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('no-history', 'No history', '[]', null, null, 1000, 1);
+    db.prepare(
+      'INSERT INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
+    ).run('has-history', 'hash-a', 1000);
+
+    initSchema(db);
+
+    const rows = db
+      .prepare<[], { id: string; has_completed_population_run: number }>(
+        'SELECT id, has_completed_population_run FROM saved_searches ORDER BY id'
+      )
+      .all();
+    expect(rows.find((r) => r.id === 'has-history')?.has_completed_population_run).toBe(1);
+    expect(rows.find((r) => r.id === 'no-history')?.has_completed_population_run).toBe(0);
+  });
+
   it('preserves existing data when called on an existing database', () => {
     const db = new Database(':memory:');
     initSchema(db);
@@ -54,6 +122,102 @@ describe('initSchema', () => {
       .prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories')
       .get()?.n;
     expect(count).toBe(1);
+  });
+});
+
+describe('alerted_listings statements', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('counts zero alerts for a saved search with no rows', () => {
+    const db = freshDb();
+    expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(0);
+  });
+
+  it('counts only rows for the given saved search id', () => {
+    const db = freshDb();
+    stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+    stmtInsertAlertedListing(db).run('search-2', 'hash-b', 1000);
+    expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(1);
+  });
+
+  it('reports no existing alert for an unseen (saved search, hash) pair', () => {
+    const db = freshDb();
+    expect(stmtHasAlertedListing(db).get('search-1', 'hash-a')).toBeUndefined();
+  });
+
+  it('reports an existing alert after insertion', () => {
+    const db = freshDb();
+    stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+    expect(stmtHasAlertedListing(db).get('search-1', 'hash-a')).toBeDefined();
+  });
+
+  it('the same hash is independent across two different saved searches', () => {
+    const db = freshDb();
+    stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+    expect(stmtHasAlertedListing(db).get('search-2', 'hash-a')).toBeUndefined();
+  });
+
+  it('inserting the same (saved search, hash) pair twice does not throw or duplicate', () => {
+    const db = freshDb();
+    expect(() => {
+      stmtInsertAlertedListing(db).run('search-1', 'hash-a', 1000);
+      stmtInsertAlertedListing(db).run('search-1', 'hash-a', 2000);
+    }).not.toThrow();
+    expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(1);
+  });
+});
+
+describe('stmtGetOldestAlertEnabledSavedSearch', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('ignores saved searches with should_alert_on_new_listings unset', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Alert search', '[]', null, null, 1000, 1);
+    stmtInsertSavedSearch(db).run('s2', 'Silent search', '[]', null, null, 2000, 0);
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s1');
+  });
+
+  it('returns undefined when no saved search has alerts enabled', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Silent search', '[]', null, null, 1000, 0);
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()).toBeUndefined();
+  });
+
+  it('prefers a saved search that has never run over one with any last_run_at', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Ran once', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(500, 's1');
+    stmtInsertSavedSearch(db).run('s2', 'Never run', '[]', null, null, 2000, 1);
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s2');
+  });
+
+  it('prefers the saved search with the older last_run_at', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Ran recently', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(2000, 's1');
+    stmtInsertSavedSearch(db).run('s2', 'Ran long ago', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(500, 's2');
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s2');
+  });
+
+  it('breaks a tied last_run_at by insertion order', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Inserted first', '[]', null, null, 1000, 1);
+    stmtInsertSavedSearch(db).run('s2', 'Inserted second', '[]', null, null, 1000, 1);
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s1');
   });
 });
 

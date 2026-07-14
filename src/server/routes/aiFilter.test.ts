@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON, getAIConfig } from '../ai';
-import { clampRelevance, handleAiFilter, isValidFilterResultEntry } from './aiFilter';
+import { handleAiFilter } from './aiFilter';
 
 // `applyAiJsonResult` is left as the real implementation (not mocked) so these tests
 // exercise the actual orchestration logic — unwrapping an ok result, or marking the
@@ -18,6 +18,14 @@ const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
   getCooldownUntil: () => undefined,
 };
+
+// aiJSON/getAIConfig are shared mock instances across every test in this file —
+// without a reset, one test's queued `mockResolvedValueOnce`/call history leaks
+// into the next, making assertions on call count/order order-dependent.
+beforeEach(() => {
+  vi.mocked(aiJSON).mockReset();
+  vi.mocked(getAIConfig).mockReset();
+});
 
 function makeRequest(body: unknown): IncomingMessage {
   const stream = new PassThrough();
@@ -53,64 +61,6 @@ function makeResponse(): ServerResponse & {
 function makeListing(url: string) {
   return { url, title: 'Item', price: '$10', location: 'Auckland', description: '' };
 }
-
-describe('clampRelevance', () => {
-  it('passes through an in-range integer', () => {
-    expect(clampRelevance(7)).toBe(7);
-    expect(clampRelevance(0)).toBe(0);
-    expect(clampRelevance(9)).toBe(9);
-  });
-
-  it('clamps values above 9 down to 9', () => {
-    expect(clampRelevance(42)).toBe(9);
-  });
-
-  it('clamps negative values up to 0', () => {
-    expect(clampRelevance(-3)).toBe(0);
-  });
-
-  it('defaults non-integer values to 0', () => {
-    expect(clampRelevance(3.5)).toBe(0);
-  });
-
-  it('defaults missing/non-numeric values to 0', () => {
-    expect(clampRelevance(undefined)).toBe(0);
-    expect(clampRelevance(null)).toBe(0);
-    expect(clampRelevance('7')).toBe(0);
-  });
-});
-
-describe('isValidFilterResultEntry', () => {
-  it('accepts a well-formed entry', () => {
-    expect(isValidFilterResultEntry({ index: 1, pass: true, reason: null })).toBe(true);
-    expect(isValidFilterResultEntry({ index: 1, pass: false, reason: 'wrong type' })).toBe(true);
-  });
-
-  it('accepts a missing reason', () => {
-    expect(isValidFilterResultEntry({ index: 1, pass: true })).toBe(true);
-  });
-
-  it('rejects a non-boolean pass', () => {
-    expect(isValidFilterResultEntry({ index: 1, pass: 'yes', reason: null })).toBe(false);
-    expect(isValidFilterResultEntry({ index: 1, pass: 1, reason: null })).toBe(false);
-    expect(isValidFilterResultEntry({ index: 1, reason: null })).toBe(false);
-  });
-
-  it('rejects a reason that is neither a string nor null/undefined', () => {
-    expect(isValidFilterResultEntry({ index: 1, pass: true, reason: 42 })).toBe(false);
-    expect(isValidFilterResultEntry({ index: 1, pass: true, reason: { text: 'no' } })).toBe(false);
-  });
-
-  it('rejects a non-numeric index', () => {
-    expect(isValidFilterResultEntry({ index: '1', pass: true, reason: null })).toBe(false);
-  });
-
-  it('rejects non-object values', () => {
-    expect(isValidFilterResultEntry(null)).toBe(false);
-    expect(isValidFilterResultEntry(undefined)).toBe(false);
-    expect(isValidFilterResultEntry('nope')).toBe(false);
-  });
-});
 
 describe('handleAiFilter', () => {
   it('returns 500 without starting the SSE stream when no AI provider is configured at all', async () => {

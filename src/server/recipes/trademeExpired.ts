@@ -8,6 +8,7 @@ import type {
   ReserveStatus,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
+import { hashFingerprintParts } from '../alerts';
 import { MAX_PAGES_PER_SEARCH, MAX_RESULTS_PER_URL } from '../constants';
 import { getDb, stmtGetCategoryByLegacyPath } from '../db';
 import { parsePriceValue } from './trademe';
@@ -227,6 +228,18 @@ async function deepSearchAsync(
   onEvent({ type: 'complete' });
 }
 
+// Mirrors trademe.ts's choice (thumbnailUrl over price) for consistency
+// within the same TradeMe CDN family, though these listings are expired
+// (bidding already finalized) so price would be equally stable here.
+function computeAlertFingerprint(listing: Listing): string {
+  return hashFingerprintParts([
+    listing.title,
+    listing.location,
+    listing.description,
+    listing.thumbnailUrl,
+  ]);
+}
+
 export const trademeExpiredRecipe: Recipe = {
   name: LEGACY_PATTERN.name,
   matches(url: string): boolean {
@@ -240,4 +253,5 @@ export const trademeExpiredRecipe: Recipe = {
   extractImplicitFilters,
   quickSearchAsync,
   deepSearchAsync,
+  computeAlertFingerprint,
 };

@@ -37,6 +37,7 @@ function makeStubRecipe(urls: string[], warnings: string[] = []): DiscoverableRe
     quickSearchAsync: async () => {},
     deepSearchAsync: async () => {},
     buildDiscoverUrlsAsync: async () => ({ urls, warnings }),
+    computeAlertFingerprint: () => 'stub-fingerprint',
   };
 }
 

@@ -1,19 +1,18 @@
 // Server-side only — POST /api/quick-search route handler.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Listing } from '../../lib/recipes/base';
 import { requireString } from '../../lib/validate';
 import { cancelSearch, cleanupSearch, isSearchCancelled, registerSearch } from '../cancellation';
-import { cacheAge, getDb, isFresh, stmtGetSearch, stmtSetSearch, ttlForListingCount } from '../db';
+import { getDb } from '../db';
 import { readBody, sendJSON, sse, startSSE } from '../helpers';
 import { getRecipeForUrl } from '../recipes/registry';
+import { runQuickSearchForUrlAsync } from '../services/quickSearch';
 
-// Cached rows may predate the `relevance` field (or any future required
-// field) becoming mandatory on `Listing`. Default it on read so replaying a
-// pre-deploy cache entry can't feed `undefined`/NaN into the sort comparator.
-export function normalizeCachedListings(rawListings: Listing[]): Listing[] {
-  return rawListings.map((listing) => ({ ...listing, relevance: listing.relevance ?? 0 }));
-}
+export type {
+  QuickSearchCacheEvent,
+  QuickSearchRunResult,
+} from '../services/quickSearch';
+export { normalizeCachedListings, runQuickSearchForUrlAsync } from '../services/quickSearch';
 
 export async function handleQuickSearch(
   request: IncomingMessage,
@@ -39,19 +38,6 @@ export async function handleQuickSearch(
   }
 
   const database = getDb();
-  const cachedRow = stmtGetSearch(database).get(url);
-  if (cachedRow && isFresh(cachedRow.cached_at, ttlForListingCount(cachedRow.listing_count))) {
-    const age = cacheAge(cachedRow.cached_at);
-    console.log(`[cache] search hit (${age})`);
-    startSSE(response);
-    sse(response, { type: 'criteria', filters: recipe.extractImplicitFilters(url) });
-    sse(response, { type: 'cached', age });
-    for (const listing of normalizeCachedListings(JSON.parse(cachedRow.data) as Listing[]))
-      sse(response, { type: 'listing', data: listing });
-    sse(response, { type: 'complete' });
-    response.end();
-    return;
-  }
 
   startSSE(response);
   if (searchIdStr) {
@@ -66,21 +52,13 @@ export async function handleQuickSearch(
       /* ignore */
     }
   }, 15000);
-  const listings: Listing[] = [];
-  // Every recipe emits `{ type: 'complete' }` only once it has genuinely finished
-  // searching — a login wall, block, or other failure emits `{ type: 'error' }`
-  // and returns without ever reaching `complete` (see facebook.ts). Gating the
-  // cache write on this instead of `listings.length > 0` lets a genuine
-  // zero-result search be cached as a real success, without caching a
-  // zero-listing error/blocked outcome as if it were one.
-  let didCompleteSuccessfully = false;
 
   try {
-    await recipe.quickSearchAsync(
+    await runQuickSearchForUrlAsync(
       url,
+      recipe,
+      database,
       (event) => {
-        if (event.type === 'listing') listings.push(event.data);
-        if (event.type === 'complete') didCompleteSuccessfully = true;
         try {
           sse(response, event);
         } catch {
@@ -89,10 +67,6 @@ export async function handleQuickSearch(
       },
       isCancelled
     );
-    if (!isCancelled() && didCompleteSuccessfully) {
-      stmtSetSearch(database).run(url, JSON.stringify(listings), Date.now(), listings.length);
-      console.log(`[cache] stored ${listings.length} listings`);
-    }
   } catch (err) {
     if (!isCancelled())
       try {

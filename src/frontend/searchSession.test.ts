@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { handleDiscoverySubmitAsync, loadSavedSearchAsync } from './searchSession';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  handleDiscoverySubmitAsync,
+  handleSavedSearchAlertToggleAsync,
+  loadSavedSearchAsync,
+  renderSavedSearches,
+} from './searchSession';
 import { populateShowControls } from './showDropdown';
-import { resetState } from './state';
+import { resetState, type SavedSearch } from './state';
 import { createUrlCard } from './urlCardRow';
 import { resetUrlCardStore, urlCards } from './urlCardStore';
 
@@ -40,7 +45,11 @@ beforeEach(() => {
     <button id="searchTabBtn" class="active"></button>
     <button id="favouritesTabBtn"></button>
     <div id="searchTabPanel"></div>
-    <div id="savedSearchesPanel" class="hidden"></div>
+    <div id="savedSearchesPanel" class="hidden">
+      <div id="savedSearchesHeaderRow" class="hidden"></div>
+      <div id="savedSearchesList"></div>
+      <span id="savedSearchesCount" class="hidden">0</span>
+    </div>
     <button id="saveCurrentBtn" class="hidden"></button>
   `;
   populateShowControls();
@@ -184,6 +193,7 @@ it('does not let a stale discovery response overwrite a saved search loaded whil
     urls: ['https://example.com/saved'],
     aiFilter: null,
     createdAt: 0,
+    shouldAlertOnNewListings: false,
   });
 
   // The saved search must be visible immediately, not stuck behind the placeholder.
@@ -215,6 +225,7 @@ it('loading a saved search with includeSoldItems restores the checkbox, but the 
     urls: [],
     aiFilter: null,
     createdAt: 0,
+    shouldAlertOnNewListings: false,
     discoverInputs: {
       prompt: 'lamp',
       maxPrice: 50,
@@ -227,4 +238,126 @@ it('loading a saved search with includeSoldItems restores the checkbox, but the 
     true
   );
   expect(document.getElementById('showSoldRow')?.classList.contains('hidden')).toBe(true);
+});
+
+function makeSavedSearch(overrides: Partial<SavedSearch> = {}): SavedSearch {
+  return {
+    id: 'saved-1',
+    name: 'saved search',
+    urls: ['https://example.com/saved'],
+    aiFilter: null,
+    createdAt: 0,
+    shouldAlertOnNewListings: false,
+    ...overrides,
+  };
+}
+
+describe('renderSavedSearches', () => {
+  it('hides the header row when there are no saved searches', () => {
+    renderSavedSearches([]);
+
+    expect(document.getElementById('savedSearchesHeaderRow')?.classList.contains('hidden')).toBe(
+      true
+    );
+  });
+
+  it('shows the header row and a checkbox reflecting shouldAlertOnNewListings for each row', () => {
+    renderSavedSearches([
+      makeSavedSearch({ id: 'a', shouldAlertOnNewListings: true }),
+      makeSavedSearch({ id: 'b', shouldAlertOnNewListings: false }),
+    ]);
+
+    expect(document.getElementById('savedSearchesHeaderRow')?.classList.contains('hidden')).toBe(
+      false
+    );
+    const rows = document.querySelectorAll('.saved-search-row');
+    expect(rows).toHaveLength(2);
+    expect(
+      (rows[0].querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement).checked
+    ).toBe(true);
+    expect(
+      (rows[1].querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement).checked
+    ).toBe(false);
+  });
+
+  it('gives the alert checkbox an accessible name', () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a' })]);
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    expect(checkbox.getAttribute('aria-label')).toBe('Alert on new listings');
+    expect(checkbox.getAttribute('title')).toBe('Alert on new listings');
+  });
+});
+
+describe('handleSavedSearchAlertToggleAsync', () => {
+  it('PATCHes the toggled row id and checked state', async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a', shouldAlertOnNewListings: false })]);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    checkbox.checked = true;
+    await handleSavedSearchAlertToggleAsync({ target: checkbox } as unknown as Event);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/saved-searches/a',
+      expect.objectContaining({ method: 'PATCH' })
+    );
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody).toEqual({ shouldAlertOnNewListings: true });
+  });
+
+  it('reverts the checkbox when the PATCH request fails', async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a', shouldAlertOnNewListings: false })]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    checkbox.checked = true;
+    await handleSavedSearchAlertToggleAsync({ target: checkbox } as unknown as Event);
+
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it('disables the checkbox while the PATCH request is in flight and re-enables it once it resolves', async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a', shouldAlertOnNewListings: false })]);
+    let resolveFetch!: (value: unknown) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveFetch = resolve;
+          })
+      )
+    );
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    checkbox.checked = true;
+    const togglePromise = handleSavedSearchAlertToggleAsync({
+      target: checkbox,
+    } as unknown as Event);
+
+    // Fetch hasn't resolved yet — assert on the mid-flight state.
+    expect(checkbox.disabled).toBe(true);
+
+    resolveFetch({ ok: true });
+    await togglePromise;
+
+    expect(checkbox.disabled).toBe(false);
+  });
+
+  it('reverts the checkbox and resolves cleanly (no unhandled rejection) when the fetch itself rejects', async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a', shouldAlertOnNewListings: false })]);
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    checkbox.checked = true;
+
+    await expect(
+      handleSavedSearchAlertToggleAsync({ target: checkbox } as unknown as Event)
+    ).resolves.toBeUndefined();
+
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.disabled).toBe(false);
+  });
 });

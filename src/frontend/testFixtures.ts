@@ -5,8 +5,10 @@
 // produces a compiler error here instead of silently untyped test data.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Listing } from '../lib/recipes/base';
+import { makeListing } from '../lib/testFixtures';
 import type { ListingItem } from './state';
+
+export { makeListing } from '../lib/testFixtures';
 
 // index.html is the real DOM initApp() is written against — reading it here
 // (rather than hand-rolling a fixture) keeps test fixtures from drifting out
@@ -20,19 +22,6 @@ export function loadIndexHtmlBodyFixture(): string {
   const bodyMatch = indexHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   if (!bodyMatch) throw new Error('index.html fixture: <body> tag not found');
   return bodyMatch[1].replace(/<script[\s\S]*?<\/script>/gi, '');
-}
-
-export function makeListing(overrides: Partial<Listing> = {}): Listing {
-  return {
-    source: 'trademe',
-    title: 'Test listing',
-    price: 100,
-    location: 'Wellington',
-    url: 'https://example.com/listing/1',
-    isAuction: false,
-    relevance: 0,
-    ...overrides,
-  };
 }
 
 export function makeListingItem(overrides: Partial<ListingItem> = {}): ListingItem {
