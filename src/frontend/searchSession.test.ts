@@ -279,6 +279,14 @@ describe('renderSavedSearches', () => {
       (rows[1].querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement).checked
     ).toBe(false);
   });
+
+  it('gives the alert checkbox an accessible name', () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a' })]);
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    expect(checkbox.getAttribute('aria-label')).toBe('Alert on new listings');
+    expect(checkbox.getAttribute('title')).toBe('Alert on new listings');
+  });
 });
 
 describe('handleSavedSearchAlertToggleAsync', () => {

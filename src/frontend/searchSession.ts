@@ -68,7 +68,7 @@ export function renderSavedSearches(searches: SavedSearch[]): void {
     <div class="saved-search-row" data-id="${esc(savedSearch.id)}">
       <a class="saved-search-name load-saved-btn" href="#" title="${esc(savedSearch.name)}">${esc(savedSearch.name)}</a>
       <label class="saved-search-alert-cell">
-        <input type="checkbox" class="alert-on-new-listings-checkbox" ${savedSearch.shouldAlertOnNewListings ? 'checked' : ''} />
+        <input type="checkbox" class="alert-on-new-listings-checkbox" title="Alert on new listings" aria-label="Alert on new listings" ${savedSearch.shouldAlertOnNewListings ? 'checked' : ''} />
       </label>
       <button class="btn icon-btn delete-saved-btn saved-search-col-delete" type="button" title="Delete">${X_ICON}</button>
     </div>
