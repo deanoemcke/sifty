@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { acquireSchedulerLock, releaseSchedulerLock } from './schedulerLock';
+import { acquireSchedulerLock, LOCK_STALE_AGE_MS, releaseSchedulerLock } from './schedulerLock';
 
 function tempLockPath(): string {
   return path.join(os.tmpdir(), `sifty-scheduler-lock-test-${Date.now()}-${Math.random()}.lock`);
@@ -68,6 +68,32 @@ describe('acquireSchedulerLock', () => {
     const result = acquireSchedulerLock(lockPath);
 
     expect(result).toEqual({ acquired: true });
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
+  });
+
+  it('treats a lock file held by a live process as stale once it exceeds the max age, removes it, and acquires the lock', () => {
+    lockPath = tempLockPath();
+    // process.pid is alive for the duration of this test, so liveness alone
+    // would never let this lock be reclaimed — only its age should.
+    fs.writeFileSync(lockPath, String(process.pid));
+    const longAgo = Date.now() - (LOCK_STALE_AGE_MS + 60_000);
+    fs.utimesSync(lockPath, longAgo / 1000, longAgo / 1000);
+
+    const result = acquireSchedulerLock(lockPath);
+
+    expect(result).toEqual({ acquired: true });
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
+  });
+
+  it('does not treat a lock file held by a live process as stale while within the max age', () => {
+    lockPath = tempLockPath();
+    fs.writeFileSync(lockPath, String(process.pid));
+    const recently = Date.now() - 1000;
+    fs.utimesSync(lockPath, recently / 1000, recently / 1000);
+
+    const result = acquireSchedulerLock(lockPath);
+
+    expect(result.acquired).toBe(false);
     expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
   });
 });

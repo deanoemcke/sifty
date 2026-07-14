@@ -9,6 +9,12 @@ import path from 'node:path';
 
 export const DEFAULT_SCHEDULER_LOCK_PATH = path.resolve(__dirname, '../../.cache/scheduler.lock');
 
+// A lock older than this is treated as stale regardless of whether its owning
+// pid is still alive, so a wedged process (hung network call, deadlock, etc.)
+// can't hold the lock forever and permanently disable future scheduler runs.
+// Set generously above any expected single scheduler run.
+export const LOCK_STALE_AGE_MS = 30 * 60 * 1000;
+
 export type SchedulerLockResult = { acquired: true } | { acquired: false; reason: string };
 
 function isProcessAlive(pid: number): boolean {
@@ -28,18 +34,24 @@ function readLockPid(lockPath: string): number | null {
   return Number.isInteger(pid) ? pid : null;
 }
 
+function isLockStaleByAge(lockPath: string): boolean {
+  const { mtimeMs } = fs.statSync(lockPath);
+  return Date.now() - mtimeMs > LOCK_STALE_AGE_MS;
+}
+
 function removeStaleLockIfPresent(lockPath: string): void {
   if (!fs.existsSync(lockPath)) return;
   const pid = readLockPid(lockPath);
-  if (pid !== null && isProcessAlive(pid)) return;
+  if (pid !== null && isProcessAlive(pid) && !isLockStaleByAge(lockPath)) return;
   fs.unlinkSync(lockPath);
 }
 
 /**
  * Attempts to acquire the scheduler lock at `lockPath`, writing the current
  * process's pid into the file so a stale lock can be diagnosed. If a lock
- * file already exists for a pid that is no longer running, it is treated as
- * stale, removed, and the lock is acquired.
+ * file already exists for a pid that is no longer running, or the lock file
+ * is older than `LOCK_STALE_AGE_MS` (even if its pid is still alive — e.g. a
+ * wedged process), it is treated as stale, removed, and the lock is acquired.
  */
 export function acquireSchedulerLock(lockPath: string): SchedulerLockResult {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
