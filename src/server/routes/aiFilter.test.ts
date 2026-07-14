@@ -1,9 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON, getAIConfig } from '../ai';
-import { clampRelevance, handleAiFilter, isValidFilterResultEntry } from './aiFilter';
+import {
+  clampRelevance,
+  handleAiFilter,
+  isValidFilterResultEntry,
+  runAiFilterBatchesAsync,
+} from './aiFilter';
 
 // `applyAiJsonResult` is left as the real implementation (not mocked) so these tests
 // exercise the actual orchestration logic — unwrapping an ok result, or marking the
@@ -18,6 +23,14 @@ const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
   getCooldownUntil: () => undefined,
 };
+
+// aiJSON/getAIConfig are shared mock instances across every test in this file —
+// without a reset, one test's queued `mockResolvedValueOnce`/call history leaks
+// into the next, making assertions on call count/order order-dependent.
+beforeEach(() => {
+  vi.mocked(aiJSON).mockReset();
+  vi.mocked(getAIConfig).mockReset();
+});
 
 function makeRequest(body: unknown): IncomingMessage {
   const stream = new PassThrough();
@@ -109,6 +122,78 @@ describe('isValidFilterResultEntry', () => {
     expect(isValidFilterResultEntry(null)).toBe(false);
     expect(isValidFilterResultEntry(undefined)).toBe(false);
     expect(isValidFilterResultEntry('nope')).toBe(false);
+  });
+});
+
+describe('runAiFilterBatchesAsync', () => {
+  const CONFIG_A = {
+    url: 'a',
+    model: 'm',
+    apiKey: 'k',
+    providerKey: 'a',
+    cooldownStore: STUB_COOLDOWN_STORE,
+  };
+
+  it('returns the flattened results without any callback', async () => {
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+    });
+
+    const results = await runAiFilterBatchesAsync(
+      [makeListing('https://example.com/1')],
+      'laptop',
+      STUB_COOLDOWN_STORE
+    );
+
+    expect(results).toEqual([
+      { url: 'https://example.com/1', pass: true, reason: null, relevance: 7 },
+    ]);
+  });
+
+  it('invokes onBatchResult per completed batch', async () => {
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+    });
+    const onBatchResult = vi.fn();
+
+    await runAiFilterBatchesAsync(
+      [makeListing('https://example.com/1')],
+      'laptop',
+      STUB_COOLDOWN_STORE,
+      onBatchResult
+    );
+
+    expect(onBatchResult).toHaveBeenCalledWith([
+      { url: 'https://example.com/1', pass: true, reason: null, relevance: 7 },
+    ]);
+  });
+
+  it('invokes onBatchError for a failed batch instead of throwing, and does not abort other batches', async () => {
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({
+        kind: 'ok',
+        value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+      });
+    const onBatchError = vi.fn();
+
+    // BATCH_SIZE is 50 — 51 listings forces a second batch.
+    const listings = Array.from({ length: 51 }, (_, i) => makeListing(`https://example.com/${i}`));
+    const results = await runAiFilterBatchesAsync(
+      listings,
+      'laptop',
+      STUB_COOLDOWN_STORE,
+      undefined,
+      onBatchError
+    );
+
+    expect(onBatchError).toHaveBeenCalledWith('boom');
+    expect(results).toHaveLength(1);
   });
 });
 

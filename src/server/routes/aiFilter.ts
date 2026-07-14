@@ -42,46 +42,37 @@ export function isValidFilterResultEntry(value: unknown): value is RawFilterResu
   );
 }
 
-export async function handleAiFilter(
-  request: IncomingMessage,
-  response: ServerResponse,
-  cooldownStore: ProviderCooldownStore
-): Promise<void> {
-  const body = await readBody(request).catch(() => null);
-  const rawBody = (body ?? {}) as Record<string, unknown>;
+export type AiFilterListing = {
+  url: string;
+  title: string;
+  price: string;
+  location: string;
+  description: string;
+};
 
-  let listings: Array<{
-    url: string;
-    title: string;
-    price: string;
-    location: string;
-    description: string;
-  }>;
-  let prompt: string;
-  try {
-    const rawListings = requireArray(rawBody.listings, 'listings');
-    // Each item is trusted as the expected shape — url presence is the only safety-critical field
-    listings = rawListings.map((item, listingIndex) =>
-      requireListingUrl(item, listingIndex)
-    ) as typeof listings;
-    prompt = requireString(rawBody.prompt, 'prompt');
-  } catch (err) {
-    sendJSON(response, 400, { error: (err as Error).message });
-    return;
-  }
+export type FilterResultEntry = {
+  url: string;
+  pass: boolean;
+  reason: string | null;
+  relevance: number;
+};
 
-  try {
-    getAIConfig(cooldownStore); // fail fast before opening the SSE stream if no provider is configured at all
-  } catch (err) {
-    sendJSON(response, 500, { error: (err as Error).message });
-    return;
-  }
-
-  startSSE(response);
+// Shared core reused by both the SSE route below and the headless scheduler
+// (src/server/scheduler.ts): batches listings, calls the LLM per batch, and
+// parses/validates the response — everything except how a caller wants to
+// surface progress (SSE per batch vs. just the final array).
+export async function runAiFilterBatchesAsync(
+  listings: AiFilterListing[],
+  prompt: string,
+  cooldownStore: ProviderCooldownStore,
+  onBatchResult?: (results: FilterResultEntry[]) => void,
+  onBatchError?: (message: string) => void
+): Promise<FilterResultEntry[]> {
   const queue = new ConcurrencyQueue(3);
+  const allResults: FilterResultEntry[] = [];
   let rejectedCount = 0;
 
-  const batches: (typeof listings)[] = [];
+  const batches: AiFilterListing[][] = [];
   for (let offset = 0; offset < listings.length; offset += BATCH_SIZE) {
     batches.push(listings.slice(offset, offset + BATCH_SIZE));
   }
@@ -128,14 +119,55 @@ export async function handleAiFilter(
             }))
             .filter((resultItem) => resultItem.url);
           rejectedCount += results.filter((resultItem) => !resultItem.pass).length;
-          sse(response, { type: 'result', results });
+          allResults.push(...results);
+          onBatchResult?.(results);
         } catch (err) {
-          sse(response, { type: 'error', message: (err as Error).message });
+          onBatchError?.((err as Error).message);
         }
       })
     )
   );
 
   console.log(`[ai-filter] checked ${listings.length} listings, ${rejectedCount} rejected`);
+  return allResults;
+}
+
+export async function handleAiFilter(
+  request: IncomingMessage,
+  response: ServerResponse,
+  cooldownStore: ProviderCooldownStore
+): Promise<void> {
+  const body = await readBody(request).catch(() => null);
+  const rawBody = (body ?? {}) as Record<string, unknown>;
+
+  let listings: AiFilterListing[];
+  let prompt: string;
+  try {
+    const rawListings = requireArray(rawBody.listings, 'listings');
+    // Each item is trusted as the expected shape — url presence is the only safety-critical field
+    listings = rawListings.map((item, listingIndex) =>
+      requireListingUrl(item, listingIndex)
+    ) as typeof listings;
+    prompt = requireString(rawBody.prompt, 'prompt');
+  } catch (err) {
+    sendJSON(response, 400, { error: (err as Error).message });
+    return;
+  }
+
+  try {
+    getAIConfig(cooldownStore); // fail fast before opening the SSE stream if no provider is configured at all
+  } catch (err) {
+    sendJSON(response, 500, { error: (err as Error).message });
+    return;
+  }
+
+  startSSE(response);
+  await runAiFilterBatchesAsync(
+    listings,
+    prompt,
+    cooldownStore,
+    (results) => sse(response, { type: 'result', results }),
+    (message) => sse(response, { type: 'error', message })
+  );
   response.end();
 }
