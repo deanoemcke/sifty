@@ -148,6 +148,76 @@ describe('runSchedulerAsync', () => {
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
   });
 
+  it('does not re-enter population mode for a saved search whose alerted_listings rows were separately cleared, even though the row count is back to zero', async () => {
+    // Regression test: isPopulationRun must be read from the persisted
+    // has_completed_population_run flag, not re-derived from
+    // stmtCountAlertsForSavedSearch — otherwise any unrelated event that
+    // drops the count back to zero (a zero-row run, manual cleanup, etc.)
+    // makes the next genuinely-new listing look like population-run
+    // backfill and silently swallows the alert instead of notifying.
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
+
+    // Simulate the count dropping back to zero for reasons unrelated to
+    // population state (e.g. a cleanup job, or the earlier bug this column
+    // fixes) — the persisted flag must still say the population run is done.
+    db.prepare('DELETE FROM alerted_listings WHERE saved_search_id = ?').run(searchId);
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    // Only the genuinely new listing is scraped this run (the seed listing's
+    // own alerted_listings row was cleared above too, but that's incidental
+    // to this test — what's under test is that has_completed_population_run
+    // alone, not the row count, decides population vs. notify mode).
+    const newListing = makeListing({ title: 'New chair', url: 'https://example.com/new' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([newListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('New chair');
+  });
+
+  it('rolls back the entire population baseline insert if an error occurs partway through, leaving no partial rows and the flag unset for a clean retry', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const listingA = makeListing({ title: 'Chair', url: 'https://example.com/1' });
+    const listingB = makeListing({ title: 'Table', url: 'https://example.com/2' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([listingA, listingB]));
+
+    let nowCallCount = 0;
+    const now = () => {
+      nowCallCount++;
+      if (nowCallCount === 2) throw new Error('simulated crash mid-population');
+      return 1000;
+    };
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now,
+    });
+
+    // Neither listing was recorded — the transaction rolled back rather
+    // than leaving the first listing's row committed on its own.
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(0);
+  });
+
   it('does not re-notify for a listing that was already alerted', async () => {
     const db = freshDb();
     insertAlertSearch(db);

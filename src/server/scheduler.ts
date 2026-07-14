@@ -8,10 +8,10 @@ import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import {
   type SavedSearchRow,
-  stmtCountAlertsForSavedSearch,
   stmtGetOldestAlertEnabledSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
+  stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { getRecipeForUrl } from './recipes/registry';
@@ -107,8 +107,14 @@ async function processSavedSearchAsync(
   const summary: SavedSearchRunSummary = {
     savedSearchId: row.id,
     savedSearchName: row.name,
-    // Captured once, up front, so it can't flip mid-run as rows get inserted below.
-    isPopulationRun: stmtCountAlertsForSavedSearch(database).get(row.id)?.n === 0,
+    // Read from the persisted flag rather than re-derived from
+    // alerted_listings row counts: a run that legitimately inserts zero rows
+    // (a recipe error, the AI filter rejecting every candidate, a transient
+    // empty scrape) would otherwise leave the count at 0 forever, making the
+    // *next* run — possibly the one that finds a genuine new listing —
+    // misclassify itself as still-populating and silently swallow that
+    // listing's alert instead of notifying.
+    isPopulationRun: row.has_completed_population_run === 0,
     listingsFoundCount: 0,
     soldSkippedCount: 0,
     aiFilteredOutCount: 0,
@@ -172,23 +178,37 @@ async function processSavedSearchAsync(
     summary.aiFilteredOutCount = beforeCount - candidates.length;
   }
 
-  for (const [hash, listing] of candidates) {
-    if (stmtHasAlertedListing(database).get(row.id, hash)) {
-      summary.alreadyAlertedCount++;
-      continue;
-    }
-    if (summary.isPopulationRun) {
-      stmtInsertAlertedListing(database).run(row.id, hash, now());
-      summary.populatedCount++;
-      continue;
-    }
-    try {
-      await sendNotificationAsync(formatAlertMessage(row.name, listing));
-      stmtInsertAlertedListing(database).run(row.id, hash, now());
-      summary.notifiedCount++;
-    } catch (err) {
-      // Not recorded as alerted — retried on the next scheduler run.
-      summary.errors.push(`Notification failed for ${listing.url}: ${(err as Error).message}`);
+  if (summary.isPopulationRun) {
+    // The baseline insert and the "population run done" flag must land
+    // together or not at all: if this were split across two statements, a
+    // mid-run crash could commit some baseline rows and never set the flag
+    // (next run redoes the notify-suppressed backfill — harmless), or set
+    // the flag without a complete baseline (next run wrongly notifies on
+    // pre-existing listings that were never actually recorded). Wrapping
+    // both in one transaction makes a crash all-or-nothing: either the full
+    // baseline plus the flag commit, or neither does and the next run
+    // safely retries the whole population from scratch (stmtInsertAlertedListing
+    // is INSERT OR IGNORE, so redoing it is idempotent).
+    const insertPopulationBaseline = database.transaction((rows: [string, Listing][]) => {
+      for (const [hash] of rows) stmtInsertAlertedListing(database).run(row.id, hash, now());
+      stmtMarkPopulationRunComplete(database).run(row.id);
+    });
+    insertPopulationBaseline(candidates);
+    summary.populatedCount = candidates.length;
+  } else {
+    for (const [hash, listing] of candidates) {
+      if (stmtHasAlertedListing(database).get(row.id, hash)) {
+        summary.alreadyAlertedCount++;
+        continue;
+      }
+      try {
+        await sendNotificationAsync(formatAlertMessage(row.name, listing));
+        stmtInsertAlertedListing(database).run(row.id, hash, now());
+        summary.notifiedCount++;
+      } catch (err) {
+        // Not recorded as alerted — retried on the next scheduler run.
+        summary.errors.push(`Notification failed for ${listing.url}: ${(err as Error).message}`);
+      }
     }
   }
 

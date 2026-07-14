@@ -61,6 +61,56 @@ describe('initSchema', () => {
     expect(columnNames(db, 'saved_searches')).toContain('last_run_at');
   });
 
+  it('saved_searches has a has_completed_population_run column, added idempotently', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    expect(columnNames(db, 'saved_searches')).toContain('has_completed_population_run');
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'saved_searches')).toContain('has_completed_population_run');
+  });
+
+  it('backfills has_completed_population_run = 1 for existing rows with alert history, and 0 for rows without, when migrating an existing on-disk database', () => {
+    // Simulates a pre-migration on-disk schema — no has_completed_population_run column yet.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE saved_searches (
+        id                          TEXT PRIMARY KEY,
+        name                        TEXT NOT NULL,
+        urls                        TEXT NOT NULL,
+        discover_inputs             TEXT,
+        ai_filter                   TEXT,
+        created_at                  INTEGER NOT NULL,
+        should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0,
+        last_run_at                 INTEGER
+      );
+      CREATE TABLE alerted_listings (
+        saved_search_id TEXT NOT NULL,
+        listing_hash     TEXT NOT NULL,
+        created_at       INTEGER NOT NULL,
+        PRIMARY KEY (saved_search_id, listing_hash)
+      );
+    `);
+    db.prepare(
+      'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('has-history', 'Has history', '[]', null, null, 1000, 1);
+    db.prepare(
+      'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('no-history', 'No history', '[]', null, null, 1000, 1);
+    db.prepare(
+      'INSERT INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
+    ).run('has-history', 'hash-a', 1000);
+
+    initSchema(db);
+
+    const rows = db
+      .prepare<[], { id: string; has_completed_population_run: number }>(
+        'SELECT id, has_completed_population_run FROM saved_searches ORDER BY id'
+      )
+      .all();
+    expect(rows.find((r) => r.id === 'has-history')?.has_completed_population_run).toBe(1);
+    expect(rows.find((r) => r.id === 'no-history')?.has_completed_population_run).toBe(0);
+  });
+
   it('preserves existing data when called on an existing database', () => {
     const db = new Database(':memory:');
     initSchema(db);

@@ -29,7 +29,8 @@ export function initSchema(database: Database.Database): void {
       discover_inputs             TEXT,
       ai_filter                   TEXT,
       created_at                  INTEGER NOT NULL,
-      should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0
+      should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0,
+      has_completed_population_run INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS trademe_categories (
       slug        TEXT PRIMARY KEY,
@@ -56,6 +57,22 @@ export function initSchema(database: Database.Database): void {
     .all();
   if (!savedSearchColumns.some((column) => column.name === 'last_run_at')) {
     database.exec('ALTER TABLE saved_searches ADD COLUMN last_run_at INTEGER');
+  }
+  if (!savedSearchColumns.some((column) => column.name === 'has_completed_population_run')) {
+    database.exec(
+      'ALTER TABLE saved_searches ADD COLUMN has_completed_population_run INTEGER NOT NULL DEFAULT 0'
+    );
+    // Backfill: a pre-migration row that already has alert history has, by
+    // definition, already been through (the old, derived version of) a
+    // population run — mark it done so existing installs keep notifying
+    // normally instead of every history-bearing search silently re-entering
+    // population mode (and swallowing its next genuinely new listing) the
+    // moment this column defaults everyone to 0.
+    database.exec(`
+      UPDATE saved_searches
+      SET has_completed_population_run = 1
+      WHERE id IN (SELECT DISTINCT saved_search_id FROM alerted_listings)
+    `);
   }
 }
 
@@ -109,6 +126,7 @@ export type SavedSearchRow = {
   created_at: number;
   should_alert_on_new_listings: number;
   last_run_at: number | null;
+  has_completed_population_run: number;
 };
 export type CategoryRow = { slug: string; display: string };
 export type CategoryLegacyPathRow = { legacy_path: string };
@@ -154,12 +172,12 @@ export function stmtCountDetails(database: Database.Database) {
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at FROM saved_searches ORDER BY created_at DESC'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches ORDER BY created_at DESC'
   );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at FROM saved_searches WHERE id = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches WHERE id = ?'
   );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
@@ -172,7 +190,7 @@ export function stmtInsertSavedSearch(database: Database.Database) {
 // (insertion order) breaks ties between rows with equal last_run_at.
 export function stmtGetOldestAlertEnabledSavedSearch(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at ' +
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run ' +
       'FROM saved_searches WHERE should_alert_on_new_listings = 1 ' +
       'ORDER BY last_run_at ASC, rowid ASC LIMIT 1'
   );
@@ -187,6 +205,11 @@ export function stmtUpdateSavedSearchAlert(database: Database.Database) {
 }
 export function stmtUpdateSavedSearchLastRunAt(database: Database.Database) {
   return database.prepare('UPDATE saved_searches SET last_run_at = ? WHERE id = ?');
+}
+export function stmtMarkPopulationRunComplete(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET has_completed_population_run = 1 WHERE id = ?'
+  );
 }
 export function stmtCountAlertsForSavedSearch(database: Database.Database) {
   return database.prepare<[string], CountRow>(
