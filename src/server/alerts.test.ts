@@ -8,10 +8,16 @@ describe('computeListingAlertHash', () => {
     expect(computeListingAlertHash(listing)).toBe(computeListingAlertHash(listing));
   });
 
-  it('is the same for a listing relisted under a different URL id/query string', () => {
-    const original = makeListing({ url: 'https://example.com/listing/111?ref=facebook' });
-    const relisted = makeListing({ url: 'https://example.com/listing/111?ref=trademe' });
+  it('is the same for a listing relisted under a different URL id (a new listing ID in the path, not just the query string)', () => {
+    const original = makeListing({ url: 'https://example.com/marketplace/listing/111' });
+    const relisted = makeListing({ url: 'https://example.com/marketplace/listing/999' });
     expect(computeListingAlertHash(original)).toBe(computeListingAlertHash(relisted));
+  });
+
+  it('ignores the URL entirely — same content, wildly different URL, same hash', () => {
+    const a = makeListing({ url: 'https://trademe.co.nz/a/marketplace/for-sale/listing/1' });
+    const b = makeListing({ url: 'https://facebook.com/marketplace/item/999999999' });
+    expect(computeListingAlertHash(a)).toBe(computeListingAlertHash(b));
   });
 
   it('differs when the title differs', () => {
@@ -20,10 +26,28 @@ describe('computeListingAlertHash', () => {
     expect(computeListingAlertHash(a)).not.toBe(computeListingAlertHash(b));
   });
 
-  it('differs when the base URL differs (a genuinely different listing)', () => {
-    const a = makeListing({ url: 'https://example.com/listing/1' });
-    const b = makeListing({ url: 'https://example.com/listing/2' });
+  it('differs when the location differs', () => {
+    const a = makeListing({ location: 'Wellington' });
+    const b = makeListing({ location: 'Auckland' });
     expect(computeListingAlertHash(a)).not.toBe(computeListingAlertHash(b));
+  });
+
+  it('differs when the price differs', () => {
+    const a = makeListing({ price: 50 });
+    const b = makeListing({ price: 75 });
+    expect(computeListingAlertHash(a)).not.toBe(computeListingAlertHash(b));
+  });
+
+  it('differs when the description differs', () => {
+    const a = makeListing({ description: 'Barely used' });
+    const b = makeListing({ description: 'Brand new' });
+    expect(computeListingAlertHash(a)).not.toBe(computeListingAlertHash(b));
+  });
+
+  it('treats an absent description the same as an empty-string description', () => {
+    const a = makeListing({ description: undefined });
+    const b = makeListing({ description: '' });
+    expect(computeListingAlertHash(a)).toBe(computeListingAlertHash(b));
   });
 
   it('returns a compact hex string, not the raw composite key', () => {
