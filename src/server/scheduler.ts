@@ -124,6 +124,11 @@ async function processSavedSearchAsync(
     errors: [],
   };
 
+  console.log(
+    `[scheduler] processing "${row.name}" (${urls.length} url(s))` +
+      (summary.isPopulationRun ? ' — population run' : '')
+  );
+
   // Deduped by content hash, not URL — the same physical listing can appear
   // via more than one of this saved search's own URLs.
   const listingsByHash = new Map<string, Listing>();
@@ -146,6 +151,7 @@ async function processSavedSearchAsync(
     }
   }
   summary.listingsFoundCount = listingsByHash.size;
+  console.log(`[scheduler] "${row.name}": scraped ${summary.listingsFoundCount} listing(s)`);
 
   let candidates = [...listingsByHash.entries()].filter(([, listing]) => !listing.isSold);
   summary.soldSkippedCount = listingsByHash.size - candidates.length;
@@ -176,6 +182,9 @@ async function processSavedSearchAsync(
     const beforeCount = candidates.length;
     candidates = candidates.filter(([, listing]) => passedUrls.has(listing.url));
     summary.aiFilteredOutCount = beforeCount - candidates.length;
+    console.log(
+      `[scheduler] "${row.name}": AI filter passed ${candidates.length}/${beforeCount} listing(s)`
+    );
   }
 
   if (summary.isPopulationRun) {
@@ -195,6 +204,9 @@ async function processSavedSearchAsync(
     });
     insertPopulationBaseline(candidates);
     summary.populatedCount = candidates.length;
+    console.log(
+      `[scheduler] "${row.name}": population run complete — recorded ${summary.populatedCount} baseline listing(s), no notifications sent`
+    );
   } else {
     for (const [hash, listing] of candidates) {
       if (stmtHasAlertedListing(database).get(row.id, hash)) {
@@ -202,6 +214,9 @@ async function processSavedSearchAsync(
         continue;
       }
       try {
+        console.log(
+          `[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`
+        );
         await sendNotificationAsync(formatAlertMessage(row.name, listing));
         stmtInsertAlertedListing(database).run(row.id, hash, now());
         summary.notifiedCount++;
@@ -209,6 +224,9 @@ async function processSavedSearchAsync(
         // Not recorded as alerted — retried on the next scheduler run.
         summary.errors.push(`Notification failed for ${listing.url}: ${(err as Error).message}`);
       }
+    }
+    if (summary.notifiedCount === 0) {
+      console.log(`[scheduler] "${row.name}": no new listings found`);
     }
   }
 
