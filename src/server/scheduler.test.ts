@@ -18,7 +18,7 @@ import {
   stmtInsertSavedSearch,
 } from './db';
 import { getRecipeForUrl } from './recipes/registry';
-import { runSchedulerAsync } from './scheduler';
+import { AI_FILTER_TIMEOUT_MS, runSchedulerAsync, SCRAPE_TIMEOUT_MS } from './scheduler';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -65,6 +65,18 @@ function makeStubRecipe(listings: Listing[]): Recipe {
       for (const listing of listings) onEvent({ type: 'listing', data: listing });
       onEvent({ type: 'complete' });
     },
+    deepSearchAsync: async () => {},
+  };
+}
+
+// Simulates a recipe stuck on a login wall / hung socket / unresolved
+// promise — its quickSearchAsync call never settles either way.
+function makeHangingRecipe(): Recipe {
+  return {
+    name: 'stub-hang',
+    matches: () => true,
+    extractImplicitFilters: () => [],
+    quickSearchAsync: () => new Promise(() => {}),
     deepSearchAsync: async () => {},
   };
 }
@@ -528,5 +540,60 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(summary.searches).toHaveLength(0);
+  });
+
+  it('times out a stalled scrape instead of hanging forever, recording an error and completing the run', async () => {
+    vi.useFakeTimers();
+    try {
+      const db = freshDb();
+      insertAlertSearch(db);
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeHangingRecipe());
+
+      const summaryPromise = runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: vi.fn(),
+      });
+      await vi.advanceTimersByTimeAsync(SCRAPE_TIMEOUT_MS);
+      const summary = await summaryPromise;
+
+      expect(summary.searches).toHaveLength(1);
+      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      expect(summary.searches[0].listingsFoundCount).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('times out a stalled AI filter run instead of hanging forever, recording an error and completing the run', async () => {
+    vi.useFakeTimers();
+    try {
+      const db = freshDb();
+      insertAlertSearch(db, { aiFilter: 'laptop' });
+      const listing = makeListing({ title: 'Gaming laptop', url: 'https://example.com/pass' });
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([listing]));
+      vi.mocked(getAIConfig).mockReturnValue({
+        url: 'a',
+        model: 'm',
+        apiKey: 'k',
+        providerKey: 'a',
+        cooldownStore: STUB_COOLDOWN_STORE,
+      });
+      // Simulates a hung AI provider call — aiJSON's own promise never settles.
+      vi.mocked(aiJSON).mockImplementation(() => new Promise(() => {}));
+
+      const summaryPromise = runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: vi.fn(),
+      });
+      await vi.advanceTimersByTimeAsync(AI_FILTER_TIMEOUT_MS);
+      const summary = await summaryPromise;
+
+      expect(summary.searches).toHaveLength(1);
+      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

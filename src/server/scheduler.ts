@@ -16,8 +16,43 @@ import {
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { getRecipeForUrl } from './recipes/registry';
-import { type AiFilterListing, runAiFilterBatchesAsync } from './services/aiFilter';
+import {
+  type AiFilterListing,
+  type FilterResultEntry,
+  runAiFilterBatchesAsync,
+} from './services/aiFilter';
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
+
+// Upper bound on a single URL's quick search. The scheduler runs unattended
+// via cron with no human to notice a hang — a stalled recipe (login wall,
+// stuck socket, unresolved promise) must not be able to wedge the run
+// forever and hold the scheduler lock indefinitely (see schedulerLock.ts).
+export const SCRAPE_TIMEOUT_MS = 60_000;
+
+// Upper bound on the whole AI-filter batch run for one saved search. Each
+// underlying aiJSON call already has its own internal budget (ai.ts's
+// TOTAL_TIMEOUT_MS), but batches run concurrently across multiple providers
+// and retries, so this is a generous outer bound rather than a tight one.
+export const AI_FILTER_TIMEOUT_MS = 120_000;
+
+async function withTimeoutAsync<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([promise, timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export type SchedulerNotifier = (message: string) => Promise<void>;
 
@@ -94,7 +129,11 @@ async function processSavedSearchAsync(
       continue;
     }
     try {
-      const { listings } = await runQuickSearchForUrlAsync(url, recipe, database, () => {});
+      const { listings } = await withTimeoutAsync(
+        runQuickSearchForUrlAsync(url, recipe, database, () => {}),
+        SCRAPE_TIMEOUT_MS,
+        `Quick search for ${url}`
+      );
       for (const listing of listings) listingsByHash.set(computeListingAlertHash(listing), listing);
     } catch (err) {
       summary.errors.push(`Quick search failed for ${url}: ${(err as Error).message}`);
@@ -107,13 +146,26 @@ async function processSavedSearchAsync(
 
   if (aiFilterPrompt && candidates.length > 0) {
     const aiFilterListings = candidates.map(([, listing]) => toAiFilterListing(listing));
-    const results = await runAiFilterBatchesAsync(
-      aiFilterListings,
-      aiFilterPrompt,
-      cooldownStore,
-      undefined,
-      (message) => summary.errors.push(`AI filter: ${message}`)
-    );
+    let results: FilterResultEntry[];
+    try {
+      results = await withTimeoutAsync(
+        runAiFilterBatchesAsync(
+          aiFilterListings,
+          aiFilterPrompt,
+          cooldownStore,
+          undefined,
+          (message) => summary.errors.push(`AI filter: ${message}`)
+        ),
+        AI_FILTER_TIMEOUT_MS,
+        'AI filter batch run'
+      );
+    } catch (err) {
+      // Mirrors the per-batch error path in runAiFilterBatchesAsync: none of
+      // these candidates are treated as having passed, so nothing is
+      // notified on unverified AI judgement rather than risking false alerts.
+      summary.errors.push(`AI filter timed out: ${(err as Error).message}`);
+      results = [];
+    }
     const passedUrls = new Set(results.filter((result) => result.pass).map((result) => result.url));
     const beforeCount = candidates.length;
     candidates = candidates.filter(([, listing]) => passedUrls.has(listing.url));
