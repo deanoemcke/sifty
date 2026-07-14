@@ -71,6 +71,26 @@ describe('acquireSchedulerLock', () => {
     expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
   });
 
+  it('treats an empty lock file (which parses as pid 0) as stale, removes it, and acquires the lock', () => {
+    lockPath = tempLockPath();
+    fs.writeFileSync(lockPath, '');
+
+    const result = acquireSchedulerLock(lockPath);
+
+    expect(result).toEqual({ acquired: true });
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
+  });
+
+  it('treats a lock file containing "0" as stale, removes it, and acquires the lock', () => {
+    lockPath = tempLockPath();
+    fs.writeFileSync(lockPath, '0');
+
+    const result = acquireSchedulerLock(lockPath);
+
+    expect(result).toEqual({ acquired: true });
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
+  });
+
   it('treats a lock file held by a live process as stale once it exceeds the max age, removes it, and acquires the lock', () => {
     lockPath = tempLockPath();
     // process.pid is alive for the duration of this test, so liveness alone

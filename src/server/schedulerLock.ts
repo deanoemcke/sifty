@@ -31,7 +31,12 @@ function isProcessAlive(pid: number): boolean {
 function readLockPid(lockPath: string): number | null {
   const contents = fs.readFileSync(lockPath, 'utf8').trim();
   const pid = Number(contents);
-  return Number.isInteger(pid) ? pid : null;
+  // pid 0 is never a valid pid for a real user process — Number('') and
+  // Number.isInteger(0) both pass, so an empty/corrupt lock file would
+  // otherwise parse as pid 0, and isProcessAlive(0) reports it as "alive"
+  // (process.kill(0, 0) signals the current process's own group and never
+  // throws), permanently blocking stale-lock cleanup.
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
 function isLockStaleByAge(lockPath: string): boolean {
