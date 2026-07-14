@@ -149,7 +149,24 @@ export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerS
   // Sequential, not parallel — avoids hammering the shared Facebook session
   // and AI provider cooldowns across multiple saved searches at once.
   for (const row of rows) {
-    searches.push(await processSavedSearchAsync(row, resolvedDeps));
+    try {
+      searches.push(await processSavedSearchAsync(row, resolvedDeps));
+    } catch (err) {
+      // A synchronous throw (e.g. malformed row.urls JSON, SQLITE_BUSY) must not
+      // abort the whole pass — every other saved search still needs a result.
+      searches.push({
+        savedSearchId: row.id,
+        savedSearchName: row.name,
+        isPopulationRun: false,
+        listingsFoundCount: 0,
+        soldSkippedCount: 0,
+        aiFilteredOutCount: 0,
+        alreadyAlertedCount: 0,
+        notifiedCount: 0,
+        populatedCount: 0,
+        errors: [`Unhandled error: ${(err as Error).message}`],
+      });
+    }
   }
   return { searches };
 }

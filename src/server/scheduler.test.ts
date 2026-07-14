@@ -391,4 +391,38 @@ describe('runSchedulerAsync', () => {
 
     expect(summary.searches[0].errors.length).toBeGreaterThan(0);
   });
+
+  it('a saved search whose row causes a synchronous throw does not prevent other saved searches from being processed', async () => {
+    const db = freshDb();
+    // Corrupt urls column — JSON.parse(row.urls) throws synchronously inside processSavedSearchAsync.
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+    const goodSearchId = insertAlertSearch(db, { id: 'search-good', name: 'Good search' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(summary.searches).toHaveLength(2);
+    const corruptResult = summary.searches.find(
+      (search) => search.savedSearchId === 'search-corrupt'
+    );
+    expect(corruptResult?.errors.length).toBeGreaterThan(0);
+    // The good saved search after the corrupt one in the pass must still be processed.
+    expect(stmtCountAlertsForSavedSearch(db).get(goodSearchId)?.n).toBe(1);
+    const goodResult = summary.searches.find((search) => search.savedSearchId === 'search-good');
+    expect(goodResult?.populatedCount).toBe(1);
+  });
 });
