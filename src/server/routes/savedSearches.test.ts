@@ -243,6 +243,22 @@ describe('handleCreateSavedSearch', () => {
     const { search } = vi.mocked(sendJSON).mock.calls[0][2] as { search: Record<string, unknown> };
     expect(search.shouldAlertOnNewListings).toBe(true);
   });
+
+  it('returns 400 when shouldAlertOnNewListings is not a boolean', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Plain search',
+      urls: ['https://www.trademe.co.nz/a/x'],
+      shouldAlertOnNewListings: 'yes',
+    });
+
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      400,
+      expect.objectContaining({ error: expect.stringContaining('shouldAlertOnNewListings') })
+    );
+  });
 });
 
 describe('handleListSavedSearches', () => {

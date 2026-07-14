@@ -81,17 +81,21 @@ export async function handleCreateSavedSearch(
   let name: string;
   let urls: unknown[];
   let discoverInputsSerialized: string | null;
+  let shouldAlertOnNewListings: boolean;
   try {
     name = requireString(rawBody.name, 'name');
     urls = requireArray(rawBody.urls, 'urls');
     discoverInputsSerialized = parseDiscoverInputs(rawBody.discoverInputs);
+    shouldAlertOnNewListings =
+      rawBody.shouldAlertOnNewListings === undefined
+        ? false
+        : requireBoolean(rawBody.shouldAlertOnNewListings, 'shouldAlertOnNewListings');
   } catch (err) {
     sendJSON(response, 400, { error: (err as Error).message });
     return;
   }
 
   const aiFilter = rawBody.aiFilter;
-  const shouldAlertOnNewListings = rawBody.shouldAlertOnNewListings === true;
   try {
     const database = getDb();
     const id = crypto.randomUUID();
