@@ -275,10 +275,18 @@ export async function handleSavedSearchAlertToggleAsync(changeEvent: Event): Pro
   const savedSearchId = row?.dataset.id;
   if (!savedSearchId) throw new Error('saved-search-row missing data-id attribute');
 
-  const response = await fetch(`/api/saved-searches/${savedSearchId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ shouldAlertOnNewListings: checkbox.checked }),
-  });
-  if (!response.ok) checkbox.checked = !checkbox.checked;
+  const desiredValue = checkbox.checked;
+  checkbox.disabled = true;
+  try {
+    const response = await fetch(`/api/saved-searches/${savedSearchId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shouldAlertOnNewListings: desiredValue }),
+    });
+    if (!response.ok) checkbox.checked = !desiredValue;
+  } catch {
+    checkbox.checked = !desiredValue;
+  } finally {
+    checkbox.disabled = false;
+  }
 }

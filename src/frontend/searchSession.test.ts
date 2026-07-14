@@ -309,4 +309,47 @@ describe('handleSavedSearchAlertToggleAsync', () => {
 
     expect(checkbox.checked).toBe(false);
   });
+
+  it('disables the checkbox while the PATCH request is in flight and re-enables it once it resolves', async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a', shouldAlertOnNewListings: false })]);
+    let resolveFetch!: (value: unknown) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveFetch = resolve;
+          })
+      )
+    );
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    checkbox.checked = true;
+    const togglePromise = handleSavedSearchAlertToggleAsync({
+      target: checkbox,
+    } as unknown as Event);
+
+    // Fetch hasn't resolved yet — assert on the mid-flight state.
+    expect(checkbox.disabled).toBe(true);
+
+    resolveFetch({ ok: true });
+    await togglePromise;
+
+    expect(checkbox.disabled).toBe(false);
+  });
+
+  it('reverts the checkbox and resolves cleanly (no unhandled rejection) when the fetch itself rejects', async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a', shouldAlertOnNewListings: false })]);
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const checkbox = document.querySelector('.alert-on-new-listings-checkbox') as HTMLInputElement;
+    checkbox.checked = true;
+
+    await expect(
+      handleSavedSearchAlertToggleAsync({ target: checkbox } as unknown as Event)
+    ).resolves.toBeUndefined();
+
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.disabled).toBe(false);
+  });
 });
