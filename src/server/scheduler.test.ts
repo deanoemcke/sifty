@@ -10,6 +10,7 @@ vi.mock('./ai', async (importOriginal) => {
 });
 
 import { aiJSON, getAIConfig } from './ai';
+import { hashFingerprintParts } from './alerts';
 import {
   initSchema,
   stmtClearSearch,
@@ -56,6 +57,17 @@ function insertAlertSearch(
   return id;
 }
 
+// Mirrors the pre-per-recipe-fingerprint shared hash (title+location+description+price)
+// so existing dedup/relist-proof assertions below keep their original meaning.
+function stubComputeAlertFingerprint(listing: Listing): string {
+  return hashFingerprintParts([
+    listing.title,
+    listing.location,
+    listing.description,
+    listing.price,
+  ]);
+}
+
 function makeStubRecipe(listings: Listing[]): Recipe {
   return {
     name: 'stub',
@@ -66,6 +78,7 @@ function makeStubRecipe(listings: Listing[]): Recipe {
       onEvent({ type: 'complete' });
     },
     deepSearchAsync: async () => {},
+    computeAlertFingerprint: stubComputeAlertFingerprint,
   };
 }
 
@@ -78,6 +91,7 @@ function makeHangingRecipe(): Recipe {
     extractImplicitFilters: () => [],
     quickSearchAsync: () => new Promise(() => {}),
     deepSearchAsync: async () => {},
+    computeAlertFingerprint: stubComputeAlertFingerprint,
   };
 }
 

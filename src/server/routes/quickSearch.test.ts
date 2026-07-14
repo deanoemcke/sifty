@@ -67,6 +67,7 @@ function makeStubRecipe(
     extractImplicitFilters: () => [],
     quickSearchAsync,
     deepSearchAsync: async () => {},
+    computeAlertFingerprint: () => 'stub-fingerprint',
   };
 }
 

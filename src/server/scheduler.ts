@@ -6,7 +6,6 @@
 
 import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
-import { computeListingAlertHash } from './alerts';
 import {
   type SavedSearchRow,
   stmtCountAlertsForSavedSearch,
@@ -134,7 +133,8 @@ async function processSavedSearchAsync(
         SCRAPE_TIMEOUT_MS,
         `Quick search for ${url}`
       );
-      for (const listing of listings) listingsByHash.set(computeListingAlertHash(listing), listing);
+      for (const listing of listings)
+        listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
     } catch (err) {
       summary.errors.push(`Quick search failed for ${url}: ${(err as Error).message}`);
     }

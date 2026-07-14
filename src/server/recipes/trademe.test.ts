@@ -171,6 +171,32 @@ function _makeListing(overrides: Partial<Listing> = {}): Listing {
 // Keep the listing helper available for future use
 _makeListing;
 
+// ── computeAlertFingerprint ───────────────────────────────────────────────────
+
+describe('trademeRecipe.computeAlertFingerprint', () => {
+  it('is the same when only the price differs — auction bids changing must not re-trigger a "new listing" alert', () => {
+    const a = _makeListing({ price: 50 });
+    const b = _makeListing({ price: 75 });
+    expect(trademeRecipe.computeAlertFingerprint(a)).toBe(trademeRecipe.computeAlertFingerprint(b));
+  });
+
+  it('differs when thumbnailUrl differs', () => {
+    const a = _makeListing({ thumbnailUrl: 'https://trademe.tmcdn.co.nz/photoserver/full/1.jpg' });
+    const b = _makeListing({ thumbnailUrl: 'https://trademe.tmcdn.co.nz/photoserver/full/2.jpg' });
+    expect(trademeRecipe.computeAlertFingerprint(a)).not.toBe(
+      trademeRecipe.computeAlertFingerprint(b)
+    );
+  });
+
+  it('is the same for a listing relisted under a different URL id', () => {
+    const original = _makeListing({ url: 'https://example.com/marketplace/listing/111' });
+    const relisted = _makeListing({ url: 'https://example.com/marketplace/listing/999' });
+    expect(trademeRecipe.computeAlertFingerprint(original)).toBe(
+      trademeRecipe.computeAlertFingerprint(relisted)
+    );
+  });
+});
+
 // ── buildListing ──────────────────────────────────────────────────────────────
 
 describe('buildListing', () => {
