@@ -1248,6 +1248,13 @@ label {
   display: flex;
   justify-content: center;
 }
+/* Shared by the header row's spacer <span> and the delete button on each
+   data row, so the two stay pixel-identical without duplicating a width
+   value across two independent rules. */
+.saved-search-col-delete {
+  width: 24px;
+  flex-shrink: 0;
+}
 .saved-search-name:hover {
   text-decoration: underline;
 }

@@ -70,7 +70,7 @@ export function renderSavedSearches(searches: SavedSearch[]): void {
       <label class="saved-search-alert-cell">
         <input type="checkbox" class="alert-on-new-listings-checkbox" ${savedSearch.shouldAlertOnNewListings ? 'checked' : ''} />
       </label>
-      <button class="btn icon-btn delete-saved-btn" type="button" title="Delete">${X_ICON}</button>
+      <button class="btn icon-btn delete-saved-btn saved-search-col-delete" type="button" title="Delete">${X_ICON}</button>
     </div>
   `
     )
