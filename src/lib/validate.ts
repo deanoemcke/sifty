@@ -30,6 +30,13 @@ export function requirePositiveNumber(val: unknown, field: string): number {
   return n;
 }
 
+export function requireBoolean(val: unknown, field: string): boolean {
+  if (typeof val !== 'boolean') {
+    throw new Error(`${field} must be a boolean`);
+  }
+  return val;
+}
+
 /**
  * Asserts that an element from an external array has a non-empty string `url`
  * property.  Used when iterating over a client-supplied listings array before

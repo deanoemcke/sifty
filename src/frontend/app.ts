@@ -29,6 +29,7 @@ import {
   closeSaveSearchModal,
   fetchSavedSearchesAsync,
   handleDiscoverySubmitAsync,
+  handleSavedSearchAlertToggleAsync,
   handleSavedSearchListClickAsync,
   handleSaveSearchConfirmAsync,
   markDirty,
@@ -248,6 +249,10 @@ function initApp(): void {
 
   getElement('savedSearchesList').addEventListener('click', (mouseEvent: MouseEvent) => {
     void handleSavedSearchListClickAsync(mouseEvent);
+  });
+
+  getElement('savedSearchesList').addEventListener('change', (changeEvent: Event) => {
+    void handleSavedSearchAlertToggleAsync(changeEvent);
   });
 }
 

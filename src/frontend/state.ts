@@ -69,6 +69,7 @@ export interface SavedSearch {
   discoverInputs?: DiscoverInputs;
   aiFilter: string | null;
   createdAt: number;
+  shouldAlertOnNewListings: boolean;
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ import {
   handleDeleteSavedSearch,
   handleGetSavedSearch,
   handleListSavedSearches,
+  handlePatchSavedSearch,
 } from './src/server/routes/savedSearches';
 import { getWorktreeLabel, getWorktreePort } from './vite.config.helpers';
 
@@ -59,6 +60,11 @@ export default defineConfig({
           if (urlPath.startsWith('/api/saved-searches/') && req.method === 'DELETE') {
             const id = urlPath.slice('/api/saved-searches/'.length);
             handleDeleteSavedSearch(req, res, id);
+            return;
+          }
+          if (urlPath.startsWith('/api/saved-searches/') && req.method === 'PATCH') {
+            const id = urlPath.slice('/api/saved-searches/'.length);
+            await handlePatchSavedSearch(req, res, id);
             return;
           }
           if (urlPath === '/api/regions' && req.method === 'GET') {

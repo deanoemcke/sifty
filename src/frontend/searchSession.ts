@@ -52,9 +52,11 @@ export async function fetchSavedSearchesAsync(): Promise<void> {
 export function renderSavedSearches(searches: SavedSearch[]): void {
   const list = getElement('savedSearchesList');
   const count = getElement('savedSearchesCount');
+  const header = getElement('savedSearchesHeaderRow');
 
   count.textContent = String(searches.length);
   count.classList.toggle('hidden', searches.length === 0);
+  header.classList.toggle('hidden', searches.length === 0);
 
   if (searches.length === 0) {
     list.innerHTML = '<p class="deep-empty">No favourites yet.</p>';
@@ -65,6 +67,9 @@ export function renderSavedSearches(searches: SavedSearch[]): void {
       (savedSearch) => `
     <div class="saved-search-row" data-id="${esc(savedSearch.id)}">
       <a class="saved-search-name load-saved-btn" href="#" title="${esc(savedSearch.name)}">${esc(savedSearch.name)}</a>
+      <label class="saved-search-alert-cell">
+        <input type="checkbox" class="alert-on-new-listings-checkbox" ${savedSearch.shouldAlertOnNewListings ? 'checked' : ''} />
+      </label>
       <button class="btn icon-btn delete-saved-btn" type="button" title="Delete">${X_ICON}</button>
     </div>
   `
@@ -83,6 +88,7 @@ export async function saveCurrentSearchAsync(name: string): Promise<void> {
       urls,
       discoverInputs: readDiscoverInputs(),
       aiFilter: getElement<HTMLTextAreaElement>('aiFilter').value.trim() || null,
+      shouldAlertOnNewListings: false,
     }),
   });
   if (response.ok) await fetchSavedSearchesAsync();
@@ -258,4 +264,21 @@ export async function handleSavedSearchListClickAsync(mouseEvent: MouseEvent): P
     const { search } = (await response.json()) as { search: SavedSearch };
     await loadSavedSearchAsync(search);
   }
+}
+
+export async function handleSavedSearchAlertToggleAsync(changeEvent: Event): Promise<void> {
+  const checkbox = (changeEvent.target as HTMLElement).closest<HTMLInputElement>(
+    '.alert-on-new-listings-checkbox'
+  );
+  if (!checkbox) return;
+  const row = checkbox.closest<HTMLElement>('.saved-search-row');
+  const savedSearchId = row?.dataset.id;
+  if (!savedSearchId) throw new Error('saved-search-row missing data-id attribute');
+
+  const response = await fetch(`/api/saved-searches/${savedSearchId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shouldAlertOnNewListings: checkbox.checked }),
+  });
+  if (!response.ok) checkbox.checked = !checkbox.checked;
 }

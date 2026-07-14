@@ -1201,6 +1201,26 @@ label {
   font-size: 0.85rem;
   padding: 0.5rem 0;
 }
+.saved-search-header-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.saved-search-col-name {
+  flex: 1;
+}
+.saved-search-col-alert {
+  width: 64px;
+  flex-shrink: 0;
+  text-align: center;
+  line-height: 1.2;
+}
 .saved-search-row {
   display: flex;
   align-items: center;
@@ -1221,6 +1241,12 @@ label {
   color: var(--primary);
   text-decoration: none;
   cursor: pointer;
+}
+.saved-search-alert-cell {
+  width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
 }
 .saved-search-name:hover {
   text-decoration: underline;

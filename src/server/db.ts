@@ -23,12 +23,13 @@ export function initSchema(database: Database.Database): void {
       cached_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS saved_searches (
-      id              TEXT PRIMARY KEY,
-      name            TEXT NOT NULL,
-      urls            TEXT NOT NULL,
-      discover_inputs TEXT,
-      ai_filter       TEXT,
-      created_at      INTEGER NOT NULL
+      id                          TEXT PRIMARY KEY,
+      name                        TEXT NOT NULL,
+      urls                        TEXT NOT NULL,
+      discover_inputs             TEXT,
+      ai_filter                   TEXT,
+      created_at                  INTEGER NOT NULL,
+      should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS trademe_categories (
       slug        TEXT PRIMARY KEY,
@@ -89,6 +90,7 @@ export type SavedSearchRow = {
   discover_inputs: string | null;
   ai_filter: string | null;
   created_at: number;
+  should_alert_on_new_listings: number;
 };
 export type CategoryRow = { slug: string; display: string };
 export type CategoryLegacyPathRow = { legacy_path: string };
@@ -133,21 +135,26 @@ export function stmtCountDetails(database: Database.Database) {
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches ORDER BY created_at DESC'
   );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at FROM saved_searches WHERE id = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches WHERE id = ?'
   );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
   return database.prepare(
-    'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
 }
 export function stmtDeleteSavedSearch(database: Database.Database) {
   return database.prepare('DELETE FROM saved_searches WHERE id = ?');
+}
+export function stmtUpdateSavedSearchAlert(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET should_alert_on_new_listings = ? WHERE id = ?'
+  );
 }
 export function stmtGetCategoriesAtDepth2(database: Database.Database) {
   return database.prepare<[], CategoryRow>(
