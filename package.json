@@ -13,7 +13,8 @@
     "fix": "biome check --write .",
     "check": "biome check .",
     "prepare": "husky",
-    "postinstall": "tsx scripts/setup-worktree-links.ts"
+    "postinstall": "tsx scripts/setup-worktree-links.ts",
+    "scheduler": "tsx scripts/scheduler.ts"
   },
   "keywords": [],
   "author": "",
