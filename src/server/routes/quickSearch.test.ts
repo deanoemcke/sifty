@@ -26,7 +26,7 @@ vi.mock('../recipes/registry', () => ({ getRecipeForUrl: vi.fn() }));
 
 import { EMPTY_RESULT_CACHE_TTL_MS, initSchema, stmtGetSearch } from '../db';
 import { getRecipeForUrl } from '../recipes/registry';
-import { handleQuickSearch } from './quickSearch';
+import { handleQuickSearch, runQuickSearchForUrlAsync } from './quickSearch';
 
 const SEARCH_URL = 'https://example.com/marketplace/search';
 
@@ -173,6 +173,62 @@ describe('handleQuickSearch — caching a genuine empty completion', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('runQuickSearchForUrlAsync', () => {
+  it('scrapes and caches on a miss, returning the collected listings', async () => {
+    const recipe = makeStubRecipe(async (_url, onEvent) => {
+      onEvent({ type: 'listing', data: SAMPLE_LISTING });
+      onEvent({ type: 'complete' });
+    });
+    const events: unknown[] = [];
+
+    const result = await runQuickSearchForUrlAsync(SEARCH_URL, recipe, requireTestDb(), (event) =>
+      events.push(event)
+    );
+
+    expect(result).toEqual({ listings: [SAMPLE_LISTING], didCompleteSuccessfully: true });
+    expect(events).toContainEqual({ type: 'listing', data: SAMPLE_LISTING });
+    expect(stmtGetSearch(requireTestDb()).get(SEARCH_URL)?.listing_count).toBe(1);
+  });
+
+  it('serves a fresh cache entry without invoking the recipe again', async () => {
+    const quickSearchAsync = vi.fn(
+      async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
+        onEvent({ type: 'listing', data: SAMPLE_LISTING });
+        onEvent({ type: 'complete' });
+      }
+    );
+    const recipe = makeStubRecipe(quickSearchAsync);
+
+    await runQuickSearchForUrlAsync(SEARCH_URL, recipe, requireTestDb(), () => {});
+    const secondResult = await runQuickSearchForUrlAsync(
+      SEARCH_URL,
+      recipe,
+      requireTestDb(),
+      () => {}
+    );
+
+    expect(quickSearchAsync).toHaveBeenCalledTimes(1);
+    expect(secondResult).toEqual({ listings: [SAMPLE_LISTING], didCompleteSuccessfully: true });
+  });
+
+  it('does not cache when the search is cancelled mid-run', async () => {
+    const recipe = makeStubRecipe(async (_url, onEvent) => {
+      onEvent({ type: 'listing', data: SAMPLE_LISTING });
+      onEvent({ type: 'complete' });
+    });
+
+    await runQuickSearchForUrlAsync(
+      SEARCH_URL,
+      recipe,
+      requireTestDb(),
+      () => {},
+      () => true
+    );
+
+    expect(stmtGetSearch(requireTestDb()).get(SEARCH_URL)).toBeUndefined();
   });
 });
 
