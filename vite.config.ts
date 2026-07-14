@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import { createProviderCooldownStore } from './src/server/ai';
+import { loadServerEnv } from './src/server/env';
 import { parseFbCookies } from './src/server/recipes/facebook';
 import { handleAiFilter } from './src/server/routes/aiFilter';
 import { handleCacheClear } from './src/server/routes/cacheRoutes';
@@ -18,7 +19,7 @@ import {
 } from './src/server/routes/savedSearches';
 import { getWorktreeLabel, getWorktreePort } from './vite.config.helpers';
 
-Object.assign(process.env, loadEnv('development', process.cwd(), ''));
+loadServerEnv();
 
 // Composition root: one cooldown store for the life of the dev server process,
 // threaded explicitly into every route handler that needs AI provider rotation —
