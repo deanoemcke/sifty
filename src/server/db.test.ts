@@ -7,10 +7,11 @@ import {
   configureDatabaseConnection,
   initSchema,
   stmtCountAlertsForSavedSearch,
+  stmtGetOldestAlertEnabledSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtInsertSavedSearch,
-  stmtListAlertEnabledSavedSearches,
+  stmtUpdateSavedSearchLastRunAt,
 } from './db';
 
 function columnNames(db: Database.Database, table: string): string[] {
@@ -50,6 +51,14 @@ describe('initSchema', () => {
     initSchema(db);
     expect(() => initSchema(db)).not.toThrow();
     expect(columnNames(db, 'saved_searches')).toContain('discover_inputs');
+  });
+
+  it('saved_searches has a last_run_at column, added idempotently', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    expect(columnNames(db, 'saved_searches')).toContain('last_run_at');
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'saved_searches')).toContain('last_run_at');
   });
 
   it('preserves existing data when called on an existing database', () => {
@@ -112,28 +121,53 @@ describe('alerted_listings statements', () => {
   });
 });
 
-describe('stmtListAlertEnabledSavedSearches', () => {
+describe('stmtGetOldestAlertEnabledSavedSearch', () => {
   function freshDb(): Database.Database {
     const db = new Database(':memory:');
     initSchema(db);
     return db;
   }
 
-  it('returns only saved searches with should_alert_on_new_listings set', () => {
+  it('ignores saved searches with should_alert_on_new_listings unset', () => {
     const db = freshDb();
     stmtInsertSavedSearch(db).run('s1', 'Alert search', '[]', null, null, 1000, 1);
     stmtInsertSavedSearch(db).run('s2', 'Silent search', '[]', null, null, 2000, 0);
 
-    const rows = stmtListAlertEnabledSavedSearches(db).all();
-
-    expect(rows.map((r) => r.id)).toEqual(['s1']);
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s1');
   });
 
-  it('returns an empty array when no saved search has alerts enabled', () => {
+  it('returns undefined when no saved search has alerts enabled', () => {
     const db = freshDb();
     stmtInsertSavedSearch(db).run('s1', 'Silent search', '[]', null, null, 1000, 0);
 
-    expect(stmtListAlertEnabledSavedSearches(db).all()).toEqual([]);
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()).toBeUndefined();
+  });
+
+  it('prefers a saved search that has never run over one with any last_run_at', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Ran once', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(500, 's1');
+    stmtInsertSavedSearch(db).run('s2', 'Never run', '[]', null, null, 2000, 1);
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s2');
+  });
+
+  it('prefers the saved search with the older last_run_at', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Ran recently', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(2000, 's1');
+    stmtInsertSavedSearch(db).run('s2', 'Ran long ago', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(500, 's2');
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s2');
+  });
+
+  it('breaks a tied last_run_at by insertion order', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Inserted first', '[]', null, null, 1000, 1);
+    stmtInsertSavedSearch(db).run('s2', 'Inserted second', '[]', null, null, 1000, 1);
+
+    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s1');
   });
 });
 

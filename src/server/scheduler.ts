@@ -1,7 +1,8 @@
 // Server-side only — headless scheduler core, invoked by scripts/scheduler.ts.
-// Runs every alert-enabled saved search's already-known URLs (no discovery,
-// no deep search), applies its AI filter if set, and notifies on any new,
-// non-sold listing it hasn't alerted on before.
+// Each run processes the single alert-enabled saved search that was run
+// longest ago (or never run): its already-known URLs (no discovery, no deep
+// search), applying its AI filter if set, and notifying on any new, non-sold
+// listing it hasn't alerted on before.
 
 import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
@@ -9,9 +10,10 @@ import { computeListingAlertHash } from './alerts';
 import {
   type SavedSearchRow,
   stmtCountAlertsForSavedSearch,
+  stmtGetOldestAlertEnabledSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
-  stmtListAlertEnabledSavedSearches,
+  stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { getRecipeForUrl } from './recipes/registry';
 import { type AiFilterListing, runAiFilterBatchesAsync } from './services/aiFilter';
@@ -143,30 +145,30 @@ async function processSavedSearchAsync(
 
 export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerSummary> {
   const resolvedDeps: Required<SchedulerDeps> = { now: () => Date.now(), ...deps };
-  const rows = stmtListAlertEnabledSavedSearches(resolvedDeps.database).all();
+  const row = stmtGetOldestAlertEnabledSavedSearch(resolvedDeps.database).get();
+  if (!row) return { searches: [] };
 
-  const searches: SavedSearchRunSummary[] = [];
-  // Sequential, not parallel — avoids hammering the shared Facebook session
-  // and AI provider cooldowns across multiple saved searches at once.
-  for (const row of rows) {
-    try {
-      searches.push(await processSavedSearchAsync(row, resolvedDeps));
-    } catch (err) {
-      // A synchronous throw (e.g. malformed row.urls JSON, SQLITE_BUSY) must not
-      // abort the whole pass — every other saved search still needs a result.
-      searches.push({
-        savedSearchId: row.id,
-        savedSearchName: row.name,
-        isPopulationRun: false,
-        listingsFoundCount: 0,
-        soldSkippedCount: 0,
-        aiFilteredOutCount: 0,
-        alreadyAlertedCount: 0,
-        notifiedCount: 0,
-        populatedCount: 0,
-        errors: [`Unhandled error: ${(err as Error).message}`],
-      });
-    }
+  let summary: SavedSearchRunSummary;
+  try {
+    summary = await processSavedSearchAsync(row, resolvedDeps);
+  } catch (err) {
+    // A synchronous throw (e.g. malformed row.urls JSON, SQLITE_BUSY) still
+    // needs a result, and last_run_at below still needs to advance — otherwise
+    // a permanently broken saved search would be picked as "oldest" forever
+    // and starve every other alert-enabled saved search out of rotation.
+    summary = {
+      savedSearchId: row.id,
+      savedSearchName: row.name,
+      isPopulationRun: false,
+      listingsFoundCount: 0,
+      soldSkippedCount: 0,
+      aiFilteredOutCount: 0,
+      alreadyAlertedCount: 0,
+      notifiedCount: 0,
+      populatedCount: 0,
+      errors: [`Unhandled error: ${(err as Error).message}`],
+    };
   }
-  return { searches };
+  stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
+  return { searches: [summary] };
 }

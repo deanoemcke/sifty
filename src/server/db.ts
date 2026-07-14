@@ -46,6 +46,17 @@ export function initSchema(database: Database.Database): void {
       PRIMARY KEY (saved_search_id, listing_hash)
     );
   `);
+
+  // CREATE TABLE IF NOT EXISTS doesn't retroactively add columns to an
+  // existing on-disk saved_searches table, so new columns need an explicit,
+  // idempotency-checked ALTER TABLE (this SQLite build doesn't support
+  // ADD COLUMN IF NOT EXISTS).
+  const savedSearchColumns = database
+    .prepare<[], { name: string }>('PRAGMA table_info(saved_searches)')
+    .all();
+  if (!savedSearchColumns.some((column) => column.name === 'last_run_at')) {
+    database.exec('ALTER TABLE saved_searches ADD COLUMN last_run_at INTEGER');
+  }
 }
 
 function logDbStats(database: Database.Database): void {
@@ -97,6 +108,7 @@ export type SavedSearchRow = {
   ai_filter: string | null;
   created_at: number;
   should_alert_on_new_listings: number;
+  last_run_at: number | null;
 };
 export type CategoryRow = { slug: string; display: string };
 export type CategoryLegacyPathRow = { legacy_path: string };
@@ -142,12 +154,12 @@ export function stmtCountDetails(database: Database.Database) {
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches ORDER BY created_at DESC'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at FROM saved_searches ORDER BY created_at DESC'
   );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches WHERE id = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at FROM saved_searches WHERE id = ?'
   );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
@@ -155,9 +167,14 @@ export function stmtInsertSavedSearch(database: Database.Database) {
     'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
 }
-export function stmtListAlertEnabledSavedSearches(database: Database.Database) {
+// NULL last_run_at sorts before any timestamp in SQLite's ASC ordering, so a
+// never-run saved search is always picked over one that has run before; rowid
+// (insertion order) breaks ties between rows with equal last_run_at.
+export function stmtGetOldestAlertEnabledSavedSearch(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches WHERE should_alert_on_new_listings = 1 ORDER BY created_at DESC'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at ' +
+      'FROM saved_searches WHERE should_alert_on_new_listings = 1 ' +
+      'ORDER BY last_run_at ASC, rowid ASC LIMIT 1'
   );
 }
 export function stmtDeleteSavedSearch(database: Database.Database) {
@@ -167,6 +184,9 @@ export function stmtUpdateSavedSearchAlert(database: Database.Database) {
   return database.prepare(
     'UPDATE saved_searches SET should_alert_on_new_listings = ? WHERE id = ?'
   );
+}
+export function stmtUpdateSavedSearchLastRunAt(database: Database.Database) {
+  return database.prepare('UPDATE saved_searches SET last_run_at = ? WHERE id = ?');
 }
 export function stmtCountAlertsForSavedSearch(database: Database.Database) {
   return database.prepare<[string], CountRow>(

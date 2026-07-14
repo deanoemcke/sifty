@@ -14,6 +14,7 @@ import {
   initSchema,
   stmtClearSearch,
   stmtCountAlertsForSavedSearch,
+  stmtGetSavedSearch,
   stmtInsertSavedSearch,
 } from './db';
 import { getRecipeForUrl } from './recipes/registry';
@@ -34,7 +35,13 @@ function freshDb(): Database.Database {
 
 function insertAlertSearch(
   db: Database.Database,
-  overrides: { id?: string; name?: string; urls?: string[]; aiFilter?: string | null } = {}
+  overrides: {
+    id?: string;
+    name?: string;
+    urls?: string[];
+    aiFilter?: string | null;
+    alertEnabled?: boolean;
+  } = {}
 ): string {
   const id = overrides.id ?? 'search-1';
   stmtInsertSavedSearch(db).run(
@@ -44,7 +51,7 @@ function insertAlertSearch(
     null,
     overrides.aiFilter ?? null,
     Date.now(),
-    1
+    overrides.alertEnabled === false ? 0 : 1
   );
   return id;
 }
@@ -341,6 +348,13 @@ describe('runSchedulerAsync', () => {
 
   it('alerts independently per saved search for the same physical listing', async () => {
     const db = freshDb();
+    // A monotonic fake clock — real scheduler invocations are minutes apart
+    // (cron-driven), but these calls run back-to-back with no real I/O
+    // between them, so a wall-clock Date.now() could tie two last_run_at
+    // writes to the same millisecond and make the rowid tiebreak stick to
+    // one saved search. Strictly increasing timestamps sidestep that.
+    let fakeNow = 1_000;
+    const now = () => fakeNow++;
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     const searchA = insertAlertSearch(db, {
       id: 'search-a',
@@ -351,12 +365,20 @@ describe('runSchedulerAsync', () => {
       urls: ['https://b.example.com/search'],
     });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
-    // Population runs for both searches, so a later new listing goes through the
-    // notify path rather than being silently backfilled.
+    // One search is processed per call — two calls to cover both population runs,
+    // so a later new listing goes through the notify path rather than being
+    // silently backfilled.
     await runSchedulerAsync({
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync: vi.fn(),
+      now,
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now,
     });
     expect(stmtCountAlertsForSavedSearch(db).get(searchA)?.n).toBe(1);
     expect(stmtCountAlertsForSavedSearch(db).get(searchB)?.n).toBe(1);
@@ -370,6 +392,13 @@ describe('runSchedulerAsync', () => {
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync,
+      now,
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now,
     });
 
     // The same physical listing surfaces via both saved searches and notifies for each.
@@ -392,7 +421,7 @@ describe('runSchedulerAsync', () => {
     expect(summary.searches[0].errors.length).toBeGreaterThan(0);
   });
 
-  it('a saved search whose row causes a synchronous throw does not prevent other saved searches from being processed', async () => {
+  it('a saved search whose row causes a synchronous throw does not prevent other saved searches from being processed on a later run', async () => {
     const db = freshDb();
     // Corrupt urls column — JSON.parse(row.urls) throws synchronously inside processSavedSearchAsync.
     stmtInsertSavedSearch(db).run(
@@ -409,20 +438,95 @@ describe('runSchedulerAsync', () => {
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
     );
 
+    // First call picks the corrupt row (inserted first, both last_run_at are NULL).
+    const firstSummary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(firstSummary.searches).toHaveLength(1);
+    expect(firstSummary.searches[0].savedSearchId).toBe('search-corrupt');
+    expect(firstSummary.searches[0].errors.length).toBeGreaterThan(0);
+    // The failure doesn't starve the search out of rotation — its last_run_at
+    // still advances so the next run moves on to the good search.
+    expect(stmtGetSavedSearch(db).get('search-corrupt')?.last_run_at).not.toBeNull();
+
+    // Second call picks the good search — the corrupt one is no longer "oldest".
+    const secondSummary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(secondSummary.searches).toHaveLength(1);
+    expect(secondSummary.searches[0].savedSearchId).toBe('search-good');
+    expect(stmtCountAlertsForSavedSearch(db).get(goodSearchId)?.n).toBe(1);
+    expect(secondSummary.searches[0].populatedCount).toBe(1);
+  });
+
+  it('processes only the alert-enabled saved search that was run longest ago', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    // Both start with last_run_at = NULL, so rowid (insertion order) breaks the
+    // tie — search-a was inserted first and is picked.
     const summary = await runSchedulerAsync({
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync: vi.fn(),
     });
 
-    expect(summary.searches).toHaveLength(2);
-    const corruptResult = summary.searches.find(
-      (search) => search.savedSearchId === 'search-corrupt'
+    expect(summary.searches).toHaveLength(1);
+    expect(summary.searches[0].savedSearchId).toBe('search-a');
+  });
+
+  it('sets last_run_at to the injected clock time after processing a saved search', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
     );
-    expect(corruptResult?.errors.length).toBeGreaterThan(0);
-    // The good saved search after the corrupt one in the pass must still be processed.
-    expect(stmtCountAlertsForSavedSearch(db).get(goodSearchId)?.n).toBe(1);
-    const goodResult = summary.searches.find((search) => search.savedSearchId === 'search-good');
-    expect(goodResult?.populatedCount).toBe(1);
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+
+    const fixedNow = 1_700_000_000_000;
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now: () => fixedNow,
+    });
+
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBe(fixedNow);
+  });
+
+  it('never selects a saved search with alerts disabled', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-disabled', alertEnabled: false });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(summary.searches).toHaveLength(0);
+  });
+
+  it('returns no searches when there are no alert-enabled saved searches at all', async () => {
+    const db = freshDb();
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(summary.searches).toHaveLength(0);
   });
 });
