@@ -9,6 +9,8 @@ import {
   stmtCountAlertsForSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
+  stmtInsertSavedSearch,
+  stmtListAlertEnabledSavedSearches,
 } from './db';
 
 function columnNames(db: Database.Database, table: string): string[] {
@@ -107,6 +109,31 @@ describe('alerted_listings statements', () => {
       stmtInsertAlertedListing(db).run('search-1', 'hash-a', 2000);
     }).not.toThrow();
     expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(1);
+  });
+});
+
+describe('stmtListAlertEnabledSavedSearches', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('returns only saved searches with should_alert_on_new_listings set', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Alert search', '[]', null, null, 1000, 1);
+    stmtInsertSavedSearch(db).run('s2', 'Silent search', '[]', null, null, 2000, 0);
+
+    const rows = stmtListAlertEnabledSavedSearches(db).all();
+
+    expect(rows.map((r) => r.id)).toEqual(['s1']);
+  });
+
+  it('returns an empty array when no saved search has alerts enabled', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Silent search', '[]', null, null, 1000, 0);
+
+    expect(stmtListAlertEnabledSavedSearches(db).all()).toEqual([]);
   });
 });
 

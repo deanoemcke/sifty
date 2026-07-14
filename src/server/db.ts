@@ -155,6 +155,11 @@ export function stmtInsertSavedSearch(database: Database.Database) {
     'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
 }
+export function stmtListAlertEnabledSavedSearches(database: Database.Database) {
+  return database.prepare<[], SavedSearchRow>(
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches WHERE should_alert_on_new_listings = 1 ORDER BY created_at DESC'
+  );
+}
 export function stmtDeleteSavedSearch(database: Database.Database) {
   return database.prepare('DELETE FROM saved_searches WHERE id = ?');
 }
