@@ -25,6 +25,7 @@ import {
   AI_FILTER_TIMEOUT_MS,
   escapeSignalMarkdown,
   formatAlertMessage,
+  NOTIFY_LOOP_TIMEOUT_MS,
   runSchedulerAsync,
   SCRAPE_TIMEOUT_MS,
 } from './scheduler';
@@ -731,6 +732,42 @@ describe('runSchedulerAsync', () => {
 
       expect(summary.searches).toHaveLength(1);
       expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('times out a stalled notify loop instead of hanging forever, recording an error and completing the run', async () => {
+    vi.useFakeTimers();
+    try {
+      const db = freshDb();
+      const searchId = insertAlertSearch(db);
+      const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+      await runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: vi.fn(),
+      });
+      stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+      const newListing = makeListing({ title: 'New chair', url: 'https://example.com/new' });
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
+      // Simulates a hung notifier — sendNotificationAsync's own promise never settles.
+      const sendNotificationAsync = vi.fn().mockImplementation(() => new Promise(() => {}));
+
+      const summaryPromise = runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync,
+      });
+      await vi.advanceTimersByTimeAsync(NOTIFY_LOOP_TIMEOUT_MS);
+      const summary = await summaryPromise;
+
+      expect(summary.searches).toHaveLength(1);
+      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      // Only the seed baseline is alerted — the hung listing's send never completed.
+      expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1);
     } finally {
       vi.useRealTimers();
     }
