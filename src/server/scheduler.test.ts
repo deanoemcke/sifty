@@ -839,6 +839,14 @@ describe('formatAlertMessage', () => {
     // function itself added around the whole (escaped) title.
     expect(message.match(/\*\*/g)?.length).toBe(2);
   });
+
+  it('does not let a leading/trailing * in the title merge with the bold wrapper into a *** run', () => {
+    const listing = makeListing({ title: '*Rare* guitar' });
+
+    const message = formatAlertMessage('My search', listing);
+
+    expect(message).not.toMatch(/\*{3,}/);
+  });
 });
 
 describe('escapeSignalMarkdown', () => {
@@ -846,9 +854,18 @@ describe('escapeSignalMarkdown', () => {
     expect(escapeSignalMarkdown('Plain chair listing')).toBe('Plain chair listing');
   });
 
-  it.each(['*', '_', '`', '~'])('neutralizes adjacent pairs of %s', (marker) => {
+  it.each(['*', '_', '`', '~'])('strips adjacent pairs of %s entirely', (marker) => {
     const input = `a${marker}${marker}b`;
     const escaped = escapeSignalMarkdown(input);
-    expect(escaped).not.toContain(`${marker}${marker}`);
+    expect(escaped).not.toContain(marker);
+  });
+
+  it.each([
+    '_',
+    '`',
+  ])('strips a single-character %s delimiter pair, not just spaces it apart', (marker) => {
+    const input = `Cheap ${marker}car${marker} for sale`;
+    const escaped = escapeSignalMarkdown(input);
+    expect(escaped).not.toContain(marker);
   });
 });

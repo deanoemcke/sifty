@@ -82,14 +82,17 @@ export type SchedulerSummary = {
   searches: SavedSearchRunSummary[];
 };
 
-// Neutralizes the four characters the Signal proxy's regex-based markdown
-// converter looks for (**, _..._, `...`, ~~) by inserting a zero-width space
-// after each occurrence. This can't change how the text reads, but it
-// guarantees no two of these characters remain adjacent — which is what the
-// converter needs to match a style marker — so scraped, untrusted listing
-// text can never accidentally trigger or break styling in the message.
+// Strips the four characters the Signal proxy's regex-based markdown
+// converter treats as style markers (**, _..._, `...`, ~~). Inserting an
+// invisible character next to a marker only defeats markers that require
+// doubling (**, ~~) — a lone _ or ` still matches a single-character
+// delimiter regex regardless of what surrounds it, and a marker adjacent to
+// a caller-supplied wrapper (formatAlertMessage's own **) can still merge
+// into an unbroken run. Removing the characters outright is correct
+// regardless of delimiter width or surrounding context, at the cost of
+// altering the visible text (e.g. `Model_X` renders as `ModelX`).
 export function escapeSignalMarkdown(text: string): string {
-  return text.replace(/[*_`~]/g, '$&​');
+  return text.replace(/[*_`~]/g, '');
 }
 
 // Emulates the results-grid listing card as closely as the Signal proxy's
