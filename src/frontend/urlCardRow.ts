@@ -170,7 +170,15 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   };
   const urlCard = addUrlCard(dom, data);
 
-  input.addEventListener('input', () => handleUrlInputChanged(urlCard));
+  let cameFromPaste = false;
+  input.addEventListener('paste', () => {
+    cameFromPaste = true;
+  });
+  input.addEventListener('input', () => {
+    handleUrlInputChanged(urlCard);
+    if (cameFromPaste && canSearchCard(urlCard)) searchCardAsync(urlCard);
+    cameFromPaste = false;
+  });
   input.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
     if (keyboardEvent.key === 'Enter' && canSearchCard(urlCard)) searchCardAsync(urlCard);
   });
@@ -213,11 +221,6 @@ export function resetAllResults(): void {
 export function updateRemoveButtons(): void {
   const show = urlCards.length > 1;
   for (const card of urlCards) card.dom.removeButton.classList.toggle('hidden', !show);
-}
-
-export function clearCardCacheBadge(card: UrlCard): void {
-  card.dom.cacheStatusElement.classList.add('hidden');
-  card.dom.cacheStatusElement.innerHTML = '';
 }
 
 export function resetCardForResearch(card: UrlCard): void {
