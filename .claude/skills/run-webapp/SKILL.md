@@ -74,3 +74,53 @@ sleeping a fixed amount:
 ```js
 await page.waitForSelector(".listing-card", { timeout: 30000 });
 ```
+
+## 4. Gotchas from writing verification scripts
+
+**Native `confirm()`/`alert()` dialogs block forever without a handler.**
+Register `page.on("dialog", ...)` *before* the click that triggers it, or
+the script hangs waiting for a human:
+
+```js
+page.on("dialog", (dialog) => dialog.accept()); // or .dismiss() to test the decline path
+```
+
+**Don't locate a specific dynamic row by position or by transient DOM
+state.** Cards can get reordered/reparented — e.g. URL cards matching a
+known recipe get moved into a `.url-group` wrapper by `syncUrlGroups()`,
+so a freshly-added card isn't reliably "last" in `.source-url-row`
+order, and `.nth(n)` breaks. Likewise, don't filter on state like
+`:not([readonly])` to mean "the new one" — an existing card can
+transiently share that state (e.g. before its own search request
+resolves). Instead, set a distinctive value and re-find the row by that
+value right before acting on it:
+
+```js
+await page.evaluate((url) => {
+  const input = [...document.querySelectorAll(".url-input")].find((el) => el.value === "");
+  input.value = url;
+  input.dispatchEvent(new Event("input", { bubbles: true })); // real 'input' event, not just .fill()
+}, NEW_URL);
+// ...later, right before clicking:
+const rowIndex = await page.evaluate(
+  (url) => [...document.querySelectorAll(".source-url-row")]
+    .findIndex((row) => row.querySelector(".url-input")?.value === url),
+  NEW_URL
+);
+await page.locator(".source-url-row").nth(rowIndex).locator(".url-remove-btn").click();
+```
+
+**The dev database persists across script runs.** Saved searches (and
+other writes) created by one run are still there on the next — don't
+assert on exact row counts against fixed names, or a second run sees
+stale data from the first and looks broken. Use a run-unique suffix for
+anything you create (e.g. a random/timestamp id passed as an arg), and
+clean up afterward:
+
+```bash
+node -e "
+const db = new (require('better-sqlite3'))('data/sifty.db');
+for (const r of db.prepare(\"SELECT id FROM saved_searches WHERE name LIKE 'Verify %'\").all())
+  db.prepare('DELETE FROM saved_searches WHERE id = ?').run(r.id);
+"
+```
