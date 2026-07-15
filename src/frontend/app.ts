@@ -168,9 +168,12 @@ function initApp(): void {
     (keyboardEvent: KeyboardEvent) => handleDiscoveryKeydown(keyboardEvent, submitAiFilterForm)
   );
 
-  // Mark dirty on any URL input change or new URL card
+  // Mark dirty on any URL input change, new URL card, or removed URL card
   getElement('urlCardsContainer').addEventListener('input', markDirty);
   getElement('addUrlBtn').addEventListener('click', markDirty);
+  getElement('urlCardsContainer').addEventListener('click', (mouseEvent: MouseEvent) => {
+    if ((mouseEvent.target as HTMLElement).closest('.url-remove-btn')) markDirty();
+  });
 
   // Recipe group headers: chevron toggles the rows, cancel stops all of the
   // group's running searches.

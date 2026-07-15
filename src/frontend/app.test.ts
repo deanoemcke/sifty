@@ -534,4 +534,24 @@ describe('initApp() wiring', () => {
       expect(vi.mocked(openListingCardModal)).not.toHaveBeenCalled();
     });
   });
+
+  describe('saved-search dirty tracking', () => {
+    it('marks the search dirty when a URL card is removed', async () => {
+      // jsdom doesn't implement scrollIntoView; addUrlBtn's click handler calls it.
+      Element.prototype.scrollIntoView = vi.fn();
+      await import('./app');
+      const saveCurrentBtn = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
+      const addUrlBtn = document.getElementById('addUrlBtn') as HTMLButtonElement;
+      // initApp() seeds one blank card; add a second so a remove button is shown.
+      addUrlBtn.click();
+      // Simulate a clean session (as if a favourite had just been loaded) —
+      // adding the card itself also marks dirty, which isn't what's under test.
+      saveCurrentBtn.classList.add('hidden');
+
+      const removeButtons = document.querySelectorAll<HTMLButtonElement>('.url-remove-btn');
+      removeButtons[removeButtons.length - 1].click();
+
+      expect(saveCurrentBtn.classList.contains('hidden')).toBe(false);
+    });
+  });
 });
