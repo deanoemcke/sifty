@@ -7,10 +7,8 @@ import type { AiAuditEntry } from './aiAuditLog';
 import {
   appendAuditLogLineAsync,
   formatAuditEntryLine,
-  MAX_AUDIT_FIELD_LENGTH,
   MAX_AUDIT_LOG_FILE_SIZE_BYTES,
   rotateAuditLogIfOversizedAsync,
-  truncateAuditField,
   writeAuditLogHeaderAsync,
 } from './aiAuditLog';
 
@@ -39,32 +37,11 @@ describe('formatAuditEntryLine', () => {
   });
 });
 
-describe('truncateAuditField', () => {
-  it('returns a value at or under the cap unchanged', () => {
-    const value = 'a'.repeat(MAX_AUDIT_FIELD_LENGTH);
-    expect(truncateAuditField(value)).toBe(value);
-  });
+describe('formatAuditEntryLine never truncates fields', () => {
+  const OVERSIZED_LENGTH = 50_000;
 
-  it('truncates a value over the cap and appends a marker naming the omitted byte count', () => {
-    const value = 'a'.repeat(MAX_AUDIT_FIELD_LENGTH + 500);
-    const truncated = truncateAuditField(value);
-    expect(truncated.startsWith('a'.repeat(MAX_AUDIT_FIELD_LENGTH))).toBe(true);
-    expect(truncated).toBe(
-      `${'a'.repeat(MAX_AUDIT_FIELD_LENGTH)}...[truncated, 500 bytes omitted]`
-    );
-  });
-
-  it('counts multi-byte UTF-8 characters in the omitted byte count, not just omitted characters', () => {
-    // Every "é" is 2 bytes in UTF-8, so 10 omitted characters is 20 omitted bytes.
-    const value = 'a'.repeat(MAX_AUDIT_FIELD_LENGTH) + 'é'.repeat(10);
-    const truncated = truncateAuditField(value);
-    expect(truncated).toContain('...[truncated, 20 bytes omitted]');
-  });
-});
-
-describe('formatAuditEntryLine field size caps', () => {
-  it('truncates an oversized rawContent field with a visible marker', () => {
-    const oversizedRawContent = 'x'.repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+  it('writes an oversized rawContent field in full, with no truncation marker', () => {
+    const oversizedRawContent = 'x'.repeat(OVERSIZED_LENGTH);
     const entry: AiAuditEntry = {
       ...SAMPLE_ENTRY,
       response: undefined,
@@ -73,41 +50,24 @@ describe('formatAuditEntryLine field size caps', () => {
 
     const parsed = JSON.parse(formatAuditEntryLine(entry));
 
-    expect(parsed.rawContent).toContain('...[truncated, 5000 bytes omitted]');
-    expect(parsed.rawContent.length).toBeLessThan(oversizedRawContent.length);
+    expect(parsed.rawContent).toBe(oversizedRawContent);
+    expect(parsed.rawContent).not.toContain('truncated');
   });
 
-  it('leaves a rawContent field under the cap untouched', () => {
+  it('writes an oversized response field in full, as the original structured value', () => {
+    const oversizedResponse = { data: 'x'.repeat(OVERSIZED_LENGTH) };
     const entry: AiAuditEntry = {
       ...SAMPLE_ENTRY,
-      response: undefined,
-      rawContent: 'short content',
+      response: oversizedResponse,
     };
 
     const parsed = JSON.parse(formatAuditEntryLine(entry));
 
-    expect(parsed.rawContent).toBe('short content');
+    expect(parsed.response).toEqual(oversizedResponse);
   });
 
-  it('truncates an oversized response field (by its serialized size) into a marked string', () => {
-    const entry: AiAuditEntry = {
-      ...SAMPLE_ENTRY,
-      response: { data: 'x'.repeat(MAX_AUDIT_FIELD_LENGTH + 10) },
-    };
-
-    const parsed = JSON.parse(formatAuditEntryLine(entry));
-
-    expect(typeof parsed.response).toBe('string');
-    expect(parsed.response).toContain('...[truncated,');
-  });
-
-  it('leaves a response field under the cap as the original structured value', () => {
-    const line = formatAuditEntryLine(SAMPLE_ENTRY);
-    expect(JSON.parse(line).response).toEqual(SAMPLE_ENTRY.response);
-  });
-
-  it('truncates an oversized systemMessage field with a visible marker', () => {
-    const oversizedSystemMessage = 'x'.repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+  it('writes an oversized systemMessage field in full, with no truncation marker', () => {
+    const oversizedSystemMessage = 'x'.repeat(OVERSIZED_LENGTH);
     const entry: AiAuditEntry = {
       ...SAMPLE_ENTRY,
       response: undefined,
@@ -116,12 +76,12 @@ describe('formatAuditEntryLine field size caps', () => {
 
     const parsed = JSON.parse(formatAuditEntryLine(entry));
 
-    expect(parsed.systemMessage).toContain('...[truncated, 5000 bytes omitted]');
-    expect(parsed.systemMessage.length).toBeLessThan(oversizedSystemMessage.length);
+    expect(parsed.systemMessage).toBe(oversizedSystemMessage);
+    expect(parsed.systemMessage).not.toContain('truncated');
   });
 
-  it('truncates an oversized userMessage field with a visible marker', () => {
-    const oversizedUserMessage = 'x'.repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+  it('writes an oversized userMessage field in full, with no truncation marker', () => {
+    const oversizedUserMessage = 'x'.repeat(OVERSIZED_LENGTH);
     const entry: AiAuditEntry = {
       ...SAMPLE_ENTRY,
       response: undefined,
@@ -130,12 +90,12 @@ describe('formatAuditEntryLine field size caps', () => {
 
     const parsed = JSON.parse(formatAuditEntryLine(entry));
 
-    expect(parsed.userMessage).toContain('...[truncated, 5000 bytes omitted]');
-    expect(parsed.userMessage.length).toBeLessThan(oversizedUserMessage.length);
+    expect(parsed.userMessage).toBe(oversizedUserMessage);
+    expect(parsed.userMessage).not.toContain('truncated');
   });
 
-  it('truncates an oversized errorMessage field with a visible marker', () => {
-    const oversizedErrorMessage = 'x'.repeat(MAX_AUDIT_FIELD_LENGTH + 5_000);
+  it('writes an oversized errorMessage field in full, with no truncation marker', () => {
+    const oversizedErrorMessage = 'x'.repeat(OVERSIZED_LENGTH);
     const entry: AiAuditEntry = {
       ...SAMPLE_ENTRY,
       response: undefined,
@@ -144,11 +104,11 @@ describe('formatAuditEntryLine field size caps', () => {
 
     const parsed = JSON.parse(formatAuditEntryLine(entry));
 
-    expect(parsed.errorMessage).toContain('...[truncated, 5000 bytes omitted]');
-    expect(parsed.errorMessage.length).toBeLessThan(oversizedErrorMessage.length);
+    expect(parsed.errorMessage).toBe(oversizedErrorMessage);
+    expect(parsed.errorMessage).not.toContain('truncated');
   });
 
-  it('leaves systemMessage, userMessage, and errorMessage under the cap untouched', () => {
+  it('leaves short systemMessage, userMessage, and errorMessage fields untouched', () => {
     const entry: AiAuditEntry = {
       ...SAMPLE_ENTRY,
       response: undefined,
@@ -276,8 +236,7 @@ describe('recordAiAuditEntry (fire-and-forget async writes)', () => {
   });
 
   it('is fire-and-forget: it returns synchronously without throwing even when the write rejects', async () => {
-    vi.spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined);
-    vi.spyOn(fsPromises, 'writeFile').mockRejectedValue(new Error('ENOSPC'));
+    vi.spyOn(fsPromises, 'mkdir').mockRejectedValue(new Error('ENOSPC'));
     vi.spyOn(fsPromises, 'appendFile').mockResolvedValue(undefined);
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -317,7 +276,7 @@ describe('recordAiAuditEntry (fire-and-forget async writes)', () => {
     expect(unhandledRejections).toHaveLength(0);
   });
 
-  it('initializes (mkdir + truncate) once per module instance, then appends on every call', async () => {
+  it('initializes (mkdir only, no truncation) once per module instance, then appends on every call', async () => {
     const mkdirSpy = vi.spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined);
     const writeFileSpy = vi.spyOn(fsPromises, 'writeFile').mockResolvedValue(undefined);
     const appendFileSpy = vi.spyOn(fsPromises, 'appendFile').mockResolvedValue(undefined);
@@ -330,7 +289,20 @@ describe('recordAiAuditEntry (fire-and-forget async writes)', () => {
 
     await vi.waitFor(() => expect(appendFileSpy).toHaveBeenCalledTimes(3));
     expect(mkdirSpy).toHaveBeenCalledTimes(1);
-    expect(writeFileSpy).toHaveBeenCalledTimes(1);
+    expect(writeFileSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves pre-existing log content across module instances instead of truncating it', async () => {
+    vi.spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined);
+    const writeFileSpy = vi.spyOn(fsPromises, 'writeFile');
+    vi.spyOn(fsPromises, 'stat').mockResolvedValue({ size: 0 } as fs.Stats);
+    const appendFileSpy = vi.spyOn(fsPromises, 'appendFile').mockResolvedValue(undefined);
+
+    const { recordAiAuditEntry } = await import('./aiAuditLog');
+    recordAiAuditEntry(SAMPLE_ENTRY);
+
+    await vi.waitFor(() => expect(appendFileSpy).toHaveBeenCalledTimes(1));
+    expect(writeFileSpy).not.toHaveBeenCalled();
   });
 
   it('does not drop an entry when two concurrent calls both observe an oversized log (rotation race)', async () => {
@@ -369,24 +341,23 @@ describe('recordAiAuditEntry (fire-and-forget async writes)', () => {
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
-  it('retries initialization on the next entry after a failed header write', async () => {
-    const writeFileSpy = vi
-      .spyOn(fsPromises, 'writeFile')
+  it('retries initialization on the next entry after a failed directory creation', async () => {
+    const mkdirSpy = vi
+      .spyOn(fsPromises, 'mkdir')
       .mockRejectedValueOnce(new Error('EACCES'))
       .mockResolvedValueOnce(undefined);
-    vi.spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined);
     const appendFileSpy = vi.spyOn(fsPromises, 'appendFile').mockResolvedValue(undefined);
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const { recordAiAuditEntry } = await import('./aiAuditLog');
 
     recordAiAuditEntry(SAMPLE_ENTRY);
-    await vi.waitFor(() => expect(writeFileSpy).toHaveBeenCalledTimes(1));
-    // First entry never gets appended because header initialization failed.
+    await vi.waitFor(() => expect(mkdirSpy).toHaveBeenCalledTimes(1));
+    // First entry never gets appended because directory initialization failed.
     expect(appendFileSpy).not.toHaveBeenCalled();
 
     recordAiAuditEntry({ ...SAMPLE_ENTRY, attempt: 2 });
     await vi.waitFor(() => expect(appendFileSpy).toHaveBeenCalledTimes(1));
-    expect(writeFileSpy).toHaveBeenCalledTimes(2);
+    expect(mkdirSpy).toHaveBeenCalledTimes(2);
   });
 });
