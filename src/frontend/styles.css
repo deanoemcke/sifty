@@ -322,6 +322,7 @@ label {
   text-decoration: underline;
 }
 .url-remove-btn,
+.url-edit-btn,
 .delete-saved-btn {
   color: var(--text);
 }

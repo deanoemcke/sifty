@@ -14,6 +14,7 @@ import {
   canCancelSearch,
   cardIdByUrl,
   clearListings,
+  isCardSearchActive,
   isDeepSearchRunning,
   isSearchButtonDisabled,
   removeListingByUrl,
@@ -109,6 +110,10 @@ export function renderUrlRowMode(card: UrlCard): void {
   card.dom.linkElement.classList.toggle('hidden', !showLink);
   card.dom.input.classList.toggle('hidden', showLink);
   card.dom.searchButton.classList.toggle('hidden', showLink);
+  card.dom.editButton.classList.toggle(
+    'hidden',
+    !showLink || isCardSearchActive(data.searchStatus)
+  );
 }
 
 export function canSearchCard(card: UrlCard): boolean {
@@ -121,10 +126,28 @@ export function canSearchCard(card: UrlCard): boolean {
   );
 }
 
+export function isDuplicateUrl(card: UrlCard): boolean {
+  const current = card.dom.input.value.trim();
+  if (!current) return false;
+  return urlCards.some((other) => other !== card && other.dom.input.value.trim() === current);
+}
+
+function attemptSearchCard(card: UrlCard, searchCardAsync: (card: UrlCard) => Promise<void>): void {
+  if (isDuplicateUrl(card)) {
+    const data = urlCardData(card);
+    data.errorMessage = 'This URL has already been added.';
+    renderCardStatus(card);
+    return;
+  }
+  if (canSearchCard(card)) searchCardAsync(card);
+}
+
 // assets/x.svg, inlined so it inherits currentColor.
 export const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 export const SEARCH_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+
+export const EDIT_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="m15 5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>): UrlCard {
   const cardEl = document.createElement('div');
@@ -134,6 +157,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
       <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
       <input type="url" class="url-input" placeholder="Paste search URL…" />
       <button class="btn icon-btn url-search-btn" type="button" title="Search" disabled>${SEARCH_ICON}</button>
+      <button class="btn icon-btn url-edit-btn hidden" type="button" title="Edit">${EDIT_ICON}</button>
       <button class="btn icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
     </div>
     <div class="url-card-status hidden"></div>
@@ -144,6 +168,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   const input = requireChild<HTMLInputElement>(cardEl, '.url-input');
   const linkElement = requireChild<HTMLAnchorElement>(cardEl, '.url-link');
   const searchButton = requireChild<HTMLButtonElement>(cardEl, '.url-search-btn');
+  const editButton = requireChild<HTMLButtonElement>(cardEl, '.url-edit-btn');
   const removeButton = requireChild<HTMLButtonElement>(cardEl, '.url-remove-btn');
   const criteriaElement = requireChild<HTMLElement>(cardEl, '.url-criteria');
   const cacheStatusElement = requireChild<HTMLElement>(cardEl, '.cache-status');
@@ -163,6 +188,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     input,
     linkElement,
     searchButton,
+    editButton,
     removeButton,
     criteriaElement,
     cacheStatusElement,
@@ -170,20 +196,22 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   };
   const urlCard = addUrlCard(dom, data);
 
-  let cameFromPaste = false;
-  input.addEventListener('paste', () => {
-    cameFromPaste = true;
-  });
   input.addEventListener('input', () => {
+    const cardData = urlCardData(urlCard);
+    if (cardData.searchStatus === 'idle' && cardData.errorMessage !== null) {
+      cardData.errorMessage = null;
+      renderCardStatus(urlCard);
+    }
     handleUrlInputChanged(urlCard);
-    if (cameFromPaste && canSearchCard(urlCard)) searchCardAsync(urlCard);
-    cameFromPaste = false;
   });
   input.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
-    if (keyboardEvent.key === 'Enter' && canSearchCard(urlCard)) searchCardAsync(urlCard);
+    if (keyboardEvent.key === 'Enter') attemptSearchCard(urlCard, searchCardAsync);
   });
-  searchButton.addEventListener('click', () => {
-    if (canSearchCard(urlCard)) searchCardAsync(urlCard);
+  searchButton.addEventListener('click', () => attemptSearchCard(urlCard, searchCardAsync));
+  editButton.addEventListener('click', () => {
+    resetCardForResearch(urlCard);
+    handleUrlInputChanged(urlCard);
+    input.focus();
   });
   removeButton.addEventListener('click', () => removeUrlCard(urlCard));
 

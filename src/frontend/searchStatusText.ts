@@ -76,6 +76,7 @@ export function cardStatusText(
   if (searchStatus === 'cancelling') return { text: 'Cancelling…', kind: 'info' };
   if (wasCancelled)
     return { text: `Cancelled — ${listingsCountText(listingsFoundCount)}`, kind: 'error' };
+  if (searchStatus === 'idle' && errorMessage) return { text: errorMessage, kind: 'error' };
   if (searchStatus === 'done')
     return errorMessage
       ? { text: errorMessage, kind: 'error' }

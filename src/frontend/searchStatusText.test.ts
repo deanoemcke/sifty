@@ -127,4 +127,11 @@ describe('cardStatusText', () => {
       kind: 'error',
     });
   });
+
+  it('shows a pending error message on an idle card', () => {
+    expect(cardStatusText({ ...base, errorMessage: 'This URL has already been added.' })).toEqual({
+      text: 'This URL has already been added.',
+      kind: 'error',
+    });
+  });
 });
