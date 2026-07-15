@@ -44,6 +44,14 @@ export const RECIPE_PATTERNS = [
 
 export type RecipeSource = (typeof RECIPE_PATTERNS)[number]['name'];
 
+// Single source of truth for human-readable source names — shared by the
+// frontend's source badge and server-side notification text.
+export const RECIPE_LABELS: Record<RecipeId, string> = {
+  [RecipeId.Trademe]: 'Trade Me',
+  [RecipeId.Facebook]: 'Facebook',
+  [RecipeId.TrademeExpired]: 'Trade Me (sold)',
+};
+
 export function requirePattern(name: RecipeSource) {
   const pattern = RECIPE_PATTERNS.find((p) => p.name === name);
   if (!pattern) throw new Error(`Recipe pattern "${name}" not found`);
