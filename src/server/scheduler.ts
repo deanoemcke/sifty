@@ -5,9 +5,7 @@
 // listing it hasn't alerted on before.
 
 import type Database from 'better-sqlite3';
-import { formatListingPrice } from '../lib/priceFormat';
-import type { Listing, ProviderCooldownStore, QuickSearchProgress } from '../lib/recipes/base';
-import { RECIPE_LABELS, requirePattern } from '../lib/recipes/metadata';
+import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import {
   type SavedSearchRow,
   stmtGetOldestAlertEnabledSavedSearch,
@@ -18,13 +16,15 @@ import {
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import type { SignalNotificationOptions } from './notify';
+import { logQuickSearchEvent } from './quickSearchLogging';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   type AiFilterListing,
   type FilterResultEntry,
   runAiFilterBatchesAsync,
 } from './services/aiFilter';
-import { type QuickSearchCacheEvent, runQuickSearchForUrlAsync } from './services/quickSearch';
+import { runQuickSearchForUrlAsync } from './services/quickSearch';
+import { formatAlertMessage } from './signalMessage';
 
 // Upper bound on a single URL's quick search. The scheduler runs unattended
 // via cron with no human to notice a hang — a stalled recipe (login wall,
@@ -93,63 +93,6 @@ export type SavedSearchRunSummary = {
 export type SchedulerSummary = {
   searches: SavedSearchRunSummary[];
 };
-
-// Strips the four characters the Signal proxy's regex-based markdown
-// converter treats as style markers (**, _..._, `...`, ~~). Inserting an
-// invisible character next to a marker only defeats markers that require
-// doubling (**, ~~) — a lone _ or ` still matches a single-character
-// delimiter regex regardless of what surrounds it, and a marker adjacent to
-// a caller-supplied wrapper (formatAlertMessage's own **) can still merge
-// into an unbroken run. Removing the characters outright is correct
-// regardless of delimiter width or surrounding context, at the cost of
-// altering the visible text (e.g. `Model_X` renders as `ModelX`).
-export function escapeSignalMarkdown(text: string): string {
-  return text.replace(/[*_`~]/g, '');
-}
-
-// Emulates the results-grid listing card as closely as the Signal proxy's
-// markdown subset allows: bold title (the card's dominant element), then
-// source/location/price on one line (the card's badge + footer, collapsed
-// into text), then the link. The saved search name leads, preserving the
-// "which search fired this" context the old plain-text message carried.
-// `url` is deliberately never escaped — it must stay byte-identical to
-// `listing.url` so Signal's client-side auto-linkify isn't broken.
-export function formatAlertMessage(savedSearchName: string, listing: Listing): string {
-  const sourceLabel = RECIPE_LABELS[requirePattern(listing.source).recipeId];
-  const price = formatListingPrice(listing.price);
-  return [
-    escapeSignalMarkdown(savedSearchName),
-    `**${escapeSignalMarkdown(listing.title)}**`,
-    `${sourceLabel} · ${escapeSignalMarkdown(listing.location)} · ${price}`,
-    listing.url,
-  ].join('\n');
-}
-
-function describeQuickSearchProgress(progress: QuickSearchProgress): string {
-  switch (progress.phase) {
-    case 'loading':
-      return 'loading';
-    case 'counted':
-      return `${progress.totalResults} result(s) across ${progress.totalPages} page(s)`;
-    case 'paging':
-      return progress.totalPages === undefined
-        ? `fetching page ${progress.page}`
-        : `fetching page ${progress.page}/${progress.totalPages}`;
-    case 'collecting':
-      return `found ${progress.foundSoFar} so far${progress.isLoadingMore ? ', loading more' : ''}`;
-  }
-}
-
-// The scheduler previously discarded every recipe's onEvent callback, so a
-// recipe that only ever reported progress/errors through onEvent (rather
-// than its own direct console.log calls) was silently invisible in scheduler
-// output — logging this generically here fixes that for every recipe at
-// once, rather than relying on each recipe author to hand-add console calls.
-function logQuickSearchEvent(recipeName: string, event: QuickSearchCacheEvent): void {
-  if (event.type === 'progress')
-    console.log(`[${recipeName}] ${describeQuickSearchProgress(event)}`);
-  if (event.type === 'error') console.error(`[${recipeName}] ${event.message}`);
-}
 
 function toAiFilterListing(listing: Listing): AiFilterListing {
   return {
