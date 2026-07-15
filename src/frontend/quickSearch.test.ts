@@ -227,13 +227,30 @@ describe('searchUrlCardAsync — stale cached listing data', () => {
 });
 
 describe('clearQuickSearchCacheAsync', () => {
-  function stubFetch(): Array<{ url: string; body: unknown }> {
+  // Routes fetch by URL: `/api/cache/clear` resolves like a plain POST, while
+  // `/api/quick-search` is served from `researchChunks` — clearing the cache
+  // now re-runs the card's search, so both endpoints get hit in one call.
+  function stubClearThenResearch(researchChunks: string[]): Array<{ url: string; body: unknown }> {
     const calls: Array<{ url: string; body: unknown }> = [];
+    const encoder = new TextEncoder();
+    const pendingChunks = [...researchChunks];
+    const reader = {
+      read: async () =>
+        pendingChunks.length > 0
+          ? { value: encoder.encode(pendingChunks.shift()), done: false }
+          : { value: undefined, done: true },
+    };
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string, init?: RequestInit) => {
         calls.push({ url, body: init?.body ? JSON.parse(init.body as string) : undefined });
-        return Promise.resolve({ ok: true } as Response);
+        if (url === '/api/cache/clear') return Promise.resolve({ ok: true } as Response);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+          body: { getReader: () => reader },
+        } as unknown as Response);
       })
     );
     return calls;
@@ -249,15 +266,18 @@ describe('clearQuickSearchCacheAsync', () => {
     return card;
   }
 
-  it('posts { type: "quick-search", url: <searchedUrl> } for the clicked card', async () => {
+  it('posts { type: "quick-search", url: <searchedUrl> } to clear the cache, then re-runs the search against the same URL', async () => {
     const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
-    const calls = stubFetch();
+    const calls = stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/item-b","isAuction":false,"relevance":0}}\n',
+    ]);
 
     await clearQuickSearchCacheAsync(card);
 
-    expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe('/api/cache/clear');
     expect(calls[0].body).toEqual({ type: 'quick-search', url: TRADEME_URL });
+    expect(calls[1].url).toBe('/api/quick-search');
+    expect((calls[1].body as { url: string }).url).toBe(TRADEME_URL);
   });
 
   it("clearing card A leaves card B's searchedUrl, listingUrls, and cache badge untouched", async () => {
@@ -269,7 +289,9 @@ describe('clearQuickSearchCacheAsync', () => {
       'https://www.trademe.co.nz/search/b',
       'https://example.com/item-b'
     );
-    stubFetch();
+    stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/item-a2","isAuction":false,"relevance":0}}\n',
+    ]);
 
     await clearQuickSearchCacheAsync(cardA);
 
@@ -279,29 +301,32 @@ describe('clearQuickSearchCacheAsync', () => {
     expect(cardB.dom.cacheStatusElement.classList.contains('hidden')).toBe(false);
   });
 
-  it("does not reset the clicked card's own searchStatus/listingUrls/criteria — only its cache badge disappears", async () => {
+  it('re-runs against fresh data — listingUrls reflect the new stream, and no stale cache badge remains', async () => {
     const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
-    stubFetch();
+    stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/item-b","isAuction":false,"relevance":0}}\n',
+    ]);
 
     await clearQuickSearchCacheAsync(card);
 
     const data = urlCardData(card);
     expect(data.searchStatus).toBe('done');
-    expect(data.listingUrls).toEqual(['https://example.com/item-a']);
+    expect(data.searchedUrl).toBe(TRADEME_URL);
+    expect(data.listingUrls).toEqual(['https://example.com/item-b']);
     expect(card.dom.cacheStatusElement.classList.contains('hidden')).toBe(true);
     expect(card.dom.cacheStatusElement.innerHTML).toBe('');
   });
 
-  it('leaves listingsByUrl size and resultsSection visibility unchanged', async () => {
+  it('surfaces the freshly streamed listing in listingsByUrl and keeps resultsSection visible', async () => {
     const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
-    stubFetch();
-    const sizeBefore = listingsByUrl.size;
-    const resultsHiddenBefore = getElement('resultsSection').classList.contains('hidden');
+    stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/item-b","isAuction":false,"relevance":0}}\n',
+    ]);
 
     await clearQuickSearchCacheAsync(card);
 
-    expect(listingsByUrl.size).toBe(sizeBefore);
-    expect(getElement('resultsSection').classList.contains('hidden')).toBe(resultsHiddenBefore);
+    expect(listingsByUrl.has('https://example.com/item-b')).toBe(true);
+    expect(getElement('resultsSection').classList.contains('hidden')).toBe(false);
   });
 });
 

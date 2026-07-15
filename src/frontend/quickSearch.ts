@@ -18,7 +18,7 @@ import {
   type UrlCardSearchStatus,
 } from './state';
 import { streamPostAsync } from './streamPost';
-import { clearCardCacheBadge, renderCardStatus, resetCardForResearch } from './urlCardRow';
+import { renderCardStatus, resetCardForResearch } from './urlCardRow';
 import { type UrlCard, urlCardData } from './urlCardStore';
 import { updateUrlGroupHeaders } from './urlGroupsView';
 
@@ -165,5 +165,5 @@ export async function clearQuickSearchCacheAsync(card: UrlCard): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: 'quick-search', url }),
   }).catch(() => null);
-  clearCardCacheBadge(card);
+  await searchUrlCardAsync(card);
 }
