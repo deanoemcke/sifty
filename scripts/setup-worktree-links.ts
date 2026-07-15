@@ -1,6 +1,6 @@
 /**
- * Ensures .claude/reviews and .cache are symlinked to the main repo's copies when running
- * inside a git worktree, so peer-review reports and the SQLite cache are shared instead of
+ * Ensures .claude/reviews and data are symlinked to the main repo's copies when running
+ * inside a git worktree, so peer-review reports and the SQLite database are shared instead of
  * silently diverging per worktree. Runs automatically via the postinstall npm script, since
  * every new worktree already requires `npm install` as its first setup step.
  *
@@ -13,7 +13,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-const LINKED_PATHS = ['.claude/reviews', '.cache'];
+const LINKED_PATHS = ['.claude/reviews', 'data'];
 
 export function getGitCommonDir(cwd: string): string {
   return execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd, encoding: 'utf8' }).trim();
