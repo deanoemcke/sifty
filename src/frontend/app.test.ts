@@ -546,12 +546,12 @@ describe('initApp() wiring', () => {
       addUrlBtn.click();
       // Simulate a clean session (as if a favourite had just been loaded) —
       // adding the card itself also marks dirty, which isn't what's under test.
-      saveCurrentBtn.classList.add('hidden');
+      saveCurrentBtn.disabled = true;
 
       const removeButtons = document.querySelectorAll<HTMLButtonElement>('.url-remove-btn');
       removeButtons[removeButtons.length - 1].click();
 
-      expect(saveCurrentBtn.classList.contains('hidden')).toBe(false);
+      expect(saveCurrentBtn.disabled).toBe(false);
     });
   });
 });

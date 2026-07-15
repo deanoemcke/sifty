@@ -36,13 +36,13 @@ import {
 import { urlCards } from './urlCardStore';
 
 export function markDirty(): void {
-  getElement('saveCurrentBtn').classList.remove('hidden');
+  getElement<HTMLButtonElement>('saveCurrentBtn').disabled = false;
 }
 
 export function setSearchName(id: string | null, name: string | null): void {
   setCurrentSearchId(id);
   setCurrentSearchName(name);
-  getElement('saveCurrentBtn').classList.add('hidden');
+  getElement<HTMLButtonElement>('saveCurrentBtn').disabled = true;
 }
 
 // ── Saved searches ────────────────────────────────────────────────────────────

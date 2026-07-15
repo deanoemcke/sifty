@@ -51,7 +51,7 @@ beforeEach(() => {
       <div id="savedSearchesList"></div>
       <span id="savedSearchesCount" class="hidden">0</span>
     </div>
-    <button id="saveCurrentBtn" class="hidden"></button>
+    <button id="saveCurrentBtn" disabled></button>
 
     <div id="saveSearchModal" class="hidden">
       <input id="saveSearchName" />

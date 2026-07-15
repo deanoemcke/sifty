@@ -1101,17 +1101,11 @@ label {
   background: none;
 }
 
-/* Discovery action row: search button centred, save-favourite pinned right */
+/* Discovery action row: search button left, save-favourite right */
 .discovery-actions {
-  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-}
-.save-current-btn {
-  position: absolute;
-  right: 0;
-  color: var(--primary);
+  justify-content: space-between;
 }
 
 /* ── Misc ── */
