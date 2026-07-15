@@ -41,8 +41,8 @@ describe('ensureSharedSymlink', () => {
 
   it('is idempotent — running again on an already-correct symlink reports already-linked', () => {
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sifty-link-test-'));
-    const linkPath = path.join(tmpRoot, 'worktree', '.cache');
-    const targetDir = path.join(tmpRoot, 'main', '.cache');
+    const linkPath = path.join(tmpRoot, 'worktree', 'data');
+    const targetDir = path.join(tmpRoot, 'main', 'data');
 
     ensureSharedSymlink(linkPath, targetDir);
     const result = ensureSharedSymlink(linkPath, targetDir);
@@ -52,15 +52,15 @@ describe('ensureSharedSymlink', () => {
 
   it('does not touch a real (non-symlink) directory that already holds data', () => {
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sifty-link-test-'));
-    const linkPath = path.join(tmpRoot, 'worktree', '.cache');
-    const targetDir = path.join(tmpRoot, 'main', '.cache');
+    const linkPath = path.join(tmpRoot, 'worktree', 'data');
+    const targetDir = path.join(tmpRoot, 'main', 'data');
     fs.mkdirSync(linkPath, { recursive: true });
-    fs.writeFileSync(path.join(linkPath, 'cache.db'), 'pre-existing data');
+    fs.writeFileSync(path.join(linkPath, 'sifty.db'), 'pre-existing data');
 
     const result = ensureSharedSymlink(linkPath, targetDir);
 
     expect(result).toBe('skipped-existing-data');
     expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(false);
-    expect(fs.readFileSync(path.join(linkPath, 'cache.db'), 'utf8')).toBe('pre-existing data');
+    expect(fs.readFileSync(path.join(linkPath, 'sifty.db'), 'utf8')).toBe('pre-existing data');
   });
 });

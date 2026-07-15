@@ -4,7 +4,14 @@
 const NOTIFY_URL = 'http://127.0.0.1:8091/notify';
 const NOTIFY_TIMEOUT_MS = 10_000;
 
-export async function sendSignalNotificationAsync(message: string): Promise<void> {
+export type SignalNotificationOptions = {
+  image?: string;
+};
+
+export async function sendSignalNotificationAsync(
+  message: string,
+  options?: SignalNotificationOptions
+): Promise<void> {
   const token = process.env.OPENCLAW_BEARER_TOKEN;
   if (!token) throw new Error('OPENCLAW_BEARER_TOKEN environment variable is not set');
 
@@ -18,7 +25,7 @@ export async function sendSignalNotificationAsync(message: string): Promise<void
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(options?.image ? { image: options.image } : {}) }),
       signal: controller.signal,
     });
   } finally {

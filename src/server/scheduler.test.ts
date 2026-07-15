@@ -8,6 +8,7 @@ vi.mock('./ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./ai')>();
   return { ...actual, aiJSON: vi.fn(), getAIConfig: vi.fn() };
 });
+vi.mock('./imageAttachment', () => ({ fetchListingImageAttachmentAsync: vi.fn() }));
 
 import { aiJSON, getAIConfig } from './ai';
 import { hashFingerprintParts } from './alerts';
@@ -18,8 +19,14 @@ import {
   stmtGetSavedSearch,
   stmtInsertSavedSearch,
 } from './db';
+import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { getRecipeForUrl } from './recipes/registry';
-import { AI_FILTER_TIMEOUT_MS, runSchedulerAsync, SCRAPE_TIMEOUT_MS } from './scheduler';
+import {
+  AI_FILTER_TIMEOUT_MS,
+  NOTIFY_LOOP_TIMEOUT_MS,
+  runSchedulerAsync,
+  SCRAPE_TIMEOUT_MS,
+} from './scheduler';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -99,6 +106,7 @@ beforeEach(() => {
   vi.mocked(getRecipeForUrl).mockReset();
   vi.mocked(aiJSON).mockReset();
   vi.mocked(getAIConfig).mockReset();
+  vi.mocked(fetchListingImageAttachmentAsync).mockReset().mockResolvedValue(undefined);
 });
 
 describe('runSchedulerAsync', () => {
@@ -649,6 +657,52 @@ describe('runSchedulerAsync', () => {
     }
   });
 
+  it('logs progress and error events reported by the recipe during quick search, tagged with the recipe name', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const recipe: Recipe = {
+      name: 'trademe',
+      matches: () => true,
+      extractImplicitFilters: () => [],
+      quickSearchAsync: async (_url, onEvent) => {
+        onEvent({ type: 'progress', phase: 'paging', page: 1, totalPages: 3 });
+        onEvent({ type: 'error', message: 'boom' });
+        onEvent({ type: 'complete' });
+      },
+      deepSearchAsync: async () => {},
+      computeAlertFingerprint: stubComputeAlertFingerprint,
+    };
+    vi.mocked(getRecipeForUrl).mockReturnValue(recipe);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: vi.fn(),
+      });
+
+      expect(
+        logSpy.mock.calls.some(
+          ([message]) =>
+            typeof message === 'string' &&
+            message.includes('[trademe]') &&
+            message.includes('page 1')
+        )
+      ).toBe(true);
+      expect(
+        errorSpy.mock.calls.some(
+          ([message]) =>
+            typeof message === 'string' && message.includes('[trademe]') && message.includes('boom')
+        )
+      ).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
   it('times out a stalled AI filter run instead of hanging forever, recording an error and completing the run', async () => {
     vi.useFakeTimers();
     try {
@@ -679,5 +733,162 @@ describe('runSchedulerAsync', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('times out a stalled notify loop instead of hanging forever, recording an error and completing the run', async () => {
+    vi.useFakeTimers();
+    try {
+      const db = freshDb();
+      const searchId = insertAlertSearch(db);
+      const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+      await runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: vi.fn(),
+      });
+      stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+      const newListing = makeListing({ title: 'New chair', url: 'https://example.com/new' });
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
+      // Simulates a hung notifier — sendNotificationAsync's own promise never settles.
+      const sendNotificationAsync = vi.fn().mockImplementation(() => new Promise(() => {}));
+
+      const summaryPromise = runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync,
+      });
+      await vi.advanceTimersByTimeAsync(NOTIFY_LOOP_TIMEOUT_MS);
+      const summary = await summaryPromise;
+
+      expect(summary.searches).toHaveLength(1);
+      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      // Only the seed baseline is alerted — the hung listing's send never completed.
+      expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('passes the fetched thumbnail image through to the notifier when the listing has one', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/thumb.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith('https://example.com/thumb.jpg');
+    expect(sendNotificationAsync.mock.calls[0][1]?.image).toBe('data:image/jpeg;base64,abc');
+  });
+
+  it('retries without the image when the notifier rejects an image-attached message, and marks the listing notified', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/thumb.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Signal notification failed: 400 Bad Request'))
+      .mockResolvedValueOnce(undefined);
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+    expect(sendNotificationAsync.mock.calls[1][1]?.image).toBeUndefined();
+    expect(summary.searches[0].notifiedCount).toBe(1);
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
+  });
+
+  it('does not retry when the notifier rejects a message that never had an image attached', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const listing = makeListing({ title: 'Chair', url: 'https://example.com/1' }); // no thumbnailUrl
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    const sendNotificationAsync = vi.fn().mockRejectedValue(new Error('openclaw unreachable'));
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(summary.searches[0].notifiedCount).toBe(0);
+    expect(summary.searches[0].errors.length).toBeGreaterThan(0);
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1); // only the seed baseline
+  });
+
+  it('notifies with no image argument when the listing has no thumbnail', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const listing = makeListing({ title: 'Chair', url: 'https://example.com/1' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith(undefined);
+    expect(sendNotificationAsync.mock.calls[0][1]?.image).toBeUndefined();
   });
 });

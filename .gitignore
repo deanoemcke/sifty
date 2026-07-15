@@ -2,8 +2,8 @@ node_modules/
 dist/
 .claude/*
 !.claude/skills/
-.cache
-.cache.bak-*/
+data
+data.bak-*/
 .env
 .env.local
 .DS_Store

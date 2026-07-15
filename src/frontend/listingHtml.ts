@@ -2,9 +2,9 @@
 // Pure string builders shared by the results grid card and the detail modal.
 // All interpolated text goes through esc(); no DOM access here.
 
+import { formatListingPrice } from '../lib/priceFormat';
 import type { Listing } from '../lib/recipes/base';
 import { esc } from './html';
-import { formatListingPrice } from './priceFormat';
 import type { ListingItem } from './state';
 
 export function filterBannerText(item: ListingItem): string {

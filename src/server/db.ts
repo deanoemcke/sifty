@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
-const DB_PATH = path.resolve(__dirname, '../../.cache/cache.db');
+export const DB_PATH = path.resolve(__dirname, '../../data/sifty.db');
 
 let _db: Database.Database | null = null;
 
@@ -96,7 +96,7 @@ function logDbStats(database: Database.Database): void {
 
 // WAL mode lets one writer and multiple readers access the file concurrently instead of
 // exclusive-locking it; the busy timeout makes a writer retry for a while instead of
-// throwing SQLITE_BUSY immediately. Both matter once cache.db is shared (e.g. symlinked)
+// throwing SQLITE_BUSY immediately. Both matter once sifty.db is shared (e.g. symlinked)
 // across worktrees whose dev servers run as separate processes at the same time.
 export function configureDatabaseConnection(database: Database.Database): void {
   database.pragma('journal_mode = WAL');
