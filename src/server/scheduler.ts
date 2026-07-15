@@ -120,7 +120,7 @@ async function notifyNewListingsAsync(
     try {
       console.log(`[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`);
       const image = await fetchListingImageAttachmentAsync(listing.thumbnailUrl);
-      const message = formatAlertMessage(row.name, listing);
+      const message = formatAlertMessage(listing);
       try {
         await sendNotificationAsync(message, { image });
       } catch (err) {
