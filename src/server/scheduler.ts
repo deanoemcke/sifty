@@ -5,7 +5,9 @@
 // listing it hasn't alerted on before.
 
 import type Database from 'better-sqlite3';
+import { formatListingPrice } from '../lib/priceFormat';
 import type { Listing, ProviderCooldownStore, QuickSearchProgress } from '../lib/recipes/base';
+import { RECIPE_LABELS, requirePattern } from '../lib/recipes/metadata';
 import {
   type SavedSearchRow,
   stmtGetOldestAlertEnabledSavedSearch,
@@ -14,6 +16,7 @@ import {
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
+import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   type AiFilterListing,
@@ -53,7 +56,7 @@ async function withTimeoutAsync<T>(
   }
 }
 
-export type SchedulerNotifier = (message: string) => Promise<void>;
+export type SchedulerNotifier = (message: string, image?: string) => Promise<void>;
 
 export type SchedulerDeps = {
   database: Database.Database;
@@ -79,10 +82,32 @@ export type SchedulerSummary = {
   searches: SavedSearchRunSummary[];
 };
 
+// Neutralizes the four characters the Signal proxy's regex-based markdown
+// converter looks for (**, _..._, `...`, ~~) by inserting a zero-width space
+// after each occurrence. This can't change how the text reads, but it
+// guarantees no two of these characters remain adjacent — which is what the
+// converter needs to match a style marker — so scraped, untrusted listing
+// text can never accidentally trigger or break styling in the message.
+export function escapeSignalMarkdown(text: string): string {
+  return text.replace(/[*_`~]/g, '$&​');
+}
+
+// Emulates the results-grid listing card as closely as the Signal proxy's
+// markdown subset allows: bold title (the card's dominant element), then
+// source/location/price on one line (the card's badge + footer, collapsed
+// into text), then the link. The saved search name leads, preserving the
+// "which search fired this" context the old plain-text message carried.
+// `url` is deliberately never escaped — it must stay byte-identical to
+// `listing.url` so Signal's client-side auto-linkify isn't broken.
 export function formatAlertMessage(savedSearchName: string, listing: Listing): string {
-  const price =
-    listing.price === null || listing.price === undefined ? 'unknown price' : `$${listing.price}`;
-  return `${savedSearchName}: ${listing.title} — ${price} — ${listing.url}`;
+  const sourceLabel = RECIPE_LABELS[requirePattern(listing.source).recipeId];
+  const price = formatListingPrice(listing.price);
+  return [
+    escapeSignalMarkdown(savedSearchName),
+    `**${escapeSignalMarkdown(listing.title)}**`,
+    `${sourceLabel} · ${escapeSignalMarkdown(listing.location)} · ${price}`,
+    listing.url,
+  ].join('\n');
 }
 
 function describeQuickSearchProgress(progress: QuickSearchProgress): string {
@@ -245,7 +270,8 @@ async function processSavedSearchAsync(
         console.log(
           `[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`
         );
-        await sendNotificationAsync(formatAlertMessage(row.name, listing));
+        const image = await fetchListingImageAttachmentAsync(listing.thumbnailUrl);
+        await sendNotificationAsync(formatAlertMessage(row.name, listing), image);
         stmtInsertAlertedListing(database).run(row.id, hash, now());
         summary.notifiedCount++;
       } catch (err) {

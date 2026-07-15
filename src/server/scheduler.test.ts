@@ -8,6 +8,7 @@ vi.mock('./ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./ai')>();
   return { ...actual, aiJSON: vi.fn(), getAIConfig: vi.fn() };
 });
+vi.mock('./imageAttachment', () => ({ fetchListingImageAttachmentAsync: vi.fn() }));
 
 import { aiJSON, getAIConfig } from './ai';
 import { hashFingerprintParts } from './alerts';
@@ -18,8 +19,15 @@ import {
   stmtGetSavedSearch,
   stmtInsertSavedSearch,
 } from './db';
+import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { getRecipeForUrl } from './recipes/registry';
-import { AI_FILTER_TIMEOUT_MS, runSchedulerAsync, SCRAPE_TIMEOUT_MS } from './scheduler';
+import {
+  AI_FILTER_TIMEOUT_MS,
+  escapeSignalMarkdown,
+  formatAlertMessage,
+  runSchedulerAsync,
+  SCRAPE_TIMEOUT_MS,
+} from './scheduler';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -99,6 +107,7 @@ beforeEach(() => {
   vi.mocked(getRecipeForUrl).mockReset();
   vi.mocked(aiJSON).mockReset();
   vi.mocked(getAIConfig).mockReset();
+  vi.mocked(fetchListingImageAttachmentAsync).mockReset().mockResolvedValue(undefined);
 });
 
 describe('runSchedulerAsync', () => {
@@ -725,5 +734,121 @@ describe('runSchedulerAsync', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('passes the fetched thumbnail image through to the notifier when the listing has one', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/thumb.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith('https://example.com/thumb.jpg');
+    expect(sendNotificationAsync.mock.calls[0][1]).toBe('data:image/jpeg;base64,abc');
+  });
+
+  it('notifies with no image argument when the listing has no thumbnail', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const listing = makeListing({ title: 'Chair', url: 'https://example.com/1' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith(undefined);
+    expect(sendNotificationAsync.mock.calls[0][1]).toBeUndefined();
+  });
+});
+
+describe('formatAlertMessage', () => {
+  it('composes the saved search name, bold title, source/location/price line, and url', () => {
+    const listing = makeListing({
+      source: 'trademe',
+      title: 'Herman Miller Aeron, size B',
+      price: 150,
+      location: 'Wellington Central',
+      url: 'https://www.trademe.co.nz/a/123456',
+    });
+
+    const message = formatAlertMessage('Chairs under $200', listing);
+
+    expect(message).toBe(
+      'Chairs under $200\n' +
+        '**Herman Miller Aeron, size B**\n' +
+        'Trade Me · Wellington Central · $150\n' +
+        'https://www.trademe.co.nz/a/123456'
+    );
+  });
+
+  it("renders 'Price on request' for a null price and the correct label per source", () => {
+    const listing = makeListing({ source: 'facebook', price: null });
+
+    const message = formatAlertMessage('My search', listing);
+
+    expect(message).toContain('Facebook · Wellington · Price on request');
+  });
+
+  it('leaves the url untouched even if it contains markdown-special characters', () => {
+    const listing = makeListing({ url: 'https://example.com/a_b*c?x=1~2' });
+
+    const message = formatAlertMessage('My search', listing);
+
+    expect(message.endsWith('https://example.com/a_b*c?x=1~2')).toBe(true);
+  });
+
+  it('escapes markdown-special characters in the title so they cannot break the bold wrapper', () => {
+    const listing = makeListing({ title: 'Selling my **RARE** guitar' });
+
+    const message = formatAlertMessage('My search', listing);
+
+    // The only literal "**" pairs in the message must be the ones this
+    // function itself added around the whole (escaped) title.
+    expect(message.match(/\*\*/g)?.length).toBe(2);
+  });
+});
+
+describe('escapeSignalMarkdown', () => {
+  it('leaves plain text unchanged', () => {
+    expect(escapeSignalMarkdown('Plain chair listing')).toBe('Plain chair listing');
+  });
+
+  it.each(['*', '_', '`', '~'])('neutralizes adjacent pairs of %s', (marker) => {
+    const input = `a${marker}${marker}b`;
+    const escaped = escapeSignalMarkdown(input);
+    expect(escaped).not.toContain(`${marker}${marker}`);
   });
 });
