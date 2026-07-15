@@ -5,9 +5,36 @@
 import type { AiConfig } from '../../lib/recipes/base';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import type { CategoryRow } from '../db';
-import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from '../db';
+import {
+  getDb,
+  stmtGetCategoriesAtDepth2,
+  stmtGetCategoriesByTop2,
+  stmtSearchCategoriesByKeyword,
+} from '../db';
 
 export type DiscoverEntry = { slug: string; searchString: string | null };
+
+// Bare category labels alone often can't disambiguate a single-word prompt (e.g. "ladder"
+// plausibly reads as either "Tools" or "Building supplies" to step 1's LLM call). This
+// deterministic substring safety net runs alongside step 1: any category whose display name
+// literally contains a keyword from the prompt has its broad (top2) bucket added to step 2's
+// search, regardless of what step 1 picked — so a literal match is never structurally
+// unreachable just because the LLM guessed a different sibling.
+const MIN_KEYWORD_LENGTH = 4;
+
+export function extractSearchKeywords(prompt: string): string[] {
+  const words = prompt.toLowerCase().match(/[a-z]+/g) ?? [];
+  return [...new Set(words.filter((word) => word.length >= MIN_KEYWORD_LENGTH))];
+}
+
+function findKeywordMatchedTop2Slugs(database: ReturnType<typeof getDb>, prompt: string): string[] {
+  const stmt = stmtSearchCategoriesByKeyword(database);
+  const matched = new Set<string>();
+  for (const keyword of extractSearchKeywords(prompt)) {
+    for (const row of stmt.all(`%${keyword}%`)) matched.add(row.top2);
+  }
+  return [...matched];
+}
 
 export const STEP1_SYSTEM_PROMPT =
   'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also suggest a short label for the search and a search query. Return JSON: { "categories": string[], "searchLabel": string, "searchQuery": string | null } using the exact category names from the list. For searchLabel: a short human-readable label for the search (e.g. "MacBook Pro laptops"). For searchQuery: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchQuery=\'macbook pro\'.';
@@ -87,13 +114,30 @@ export async function resolveDiscoverCategoriesAsync(
     step1Warnings.push(`step1: unrecognised categories ignored: ${unrecognised.join(', ')}`);
   }
 
+  const MAX_BROAD_CATEGORIES = 5;
+  const keywordMatchedSlugs = findKeywordMatchedTop2Slugs(database, prompt).filter(
+    (slug) => !selectedBroadSlugs.includes(slug)
+  );
+  const roomForExtras = Math.max(0, MAX_BROAD_CATEGORIES - selectedBroadSlugs.length);
+  const acceptedExtraSlugs = keywordMatchedSlugs.slice(0, roomForExtras);
+  const droppedExtraSlugs = keywordMatchedSlugs.slice(roomForExtras);
+  if (acceptedExtraSlugs.length > 0) {
+    step1Warnings.push(`step1: added via keyword match: ${acceptedExtraSlugs.join(', ')}`);
+  }
+  if (droppedExtraSlugs.length > 0) {
+    step1Warnings.push(
+      `step1: keyword matches dropped (cap reached): ${droppedExtraSlugs.join(', ')}`
+    );
+  }
+  const finalBroadSlugs = [...selectedBroadSlugs, ...acceptedExtraSlugs];
+
   // Sequential (not parallel) so concurrent bursts don't collide on the provider's TPM limit.
   const subcategoryPickResults: Array<{
     top2Slug: string;
     candidates: CategoryRow[];
     result: Record<string, unknown> | null;
   }> = [];
-  for (const top2Slug of selectedBroadSlugs) {
+  for (const top2Slug of finalBroadSlugs) {
     const broadEntry = broad.find((category) => category.slug === top2Slug);
     if (!broadEntry) throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
     const candidates = stmtGetCategoriesByTop2(database).all(top2Slug);

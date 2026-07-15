@@ -1,7 +1,36 @@
-import { describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { describe, expect, it, vi } from 'vitest';
+import type { AiConfig, ProviderCooldownStore } from '../../lib/recipes/base';
+
+let _testDb: Database.Database | null = null;
+
+function requireTestDb(): Database.Database {
+  if (!_testDb) throw new Error('test DB not initialised');
+  return _testDb;
+}
+
+// Mirrors the `../db` mocking pattern used in quickSearch.test.ts — keeps every
+// real export (initSchema, the prepared statements, ...) via `importOriginal`
+// and only swaps `getDb` for an in-memory instance seeded per-test.
+vi.mock('../db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../db')>();
+  return { ...actual, getDb: () => requireTestDb() };
+});
+
+// Only `aiJSON` is faked — `applyAiJsonResult` stays real so the ok/rate-limited
+// unwrap logic under test is the actual implementation, not a re-encoding of it.
+vi.mock('../ai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ai')>();
+  return { ...actual, aiJSON: vi.fn() };
+});
+
+import { aiJSON } from '../ai';
+import { initSchema } from '../db';
 import {
   collapseEntries,
   type DiscoverEntry,
+  extractSearchKeywords,
+  resolveDiscoverCategoriesAsync,
   STEP2_SYSTEM_PROMPT,
 } from './trademeCategoryResolver';
 
@@ -137,5 +166,177 @@ describe('collapseEntries', () => {
     const home = result.find((e) => e.slug === 'marketplace/furniture/home');
     expect(laptops?.searchString).toBe('macbook');
     expect(home?.searchString).toBeNull();
+  });
+});
+
+// ── extractSearchKeywords ──────────────────────────────────────────────────
+
+describe('extractSearchKeywords', () => {
+  it('extracts a single word', () => {
+    expect(extractSearchKeywords('ladder')).toEqual(['ladder']);
+  });
+
+  it('drops words shorter than 4 characters', () => {
+    expect(extractSearchKeywords('I want a ladder')).toEqual(['want', 'ladder']);
+  });
+
+  it('lowercases words', () => {
+    expect(extractSearchKeywords('LADDER')).toEqual(['ladder']);
+  });
+
+  it('de-duplicates repeated words', () => {
+    expect(extractSearchKeywords('ladder ladder')).toEqual(['ladder']);
+  });
+
+  it('ignores punctuation and digits', () => {
+    expect(extractSearchKeywords('macbook-laptop (2021)!')).toEqual(['macbook', 'laptop']);
+  });
+});
+
+// ── resolveDiscoverCategoriesAsync ─────────────────────────────────────────
+
+const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
+  markExhausted: () => {},
+  getCooldownUntil: () => undefined,
+};
+
+const MOCK_AI_CONFIG: AiConfig = {
+  url: 'http://example.com',
+  model: 'mock-model',
+  apiKey: 'key',
+  providerKey: 'mock',
+  cooldownStore: STUB_COOLDOWN_STORE,
+};
+
+type SeedCategory = {
+  slug: string;
+  display: string;
+  depth: number;
+  parentSlug: string | null;
+  top2: string;
+};
+
+function seedCategories(db: Database.Database, categories: SeedCategory[]): void {
+  const insert = db.prepare(
+    'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+  for (const category of categories) {
+    insert.run(
+      category.slug,
+      category.display,
+      category.depth,
+      category.parentSlug,
+      category.top2,
+      `legacy/${category.slug}`
+    );
+  }
+}
+
+// Reproduces the reported bug: step 1 (mocked below) picks the plausible-but-wrong
+// "Tools" sibling for the prompt "ladder", so the correct "Ladders" leaf lives under
+// a completely different branch ("Building supplies") that step 1 never selected.
+function seedLadderBugFixture(db: Database.Database): void {
+  seedCategories(db, [
+    {
+      slug: 'building-renovation/tools',
+      display: 'Building & renovation > Tools',
+      depth: 2,
+      parentSlug: 'building-renovation',
+      top2: 'building-renovation/tools',
+    },
+    {
+      slug: 'building-renovation/tools/hand-tools',
+      display: 'Building & renovation > Tools > Hand tools',
+      depth: 3,
+      parentSlug: 'building-renovation/tools',
+      top2: 'building-renovation/tools',
+    },
+    {
+      slug: 'building-renovation/building-supplies',
+      display: 'Building & renovation > Building supplies',
+      depth: 2,
+      parentSlug: 'building-renovation',
+      top2: 'building-renovation/building-supplies',
+    },
+    {
+      slug: 'building-renovation/building-supplies/scaffolding-ladders',
+      display: 'Building & renovation > Building supplies > Scaffolding & ladders',
+      depth: 3,
+      parentSlug: 'building-renovation/building-supplies',
+      top2: 'building-renovation/building-supplies',
+    },
+    {
+      slug: 'building-renovation/building-supplies/scaffolding-ladders/ladders',
+      display: 'Building & renovation > Building supplies > Scaffolding & ladders > Ladders',
+      depth: 4,
+      parentSlug: 'building-renovation/building-supplies/scaffolding-ladders',
+      top2: 'building-renovation/building-supplies',
+    },
+  ]);
+}
+
+function mockAiJsonForLadderBugFixture(): void {
+  vi.mocked(aiJSON).mockImplementation(async (_config, label) => {
+    if (label === 'step1') {
+      return {
+        kind: 'ok',
+        value: {
+          categories: ['Building & renovation > Tools'],
+          searchLabel: 'ladder',
+          searchQuery: null,
+        },
+      };
+    }
+    if (label === 'step2:building-renovation/tools') {
+      return {
+        kind: 'ok',
+        value: {
+          categories: [{ slug: 'building-renovation/tools/hand-tools', searchString: null }],
+        },
+      };
+    }
+    if (label === 'step2:building-renovation/building-supplies') {
+      return {
+        kind: 'ok',
+        value: {
+          categories: [
+            {
+              slug: 'building-renovation/building-supplies/scaffolding-ladders/ladders',
+              searchString: null,
+            },
+          ],
+        },
+      };
+    }
+    throw new Error(`unexpected aiJSON label in test: ${label}`);
+  });
+}
+
+describe('resolveDiscoverCategoriesAsync', () => {
+  it('finds the Ladders category via keyword match even when step 1 picks the wrong broad category', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    mockAiJsonForLadderBugFixture();
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(entries.map((e) => e.slug)).toContain(
+      'building-renovation/building-supplies/scaffolding-ladders/ladders'
+    );
+  });
+
+  it('queries step 2 for the keyword-matched branch, not just the LLM-picked branch', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    mockAiJsonForLadderBugFixture();
+
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    const calledLabels = vi.mocked(aiJSON).mock.calls.map((call) => call[1]);
+    expect(calledLabels).toContain('step2:building-renovation/building-supplies');
   });
 });

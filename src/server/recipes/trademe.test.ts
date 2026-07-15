@@ -9,6 +9,7 @@ import {
   stmtGetCategoriesAtDepth2,
   stmtGetCategoriesByTop2,
   stmtGetCategoryLegacyPath,
+  stmtSearchCategoriesByKeyword,
 } from '../db';
 import {
   buildListing,
@@ -36,6 +37,7 @@ vi.mock('../db', () => ({
   stmtGetCategoriesAtDepth2: vi.fn(),
   stmtGetCategoriesByTop2: vi.fn(),
   stmtGetCategoryLegacyPath: vi.fn(),
+  stmtSearchCategoriesByKeyword: vi.fn(),
 }));
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
@@ -1009,6 +1011,13 @@ describe('buildDiscoverUrlsAsync', () => {
     return { all } as unknown as ReturnType<typeof stmtGetCategoriesByTop2>;
   }
 
+  // Default: no keyword matches, so the deterministic keyword safety net in
+  // resolveDiscoverCategoriesAsync contributes nothing and these tests keep
+  // exercising step 1's LLM-picked categories only.
+  function fakeSearchCategoriesByKeywordStatement(all: (term: string) => Array<{ top2: string }>) {
+    return { all } as unknown as ReturnType<typeof stmtSearchCategoriesByKeyword>;
+  }
+
   // aiJSON is mocked wholesale in this file, so its calls must resolve with the
   // `AiJsonResult` shape (`{ kind: "ok", value }`) that the real function now
   // returns — see src/server/ai.ts. `applyAiJsonResult` itself is NOT mocked
@@ -1028,6 +1037,9 @@ describe('buildDiscoverUrlsAsync', () => {
         expect(top2Slug).toBe('electronics/electronics');
         return MOCK_SUBS;
       })
+    );
+    vi.mocked(stmtSearchCategoriesByKeyword).mockReturnValue(
+      fakeSearchCategoriesByKeywordStatement(() => [])
     );
   });
 
