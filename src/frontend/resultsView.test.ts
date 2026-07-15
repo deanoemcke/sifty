@@ -41,8 +41,9 @@ function addCardWithListings(listingUrls: string[]): void {
     lastProgress: null,
     errorMessage: null,
     wasCancelled: false,
+    isEditing: false,
   };
-  addUrlCard({ input: document.createElement('input') } as UrlCardDom, data);
+  addUrlCard({ input: document.createElement('textarea') } as UrlCardDom, data);
   for (const url of listingUrls) {
     if (!listingsByUrl.has(url)) listingsByUrl.set(url, makeListingItemAt(url));
   }

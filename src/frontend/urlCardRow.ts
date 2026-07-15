@@ -104,7 +104,9 @@ export function handleUrlInputChanged(card: UrlCard): void {
 export function renderUrlRowMode(card: UrlCard): void {
   const data = urlCardData(card);
   const url = card.dom.input.value.trim();
-  const showLink = data.searchStatus !== 'idle' || data.wasCancelled || data.searchedUrl !== '';
+  const showLink =
+    !data.isEditing &&
+    (data.searchStatus !== 'idle' || data.wasCancelled || data.searchedUrl !== '');
   card.dom.linkElement.href = url;
   card.dom.linkElement.textContent = url;
   card.dom.linkElement.classList.toggle('hidden', !showLink);
@@ -155,7 +157,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   cardEl.innerHTML = `
     <div class="url-row">
       <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
-      <input type="url" class="url-input" placeholder="Paste search URL…" />
+      <textarea class="url-input" rows="3" placeholder="Paste search URL…"></textarea>
       <button class="btn icon-btn url-search-btn" type="button" title="Search" disabled>${SEARCH_ICON}</button>
       <button class="btn icon-btn url-edit-btn hidden" type="button" title="Edit">${EDIT_ICON}</button>
       <button class="btn icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
@@ -165,7 +167,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   `;
   getElement('urlCardsContainer').appendChild(cardEl);
 
-  const input = requireChild<HTMLInputElement>(cardEl, '.url-input');
+  const input = requireChild<HTMLTextAreaElement>(cardEl, '.url-input');
   const linkElement = requireChild<HTMLAnchorElement>(cardEl, '.url-link');
   const searchButton = requireChild<HTMLButtonElement>(cardEl, '.url-search-btn');
   const editButton = requireChild<HTMLButtonElement>(cardEl, '.url-edit-btn');
@@ -182,6 +184,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     lastProgress: null,
     errorMessage: null,
     wasCancelled: false,
+    isEditing: false,
   };
   const dom: UrlCardDom = {
     containerElement: cardEl,
@@ -205,12 +208,17 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     handleUrlInputChanged(urlCard);
   });
   input.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
-    if (keyboardEvent.key === 'Enter') attemptSearchCard(urlCard, searchCardAsync);
+    if (keyboardEvent.key === 'Enter') {
+      keyboardEvent.preventDefault();
+      attemptSearchCard(urlCard, searchCardAsync);
+    }
   });
   searchButton.addEventListener('click', () => attemptSearchCard(urlCard, searchCardAsync));
   editButton.addEventListener('click', () => {
-    resetCardForResearch(urlCard);
-    handleUrlInputChanged(urlCard);
+    const data = urlCardData(urlCard);
+    data.isEditing = true;
+    input.readOnly = false;
+    renderUrlRowMode(urlCard);
     input.focus();
   });
   removeButton.addEventListener('click', () => removeUrlCard(urlCard));

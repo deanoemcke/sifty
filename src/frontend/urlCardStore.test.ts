@@ -19,6 +19,7 @@ function makeCardData(searchedUrl: string): UrlCardData {
     lastProgress: null,
     errorMessage: null,
     wasCancelled: false,
+    isEditing: false,
   };
 }
 

@@ -8,8 +8,8 @@ import { resetUrlCardStore, urlCardData } from './urlCardStore';
 const TRADEME_URL = 'https://www.trademe.co.nz/search/test';
 const TRADEME_URL_2 = 'https://www.trademe.co.nz/search/test?page=2';
 
-function pressEnter(input: HTMLInputElement): void {
-  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+function pressEnter(input: HTMLTextAreaElement): void {
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
 }
 
 beforeEach(() => {
@@ -167,6 +167,30 @@ describe('createUrlCard — edit button', () => {
     expect(card.dom.editButton.classList.contains('hidden')).toBe(true);
   });
 
+  it('keeps the previous criteria and cache status visible when the edit button is clicked', () => {
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+    card.dom.input.value = TRADEME_URL;
+    card.dom.input.dispatchEvent(new Event('input'));
+    const data = urlCardData(card);
+    data.searchStatus = 'done';
+    data.searchedUrl = TRADEME_URL;
+    card.dom.input.readOnly = true;
+    const criteriaGrid = card.dom.criteriaElement.querySelector('.criteria-grid');
+    if (!criteriaGrid) throw new Error('missing .criteria-grid');
+    criteriaGrid.innerHTML = '<div class="criteria-row">previous criteria</div>';
+    card.dom.criteriaElement.classList.remove('hidden');
+    card.dom.cacheStatusElement.innerHTML = 'Loaded from cache';
+    card.dom.cacheStatusElement.classList.remove('hidden');
+    renderCardStatus(card);
+
+    card.dom.editButton.click();
+
+    expect(card.dom.criteriaElement.classList.contains('hidden')).toBe(false);
+    expect(criteriaGrid.innerHTML).toContain('previous criteria');
+    expect(card.dom.cacheStatusElement.classList.contains('hidden')).toBe(false);
+    expect(card.dom.cacheStatusElement.innerHTML).toBe('Loaded from cache');
+  });
+
   it('runs a new search after editing the URL and pressing Enter', () => {
     const searchCardAsync = vi.fn().mockResolvedValue(undefined);
     const card = createUrlCard(searchCardAsync);
@@ -182,6 +206,27 @@ describe('createUrlCard — edit button', () => {
     card.dom.input.dispatchEvent(new Event('input'));
     pressEnter(card.dom.input);
 
+    expect(searchCardAsync).toHaveBeenCalledExactlyOnceWith(card);
+  });
+});
+
+describe('createUrlCard — three-row input', () => {
+  it('renders the URL field as a 3-row textarea', () => {
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+
+    expect(card.dom.input.tagName).toBe('TEXTAREA');
+    expect(card.dom.input.rows).toBe(3);
+  });
+
+  it('does not insert a newline when Enter triggers a search', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+    card.dom.input.value = TRADEME_URL;
+    card.dom.input.dispatchEvent(new Event('input'));
+
+    pressEnter(card.dom.input);
+
+    expect(card.dom.input.value).toBe(TRADEME_URL);
     expect(searchCardAsync).toHaveBeenCalledExactlyOnceWith(card);
   });
 });

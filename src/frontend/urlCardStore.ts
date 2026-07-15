@@ -8,7 +8,7 @@ import { type UrlCardData, urlCardDataById } from './state';
 
 export interface UrlCardDom {
   containerElement: HTMLElement;
-  input: HTMLInputElement;
+  input: HTMLTextAreaElement;
   // Truncated hyperlink shown in place of the input once a search has run.
   linkElement: HTMLAnchorElement;
   searchButton: HTMLButtonElement;

@@ -31,13 +31,14 @@ function makeCardData(): UrlCardData {
     lastProgress: null,
     errorMessage: null,
     wasCancelled: false,
+    isEditing: false,
   };
 }
 
 function makeCardDom(url: string): UrlCardDom {
   const criteriaElement = document.createElement('div');
   criteriaElement.innerHTML = '<div class="criteria-grid"></div>';
-  const input = document.createElement('input');
+  const input = document.createElement('textarea');
   input.value = url;
   return {
     containerElement: document.createElement('div'),

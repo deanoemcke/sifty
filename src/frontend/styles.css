@@ -187,6 +187,8 @@ header h1 {
 .url-row .url-input {
   flex: 1;
   min-width: 0;
+  resize: none;
+  overflow-wrap: anywhere;
 }
 
 /* ── Inputs ── */

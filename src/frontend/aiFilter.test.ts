@@ -76,7 +76,7 @@ function makeCardDom(): UrlCardDom {
   criteriaElement.innerHTML = '<div class="criteria-grid"></div>';
   return {
     containerElement: document.createElement('div'),
-    input: document.createElement('input'),
+    input: document.createElement('textarea'),
     linkElement: document.createElement('a'),
     searchButton: document.createElement('button'),
     editButton: document.createElement('button'),
@@ -120,6 +120,7 @@ describe('runAiFilterAsync', () => {
       lastProgress: null,
       errorMessage: null,
       wasCancelled: false,
+      isEditing: false,
     });
 
     stubAiFilterStream([

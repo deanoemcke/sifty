@@ -48,6 +48,7 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   const url = card.dom.input.value.trim();
   if (!isValidRecipeUrl(url)) return;
 
+  data.isEditing = false;
   if (data.searchStatus === 'done') resetCardForResearch(card);
 
   getElement('resultsSection').classList.remove('hidden');

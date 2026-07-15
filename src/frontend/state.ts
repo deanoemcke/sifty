@@ -60,6 +60,10 @@ export interface UrlCardData {
   lastProgress: QuickSearchProgress | null;
   errorMessage: string | null;
   wasCancelled: boolean;
+  // True from the edit button being clicked until a new search starts —
+  // keeps the input shown (instead of the link) without touching the
+  // previous search's criteria/status/cache display.
+  isEditing: boolean;
 }
 
 export interface SavedSearch {
