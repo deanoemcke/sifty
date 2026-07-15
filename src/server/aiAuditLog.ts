@@ -154,7 +154,7 @@ function logAuditWriteFailure(error: unknown): void {
   console.error('[AiAuditLog] write failed', error);
 }
 
-const AUDIT_LOG_PATH = path.resolve(__dirname, '../../.cache/ai-audit.jsonl');
+const AUDIT_LOG_PATH = path.resolve(__dirname, '../../data/ai-audit.jsonl');
 
 // Shared across all calls in this process so concurrent entries never race the
 // truncate-once header write against each other. Reset to null on failure so the next

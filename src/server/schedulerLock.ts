@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const DEFAULT_SCHEDULER_LOCK_PATH = path.resolve(__dirname, '../../.cache/scheduler.lock');
+export const DEFAULT_SCHEDULER_LOCK_PATH = path.resolve(__dirname, '../../data/scheduler.lock');
 
 // A lock older than this is treated as stale regardless of whether its owning
 // pid is still alive, so a wedged process (hung network call, deadlock, etc.)

@@ -1,5 +1,5 @@
+import { formatListingPrice } from '../lib/priceFormat';
 import { getElement } from './domUtils';
-import { formatListingPrice } from './priceFormat';
 import { djb2Hash } from './renderUtils';
 import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
 import {

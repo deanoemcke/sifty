@@ -14,6 +14,9 @@ import {
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
+import { fetchListingImageAttachmentAsync } from './imageAttachment';
+import type { SignalNotificationOptions } from './notify';
+import { logQuickSearchEvent } from './quickSearchLogging';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   type AiFilterListing,
@@ -21,6 +24,7 @@ import {
   runAiFilterBatchesAsync,
 } from './services/aiFilter';
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
+import { formatAlertMessage } from './signalMessage';
 
 // Upper bound on a single URL's quick search. The scheduler runs unattended
 // via cron with no human to notice a hang — a stalled recipe (login wall,
@@ -33,6 +37,14 @@ export const SCRAPE_TIMEOUT_MS = 60_000;
 // TOTAL_TIMEOUT_MS), but batches run concurrently across multiple providers
 // and retries, so this is a generous outer bound rather than a tight one.
 export const AI_FILTER_TIMEOUT_MS = 120_000;
+
+// Upper bound on the whole per-listing notify loop for one saved search.
+// Each thumbnail fetch and Signal POST already has its own internal timeout
+// (imageAttachment.ts's IMAGE_FETCH_TIMEOUT_MS, notify.ts's NOTIFY_TIMEOUT_MS),
+// but a saved search surfacing many new listings at once could still
+// accumulate an unbounded total duration — this is a generous outer bound,
+// mirroring SCRAPE_TIMEOUT_MS/AI_FILTER_TIMEOUT_MS above.
+export const NOTIFY_LOOP_TIMEOUT_MS = 5 * 60_000;
 
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
@@ -53,7 +65,10 @@ async function withTimeoutAsync<T>(
   }
 }
 
-export type SchedulerNotifier = (message: string) => Promise<void>;
+export type SchedulerNotifier = (
+  message: string,
+  options?: SignalNotificationOptions
+) => Promise<void>;
 
 export type SchedulerDeps = {
   database: Database.Database;
@@ -79,12 +94,6 @@ export type SchedulerSummary = {
   searches: SavedSearchRunSummary[];
 };
 
-export function formatAlertMessage(savedSearchName: string, listing: Listing): string {
-  const price =
-    listing.price === null || listing.price === undefined ? 'unknown price' : `$${listing.price}`;
-  return `${savedSearchName}: ${listing.title} — ${price} — ${listing.url}`;
-}
-
 function toAiFilterListing(listing: Listing): AiFilterListing {
   return {
     url: listing.url,
@@ -96,11 +105,46 @@ function toAiFilterListing(listing: Listing): AiFilterListing {
   };
 }
 
+async function notifyNewListingsAsync(
+  row: SavedSearchRow,
+  candidates: [string, Listing][],
+  deps: Required<SchedulerDeps>,
+  summary: SavedSearchRunSummary
+): Promise<void> {
+  const { database, sendNotificationAsync, now } = deps;
+  for (const [hash, listing] of candidates) {
+    if (stmtHasAlertedListing(database).get(row.id, hash)) {
+      summary.alreadyAlertedCount++;
+      continue;
+    }
+    try {
+      console.log(`[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`);
+      const image = await fetchListingImageAttachmentAsync(listing.thumbnailUrl);
+      const message = formatAlertMessage(row.name, listing);
+      try {
+        await sendNotificationAsync(message, { image });
+      } catch (err) {
+        // A broken/oversized thumbnail must never sink the whole alert
+        // (mirrors imageAttachment.ts's own stated invariant) — only retry
+        // if an image was actually attached; retrying an already-imageless
+        // call would just repeat the same failure.
+        if (image === undefined) throw err;
+        await sendNotificationAsync(message, {});
+      }
+      stmtInsertAlertedListing(database).run(row.id, hash, now());
+      summary.notifiedCount++;
+    } catch (err) {
+      // Not recorded as alerted — retried on the next scheduler run.
+      summary.errors.push(`Notification failed for ${listing.url}: ${(err as Error).message}`);
+    }
+  }
+}
+
 async function processSavedSearchAsync(
   row: SavedSearchRow,
   deps: Required<SchedulerDeps>
 ): Promise<SavedSearchRunSummary> {
-  const { database, cooldownStore, sendNotificationAsync, now } = deps;
+  const { database, cooldownStore, now } = deps;
   const urls = JSON.parse(row.urls) as string[];
   const aiFilterPrompt = row.ai_filter?.trim() ? row.ai_filter : null;
 
@@ -140,7 +184,9 @@ async function processSavedSearchAsync(
     }
     try {
       const { listings } = await withTimeoutAsync(
-        runQuickSearchForUrlAsync(url, recipe, database, () => {}),
+        runQuickSearchForUrlAsync(url, recipe, database, (event) =>
+          logQuickSearchEvent(recipe.name, event)
+        ),
         SCRAPE_TIMEOUT_MS,
         `Quick search for ${url}`
       );
@@ -208,22 +254,18 @@ async function processSavedSearchAsync(
       `[scheduler] "${row.name}": population run complete — recorded ${summary.populatedCount} baseline listing(s), no notifications sent`
     );
   } else {
-    for (const [hash, listing] of candidates) {
-      if (stmtHasAlertedListing(database).get(row.id, hash)) {
-        summary.alreadyAlertedCount++;
-        continue;
-      }
-      try {
-        console.log(
-          `[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`
-        );
-        await sendNotificationAsync(formatAlertMessage(row.name, listing));
-        stmtInsertAlertedListing(database).run(row.id, hash, now());
-        summary.notifiedCount++;
-      } catch (err) {
-        // Not recorded as alerted — retried on the next scheduler run.
-        summary.errors.push(`Notification failed for ${listing.url}: ${(err as Error).message}`);
-      }
+    // Partial progress is preserved intentionally: stmtInsertAlertedListing
+    // commits per-listing rather than in one wrapping transaction, so a
+    // mid-loop timeout still leaves already-processed listings marked
+    // alerted — only the unreached ones are retried on the next run.
+    try {
+      await withTimeoutAsync(
+        notifyNewListingsAsync(row, candidates, deps, summary),
+        NOTIFY_LOOP_TIMEOUT_MS,
+        `Notify loop for "${row.name}"`
+      );
+    } catch (err) {
+      summary.errors.push(`Notify loop timed out: ${(err as Error).message}`);
     }
     if (summary.notifiedCount === 0) {
       console.log(`[scheduler] "${row.name}": no new listings found`);

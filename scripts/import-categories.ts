@@ -10,8 +10,8 @@
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
+import { DB_PATH } from '../src/server/db';
 
-const DB_PATH   = path.resolve(__dirname, '../.cache/cache.db');
 const JSON_PATH = path.resolve(__dirname, '../assets/trademe-categories.json');
 
 if (!fs.existsSync(JSON_PATH)) {

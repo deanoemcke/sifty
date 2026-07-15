@@ -42,4 +42,19 @@ describe('sendSignalNotificationAsync', () => {
 
     await expect(sendSignalNotificationAsync('hello')).rejects.toThrow();
   });
+
+  it('includes the image field in the body when an image option is given', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await sendSignalNotificationAsync('new listing found', {
+      image: 'data:image/png;base64,abc',
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      message: 'new listing found',
+      image: 'data:image/png;base64,abc',
+    });
+  });
 });

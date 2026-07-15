@@ -141,12 +141,26 @@ async function createContext(): Promise<{ browser: Browser; context: BrowserCont
   return { browser, context };
 }
 
+// tsx (used by the scheduler) transforms with esbuild's keepNames:true, which
+// injects `__name(fn, "fn")` calls after named function declarations. When such
+// a declaration is nested inside a page.evaluate/addInitScript closure, that
+// injected call becomes part of what Playwright serializes into the browser via
+// toString() — but the real __name helper lives in tsx's bundle, not the
+// browser, so it throws ReferenceError. Installing this passthrough as its own
+// page-level init script (rather than folded into maskHeadless's closure below)
+// means any such call resolves, and keeps the shim callable directly in tests
+// without needing navigator/window.
+export function installNameShim(): void {
+  (globalThis as { __name?: (fn: unknown) => unknown }).__name ??= (fn: unknown) => fn;
+}
+
 async function maskHeadless(page: Page): Promise<void> {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => false });
     // @ts-expect-error
     if (!window.chrome) window.chrome = { runtime: {} };
   });
+  await page.addInitScript(installNameShim);
 }
 
 // ── Login wall detection ────────────────────────────────────────────────────
