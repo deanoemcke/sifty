@@ -177,7 +177,17 @@ async function notifyNewListingsAsync(
     try {
       console.log(`[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`);
       const image = await fetchListingImageAttachmentAsync(listing.thumbnailUrl);
-      await sendNotificationAsync(formatAlertMessage(row.name, listing), { image });
+      const message = formatAlertMessage(row.name, listing);
+      try {
+        await sendNotificationAsync(message, { image });
+      } catch (err) {
+        // A broken/oversized thumbnail must never sink the whole alert
+        // (mirrors imageAttachment.ts's own stated invariant) — only retry
+        // if an image was actually attached; retrying an already-imageless
+        // call would just repeat the same failure.
+        if (image === undefined) throw err;
+        await sendNotificationAsync(message, {});
+      }
       stmtInsertAlertedListing(database).run(row.id, hash, now());
       summary.notifiedCount++;
     } catch (err) {
