@@ -17,6 +17,7 @@ import {
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
+import type { SignalNotificationOptions } from './notify';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   type AiFilterListing,
@@ -56,7 +57,10 @@ async function withTimeoutAsync<T>(
   }
 }
 
-export type SchedulerNotifier = (message: string, image?: string) => Promise<void>;
+export type SchedulerNotifier = (
+  message: string,
+  options?: SignalNotificationOptions
+) => Promise<void>;
 
 export type SchedulerDeps = {
   database: Database.Database;
@@ -274,7 +278,7 @@ async function processSavedSearchAsync(
           `[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`
         );
         const image = await fetchListingImageAttachmentAsync(listing.thumbnailUrl);
-        await sendNotificationAsync(formatAlertMessage(row.name, listing), image);
+        await sendNotificationAsync(formatAlertMessage(row.name, listing), { image });
         stmtInsertAlertedListing(database).run(row.id, hash, now());
         summary.notifiedCount++;
       } catch (err) {

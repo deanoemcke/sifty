@@ -764,7 +764,7 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith('https://example.com/thumb.jpg');
-    expect(sendNotificationAsync.mock.calls[0][1]).toBe('data:image/jpeg;base64,abc');
+    expect(sendNotificationAsync.mock.calls[0][1]?.image).toBe('data:image/jpeg;base64,abc');
   });
 
   it('notifies with no image argument when the listing has no thumbnail', async () => {
@@ -790,7 +790,7 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith(undefined);
-    expect(sendNotificationAsync.mock.calls[0][1]).toBeUndefined();
+    expect(sendNotificationAsync.mock.calls[0][1]?.image).toBeUndefined();
   });
 });
 

@@ -43,7 +43,7 @@ async function main(): Promise<number> {
     const summary = await runSchedulerAsync({
       database,
       cooldownStore,
-      sendNotificationAsync: (message, image) => sendSignalNotificationAsync(message, { image }),
+      sendNotificationAsync: sendSignalNotificationAsync,
     });
 
     let hadErrors = false;
