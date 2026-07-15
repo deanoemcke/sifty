@@ -43,7 +43,7 @@ describe('formatAlertMessage', () => {
 
     const message = formatAlertMessage(listing);
 
-    expect(message).toContain('Auckland City, Auckland ·');
+    expect(message).toContain('Auckland City ·');
     expect(message).not.toContain('NZ');
   });
 
