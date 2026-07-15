@@ -11,12 +11,14 @@ import {
   stmtCountAlertsForSavedSearch,
   stmtGetDetail,
   stmtGetOldestAlertEnabledSavedSearch,
+  stmtGetSavedSearchByName,
   stmtGetSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtInsertSavedSearch,
   stmtSetDetail,
   stmtSetSearch,
+  stmtUpdateSavedSearch,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 
@@ -270,6 +272,59 @@ describe('stmtGetOldestAlertEnabledSavedSearch', () => {
     stmtInsertSavedSearch(db).run('s2', 'Inserted second', '[]', null, null, 1000, 1);
 
     expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s1');
+  });
+});
+
+describe('stmtGetSavedSearchByName', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('finds a saved search by its exact name', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Vintage lamps', '[]', null, null, 1000, 0);
+
+    expect(stmtGetSavedSearchByName(db).get('Vintage lamps')?.id).toBe('s1');
+  });
+
+  it('returns undefined when no saved search has that name', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Vintage lamps', '[]', null, null, 1000, 0);
+
+    expect(stmtGetSavedSearchByName(db).get('Something else')).toBeUndefined();
+  });
+});
+
+describe('stmtUpdateSavedSearch', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('replaces name, urls, discover_inputs and ai_filter, leaving other columns untouched', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Original name', '["https://a"]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(5000, 's1');
+
+    stmtUpdateSavedSearch(db).run(
+      'Updated name',
+      '["https://b"]',
+      '{"prompt":"lamp"}',
+      'no rust',
+      's1'
+    );
+
+    const row = stmtGetSavedSearchByName(db).get('Updated name');
+    expect(row?.id).toBe('s1');
+    expect(row?.urls).toBe('["https://b"]');
+    expect(row?.discover_inputs).toBe('{"prompt":"lamp"}');
+    expect(row?.ai_filter).toBe('no rust');
+    expect(row?.created_at).toBe(1000);
+    expect(row?.should_alert_on_new_listings).toBe(1);
+    expect(row?.last_run_at).toBe(5000);
   });
 });
 

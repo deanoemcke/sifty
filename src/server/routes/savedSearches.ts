@@ -11,8 +11,10 @@ import {
   getDb,
   stmtDeleteSavedSearch,
   stmtGetSavedSearch,
+  stmtGetSavedSearchByName,
   stmtInsertSavedSearch,
   stmtListSavedSearches,
+  stmtUpdateSavedSearch,
   stmtUpdateSavedSearchAlert,
 } from '../db';
 import { readBody, sendJSON } from '../helpers';
@@ -98,6 +100,14 @@ export async function handleCreateSavedSearch(
   const aiFilter = rawBody.aiFilter;
   try {
     const database = getDb();
+    const existing = stmtGetSavedSearchByName(database).get(name.trim());
+    if (existing) {
+      sendJSON(response, 409, {
+        error: 'A saved search with this name already exists',
+        existingId: existing.id,
+      });
+      return;
+    }
     const id = crypto.randomUUID();
     stmtInsertSavedSearch(database).run(
       id,
@@ -142,4 +152,46 @@ export async function handlePatchSavedSearch(
 
   stmtUpdateSavedSearchAlert(database).run(shouldAlertOnNewListings ? 1 : 0, id);
   sendJSON(response, 200, { ok: true });
+}
+
+export async function handleUpdateSavedSearch(
+  request: IncomingMessage,
+  response: ServerResponse,
+  id: string
+): Promise<void> {
+  const database = getDb();
+  const row = stmtGetSavedSearch(database).get(id);
+  if (!row) {
+    sendJSON(response, 404, { error: 'Not found' });
+    return;
+  }
+
+  const body = await readBody(request).catch(() => null);
+  const rawBody = (body ?? {}) as Record<string, unknown>;
+
+  let name: string;
+  let urls: unknown[];
+  let discoverInputsSerialized: string | null;
+  try {
+    name = requireString(rawBody.name, 'name');
+    urls = requireArray(rawBody.urls, 'urls');
+    discoverInputsSerialized = parseDiscoverInputs(rawBody.discoverInputs);
+  } catch (err) {
+    sendJSON(response, 400, { error: (err as Error).message });
+    return;
+  }
+
+  const aiFilter = rawBody.aiFilter;
+  try {
+    stmtUpdateSavedSearch(database).run(
+      name.trim(),
+      JSON.stringify(urls),
+      discoverInputsSerialized,
+      typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null,
+      id
+    );
+    sendJSON(response, 200, { ok: true });
+  } catch (err) {
+    sendJSON(response, 500, { error: (err as Error).message });
+  }
 }

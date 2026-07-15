@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   handleDiscoverySubmitAsync,
   handleSavedSearchAlertToggleAsync,
+  handleSaveSearchConfirmAsync,
   loadSavedSearchAsync,
   renderSavedSearches,
 } from './searchSession';
 import { populateShowControls } from './showDropdown';
-import { resetState, type SavedSearch } from './state';
+import { currentSearchId, currentSearchName, resetState, type SavedSearch } from './state';
 import { createUrlCard } from './urlCardRow';
 import { resetUrlCardStore, urlCards } from './urlCardStore';
 
@@ -51,6 +52,12 @@ beforeEach(() => {
       <span id="savedSearchesCount" class="hidden">0</span>
     </div>
     <button id="saveCurrentBtn" class="hidden"></button>
+
+    <div id="saveSearchModal" class="hidden">
+      <input id="saveSearchName" />
+      <button id="saveSearchCancelBtn"></button>
+      <button id="saveSearchConfirmBtn"></button>
+    </div>
   `;
   populateShowControls();
   // The app always seeds one blank URL card on init (see app.ts) — every
@@ -359,5 +366,122 @@ describe('handleSavedSearchAlertToggleAsync', () => {
 
     expect(checkbox.checked).toBe(false);
     expect(checkbox.disabled).toBe(false);
+  });
+});
+
+describe('handleSaveSearchConfirmAsync', () => {
+  function setSaveSearchName(name: string): void {
+    (document.getElementById('saveSearchName') as HTMLInputElement).value = name;
+  }
+
+  it('POSTs a new saved search when nothing is loaded and the name is unique', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, id: 'new-id' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ searches: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    setSaveSearchName('New search');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/saved-searches',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(currentSearchId).toBe('new-id');
+    expect(currentSearchName).toBe('New search');
+    expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it("PUTs to the loaded favourite's id when re-saving under its own unchanged name", async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await loadSavedSearchAsync(
+      makeSavedSearch({ id: 'fav-1', name: 'My favourite', urls: ['https://example.com/saved'] })
+    );
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ searches: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    setSaveSearchName('My favourite');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/saved-searches/fav-1',
+      expect.objectContaining({ method: 'PUT' })
+    );
+    expect(currentSearchId).toBe('fav-1');
+  });
+
+  it('POSTs a new favourite (not a PUT) when renaming a loaded favourite to a new non-colliding name', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await loadSavedSearchAsync(
+      makeSavedSearch({ id: 'fav-1', name: 'Old name', urls: ['https://example.com/saved'] })
+    );
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, id: 'new-id' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ searches: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    setSaveSearchName('New name');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/saved-searches',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(currentSearchId).toBe('new-id');
+  });
+
+  it('does not overwrite and keeps the modal open when the user declines the overwrite confirmation', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ existingId: 'other-id' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false));
+    document.getElementById('saveSearchModal')?.classList.remove('hidden');
+    setSaveSearchName('Existing name');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('overwrites the existing favourite by id when the user accepts the overwrite confirmation', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ existingId: 'other-id' }),
+      })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ searches: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
+    setSaveSearchName('Existing name');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/saved-searches/other-id',
+      expect.objectContaining({ method: 'PUT' })
+    );
+    expect(currentSearchId).toBe('other-id');
+    expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(true);
   });
 });

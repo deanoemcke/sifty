@@ -180,6 +180,11 @@ export function stmtGetSavedSearch(database: Database.Database) {
     'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches WHERE id = ?'
   );
 }
+export function stmtGetSavedSearchByName(database: Database.Database) {
+  return database.prepare<[string], SavedSearchRow>(
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches WHERE name = ?'
+  );
+}
 export function stmtInsertSavedSearch(database: Database.Database) {
   return database.prepare(
     'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -201,6 +206,11 @@ export function stmtDeleteSavedSearch(database: Database.Database) {
 export function stmtUpdateSavedSearchAlert(database: Database.Database) {
   return database.prepare(
     'UPDATE saved_searches SET should_alert_on_new_listings = ? WHERE id = ?'
+  );
+}
+export function stmtUpdateSavedSearch(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET name = ?, urls = ?, discover_inputs = ?, ai_filter = ? WHERE id = ?'
   );
 }
 export function stmtUpdateSavedSearchLastRunAt(database: Database.Database) {

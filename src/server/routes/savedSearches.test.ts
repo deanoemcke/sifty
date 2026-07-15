@@ -27,6 +27,12 @@ vi.mock('../db', () => {
     );
   }
 
+  function stmtGetSavedSearchByName(db: Database.Database) {
+    return db.prepare(
+      'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches WHERE name = ?'
+    );
+  }
+
   function stmtInsertSavedSearch(db: Database.Database) {
     return db.prepare(
       'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -41,13 +47,21 @@ vi.mock('../db', () => {
     return db.prepare('UPDATE saved_searches SET should_alert_on_new_listings = ? WHERE id = ?');
   }
 
+  function stmtUpdateSavedSearch(db: Database.Database) {
+    return db.prepare(
+      'UPDATE saved_searches SET name = ?, urls = ?, discover_inputs = ?, ai_filter = ? WHERE id = ?'
+    );
+  }
+
   return {
     getDb,
     stmtListSavedSearches,
     stmtGetSavedSearch,
+    stmtGetSavedSearchByName,
     stmtInsertSavedSearch,
     stmtDeleteSavedSearch,
     stmtUpdateSavedSearchAlert,
+    stmtUpdateSavedSearch,
   };
 });
 
@@ -63,6 +77,7 @@ import {
   handleGetSavedSearch,
   handleListSavedSearches,
   handlePatchSavedSearch,
+  handleUpdateSavedSearch,
 } from './savedSearches';
 
 function makeResponse(): ServerResponse {
@@ -259,6 +274,33 @@ describe('handleCreateSavedSearch', () => {
       expect.objectContaining({ error: expect.stringContaining('shouldAlertOnNewListings') })
     );
   });
+
+  it('returns 409 with the existing id when name already exists, and does not insert a duplicate', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Duplicate name',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    const { id: firstId } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    vi.mocked(sendJSON).mockClear();
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Duplicate name',
+      urls: ['https://www.trademe.co.nz/a/y'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      409,
+      expect.objectContaining({ existingId: firstId })
+    );
+
+    vi.mocked(sendJSON).mockClear();
+    handleListSavedSearches(makeResponse() as never, makeResponse());
+    const { searches } = vi.mocked(sendJSON).mock.calls[0][2] as { searches: unknown[] };
+    expect(searches).toHaveLength(1);
+  });
 });
 
 describe('handleListSavedSearches', () => {
@@ -394,5 +436,81 @@ describe('handlePatchSavedSearch', () => {
     handleGetSavedSearch(makeResponse() as never, makeResponse(), id);
     const { search } = vi.mocked(sendJSON).mock.calls[0][2] as { search: Record<string, unknown> };
     expect(search.shouldAlertOnNewListings).toBe(true);
+  });
+});
+
+describe('handleUpdateSavedSearch', () => {
+  it('returns 404 for unknown id', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Updated',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), 'nonexistent-id');
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      404,
+      expect.objectContaining({ error: 'Not found' })
+    );
+  });
+
+  it('returns 400 when urls is missing', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'To update',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    vi.mocked(sendJSON).mockClear();
+    vi.mocked(readBody).mockResolvedValue({ name: 'To update' });
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id);
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      400,
+      expect.objectContaining({ error: expect.stringContaining('urls') })
+    );
+  });
+
+  it('updates name, urls, aiFilter and discoverInputs while preserving id, createdAt and shouldAlertOnNewListings', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Original name',
+      urls: ['https://www.trademe.co.nz/a/original'],
+      shouldAlertOnNewListings: true,
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    vi.mocked(sendJSON).mockClear();
+    handleGetSavedSearch(makeResponse() as never, makeResponse(), id);
+    const before = (vi.mocked(sendJSON).mock.calls[0][2] as { search: Record<string, unknown> })
+      .search;
+
+    vi.mocked(sendJSON).mockClear();
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Updated name',
+      urls: ['https://www.trademe.co.nz/a/updated'],
+      aiFilter: 'good condition only',
+      discoverInputs: { prompt: 'lamp', fulfillment: 'any' },
+    });
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id);
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(expect.anything(), 200, { ok: true });
+
+    vi.mocked(sendJSON).mockClear();
+    handleGetSavedSearch(makeResponse() as never, makeResponse(), id);
+    const { search: after } = vi.mocked(sendJSON).mock.calls[0][2] as {
+      search: Record<string, unknown>;
+    };
+
+    expect(after.id).toBe(before.id);
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(after.shouldAlertOnNewListings).toBe(true);
+    expect(after.name).toBe('Updated name');
+    expect(after.urls).toEqual(['https://www.trademe.co.nz/a/updated']);
+    expect(after.aiFilter).toBe('good condition only');
+    expect(after.discoverInputs).toEqual({ prompt: 'lamp', fulfillment: 'any' });
   });
 });
