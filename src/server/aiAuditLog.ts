@@ -1,6 +1,9 @@
 // Server-side only — detailed audit trail for every request/response sent to the AI provider.
-// The log file is recreated (truncated) on first write of each process, then appended to
-// for the rest of that process's lifetime, mirroring db.ts's lazy getDb() singleton.
+// The log file persists and is appended to across processes and runs — the scheduler
+// (scripts/scheduler.ts) is a one-shot process invoked per cron tick, so truncating per
+// process would wipe the trail down to a single run's entries every time. Each process
+// only guarantees the containing directory exists once, mirroring db.ts's lazy getDb()
+// singleton for that one-time setup step.
 //
 // All disk I/O here is async and fire-and-forget: recordAiAuditEntry() never blocks the
 // event loop and never throws into its caller. This is a best-effort diagnostic side
@@ -9,14 +12,12 @@
 // never affect the AI call it is observing. Write failures are logged to stderr rather
 // than swallowed silently.
 //
-// Two independent resource limits keep this diagnostic log bounded on disk:
-//   - Per-field caps (MAX_AUDIT_FIELD_LENGTH) truncate `systemMessage`, `userMessage`,
-//     `rawContent`, `errorMessage`, and the serialized `response` before they're written,
-//     so one huge AI payload can't bloat a single line. Truncation always leaves a visible
-//     marker rather than silently dropping data.
-//   - A whole-file cap (MAX_AUDIT_LOG_FILE_SIZE_BYTES) rotates the file to a `.1` suffix
-//     (overwriting any previous rotation) once it grows past the threshold, so the file
-//     can't grow without bound across a long-running process.
+// Every field, including `systemMessage` and `userMessage` (the actual prompts sent to
+// the AI provider), is logged in full and never truncated — this log is the diagnostic
+// record of exactly what was sent and received, so a shortened prompt would defeat its
+// purpose. A whole-file cap (MAX_AUDIT_LOG_FILE_SIZE_BYTES) rotates the file to a `.1`
+// suffix (overwriting any previous rotation) once it grows past the threshold instead, so
+// the file can't grow without bound across a long-running process.
 
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
@@ -44,72 +45,23 @@ export type AiAuditEntry = {
   errorMessage?: string;
 };
 
-// Character cap applied to `systemMessage`, `userMessage`, `rawContent`, `errorMessage`,
-// and to the JSON-serialized `response` before any of them is written to the log. Chosen
-// to keep a single log line readable while still bounding worst-case size — all of these
-// are (or are built from) external/untrusted-size data.
-export const MAX_AUDIT_FIELD_LENGTH = 2_000;
-
 // Whole-file cap: once ai-audit.jsonl reaches this size, it is rotated to a `.1` suffix
 // before the next line is appended. This is a diagnostic log, not a strict requirement,
 // so a simple single-generation rotation (rather than numbered/dated log rotation) is
 // the pragmatic choice — it bounds total disk usage to roughly 2x this threshold.
 export const MAX_AUDIT_LOG_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
-/**
- * Truncates a string field for audit logging, appending a visible marker naming the
- * number of omitted bytes rather than silently dropping data. Values at or under the
- * cap are returned unchanged.
- */
-export function truncateAuditField(
-  value: string,
-  maxLength: number = MAX_AUDIT_FIELD_LENGTH
-): string {
-  if (value.length <= maxLength) return value;
-  const omittedBytesCount = Buffer.byteLength(value.slice(maxLength), 'utf-8');
-  return `${value.slice(0, maxLength)}...[truncated, ${omittedBytesCount} bytes omitted]`;
-}
-
-/**
- * Caps the size of a `response` value before it is logged. Small responses (the common
- * case) are returned untouched so they remain structured JSON in the log; responses
- * whose serialized form exceeds the cap are replaced with a truncated string so a single
- * huge AI response can't bloat the log line unboundedly.
- */
-function truncateResponseForAudit(
-  response: unknown,
-  maxLength: number = MAX_AUDIT_FIELD_LENGTH
-): unknown {
-  const serializedResponse = JSON.stringify(response);
-  if (serializedResponse === undefined || serializedResponse.length <= maxLength) {
-    return response;
-  }
-  return truncateAuditField(serializedResponse, maxLength);
-}
-
-function buildLoggableAuditEntry(entry: AiAuditEntry): AiAuditEntry {
-  const loggableEntry: AiAuditEntry = { ...entry };
-  loggableEntry.systemMessage = truncateAuditField(loggableEntry.systemMessage);
-  loggableEntry.userMessage = truncateAuditField(loggableEntry.userMessage);
-  if (loggableEntry.rawContent !== undefined) {
-    loggableEntry.rawContent = truncateAuditField(loggableEntry.rawContent);
-  }
-  if (loggableEntry.response !== undefined) {
-    loggableEntry.response = truncateResponseForAudit(loggableEntry.response);
-  }
-  if (loggableEntry.errorMessage !== undefined) {
-    loggableEntry.errorMessage = truncateAuditField(loggableEntry.errorMessage);
-  }
-  return loggableEntry;
-}
-
 export function formatAuditEntryLine(entry: AiAuditEntry): string {
-  return `${JSON.stringify(buildLoggableAuditEntry(entry))}\n`;
+  return `${JSON.stringify(entry)}\n`;
 }
 
 export async function writeAuditLogHeaderAsync(auditLogPath: string): Promise<void> {
   await fsPromises.mkdir(path.dirname(auditLogPath), { recursive: true });
   await fsPromises.writeFile(auditLogPath, '');
+}
+
+async function ensureAuditLogDirectoryAsync(auditLogPath: string): Promise<void> {
+  await fsPromises.mkdir(path.dirname(auditLogPath), { recursive: true });
 }
 
 async function getAuditLogFileSizeBytes(auditLogPath: string): Promise<number> {
@@ -157,14 +109,13 @@ function logAuditWriteFailure(error: unknown): void {
 const AUDIT_LOG_PATH = path.resolve(__dirname, '../../data/ai-audit.jsonl');
 
 // Shared across all calls in this process so concurrent entries never race the
-// truncate-once header write against each other. Reset to null on failure so the next
-// entry retries initialization, mirroring the previous sync implementation's behaviour
-// of retrying the header write on the next call after a throw.
+// once-per-process directory creation against each other. Reset to null on failure so
+// the next entry retries initialization.
 let auditLogInitializationPromise: Promise<void> | null = null;
 
 function ensureAuditLogInitializedAsync(auditLogPath: string): Promise<void> {
   if (!auditLogInitializationPromise) {
-    auditLogInitializationPromise = writeAuditLogHeaderAsync(auditLogPath).catch((error) => {
+    auditLogInitializationPromise = ensureAuditLogDirectoryAsync(auditLogPath).catch((error) => {
       auditLogInitializationPromise = null;
       throw error;
     });
