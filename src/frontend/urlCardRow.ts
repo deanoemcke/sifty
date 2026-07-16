@@ -24,6 +24,7 @@ import {
 } from './state';
 import {
   addUrlCard,
+  readCardUrl,
   removeUrlCardEntry,
   type UrlCard,
   type UrlCardDom,
@@ -84,12 +85,12 @@ export function cancelSearch(card: UrlCard): void {
 
 export function cancelGroupSearches(groupId: RecipeId): void {
   for (const card of urlCards) {
-    if (recipeGroupIdForUrl(card.dom.input.value.trim()) === groupId) cancelSearch(card);
+    if (recipeGroupIdForUrl(readCardUrl(card)) === groupId) cancelSearch(card);
   }
 }
 
 export function handleUrlInputChanged(card: UrlCard): void {
-  const groupId = recipeGroupIdForUrl(card.dom.input.value.trim());
+  const groupId = recipeGroupIdForUrl(readCardUrl(card));
   const previousParent = card.dom.containerElement.parentElement;
   syncUrlGroups();
   // A row that just moved into a collapsed group would vanish mid-edit —
@@ -107,7 +108,7 @@ export function handleUrlInputChanged(card: UrlCard): void {
 // directly elsewhere, or it can fall out of sync with `isEditing`.
 export function renderUrlRowMode(card: UrlCard): void {
   const data = urlCardData(card);
-  const url = card.dom.input.value.trim();
+  const url = readCardUrl(card);
   const showLink =
     !data.isEditing &&
     (data.searchStatus !== 'idle' || data.wasCancelled || data.searchedUrl !== '');
@@ -124,7 +125,7 @@ export function renderUrlRowMode(card: UrlCard): void {
 
 export function canSearchCard(card: UrlCard): boolean {
   const data = urlCardData(card);
-  const current = card.dom.input.value.trim();
+  const current = readCardUrl(card);
   return (
     !isDeepSearchRunning &&
     isValidRecipeUrl(current) &&
@@ -133,21 +134,18 @@ export function canSearchCard(card: UrlCard): boolean {
 }
 
 export function isDuplicateUrl(card: UrlCard): boolean {
-  const current = card.dom.input.value.trim();
+  const current = readCardUrl(card);
   if (!current) return false;
-  return urlCards.some((other) => other !== card && other.dom.input.value.trim() === current);
+  return urlCards.some((other) => other !== card && readCardUrl(other) === current);
 }
 
 function attemptSearchCard(card: UrlCard, searchCardAsync: (card: UrlCard) => Promise<void>): void {
   const data = urlCardData(card);
+  const current = readCardUrl(card);
   // Editing a card without actually changing its URL leaves nothing to
   // search — fall back to the link view instead of leaving the row stuck
   // showing an input that blur/Enter can no longer act on.
-  if (
-    data.isEditing &&
-    data.searchedUrl !== '' &&
-    card.dom.input.value.trim() === data.searchedUrl
-  ) {
+  if (data.isEditing && data.searchedUrl !== '' && current === data.searchedUrl) {
     data.isEditing = false;
     renderUrlRowMode(card);
     return;
@@ -157,7 +155,17 @@ function attemptSearchCard(card: UrlCard, searchCardAsync: (card: UrlCard) => Pr
     renderCardStatus(card);
     return;
   }
-  if (canSearchCard(card)) searchCardAsync(card);
+  if (canSearchCard(card)) {
+    searchCardAsync(card);
+    return;
+  }
+  // canSearchCard also rejects legitimate no-op states (a search already in
+  // flight, or the same URL already searched) — only a non-empty value that
+  // fails recipe matching is an actual user-facing error worth surfacing.
+  if (current !== '' && !isValidRecipeUrl(current)) {
+    data.errorMessage = 'Not a recognised search URL.';
+    renderCardStatus(card);
+  }
 }
 
 // assets/x.svg, inlined so it inherits currentColor.

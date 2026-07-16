@@ -396,6 +396,22 @@ describe('handleSaveSearchConfirmAsync', () => {
     expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(true);
   });
 
+  it('strips an embedded newline from a pasted URL before it reaches the saved-search payload', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x\nsplit-across-lines';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, id: 'new-id' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ searches: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    setSaveSearchName('New search');
+
+    await handleSaveSearchConfirmAsync();
+
+    const [, requestInit] = fetchMock.mock.calls[0];
+    const body = JSON.parse(requestInit.body as string);
+    expect(body.urls).toEqual(['https://example.com/xsplit-across-lines']);
+  });
+
   it("PUTs to the loaded favourite's id when re-saving under its own unchanged name", async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
     await loadSavedSearchAsync(

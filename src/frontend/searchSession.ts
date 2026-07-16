@@ -33,7 +33,7 @@ import {
   resetAllResults,
   X_ICON,
 } from './urlCardRow';
-import { urlCards } from './urlCardStore';
+import { readCardUrl, urlCards } from './urlCardStore';
 
 export function markDirty(): void {
   getElement<HTMLButtonElement>('saveCurrentBtn').disabled = false;
@@ -93,7 +93,7 @@ interface SaveSearchPayload {
 }
 
 function buildSaveSearchPayload(name: string): SaveSearchPayload | null {
-  const urls = urlCards.map((card) => card.dom.input.value.trim()).filter(Boolean);
+  const urls = urlCards.map(readCardUrl).filter(Boolean);
   if (!name.trim() || urls.length === 0) return null;
   return {
     name: name.trim(),

@@ -10,7 +10,7 @@ import { collapseElementAsync, expandElement } from './heightAnimation';
 import { esc } from './html';
 import { CHEVRON_ICON } from './icons';
 import { recipeFaviconHtml } from './recipeDisplay';
-import { type UrlCard, urlCardData, urlCards } from './urlCardStore';
+import { readCardUrl, type UrlCard, urlCardData, urlCards } from './urlCardStore';
 import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from './urlGroups';
 
 const urlGroupExpandedByGroupId = new Map<RecipeId, boolean>();
@@ -18,7 +18,7 @@ const urlGroupExpandedByGroupId = new Map<RecipeId, boolean>();
 export function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
   const data = urlCardData(card);
   return {
-    url: card.dom.input.value.trim(),
+    url: readCardUrl(card),
     searchStatus: data.searchStatus,
     listingUrls: data.listingUrls,
   };
@@ -63,7 +63,7 @@ export function syncUrlGroups(): void {
     groupEl.classList.toggle('expanded', urlGroupExpandedByGroupId.get(summary.groupId) ?? false);
   });
   for (const card of urlCards) {
-    const groupId = recipeGroupIdForUrl(card.dom.input.value.trim());
+    const groupId = recipeGroupIdForUrl(readCardUrl(card));
     const rowEl = card.dom.containerElement;
     const targetParent =
       groupId === null

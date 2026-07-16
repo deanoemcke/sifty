@@ -19,7 +19,7 @@ import {
 } from './state';
 import { streamPostAsync } from './streamPost';
 import { renderCardStatus, resetCardForResearch } from './urlCardRow';
-import { isUrlCardLive, type UrlCard, urlCardData } from './urlCardStore';
+import { isUrlCardLive, readCardUrl, type UrlCard, urlCardData } from './urlCardStore';
 import { updateUrlGroupHeaders } from './urlGroupsView';
 
 // A "listing" SSE event may replay a pre-deploy cached row that predates the
@@ -45,7 +45,7 @@ export function isNewConditionSearchUrl(searchUrl: string): boolean {
 
 export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   const data = urlCardData(card);
-  const url = card.dom.input.value.trim();
+  const url = readCardUrl(card);
   if (!isValidRecipeUrl(url)) return;
 
   data.isEditing = false;

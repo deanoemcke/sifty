@@ -9,7 +9,7 @@ import {
   resetAllResults,
   resetCardForResearch,
 } from './urlCardRow';
-import { isUrlCardLive, resetUrlCardStore, urlCardData } from './urlCardStore';
+import { isUrlCardLive, readCardUrl, resetUrlCardStore, urlCardData } from './urlCardStore';
 
 const TRADEME_URL = 'https://www.trademe.co.nz/search/test';
 const TRADEME_URL_2 = 'https://www.trademe.co.nz/search/test?page=2';
@@ -404,5 +404,77 @@ describe('createUrlCard — remove button vs. blur-triggered autosearch race', (
     card.dom.removeButton.click();
 
     expect(isUrlCardLive(card)).toBe(false);
+  });
+});
+
+describe('readCardUrl — embedded-newline normalization', () => {
+  it('strips a newline from a pasted URL that wraps across the textarea rows', () => {
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+    card.dom.input.value = `${TRADEME_URL}\n${TRADEME_URL_2.slice(TRADEME_URL.length)}`;
+
+    expect(readCardUrl(card)).toBe(TRADEME_URL_2);
+  });
+
+  it('runs the search with the newline-stripped URL when a wrapped paste is blurred', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+    card.dom.input.value = `${TRADEME_URL}\n${TRADEME_URL_2.slice(TRADEME_URL.length)}`;
+    card.dom.input.dispatchEvent(new Event('input'));
+
+    blur(card.dom.input);
+
+    expect(searchCardAsync).toHaveBeenCalledExactlyOnceWith(card);
+    expect(readCardUrl(card)).toBe(TRADEME_URL_2);
+  });
+});
+
+describe('createUrlCard — invalid-URL rejection surfaces an error', () => {
+  it('shows an error on blur when the pasted value is not a recognised search URL', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+
+    card.dom.input.value = 'not a url';
+    card.dom.input.dispatchEvent(new Event('input'));
+    blur(card.dom.input);
+
+    expect(searchCardAsync).not.toHaveBeenCalled();
+    expect(card.dom.statusElement.classList.contains('hidden')).toBe(false);
+    expect(card.dom.statusElement.textContent).toContain('Not a recognised search URL.');
+  });
+
+  it('shows an error on Enter when the pasted value is not a recognised search URL', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+
+    card.dom.input.value = 'not a url';
+    card.dom.input.dispatchEvent(new Event('input'));
+    pressEnter(card.dom.input);
+
+    expect(searchCardAsync).not.toHaveBeenCalled();
+    expect(card.dom.statusElement.textContent).toContain('Not a recognised search URL.');
+  });
+
+  it('does not show an error when blurring a blank, untouched row', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+
+    blur(card.dom.input);
+
+    expect(searchCardAsync).not.toHaveBeenCalled();
+    expect(card.dom.statusElement.classList.contains('hidden')).toBe(true);
+  });
+
+  it('clears the invalid-URL error once the input is edited again', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+    card.dom.input.value = 'not a url';
+    card.dom.input.dispatchEvent(new Event('input'));
+    blur(card.dom.input);
+    expect(card.dom.statusElement.textContent).toContain('Not a recognised search URL.');
+
+    card.dom.input.value = 'still not a url but edited';
+    card.dom.input.dispatchEvent(new Event('input'));
+
+    expect(card.dom.statusElement.classList.contains('hidden')).toBe(true);
   });
 });

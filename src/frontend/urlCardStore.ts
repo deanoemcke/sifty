@@ -52,6 +52,15 @@ export function isUrlCardLive(card: UrlCard): boolean {
   return urlCards.includes(card);
 }
 
+// A URL can never legitimately contain a newline, but the input is a
+// multi-row textarea (so wrapped/multi-line pastes are possible) — every
+// site that reads a card's URL must go through this single normalization
+// point rather than an ad-hoc `.value.trim()`, or an embedded newline can
+// slip past validation at one read site while another rejects it.
+export function readCardUrl(card: UrlCard): string {
+  return card.dom.input.value.replace(/[\r\n]+/g, '').trim();
+}
+
 export function resetUrlCardStore(): void {
   urlCards.length = 0;
   urlCardDataById.clear();
