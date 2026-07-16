@@ -329,6 +329,46 @@ describe('clearQuickSearchCacheAsync', () => {
     expect(listingsByUrl.has('https://example.com/item-b')).toBe(true);
     expect(getElement('resultsSection').classList.contains('hidden')).toBe(false);
   });
+
+  it('surfaces an error and does not re-search when the cache-clear request fails', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    const calls: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        calls.push({ url });
+        return Promise.resolve({ ok: false } as Response);
+      })
+    );
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('/api/cache/clear');
+    const data = urlCardData(card);
+    expect(data.errorMessage).toBeTruthy();
+    expect(data.searchedUrl).toBe(TRADEME_URL);
+    expect(data.listingUrls).toEqual(['https://example.com/item-a']);
+  });
+
+  it('surfaces an error and does not re-search when the cache-clear request throws (network error)', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    const calls: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        calls.push({ url });
+        return Promise.reject(new Error('network down'));
+      })
+    );
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(calls).toHaveLength(1);
+    const data = urlCardData(card);
+    expect(data.errorMessage).toBeTruthy();
+    expect(data.listingUrls).toEqual(['https://example.com/item-a']);
+  });
 });
 
 describe('isNewConditionSearchUrl', () => {

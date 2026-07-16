@@ -160,11 +160,16 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
 }
 
 export async function clearQuickSearchCacheAsync(card: UrlCard): Promise<void> {
-  const url = urlCardData(card).searchedUrl;
-  await fetch('/api/cache/clear', {
+  const data = urlCardData(card);
+  const response = await fetch('/api/cache/clear', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'quick-search', url }),
+    body: JSON.stringify({ type: 'quick-search', url: data.searchedUrl }),
   }).catch(() => null);
+  if (!response?.ok) {
+    data.errorMessage = 'Could not clear the cache — try again.';
+    renderCardStatus(card);
+    return;
+  }
   await searchUrlCardAsync(card);
 }
