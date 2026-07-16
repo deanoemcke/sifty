@@ -147,8 +147,9 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
     if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
+  // input.readOnly is derived from data.isEditing/searchedUrl inside
+  // renderUrlRowMode (called via renderCardStatus below) — not set directly.
   data.searchedUrl = url;
-  card.dom.input.readOnly = true;
 
   if (cachedAge) {
     card.dom.cacheStatusElement.innerHTML = `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;

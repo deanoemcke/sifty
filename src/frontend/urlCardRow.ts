@@ -100,12 +100,18 @@ export function handleUrlInputChanged(card: UrlCard): void {
 
 // Once a search has touched the row, the URL displays as a truncated link;
 // the (hidden) input stays the single source of the row's URL value.
+//
+// `data.isEditing` is the single source of truth for row mode — every other
+// call site sets only that flag and then calls this function, which derives
+// `input.readOnly` (and everything else) from it. Never toggle `readOnly`
+// directly elsewhere, or it can fall out of sync with `isEditing`.
 export function renderUrlRowMode(card: UrlCard): void {
   const data = urlCardData(card);
   const url = card.dom.input.value.trim();
   const showLink =
     !data.isEditing &&
     (data.searchStatus !== 'idle' || data.wasCancelled || data.searchedUrl !== '');
+  card.dom.input.readOnly = !data.isEditing && data.searchedUrl !== '';
   card.dom.linkElement.href = url;
   card.dom.linkElement.textContent = url;
   card.dom.linkElement.classList.toggle('hidden', !showLink);
@@ -143,7 +149,6 @@ function attemptSearchCard(card: UrlCard, searchCardAsync: (card: UrlCard) => Pr
     card.dom.input.value.trim() === data.searchedUrl
   ) {
     data.isEditing = false;
-    card.dom.input.readOnly = true;
     renderUrlRowMode(card);
     return;
   }
@@ -223,7 +228,6 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   editButton.addEventListener('click', () => {
     const data = urlCardData(urlCard);
     data.isEditing = true;
-    input.readOnly = false;
     renderUrlRowMode(urlCard);
     input.focus();
   });
@@ -268,7 +272,7 @@ export function resetAllResults(): void {
     card.dom.cacheStatusElement.innerHTML = '';
     card.dom.statusElement.classList.add('hidden');
     data.searchId = null;
-    card.dom.input.readOnly = false;
+    data.isEditing = false;
     renderUrlRowMode(card);
   }
   renderDerived();
@@ -302,7 +306,7 @@ export function resetCardForResearch(card: UrlCard): void {
   card.dom.cacheStatusElement.classList.add('hidden');
   card.dom.cacheStatusElement.innerHTML = '';
   card.dom.statusElement.classList.add('hidden');
-  card.dom.input.readOnly = false;
+  data.isEditing = false;
   renderUrlRowMode(card);
   if (getOrderedListings().length === 0) getElement('resultsSection').classList.add('hidden');
   renderDerived();

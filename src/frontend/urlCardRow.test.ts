@@ -2,7 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { populateShowControls } from './showDropdown';
 import { resetState } from './state';
-import { createUrlCard, renderCardStatus } from './urlCardRow';
+import {
+  createUrlCard,
+  renderCardStatus,
+  renderUrlRowMode,
+  resetAllResults,
+  resetCardForResearch,
+} from './urlCardRow';
 import { isUrlCardLive, resetUrlCardStore, urlCardData } from './urlCardStore';
 
 const TRADEME_URL = 'https://www.trademe.co.nz/search/test';
@@ -22,6 +28,7 @@ beforeEach(() => {
   document.body.innerHTML = `
     <div id="resultsSection" class="hidden"></div>
     <div id="urlCardsContainer"></div>
+    <div id="listingsContainer"></div>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
@@ -291,6 +298,65 @@ describe('createUrlCard — edit button', () => {
     expect(data.isEditing).toBe(false);
     expect(card.dom.input.classList.contains('hidden')).toBe(true);
     expect(card.dom.linkElement.classList.contains('hidden')).toBe(false);
+  });
+});
+
+describe('renderUrlRowMode — centralised isEditing/readOnly derivation', () => {
+  it('derives readOnly from isEditing and searchedUrl instead of requiring callers to set it', () => {
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+    const data = urlCardData(card);
+    card.dom.input.value = TRADEME_URL;
+
+    // Fresh, never-searched card: not editing, nothing searched yet.
+    renderUrlRowMode(card);
+    expect(card.dom.input.readOnly).toBe(false);
+
+    // A completed search that isn't being edited is read-only.
+    data.searchedUrl = TRADEME_URL;
+    renderUrlRowMode(card);
+    expect(card.dom.input.readOnly).toBe(true);
+
+    // Flipping isEditing alone (no direct readOnly write) reopens the input.
+    data.isEditing = true;
+    renderUrlRowMode(card);
+    expect(card.dom.input.readOnly).toBe(false);
+
+    // Leaving edit mode alone restores read-only without any extra write.
+    data.isEditing = false;
+    renderUrlRowMode(card);
+    expect(card.dom.input.readOnly).toBe(true);
+  });
+
+  it('resetAllResults clears a stale isEditing flag left over from an in-progress edit', () => {
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+    const data = urlCardData(card);
+    card.dom.input.value = TRADEME_URL;
+    data.searchStatus = 'done';
+    data.searchedUrl = TRADEME_URL;
+    renderCardStatus(card);
+    card.dom.editButton.click();
+    expect(data.isEditing).toBe(true);
+
+    resetAllResults();
+
+    expect(data.isEditing).toBe(false);
+    expect(card.dom.input.readOnly).toBe(false);
+  });
+
+  it('resetCardForResearch clears a stale isEditing flag left over from an in-progress edit', () => {
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+    const data = urlCardData(card);
+    card.dom.input.value = TRADEME_URL;
+    data.searchStatus = 'done';
+    data.searchedUrl = TRADEME_URL;
+    renderCardStatus(card);
+    card.dom.editButton.click();
+    expect(data.isEditing).toBe(true);
+
+    resetCardForResearch(card);
+
+    expect(data.isEditing).toBe(false);
+    expect(card.dom.input.readOnly).toBe(false);
   });
 });
 
