@@ -89,7 +89,6 @@ export function cancelGroupSearches(groupId: RecipeId): void {
 }
 
 export function handleUrlInputChanged(card: UrlCard): void {
-  card.dom.searchButton.disabled = !canSearchCard(card);
   const groupId = recipeGroupIdForUrl(card.dom.input.value.trim());
   const previousParent = card.dom.containerElement.parentElement;
   syncUrlGroups();
@@ -111,7 +110,6 @@ export function renderUrlRowMode(card: UrlCard): void {
   card.dom.linkElement.textContent = url;
   card.dom.linkElement.classList.toggle('hidden', !showLink);
   card.dom.input.classList.toggle('hidden', showLink);
-  card.dom.searchButton.classList.toggle('hidden', showLink);
   card.dom.editButton.classList.toggle(
     'hidden',
     !showLink || isCardSearchActive(data.searchStatus)
@@ -147,8 +145,6 @@ function attemptSearchCard(card: UrlCard, searchCardAsync: (card: UrlCard) => Pr
 // assets/x.svg, inlined so it inherits currentColor.
 export const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-export const SEARCH_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
-
 export const EDIT_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="m15 5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>): UrlCard {
@@ -158,7 +154,6 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     <div class="url-row">
       <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
       <textarea class="url-input" rows="3" placeholder="Paste search URL…"></textarea>
-      <button class="btn icon-btn url-search-btn" type="button" title="Search" disabled>${SEARCH_ICON}</button>
       <button class="btn icon-btn url-edit-btn hidden" type="button" title="Edit">${EDIT_ICON}</button>
       <button class="btn icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
     </div>
@@ -169,7 +164,6 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
 
   const input = requireChild<HTMLTextAreaElement>(cardEl, '.url-input');
   const linkElement = requireChild<HTMLAnchorElement>(cardEl, '.url-link');
-  const searchButton = requireChild<HTMLButtonElement>(cardEl, '.url-search-btn');
   const editButton = requireChild<HTMLButtonElement>(cardEl, '.url-edit-btn');
   const removeButton = requireChild<HTMLButtonElement>(cardEl, '.url-remove-btn');
   const criteriaElement = requireChild<HTMLElement>(cardEl, '.url-criteria');
@@ -190,7 +184,6 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     containerElement: cardEl,
     input,
     linkElement,
-    searchButton,
     editButton,
     removeButton,
     criteriaElement,
@@ -213,7 +206,7 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
       attemptSearchCard(urlCard, searchCardAsync);
     }
   });
-  searchButton.addEventListener('click', () => attemptSearchCard(urlCard, searchCardAsync));
+  input.addEventListener('blur', () => attemptSearchCard(urlCard, searchCardAsync));
   editButton.addEventListener('click', () => {
     const data = urlCardData(urlCard);
     data.isEditing = true;

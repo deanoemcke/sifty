@@ -12,6 +12,10 @@ function pressEnter(input: HTMLTextAreaElement): void {
   input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
 }
 
+function blur(input: HTMLTextAreaElement): void {
+  input.dispatchEvent(new FocusEvent('blur'));
+}
+
 beforeEach(() => {
   resetState();
   resetUrlCardStore();
@@ -71,6 +75,45 @@ describe('createUrlCard — paste behaviour', () => {
     pressEnter(card.dom.input);
 
     expect(searchCardAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('createUrlCard — blur behaviour', () => {
+  it('runs the search when a valid URL is present and the input is blurred', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+
+    card.dom.input.value = TRADEME_URL;
+    card.dom.input.dispatchEvent(new Event('input'));
+    blur(card.dom.input);
+
+    expect(searchCardAsync).toHaveBeenCalledExactlyOnceWith(card);
+  });
+
+  it('does not run the search on blur when the URL is invalid', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+
+    card.dom.input.value = 'not a url';
+    card.dom.input.dispatchEvent(new Event('input'));
+    blur(card.dom.input);
+
+    expect(searchCardAsync).not.toHaveBeenCalled();
+  });
+
+  it('blocks the search and shows an error on blur when the URL duplicates another card', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card1 = createUrlCard(searchCardAsync);
+    card1.dom.input.value = TRADEME_URL;
+    card1.dom.input.dispatchEvent(new Event('input'));
+
+    const card2 = createUrlCard(searchCardAsync);
+    card2.dom.input.value = TRADEME_URL;
+    card2.dom.input.dispatchEvent(new Event('input'));
+    blur(card2.dom.input);
+
+    expect(searchCardAsync).not.toHaveBeenCalled();
+    expect(card2.dom.statusElement.textContent).toContain('This URL has already been added.');
   });
 });
 
@@ -135,7 +178,6 @@ describe('createUrlCard — edit button', () => {
 
     expect(card.dom.editButton.classList.contains('hidden')).toBe(false);
     expect(card.dom.input.classList.contains('hidden')).toBe(true);
-    expect(card.dom.searchButton.classList.contains('hidden')).toBe(true);
   });
 
   it('stays hidden while a search is actively running', () => {

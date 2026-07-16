@@ -78,7 +78,6 @@ function makeCardDom(): UrlCardDom {
     containerElement: document.createElement('div'),
     input: document.createElement('textarea'),
     linkElement: document.createElement('a'),
-    searchButton: document.createElement('button'),
     editButton: document.createElement('button'),
     removeButton: document.createElement('button'),
     criteriaElement,

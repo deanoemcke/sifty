@@ -328,12 +328,6 @@ label {
 .delete-saved-btn {
   color: var(--text);
 }
-.url-search-btn {
-  color: var(--primary);
-}
-.url-search-btn:disabled {
-  color: var(--text-muted);
-}
 /* Criteria lines below the status text */
 .url-criteria {
   margin-top: 0.3rem;

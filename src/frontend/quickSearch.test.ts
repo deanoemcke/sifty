@@ -44,7 +44,6 @@ function makeCardDom(url: string): UrlCardDom {
     containerElement: document.createElement('div'),
     input,
     linkElement: document.createElement('a'),
-    searchButton: document.createElement('button'),
     editButton: document.createElement('button'),
     removeButton: document.createElement('button'),
     criteriaElement,

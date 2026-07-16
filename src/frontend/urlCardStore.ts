@@ -11,7 +11,6 @@ export interface UrlCardDom {
   input: HTMLTextAreaElement;
   // Truncated hyperlink shown in place of the input once a search has run.
   linkElement: HTMLAnchorElement;
-  searchButton: HTMLButtonElement;
   editButton: HTMLButtonElement;
   removeButton: HTMLButtonElement;
   // Criteria block below the status line; hidden until criteria arrive.
