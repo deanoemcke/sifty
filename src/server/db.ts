@@ -246,9 +246,9 @@ export function stmtGetCategoriesByTop2(database: Database.Database) {
     'SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug'
   );
 }
-export function stmtSearchCategoriesByKeyword(database: Database.Database) {
-  return database.prepare<[string], { top2: string }>(
-    'SELECT DISTINCT top2 FROM trademe_categories WHERE display LIKE ?'
+export function stmtGetAllCategoryDisplays(database: Database.Database) {
+  return database.prepare<[], { slug: string; display: string }>(
+    'SELECT slug, display FROM trademe_categories'
   );
 }
 export function stmtGetCategoryLegacyPath(database: Database.Database) {

@@ -191,6 +191,11 @@ describe('extractSearchKeywords', () => {
   it('ignores punctuation and digits', () => {
     expect(extractSearchKeywords('macbook-laptop (2021)!')).toEqual(['macbook', 'laptop']);
   });
+
+  it('caps the number of keywords returned', () => {
+    const words = ['able', 'baker', 'coder', 'delta', 'eagle', 'fable', 'gable', 'haste', 'igloo'];
+    expect(extractSearchKeywords(words.join(' '))).toEqual(words.slice(0, 8));
+  });
 });
 
 // ── resolveDiscoverCategoriesAsync ─────────────────────────────────────────
@@ -275,7 +280,7 @@ function seedLadderBugFixture(db: Database.Database): void {
   ]);
 }
 
-function mockAiJsonForLadderBugFixture(): void {
+function mockAiJsonForLadderBugFixture(searchQuery: string | null = null): void {
   vi.mocked(aiJSON).mockImplementation(async (_config, label) => {
     if (label === 'step1') {
       return {
@@ -283,7 +288,7 @@ function mockAiJsonForLadderBugFixture(): void {
         value: {
           categories: ['Building & renovation > Tools'],
           searchLabel: 'ladder',
-          searchQuery: null,
+          searchQuery,
         },
       };
     }
@@ -295,25 +300,12 @@ function mockAiJsonForLadderBugFixture(): void {
         },
       };
     }
-    if (label === 'step2:building-renovation/building-supplies') {
-      return {
-        kind: 'ok',
-        value: {
-          categories: [
-            {
-              slug: 'building-renovation/building-supplies/scaffolding-ladders/ladders',
-              searchString: null,
-            },
-          ],
-        },
-      };
-    }
     throw new Error(`unexpected aiJSON label in test: ${label}`);
   });
 }
 
 describe('resolveDiscoverCategoriesAsync', () => {
-  it('finds the Ladders category via keyword match even when step 1 picks the wrong broad category', async () => {
+  it('finds the ladders branch via keyword match even when step 1 picks the wrong broad category', async () => {
     const db = new Database(':memory:');
     initSchema(db);
     _testDb = db;
@@ -322,21 +314,41 @@ describe('resolveDiscoverCategoriesAsync', () => {
 
     const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
 
+    // The deeper "Ladders" leaf and its "Scaffolding & ladders" parent both match the
+    // keyword; collapseEntries' existing parent-wins rule keeps the shallower one.
     expect(entries.map((e) => e.slug)).toContain(
-      'building-renovation/building-supplies/scaffolding-ladders/ladders'
+      'building-renovation/building-supplies/scaffolding-ladders'
     );
   });
 
-  it('queries step 2 for the keyword-matched branch, not just the LLM-picked branch', async () => {
+  it('adds the keyword-matched branch directly instead of routing it through step 2', async () => {
     const db = new Database(':memory:');
     initSchema(db);
     _testDb = db;
     seedLadderBugFixture(db);
     mockAiJsonForLadderBugFixture();
 
-    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
 
     const calledLabels = vi.mocked(aiJSON).mock.calls.map((call) => call[1]);
-    expect(calledLabels).toContain('step2:building-renovation/building-supplies');
+    expect(calledLabels).not.toContain('step2:building-renovation/building-supplies');
+    expect(entries.map((e) => e.slug)).toContain(
+      'building-renovation/building-supplies/scaffolding-ladders'
+    );
+  });
+
+  it("uses step 1's searchQuery as the searchString for keyword-matched entries", async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    mockAiJsonForLadderBugFixture('extension ladder');
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    const keywordMatchedEntry = entries.find(
+      (e) => e.slug === 'building-renovation/building-supplies/scaffolding-ladders'
+    );
+    expect(keywordMatchedEntry?.searchString).toBe('extension ladder');
   });
 });

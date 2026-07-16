@@ -6,10 +6,10 @@ import {
   type CategoryLegacyPathRow,
   type CategoryRow,
   getDb,
+  stmtGetAllCategoryDisplays,
   stmtGetCategoriesAtDepth2,
   stmtGetCategoriesByTop2,
   stmtGetCategoryLegacyPath,
-  stmtSearchCategoriesByKeyword,
 } from '../db';
 import {
   buildListing,
@@ -34,10 +34,10 @@ vi.mock('../ai', async (importOriginal) => {
 });
 vi.mock('../db', () => ({
   getDb: vi.fn(),
+  stmtGetAllCategoryDisplays: vi.fn(),
   stmtGetCategoriesAtDepth2: vi.fn(),
   stmtGetCategoriesByTop2: vi.fn(),
   stmtGetCategoryLegacyPath: vi.fn(),
-  stmtSearchCategoriesByKeyword: vi.fn(),
 }));
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
@@ -1011,11 +1011,11 @@ describe('buildDiscoverUrlsAsync', () => {
     return { all } as unknown as ReturnType<typeof stmtGetCategoriesByTop2>;
   }
 
-  // Default: no keyword matches, so the deterministic keyword safety net in
+  // Default: no categories, so the deterministic keyword safety net in
   // resolveDiscoverCategoriesAsync contributes nothing and these tests keep
   // exercising step 1's LLM-picked categories only.
-  function fakeSearchCategoriesByKeywordStatement(all: (term: string) => Array<{ top2: string }>) {
-    return { all } as unknown as ReturnType<typeof stmtSearchCategoriesByKeyword>;
+  function fakeGetAllCategoryDisplaysStatement(rows: Array<{ slug: string; display: string }>) {
+    return { all: () => rows } as unknown as ReturnType<typeof stmtGetAllCategoryDisplays>;
   }
 
   // aiJSON is mocked wholesale in this file, so its calls must resolve with the
@@ -1038,9 +1038,7 @@ describe('buildDiscoverUrlsAsync', () => {
         return MOCK_SUBS;
       })
     );
-    vi.mocked(stmtSearchCategoriesByKeyword).mockReturnValue(
-      fakeSearchCategoriesByKeywordStatement(() => [])
-    );
+    vi.mocked(stmtGetAllCategoryDisplays).mockReturnValue(fakeGetAllCategoryDisplaysStatement([]));
   });
 
   // resetAllMocks (not clearAllMocks): strips mock implementations between tests so any test
