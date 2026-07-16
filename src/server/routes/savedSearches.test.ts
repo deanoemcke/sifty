@@ -15,6 +15,10 @@ vi.mock('../db', () => {
     return _testDb;
   }
 
+  function isUniqueConstraintViolation(err: unknown): boolean {
+    return err instanceof Database.SqliteError && err.code === 'SQLITE_CONSTRAINT_UNIQUE';
+  }
+
   function stmtListSavedSearches(db: Database.Database) {
     return db.prepare(
       'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches ORDER BY created_at DESC'
@@ -27,11 +31,14 @@ vi.mock('../db', () => {
     );
   }
 
-  function stmtGetSavedSearchByName(db: Database.Database) {
-    return db.prepare(
+  // vi.fn-wrapped (not a plain function) so individual tests can override its
+  // return value once, to simulate a concurrent create/rename racing past the
+  // check-then-act existence check right before this call's INSERT/UPDATE runs.
+  const stmtGetSavedSearchByName = vi.fn((db: Database.Database) =>
+    db.prepare(
       'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings FROM saved_searches WHERE name = ?'
-    );
-  }
+    )
+  );
 
   function stmtInsertSavedSearch(db: Database.Database) {
     return db.prepare(
@@ -55,6 +62,7 @@ vi.mock('../db', () => {
 
   return {
     getDb,
+    isUniqueConstraintViolation,
     stmtListSavedSearches,
     stmtGetSavedSearch,
     stmtGetSavedSearchByName,
@@ -70,6 +78,7 @@ vi.mock('../helpers', () => ({
   sendJSON: vi.fn(),
 }));
 
+import { stmtGetSavedSearchByName } from '../db';
 import { readBody, sendJSON } from '../helpers';
 import {
   handleCreateSavedSearch,
@@ -96,6 +105,7 @@ function initTestDb(): void {
       created_at                   INTEGER NOT NULL,
       should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0
     );
+    CREATE UNIQUE INDEX idx_saved_searches_name ON saved_searches(name);
   `);
   _testDb = db;
 }
@@ -104,6 +114,7 @@ beforeEach(() => {
   initTestDb();
   vi.mocked(sendJSON).mockClear();
   vi.mocked(readBody).mockClear();
+  vi.mocked(stmtGetSavedSearchByName).mockClear();
 });
 
 describe('handleCreateSavedSearch', () => {
@@ -294,6 +305,50 @@ describe('handleCreateSavedSearch', () => {
       expect.anything(),
       409,
       expect.objectContaining({ existingId: firstId })
+    );
+
+    vi.mocked(sendJSON).mockClear();
+    handleListSavedSearches(makeResponse() as never, makeResponse());
+    const { searches } = vi.mocked(sendJSON).mock.calls[0][2] as { searches: unknown[] };
+    expect(searches).toHaveLength(1);
+  });
+
+  it('returns 409 via the UNIQUE-index catch path when a concurrent create races past the existence check', async () => {
+    // Simulates the race the check-then-act SELECT can't close: another
+    // request's INSERT for the same name has already committed by the time
+    // this one reaches its own INSERT, but this call's existence check ran
+    // (and returned nothing) before that happened.
+    requireTestDb()
+      .prepare(
+        'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        'winner-of-race',
+        'Raced name',
+        '["https://www.trademe.co.nz/a/x"]',
+        null,
+        null,
+        1000,
+        0
+      );
+    vi.mocked(stmtGetSavedSearchByName).mockReturnValueOnce({
+      get: () => undefined,
+    } as unknown as ReturnType<typeof stmtGetSavedSearchByName>);
+
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Raced name',
+      urls: ['https://www.trademe.co.nz/a/z'],
+    });
+
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      409,
+      expect.objectContaining({
+        error: 'A saved search with this name already exists',
+        existingId: 'winner-of-race',
+      })
     );
 
     vi.mocked(sendJSON).mockClear();
@@ -512,5 +567,43 @@ describe('handleUpdateSavedSearch', () => {
     expect(after.urls).toEqual(['https://www.trademe.co.nz/a/updated']);
     expect(after.aiFilter).toBe('good condition only');
     expect(after.discoverInputs).toEqual({ prompt: 'lamp', fulfillment: 'any' });
+  });
+
+  it('returns 409 and leaves the row unrenamed when renaming into a name already used by another saved search', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Taken name',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    const { id: otherId } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    vi.mocked(sendJSON).mockClear();
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'To rename',
+      urls: ['https://www.trademe.co.nz/a/y'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    vi.mocked(sendJSON).mockClear();
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Taken name',
+      urls: ['https://www.trademe.co.nz/a/y'],
+    });
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id);
+
+    expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
+      expect.anything(),
+      409,
+      expect.objectContaining({
+        error: 'A saved search with this name already exists',
+        existingId: otherId,
+      })
+    );
+
+    vi.mocked(sendJSON).mockClear();
+    handleGetSavedSearch(makeResponse() as never, makeResponse(), id);
+    const { search } = vi.mocked(sendJSON).mock.calls[0][2] as { search: Record<string, unknown> };
+    expect(search.name).toBe('To rename');
   });
 });

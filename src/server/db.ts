@@ -74,6 +74,40 @@ export function initSchema(database: Database.Database): void {
       WHERE id IN (SELECT DISTINCT saved_search_id FROM alerted_listings)
     `);
   }
+
+  // Backs the create/update handlers' duplicate-name rejection with a real DB
+  // guarantee — the app-level SELECT-then-INSERT check alone can't stop two
+  // concurrent saves both passing the check before either commits. CREATE
+  // UNIQUE INDEX fails outright against any pre-existing name collision, so
+  // this runs a one-time de-dupe pass first: keep the earliest-created row
+  // per name untouched, and rename every later duplicate by appending its id
+  // (stable, collision-free) so the index below can always be created.
+  const savedSearchIndexes = database
+    .prepare<[], { name: string }>('PRAGMA index_list(saved_searches)')
+    .all();
+  if (!savedSearchIndexes.some((index) => index.name === 'idx_saved_searches_name')) {
+    database.exec(`
+      UPDATE saved_searches
+      SET name = name || ' (' || id || ')'
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY name ORDER BY created_at ASC, rowid ASC) AS rn
+          FROM saved_searches
+        )
+        WHERE rn > 1
+      )
+    `);
+    database.exec('CREATE UNIQUE INDEX idx_saved_searches_name ON saved_searches(name)');
+  }
+}
+
+// better-sqlite3 throws a `Database.SqliteError` (with a `code` string) for
+// constraint failures instead of a typed subclass per constraint — this is
+// the only way callers can tell "this INSERT/UPDATE lost a uniqueness race"
+// apart from any other failure and react to it deliberately instead of
+// treating it as a generic 500.
+export function isUniqueConstraintViolation(err: unknown): boolean {
+  return err instanceof Database.SqliteError && err.code === 'SQLITE_CONSTRAINT_UNIQUE';
 }
 
 function logDbStats(database: Database.Database): void {

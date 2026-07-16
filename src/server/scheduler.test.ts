@@ -462,10 +462,12 @@ describe('runSchedulerAsync', () => {
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     const searchA = insertAlertSearch(db, {
       id: 'search-a',
+      name: 'Search A',
       urls: ['https://a.example.com/search'],
     });
     const searchB = insertAlertSearch(db, {
       id: 'search-b',
+      name: 'Search B',
       urls: ['https://b.example.com/search'],
     });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
