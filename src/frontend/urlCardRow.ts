@@ -133,8 +133,21 @@ export function isDuplicateUrl(card: UrlCard): boolean {
 }
 
 function attemptSearchCard(card: UrlCard, searchCardAsync: (card: UrlCard) => Promise<void>): void {
+  const data = urlCardData(card);
+  // Editing a card without actually changing its URL leaves nothing to
+  // search — fall back to the link view instead of leaving the row stuck
+  // showing an input that blur/Enter can no longer act on.
+  if (
+    data.isEditing &&
+    data.searchedUrl !== '' &&
+    card.dom.input.value.trim() === data.searchedUrl
+  ) {
+    data.isEditing = false;
+    card.dom.input.readOnly = true;
+    renderUrlRowMode(card);
+    return;
+  }
   if (isDuplicateUrl(card)) {
-    const data = urlCardData(card);
     data.errorMessage = 'This URL has already been added.';
     renderCardStatus(card);
     return;

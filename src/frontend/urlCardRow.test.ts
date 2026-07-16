@@ -250,6 +250,48 @@ describe('createUrlCard — edit button', () => {
 
     expect(searchCardAsync).toHaveBeenCalledExactlyOnceWith(card);
   });
+
+  it('reverts to the link view on blur when the edited URL is left unchanged', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+    card.dom.input.value = TRADEME_URL;
+    card.dom.input.dispatchEvent(new Event('input'));
+    const data = urlCardData(card);
+    data.searchStatus = 'done';
+    data.searchedUrl = TRADEME_URL;
+    card.dom.input.readOnly = true;
+    renderCardStatus(card);
+
+    card.dom.editButton.click();
+    blur(card.dom.input);
+
+    expect(searchCardAsync).not.toHaveBeenCalled();
+    expect(data.isEditing).toBe(false);
+    expect(card.dom.input.readOnly).toBe(true);
+    expect(card.dom.input.classList.contains('hidden')).toBe(true);
+    expect(card.dom.linkElement.classList.contains('hidden')).toBe(false);
+    expect(card.dom.editButton.classList.contains('hidden')).toBe(false);
+  });
+
+  it('reverts to the link view on Enter when the edited URL is left unchanged', () => {
+    const searchCardAsync = vi.fn().mockResolvedValue(undefined);
+    const card = createUrlCard(searchCardAsync);
+    card.dom.input.value = TRADEME_URL;
+    card.dom.input.dispatchEvent(new Event('input'));
+    const data = urlCardData(card);
+    data.searchStatus = 'done';
+    data.searchedUrl = TRADEME_URL;
+    card.dom.input.readOnly = true;
+    renderCardStatus(card);
+
+    card.dom.editButton.click();
+    pressEnter(card.dom.input);
+
+    expect(searchCardAsync).not.toHaveBeenCalled();
+    expect(data.isEditing).toBe(false);
+    expect(card.dom.input.classList.contains('hidden')).toBe(true);
+    expect(card.dom.linkElement.classList.contains('hidden')).toBe(false);
+  });
 });
 
 describe('createUrlCard — three-row input', () => {
