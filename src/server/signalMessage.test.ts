@@ -3,7 +3,7 @@ import { makeListing } from '../lib/testFixtures';
 import { escapeSignalMarkdown, formatAlertMessage } from './signalMessage';
 
 describe('formatAlertMessage', () => {
-  it('composes the saved search name, bold title, source/location/price line, and url', () => {
+  it('composes a bold title, then a location/price line, then the url — no saved search name or source', () => {
     const listing = makeListing({
       source: 'trademe',
       title: 'Herman Miller Aeron, size B',
@@ -12,28 +12,53 @@ describe('formatAlertMessage', () => {
       url: 'https://www.trademe.co.nz/a/123456',
     });
 
-    const message = formatAlertMessage('Chairs under $200', listing);
+    const message = formatAlertMessage(listing);
 
     expect(message).toBe(
-      'Chairs under $200\n' +
-        '**Herman Miller Aeron, size B**\n' +
-        'Trade Me · Wellington Central · $150\n' +
+      '**Herman Miller Aeron, size B**\n' +
+        'Wellington Central · $150\n' +
         'https://www.trademe.co.nz/a/123456'
     );
   });
 
-  it("renders 'Price on request' for a null price and the correct label per source", () => {
+  it("renders 'Price on request' for a null price", () => {
     const listing = makeListing({ source: 'facebook', price: null });
 
-    const message = formatAlertMessage('My search', listing);
+    const message = formatAlertMessage(listing);
 
-    expect(message).toContain('Facebook · Wellington · Price on request');
+    expect(message).toContain('Wellington · Price on request');
+  });
+
+  it('strips a trailing ", New Zealand" from the location', () => {
+    const listing = makeListing({ location: 'Titahi Bay, New Zealand' });
+
+    const message = formatAlertMessage(listing);
+
+    expect(message).toContain('Titahi Bay ·');
+    expect(message).not.toContain('New Zealand');
+  });
+
+  it('strips a trailing ", NZ" from the location', () => {
+    const listing = makeListing({ location: 'Auckland City, Auckland, NZ' });
+
+    const message = formatAlertMessage(listing);
+
+    expect(message).toContain('Auckland City ·');
+    expect(message).not.toContain('NZ');
+  });
+
+  it('leaves a location with no country suffix unchanged', () => {
+    const listing = makeListing({ location: 'Wellington Central' });
+
+    const message = formatAlertMessage(listing);
+
+    expect(message).toContain('Wellington Central ·');
   });
 
   it('leaves the url untouched even if it contains markdown-special characters', () => {
     const listing = makeListing({ url: 'https://example.com/a_b*c?x=1~2' });
 
-    const message = formatAlertMessage('My search', listing);
+    const message = formatAlertMessage(listing);
 
     expect(message.endsWith('https://example.com/a_b*c?x=1~2')).toBe(true);
   });
@@ -41,7 +66,7 @@ describe('formatAlertMessage', () => {
   it('escapes markdown-special characters in the title so they cannot break the bold wrapper', () => {
     const listing = makeListing({ title: 'Selling my **RARE** guitar' });
 
-    const message = formatAlertMessage('My search', listing);
+    const message = formatAlertMessage(listing);
 
     // The only literal "**" pairs in the message must be the ones this
     // function itself added around the whole (escaped) title.
@@ -51,7 +76,7 @@ describe('formatAlertMessage', () => {
   it('does not let a leading/trailing * in the title merge with the bold wrapper into a *** run', () => {
     const listing = makeListing({ title: '*Rare* guitar' });
 
-    const message = formatAlertMessage('My search', listing);
+    const message = formatAlertMessage(listing);
 
     expect(message).not.toMatch(/\*{3,}/);
   });

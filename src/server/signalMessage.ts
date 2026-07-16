@@ -3,7 +3,15 @@
 
 import { formatListingPrice } from '../lib/priceFormat';
 import type { Listing } from '../lib/recipes/base';
-import { RECIPE_LABELS, requirePattern } from '../lib/recipes/metadata';
+
+// Trailing comma-segments that identify the regiona and country rather than the suburb
+function stripLocationSuffix(location: string): string {
+  const firstCommaIndex = location.indexOf(',');
+  if (firstCommaIndex === -1) {
+    return location;
+  }
+  return location.slice(0, firstCommaIndex).trim();
+}
 
 // Strips the four characters the Signal proxy's regex-based markdown
 // converter treats as style markers (**, _..._, `...`, ~~). Inserting an
@@ -20,18 +28,16 @@ export function escapeSignalMarkdown(text: string): string {
 
 // Emulates the results-grid listing card as closely as the Signal proxy's
 // markdown subset allows: bold title (the card's dominant element), then
-// source/location/price on one line (the card's badge + footer, collapsed
-// into text), then the link. The saved search name leads, preserving the
-// "which search fired this" context the old plain-text message carried.
+// location/price on one line (the card's footer, collapsed into text), then
+// the link. The saved search name and source are deliberately omitted —
+// they're metadata about how the alert was found, not about the listing.
 // `url` is deliberately never escaped — it must stay byte-identical to
 // `listing.url` so Signal's client-side auto-linkify isn't broken.
-export function formatAlertMessage(savedSearchName: string, listing: Listing): string {
-  const sourceLabel = RECIPE_LABELS[requirePattern(listing.source).recipeId];
+export function formatAlertMessage(listing: Listing): string {
   const price = formatListingPrice(listing.price);
   return [
-    escapeSignalMarkdown(savedSearchName),
     `**${escapeSignalMarkdown(listing.title)}**`,
-    `${sourceLabel} · ${escapeSignalMarkdown(listing.location)} · ${price}`,
+    `${escapeSignalMarkdown(stripLocationSuffix(listing.location))} · ${price}`,
     listing.url,
   ].join('\n');
 }

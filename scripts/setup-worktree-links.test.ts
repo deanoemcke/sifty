@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -8,14 +9,44 @@ import {
   isGitWorktree,
 } from './setup-worktree-links';
 
+function createFixtureRepoWithWorktree(): { mainRepoRoot: string; worktreeRoot: string } {
+  const containerDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sifty-worktree-fixture-')));
+  const mainRepoRoot = path.join(containerDir, 'main');
+  const worktreeRoot = path.join(containerDir, 'worktree');
+  fs.mkdirSync(mainRepoRoot);
+
+  execFileSync('git', ['init', '-q'], { cwd: mainRepoRoot });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: mainRepoRoot });
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: mainRepoRoot });
+  execFileSync('git', ['commit', '-q', '-m', 'init', '--allow-empty'], { cwd: mainRepoRoot });
+  execFileSync('git', ['worktree', 'add', '-q', '--detach', worktreeRoot], { cwd: mainRepoRoot });
+
+  return { mainRepoRoot, worktreeRoot };
+}
+
 describe('isGitWorktree / getMainRepoRoot', () => {
-  it('recognises the current checkout as a git worktree', () => {
-    expect(isGitWorktree(process.cwd())).toBe(true);
+  let mainRepoRoot: string;
+  let worktreeRoot: string;
+
+  afterEach(() => {
+    if (!mainRepoRoot) return;
+    execFileSync('git', ['worktree', 'remove', '-f', worktreeRoot], { cwd: mainRepoRoot });
+    fs.rmSync(path.dirname(mainRepoRoot), { recursive: true });
   });
 
-  it('resolves the main repo root to the checkout without a .worktrees suffix', () => {
-    const mainRepoRoot = getMainRepoRoot(process.cwd());
-    expect(mainRepoRoot).not.toContain('.worktrees');
+  it('recognises a real git worktree checkout as a worktree', () => {
+    ({ mainRepoRoot, worktreeRoot } = createFixtureRepoWithWorktree());
+    expect(isGitWorktree(worktreeRoot)).toBe(true);
+  });
+
+  it('does not recognise the main repo checkout as a worktree', () => {
+    ({ mainRepoRoot, worktreeRoot } = createFixtureRepoWithWorktree());
+    expect(isGitWorktree(mainRepoRoot)).toBe(false);
+  });
+
+  it('resolves the main repo root from within a worktree', () => {
+    ({ mainRepoRoot, worktreeRoot } = createFixtureRepoWithWorktree());
+    expect(getMainRepoRoot(worktreeRoot)).toBe(mainRepoRoot);
     expect(fs.existsSync(path.join(mainRepoRoot, '.git'))).toBe(true);
   });
 });
