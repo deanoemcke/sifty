@@ -227,7 +227,21 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     renderUrlRowMode(urlCard);
     input.focus();
   });
-  removeButton.addEventListener('click', () => removeUrlCard(urlCard));
+  // Chrome/Firefox move focus to a clicked button on mousedown, firing the
+  // textarea's blur (and its autosearch) before the button's own click runs.
+  // Suppressing the default mousedown action keeps focus on the textarea, so
+  // no blur fires on the way to removing the card.
+  removeButton.addEventListener('mousedown', (mouseEvent) => mouseEvent.preventDefault());
+  removeButton.addEventListener('click', () => {
+    // Belt and braces for any other path to removal (e.g. Tab then Enter,
+    // which blurs the textarea before the button is ever clicked): stop a
+    // search already in flight for this card before it's gone, so nothing
+    // it streams in after removal has a chance to leak into shared state —
+    // searchUrlCardAsync also checks isUrlCardLive on every event as the
+    // final backstop.
+    cancelSearch(urlCard);
+    removeUrlCard(urlCard);
+  });
 
   updateRemoveButtons();
   syncUrlGroups();

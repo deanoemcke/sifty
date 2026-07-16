@@ -19,7 +19,7 @@ import {
 } from './state';
 import { streamPostAsync } from './streamPost';
 import { renderCardStatus, resetCardForResearch } from './urlCardRow';
-import { type UrlCard, urlCardData } from './urlCardStore';
+import { isUrlCardLive, type UrlCard, urlCardData } from './urlCardStore';
 import { updateUrlGroupHeaders } from './urlGroupsView';
 
 // A "listing" SSE event may replay a pre-deploy cached row that predates the
@@ -63,6 +63,12 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   let cachedAge = '';
   try {
     await streamPostAsync('/api/quick-search', { url, searchId: data.searchId }, (ev) => {
+      // The card can be removed mid-stream (e.g. an autosearch fired on blur
+      // just before its own remove button was clicked) — once that happens,
+      // no further event may touch the shared results grid or write into a
+      // detached row, or a deleted card's search would leak a listing that
+      // nothing is left to clean up.
+      if (!isUrlCardLive(card)) return;
       if (ev.type === 'criteria') {
         const filters = ev.filters as Array<[string, string]>;
         requireChild<HTMLElement>(card.dom.criteriaElement, '.criteria-grid').innerHTML = filters
@@ -126,6 +132,10 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
   } catch (error) {
     data.errorMessage = (error as Error).message;
   }
+
+  // The card may have been removed while the last read was in flight — bail
+  // before touching its (now detached) DOM or the shared results grid.
+  if (!isUrlCardLive(card)) return;
 
   const wasCancelled = (data.searchStatus as UrlCardSearchStatus) === 'cancelling';
   data.searchStatus = wasCancelled ? 'idle' : 'done';

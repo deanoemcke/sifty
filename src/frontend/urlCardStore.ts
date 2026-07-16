@@ -44,6 +44,14 @@ export function removeUrlCardEntry(card: UrlCard): void {
   }
 }
 
+// Lets an in-flight async operation (e.g. a streaming search) check, after
+// every await point, whether the card it was started for still exists —
+// the card may have been removed mid-operation, and once it has, nothing
+// should keep mutating shared state or a detached DOM node on its behalf.
+export function isUrlCardLive(card: UrlCard): boolean {
+  return urlCards.includes(card);
+}
+
 export function resetUrlCardStore(): void {
   urlCards.length = 0;
   urlCardDataById.clear();

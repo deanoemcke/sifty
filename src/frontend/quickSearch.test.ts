@@ -11,7 +11,7 @@ import {
 import { cardStatusText } from './searchStatusText';
 import { populateShowControls } from './showDropdown';
 import { listingsByUrl, listingUrlByDedupeKey, resetState, type UrlCardData } from './state';
-import { cancelSearch, cardStatusSnapshot } from './urlCardRow';
+import { cancelSearch, cardStatusSnapshot, removeUrlCard } from './urlCardRow';
 import {
   addUrlCard,
   resetUrlCardStore,
@@ -134,6 +134,41 @@ describe('searchUrlCardAsync — post-stream cancellation disambiguation', () =>
     const data = urlCardData(card);
     expect(data.searchStatus).toBe('done');
     expect(data.wasCancelled).toBe(false);
+  });
+
+  // Regression test for the blur-vs-remove race: editing a card's URL fires
+  // an autosearch on blur, and clicking the card's own Remove button right
+  // after can remove the card while that search is still streaming.
+  // removeUrlCard already cleans up listings the card found *before* it was
+  // removed (see the "early-item" assertion below) — the bug is a listing
+  // that streams in *after* removal, which that one-off cleanup pass can
+  // never catch, leaking it into the shared grid with no card left to
+  // remove it. Without the isUrlCardLive guard, "late-item" would be added
+  // via addListingItem and never cleaned up.
+  it('drops any listing event that arrives after the card has been removed mid-search, so nothing leaks into the shared results grid', async () => {
+    const card = addSearchableCard();
+    stubQuickSearchStream(
+      [
+        'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/early-item","isAuction":false,"relevance":0}}\n',
+        'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/late-item","isAuction":false,"relevance":0}}\n',
+      ],
+      (callIndex) => {
+        // Simulates the remove button being clicked in the gap between two
+        // network reads — after the first listing has already streamed in,
+        // but before the second one arrives.
+        if (callIndex === 1) removeUrlCard(card);
+      }
+    );
+
+    await searchUrlCardAsync(card);
+
+    // Removal's own cleanup already took the first listing back out again —
+    // this just confirms that pass ran, it's not the regression under test.
+    expect(listingsByUrl.has('https://example.com/early-item')).toBe(false);
+    // The regression: this listing streamed in after removal, so it must
+    // never have been added in the first place.
+    expect(listingsByUrl.has('https://example.com/late-item')).toBe(false);
+    expect(listingsByUrl.size).toBe(0);
   });
 });
 

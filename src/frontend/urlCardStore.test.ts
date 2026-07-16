@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetState, type UrlCardData, urlCardDataById } from './state';
 import {
   addUrlCard,
+  isUrlCardLive,
   removeUrlCardEntry,
   resetUrlCardStore,
   type UrlCard,
@@ -63,6 +64,24 @@ describe('removeUrlCardEntry', () => {
     removeUrlCardEntry(ghost);
     expect(urlCards).toHaveLength(1);
     expect(urlCardData(known).searchedUrl).toBe('https://example.com/1');
+  });
+});
+
+describe('isUrlCardLive', () => {
+  it('is true for a card still in the store', () => {
+    const card = addUrlCard(stubDom, makeCardData('https://example.com/1'));
+    expect(isUrlCardLive(card)).toBe(true);
+  });
+
+  it('is false once the card has been removed', () => {
+    const card = addUrlCard(stubDom, makeCardData('https://example.com/1'));
+    removeUrlCardEntry(card);
+    expect(isUrlCardLive(card)).toBe(false);
+  });
+
+  it('is false for a card the store never held', () => {
+    const ghost: UrlCard = { id: 'ghost', dom: stubDom };
+    expect(isUrlCardLive(ghost)).toBe(false);
   });
 });
 

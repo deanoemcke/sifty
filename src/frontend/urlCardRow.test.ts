@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { populateShowControls } from './showDropdown';
 import { resetState } from './state';
 import { createUrlCard, renderCardStatus } from './urlCardRow';
-import { resetUrlCardStore, urlCardData } from './urlCardStore';
+import { isUrlCardLive, resetUrlCardStore, urlCardData } from './urlCardStore';
 
 const TRADEME_URL = 'https://www.trademe.co.nz/search/test';
 const TRADEME_URL_2 = 'https://www.trademe.co.nz/search/test?page=2';
@@ -312,5 +312,31 @@ describe('createUrlCard — three-row input', () => {
 
     expect(card.dom.input.value).toBe(TRADEME_URL);
     expect(searchCardAsync).toHaveBeenCalledExactlyOnceWith(card);
+  });
+});
+
+describe('createUrlCard — remove button vs. blur-triggered autosearch race', () => {
+  it('prevents the default mousedown action, so clicking remove cannot blur the textarea and fire an autosearch first', () => {
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+    card.dom.input.value = TRADEME_URL;
+    card.dom.input.dispatchEvent(new Event('input'));
+
+    const mousedownEvent = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    card.dom.removeButton.dispatchEvent(mousedownEvent);
+
+    expect(mousedownEvent.defaultPrevented).toBe(true);
+  });
+
+  it('removes the card from the live store when Remove is clicked', () => {
+    // Second card only to keep the remove button visible/enabled — mirrors
+    // updateRemoveButtons(), which hides it while a single card remains.
+    createUrlCard(vi.fn().mockResolvedValue(undefined));
+    const card = createUrlCard(vi.fn().mockResolvedValue(undefined));
+    card.dom.input.value = TRADEME_URL;
+    card.dom.input.dispatchEvent(new Event('input'));
+
+    card.dom.removeButton.click();
+
+    expect(isUrlCardLive(card)).toBe(false);
   });
 });
