@@ -125,12 +125,16 @@ async function createSavedSearchAsync(
   return { status: 'ok', id: data.id };
 }
 
-async function updateSavedSearchAsync(id: string, payload: SaveSearchPayload): Promise<void> {
-  await fetch(`/api/saved-searches/${id}`, {
+async function updateSavedSearchAsync(
+  id: string,
+  payload: SaveSearchPayload
+): Promise<'ok' | 'error'> {
+  const response = await fetch(`/api/saved-searches/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  });
+  }).catch(() => null);
+  return response?.ok ? 'ok' : 'error';
 }
 
 export async function deleteSavedSearchAsync(id: string): Promise<void> {
@@ -264,12 +268,25 @@ export function openSaveSearchModal(): void {
   const input = getElement<HTMLInputElement>('saveSearchName');
   input.value = currentSearchName ?? '';
   input.select();
+  hideSaveSearchError();
   getElement('saveSearchModal').classList.remove('hidden');
   input.focus();
 }
 
 export function closeSaveSearchModal(): void {
   getElement('saveSearchModal').classList.add('hidden');
+}
+
+function hideSaveSearchError(): void {
+  const errorElement = getElement<HTMLDivElement>('saveSearchError');
+  errorElement.style.display = 'none';
+  errorElement.textContent = '';
+}
+
+function showSaveSearchError(message: string): void {
+  const errorElement = getElement<HTMLDivElement>('saveSearchError');
+  errorElement.textContent = message;
+  errorElement.style.display = 'block';
 }
 
 async function finishSaveSearchAsync(id: string, name: string): Promise<void> {
@@ -287,10 +304,16 @@ export async function handleSaveSearchConfirmAsync(): Promise<void> {
   if (!payload) return;
 
   const confirmButton = getElement<HTMLButtonElement>('saveSearchConfirmBtn');
+  const saveFailedMessage = 'Could not save this favourite — try again.';
+  hideSaveSearchError();
   confirmButton.disabled = true;
   try {
     if (name === currentSearchName && currentSearchId) {
-      await updateSavedSearchAsync(currentSearchId, payload);
+      const status = await updateSavedSearchAsync(currentSearchId, payload);
+      if (status === 'error') {
+        showSaveSearchError(saveFailedMessage);
+        return;
+      }
       await finishSaveSearchAsync(currentSearchId, name);
       return;
     }
@@ -298,11 +321,19 @@ export async function handleSaveSearchConfirmAsync(): Promise<void> {
     const result = await createSavedSearchAsync(payload);
     if (result.status === 'conflict') {
       if (!window.confirm(`A saved search named "${name}" already exists. Overwrite it?`)) return;
-      await updateSavedSearchAsync(result.existingId, payload);
+      const status = await updateSavedSearchAsync(result.existingId, payload);
+      if (status === 'error') {
+        showSaveSearchError(saveFailedMessage);
+        return;
+      }
       await finishSaveSearchAsync(result.existingId, name);
       return;
     }
-    if (result.status === 'ok') await finishSaveSearchAsync(result.id, name);
+    if (result.status === 'ok') {
+      await finishSaveSearchAsync(result.id, name);
+    } else {
+      showSaveSearchError(saveFailedMessage);
+    }
   } finally {
     confirmButton.disabled = false;
   }

@@ -55,6 +55,7 @@ beforeEach(() => {
 
     <div id="saveSearchModal" class="hidden">
       <input id="saveSearchName" />
+      <div id="saveSearchError" style="display:none"></div>
       <button id="saveSearchCancelBtn"></button>
       <button id="saveSearchConfirmBtn"></button>
     </div>
@@ -483,5 +484,79 @@ describe('handleSaveSearchConfirmAsync', () => {
     );
     expect(currentSearchId).toBe('other-id');
     expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('keeps the modal open and shows an error when updating the loaded favourite fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await loadSavedSearchAsync(
+      makeSavedSearch({ id: 'fav-1', name: 'My favourite', urls: ['https://example.com/saved'] })
+    );
+
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+    document.getElementById('saveSearchModal')?.classList.remove('hidden');
+    setSaveSearchName('My favourite');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('saveSearchError')?.textContent).toBeTruthy();
+    expect((document.getElementById('saveSearchError') as HTMLElement).style.display).toBe('block');
+    expect(currentSearchId).toBe('fav-1');
+    expect(currentSearchName).toBe('My favourite');
+  });
+
+  it('keeps the modal open and shows an error when the update PUT rejects with a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await loadSavedSearchAsync(
+      makeSavedSearch({ id: 'fav-1', name: 'My favourite', urls: ['https://example.com/saved'] })
+    );
+
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+    document.getElementById('saveSearchModal')?.classList.remove('hidden');
+    setSaveSearchName('My favourite');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('saveSearchError')?.textContent).toBeTruthy();
+  });
+
+  it('keeps the modal open and shows an error when creating a new favourite fails', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+    document.getElementById('saveSearchModal')?.classList.remove('hidden');
+    setSaveSearchName('New search');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('saveSearchError')?.textContent).toBeTruthy();
+    expect(currentSearchId).toBe(null);
+  });
+
+  it('keeps the modal open and shows an error when overwriting after a conflict fails', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ existingId: 'other-id' }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
+    document.getElementById('saveSearchModal')?.classList.remove('hidden');
+    setSaveSearchName('Existing name');
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(document.getElementById('saveSearchModal')?.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('saveSearchError')?.textContent).toBeTruthy();
+    expect(currentSearchId).toBe(null);
   });
 });
