@@ -5,9 +5,51 @@
 import type { AiConfig } from '../../lib/recipes/base';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import type { CategoryRow } from '../db';
-import { getDb, stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from '../db';
+import {
+  getDb,
+  stmtGetAllCategoryDisplays,
+  stmtGetCategoriesAtDepth2,
+  stmtGetCategoriesByTop2,
+} from '../db';
 
 export type DiscoverEntry = { slug: string; searchString: string | null };
+
+// Bare category labels alone often can't disambiguate a single-word prompt (e.g. "ladder"
+// plausibly reads as either "Tools" or "Building supplies" to step 1's LLM call). This
+// deterministic word-boundary safety net runs alongside step 1: any category (at any depth)
+// whose display name literally contains a keyword from the prompt is added directly to the
+// final results, regardless of what step 1 picked — so a literal match is never structurally
+// unreachable just because the LLM guessed a different sibling, and it never costs an extra
+// AI call to confirm.
+const MIN_KEYWORD_LENGTH = 4;
+const MAX_KEYWORDS = 8;
+
+export function extractSearchKeywords(prompt: string): string[] {
+  const words = prompt.toLowerCase().match(/[a-z]+/g) ?? [];
+  return [...new Set(words.filter((word) => word.length >= MIN_KEYWORD_LENGTH))].slice(
+    0,
+    MAX_KEYWORDS
+  );
+}
+
+function findKeywordMatchedEntries(
+  database: ReturnType<typeof getDb>,
+  prompt: string,
+  searchString: string | null
+): DiscoverEntry[] {
+  const keywords = extractSearchKeywords(prompt);
+  if (keywords.length === 0) return [];
+  // Boundary before the keyword only (not after) so "ladder" still matches the plural
+  // "ladders", while "arm" no longer matches mid-word inside "Alarm" or "Farm".
+  const patterns = keywords.map((keyword) => new RegExp(`\\b${keyword}`, 'i'));
+  const matched = new Map<string, DiscoverEntry>();
+  for (const category of stmtGetAllCategoryDisplays(database).all()) {
+    if (patterns.some((pattern) => pattern.test(category.display))) {
+      matched.set(category.slug, { slug: category.slug, searchString });
+    }
+  }
+  return [...matched.values()];
+}
 
 export const STEP1_SYSTEM_PROMPT =
   'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also suggest a short label for the search and a search query. Return JSON: { "categories": string[], "searchLabel": string, "searchQuery": string | null } using the exact category names from the list. For searchLabel: a short human-readable label for the search (e.g. "MacBook Pro laptops"). For searchQuery: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchQuery=\'macbook pro\'.';
@@ -87,6 +129,14 @@ export async function resolveDiscoverCategoriesAsync(
     step1Warnings.push(`step1: unrecognised categories ignored: ${unrecognised.join(', ')}`);
   }
 
+  const sharedSearchQuery =
+    typeof broadCategoryPick.searchQuery === 'string' ? broadCategoryPick.searchQuery : null;
+  const keywordMatchedEntries = findKeywordMatchedEntries(database, prompt, sharedSearchQuery);
+  if (keywordMatchedEntries.length > 0) {
+    step1Warnings.push(
+      `step1: added via keyword match: ${keywordMatchedEntries.map((entry) => entry.slug).join(', ')}`
+    );
+  }
   // Sequential (not parallel) so concurrent bursts don't collide on the provider's TPM limit.
   const subcategoryPickResults: Array<{
     top2Slug: string;
@@ -121,7 +171,7 @@ export async function resolveDiscoverCategoriesAsync(
     });
   }
 
-  const allEntries: DiscoverEntry[] = [];
+  const allEntries: DiscoverEntry[] = [...keywordMatchedEntries];
   const warnings: string[] = [];
   for (const { top2Slug, candidates, result } of subcategoryPickResults) {
     const validSlugs = new Set(candidates.map((category) => category.slug));

@@ -8,10 +8,10 @@ import { type UrlCardData, urlCardDataById } from './state';
 
 export interface UrlCardDom {
   containerElement: HTMLElement;
-  input: HTMLInputElement;
+  input: HTMLTextAreaElement;
   // Truncated hyperlink shown in place of the input once a search has run.
   linkElement: HTMLAnchorElement;
-  searchButton: HTMLButtonElement;
+  editButton: HTMLButtonElement;
   removeButton: HTMLButtonElement;
   // Criteria block below the status line; hidden until criteria arrive.
   criteriaElement: HTMLElement;
@@ -42,6 +42,23 @@ export function removeUrlCardEntry(card: UrlCard): void {
     urlCards.splice(cardIndex, 1);
     urlCardDataById.delete(card.id);
   }
+}
+
+// Lets an in-flight async operation (e.g. a streaming search) check, after
+// every await point, whether the card it was started for still exists —
+// the card may have been removed mid-operation, and once it has, nothing
+// should keep mutating shared state or a detached DOM node on its behalf.
+export function isUrlCardLive(card: UrlCard): boolean {
+  return urlCards.includes(card);
+}
+
+// A URL can never legitimately contain a newline, but the input is a
+// multi-row textarea (so wrapped/multi-line pastes are possible) — every
+// site that reads a card's URL must go through this single normalization
+// point rather than an ad-hoc `.value.trim()`, or an embedded newline can
+// slip past validation at one read site while another rejects it.
+export function readCardUrl(card: UrlCard): string {
+  return card.dom.input.value.replace(/[\r\n]+/g, '').trim();
 }
 
 export function resetUrlCardStore(): void {

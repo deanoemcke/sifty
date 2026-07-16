@@ -14,6 +14,7 @@ import {
   canCancelSearch,
   cardIdByUrl,
   clearListings,
+  isCardSearchActive,
   isDeepSearchRunning,
   isSearchButtonDisabled,
   removeListingByUrl,
@@ -23,6 +24,7 @@ import {
 } from './state';
 import {
   addUrlCard,
+  readCardUrl,
   removeUrlCardEntry,
   type UrlCard,
   type UrlCardDom,
@@ -83,13 +85,12 @@ export function cancelSearch(card: UrlCard): void {
 
 export function cancelGroupSearches(groupId: RecipeId): void {
   for (const card of urlCards) {
-    if (recipeGroupIdForUrl(card.dom.input.value.trim()) === groupId) cancelSearch(card);
+    if (recipeGroupIdForUrl(readCardUrl(card)) === groupId) cancelSearch(card);
   }
 }
 
 export function handleUrlInputChanged(card: UrlCard): void {
-  card.dom.searchButton.disabled = !canSearchCard(card);
-  const groupId = recipeGroupIdForUrl(card.dom.input.value.trim());
+  const groupId = recipeGroupIdForUrl(readCardUrl(card));
   const previousParent = card.dom.containerElement.parentElement;
   syncUrlGroups();
   // A row that just moved into a collapsed group would vanish mid-edit —
@@ -100,20 +101,31 @@ export function handleUrlInputChanged(card: UrlCard): void {
 
 // Once a search has touched the row, the URL displays as a truncated link;
 // the (hidden) input stays the single source of the row's URL value.
+//
+// `data.isEditing` is the single source of truth for row mode — every other
+// call site sets only that flag and then calls this function, which derives
+// `input.readOnly` (and everything else) from it. Never toggle `readOnly`
+// directly elsewhere, or it can fall out of sync with `isEditing`.
 export function renderUrlRowMode(card: UrlCard): void {
   const data = urlCardData(card);
-  const url = card.dom.input.value.trim();
-  const showLink = data.searchStatus !== 'idle' || data.wasCancelled || data.searchedUrl !== '';
+  const url = readCardUrl(card);
+  const showLink =
+    !data.isEditing &&
+    (data.searchStatus !== 'idle' || data.wasCancelled || data.searchedUrl !== '');
+  card.dom.input.readOnly = !data.isEditing && data.searchedUrl !== '';
   card.dom.linkElement.href = url;
   card.dom.linkElement.textContent = url;
   card.dom.linkElement.classList.toggle('hidden', !showLink);
   card.dom.input.classList.toggle('hidden', showLink);
-  card.dom.searchButton.classList.toggle('hidden', showLink);
+  card.dom.editButton.classList.toggle(
+    'hidden',
+    !showLink || isCardSearchActive(data.searchStatus)
+  );
 }
 
 export function canSearchCard(card: UrlCard): boolean {
   const data = urlCardData(card);
-  const current = card.dom.input.value.trim();
+  const current = readCardUrl(card);
   return (
     !isDeepSearchRunning &&
     isValidRecipeUrl(current) &&
@@ -121,10 +133,45 @@ export function canSearchCard(card: UrlCard): boolean {
   );
 }
 
+export function isDuplicateUrl(card: UrlCard): boolean {
+  const current = readCardUrl(card);
+  if (!current) return false;
+  return urlCards.some((other) => other !== card && readCardUrl(other) === current);
+}
+
+function attemptSearchCard(card: UrlCard, searchCardAsync: (card: UrlCard) => Promise<void>): void {
+  const data = urlCardData(card);
+  const current = readCardUrl(card);
+  // Editing a card without actually changing its URL leaves nothing to
+  // search — fall back to the link view instead of leaving the row stuck
+  // showing an input that blur/Enter can no longer act on.
+  if (data.isEditing && data.searchedUrl !== '' && current === data.searchedUrl) {
+    data.isEditing = false;
+    renderUrlRowMode(card);
+    return;
+  }
+  if (isDuplicateUrl(card)) {
+    data.errorMessage = 'This URL has already been added.';
+    renderCardStatus(card);
+    return;
+  }
+  if (canSearchCard(card)) {
+    searchCardAsync(card);
+    return;
+  }
+  // canSearchCard also rejects legitimate no-op states (a search already in
+  // flight, or the same URL already searched) — only a non-empty value that
+  // fails recipe matching is an actual user-facing error worth surfacing.
+  if (current !== '' && !isValidRecipeUrl(current)) {
+    data.errorMessage = 'Not a recognised search URL.';
+    renderCardStatus(card);
+  }
+}
+
 // assets/x.svg, inlined so it inherits currentColor.
 export const X_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5L19 19M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-export const SEARCH_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+export const EDIT_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="m15 5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>): UrlCard {
   const cardEl = document.createElement('div');
@@ -132,8 +179,8 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   cardEl.innerHTML = `
     <div class="url-row">
       <a class="url-link hidden" target="_blank" rel="noopener noreferrer"></a>
-      <input type="url" class="url-input" placeholder="Paste search URL…" />
-      <button class="btn icon-btn url-search-btn" type="button" title="Search" disabled>${SEARCH_ICON}</button>
+      <textarea class="url-input" rows="3" placeholder="Paste search URL…"></textarea>
+      <button class="btn icon-btn url-edit-btn hidden" type="button" title="Edit">${EDIT_ICON}</button>
       <button class="btn icon-btn url-remove-btn hidden" type="button" title="Remove">${X_ICON}</button>
     </div>
     <div class="url-card-status hidden"></div>
@@ -141,9 +188,9 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   `;
   getElement('urlCardsContainer').appendChild(cardEl);
 
-  const input = requireChild<HTMLInputElement>(cardEl, '.url-input');
+  const input = requireChild<HTMLTextAreaElement>(cardEl, '.url-input');
   const linkElement = requireChild<HTMLAnchorElement>(cardEl, '.url-link');
-  const searchButton = requireChild<HTMLButtonElement>(cardEl, '.url-search-btn');
+  const editButton = requireChild<HTMLButtonElement>(cardEl, '.url-edit-btn');
   const removeButton = requireChild<HTMLButtonElement>(cardEl, '.url-remove-btn');
   const criteriaElement = requireChild<HTMLElement>(cardEl, '.url-criteria');
   const cacheStatusElement = requireChild<HTMLElement>(cardEl, '.cache-status');
@@ -157,12 +204,13 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
     lastProgress: null,
     errorMessage: null,
     wasCancelled: false,
+    isEditing: false,
   };
   const dom: UrlCardDom = {
     containerElement: cardEl,
     input,
     linkElement,
-    searchButton,
+    editButton,
     removeButton,
     criteriaElement,
     cacheStatusElement,
@@ -170,14 +218,42 @@ export function createUrlCard(searchCardAsync: (card: UrlCard) => Promise<void>)
   };
   const urlCard = addUrlCard(dom, data);
 
-  input.addEventListener('input', () => handleUrlInputChanged(urlCard));
+  input.addEventListener('input', () => {
+    const cardData = urlCardData(urlCard);
+    if (cardData.searchStatus === 'idle' && cardData.errorMessage !== null) {
+      cardData.errorMessage = null;
+      renderCardStatus(urlCard);
+    }
+    handleUrlInputChanged(urlCard);
+  });
   input.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
-    if (keyboardEvent.key === 'Enter' && canSearchCard(urlCard)) searchCardAsync(urlCard);
+    if (keyboardEvent.key === 'Enter') {
+      keyboardEvent.preventDefault();
+      attemptSearchCard(urlCard, searchCardAsync);
+    }
   });
-  searchButton.addEventListener('click', () => {
-    if (canSearchCard(urlCard)) searchCardAsync(urlCard);
+  input.addEventListener('blur', () => attemptSearchCard(urlCard, searchCardAsync));
+  editButton.addEventListener('click', () => {
+    const data = urlCardData(urlCard);
+    data.isEditing = true;
+    renderUrlRowMode(urlCard);
+    input.focus();
   });
-  removeButton.addEventListener('click', () => removeUrlCard(urlCard));
+  // Chrome/Firefox move focus to a clicked button on mousedown, firing the
+  // textarea's blur (and its autosearch) before the button's own click runs.
+  // Suppressing the default mousedown action keeps focus on the textarea, so
+  // no blur fires on the way to removing the card.
+  removeButton.addEventListener('mousedown', (mouseEvent) => mouseEvent.preventDefault());
+  removeButton.addEventListener('click', () => {
+    // Belt and braces for any other path to removal (e.g. Tab then Enter,
+    // which blurs the textarea before the button is ever clicked): stop a
+    // search already in flight for this card before it's gone, so nothing
+    // it streams in after removal has a chance to leak into shared state —
+    // searchUrlCardAsync also checks isUrlCardLive on every event as the
+    // final backstop.
+    cancelSearch(urlCard);
+    removeUrlCard(urlCard);
+  });
 
   updateRemoveButtons();
   syncUrlGroups();
@@ -204,7 +280,7 @@ export function resetAllResults(): void {
     card.dom.cacheStatusElement.innerHTML = '';
     card.dom.statusElement.classList.add('hidden');
     data.searchId = null;
-    card.dom.input.readOnly = false;
+    data.isEditing = false;
     renderUrlRowMode(card);
   }
   renderDerived();
@@ -238,7 +314,7 @@ export function resetCardForResearch(card: UrlCard): void {
   card.dom.cacheStatusElement.classList.add('hidden');
   card.dom.cacheStatusElement.innerHTML = '';
   card.dom.statusElement.classList.add('hidden');
-  card.dom.input.readOnly = false;
+  data.isEditing = false;
   renderUrlRowMode(card);
   if (getOrderedListings().length === 0) getElement('resultsSection').classList.add('hidden');
   renderDerived();

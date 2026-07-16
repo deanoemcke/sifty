@@ -6,6 +6,7 @@ import {
   type CategoryLegacyPathRow,
   type CategoryRow,
   getDb,
+  stmtGetAllCategoryDisplays,
   stmtGetCategoriesAtDepth2,
   stmtGetCategoriesByTop2,
   stmtGetCategoryLegacyPath,
@@ -33,6 +34,7 @@ vi.mock('../ai', async (importOriginal) => {
 });
 vi.mock('../db', () => ({
   getDb: vi.fn(),
+  stmtGetAllCategoryDisplays: vi.fn(),
   stmtGetCategoriesAtDepth2: vi.fn(),
   stmtGetCategoriesByTop2: vi.fn(),
   stmtGetCategoryLegacyPath: vi.fn(),
@@ -1009,6 +1011,13 @@ describe('buildDiscoverUrlsAsync', () => {
     return { all } as unknown as ReturnType<typeof stmtGetCategoriesByTop2>;
   }
 
+  // Default: no categories, so the deterministic keyword safety net in
+  // resolveDiscoverCategoriesAsync contributes nothing and these tests keep
+  // exercising step 1's LLM-picked categories only.
+  function fakeGetAllCategoryDisplaysStatement(rows: Array<{ slug: string; display: string }>) {
+    return { all: () => rows } as unknown as ReturnType<typeof stmtGetAllCategoryDisplays>;
+  }
+
   // aiJSON is mocked wholesale in this file, so its calls must resolve with the
   // `AiJsonResult` shape (`{ kind: "ok", value }`) that the real function now
   // returns — see src/server/ai.ts. `applyAiJsonResult` itself is NOT mocked
@@ -1029,6 +1038,7 @@ describe('buildDiscoverUrlsAsync', () => {
         return MOCK_SUBS;
       })
     );
+    vi.mocked(stmtGetAllCategoryDisplays).mockReturnValue(fakeGetAllCategoryDisplaysStatement([]));
   });
 
   // resetAllMocks (not clearAllMocks): strips mock implementations between tests so any test

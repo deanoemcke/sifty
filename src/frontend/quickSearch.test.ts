@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing } from '../lib/recipes/base';
+import { getElement } from './domUtils';
 import {
+  clearQuickSearchCacheAsync,
   isNewConditionSearchUrl,
   normalizeListingRelevance,
   searchUrlCardAsync,
@@ -9,7 +11,7 @@ import {
 import { cardStatusText } from './searchStatusText';
 import { populateShowControls } from './showDropdown';
 import { listingsByUrl, listingUrlByDedupeKey, resetState, type UrlCardData } from './state';
-import { cancelSearch, cardStatusSnapshot } from './urlCardRow';
+import { cancelSearch, cardStatusSnapshot, removeUrlCard } from './urlCardRow';
 import {
   addUrlCard,
   resetUrlCardStore,
@@ -29,19 +31,20 @@ function makeCardData(): UrlCardData {
     lastProgress: null,
     errorMessage: null,
     wasCancelled: false,
+    isEditing: false,
   };
 }
 
 function makeCardDom(url: string): UrlCardDom {
   const criteriaElement = document.createElement('div');
   criteriaElement.innerHTML = '<div class="criteria-grid"></div>';
-  const input = document.createElement('input');
+  const input = document.createElement('textarea');
   input.value = url;
   return {
     containerElement: document.createElement('div'),
     input,
     linkElement: document.createElement('a'),
-    searchButton: document.createElement('button'),
+    editButton: document.createElement('button'),
     removeButton: document.createElement('button'),
     criteriaElement,
     cacheStatusElement: document.createElement('div'),
@@ -132,6 +135,41 @@ describe('searchUrlCardAsync — post-stream cancellation disambiguation', () =>
     expect(data.searchStatus).toBe('done');
     expect(data.wasCancelled).toBe(false);
   });
+
+  // Regression test for the blur-vs-remove race: editing a card's URL fires
+  // an autosearch on blur, and clicking the card's own Remove button right
+  // after can remove the card while that search is still streaming.
+  // removeUrlCard already cleans up listings the card found *before* it was
+  // removed (see the "early-item" assertion below) — the bug is a listing
+  // that streams in *after* removal, which that one-off cleanup pass can
+  // never catch, leaking it into the shared grid with no card left to
+  // remove it. Without the isUrlCardLive guard, "late-item" would be added
+  // via addListingItem and never cleaned up.
+  it('drops any listing event that arrives after the card has been removed mid-search, so nothing leaks into the shared results grid', async () => {
+    const card = addSearchableCard();
+    stubQuickSearchStream(
+      [
+        'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/early-item","isAuction":false,"relevance":0}}\n',
+        'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/late-item","isAuction":false,"relevance":0}}\n',
+      ],
+      (callIndex) => {
+        // Simulates the remove button being clicked in the gap between two
+        // network reads — after the first listing has already streamed in,
+        // but before the second one arrives.
+        if (callIndex === 1) removeUrlCard(card);
+      }
+    );
+
+    await searchUrlCardAsync(card);
+
+    // Removal's own cleanup already took the first listing back out again —
+    // this just confirms that pass ran, it's not the regression under test.
+    expect(listingsByUrl.has('https://example.com/early-item')).toBe(false);
+    // The regression: this listing streamed in after removal, so it must
+    // never have been added in the first place.
+    expect(listingsByUrl.has('https://example.com/late-item')).toBe(false);
+    expect(listingsByUrl.size).toBe(0);
+  });
 });
 
 describe('normalizeListingRelevance', () => {
@@ -221,6 +259,150 @@ describe('searchUrlCardAsync — stale cached listing data', () => {
 
     const item = listingsByUrl.get('https://example.com/stale');
     expect(item?.data.relevance).toBe(0);
+  });
+});
+
+describe('clearQuickSearchCacheAsync', () => {
+  // Routes fetch by URL: `/api/cache/clear` resolves like a plain POST, while
+  // `/api/quick-search` is served from `researchChunks` — clearing the cache
+  // now re-runs the card's search, so both endpoints get hit in one call.
+  function stubClearThenResearch(researchChunks: string[]): Array<{ url: string; body: unknown }> {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const encoder = new TextEncoder();
+    const pendingChunks = [...researchChunks];
+    const reader = {
+      read: async () =>
+        pendingChunks.length > 0
+          ? { value: encoder.encode(pendingChunks.shift()), done: false }
+          : { value: undefined, done: true },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, body: init?.body ? JSON.parse(init.body as string) : undefined });
+        if (url === '/api/cache/clear') return Promise.resolve({ ok: true } as Response);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+          body: { getReader: () => reader },
+        } as unknown as Response);
+      })
+    );
+    return calls;
+  }
+
+  async function setUpCachedCard(url: string, listingUrl: string): Promise<UrlCard> {
+    const card = addSearchableCardWithUrl(url);
+    stubQuickSearchStream([
+      'data: {"type":"cached","age":"5m"}\n',
+      `data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"${listingUrl}","isAuction":false,"relevance":0}}\n`,
+    ]);
+    await searchUrlCardAsync(card);
+    return card;
+  }
+
+  it('posts { type: "quick-search", url: <searchedUrl> } to clear the cache, then re-runs the search against the same URL', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    const calls = stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/item-b","isAuction":false,"relevance":0}}\n',
+    ]);
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(calls[0].url).toBe('/api/cache/clear');
+    expect(calls[0].body).toEqual({ type: 'quick-search', url: TRADEME_URL });
+    expect(calls[1].url).toBe('/api/quick-search');
+    expect((calls[1].body as { url: string }).url).toBe(TRADEME_URL);
+  });
+
+  it("clearing card A leaves card B's searchedUrl, listingUrls, and cache badge untouched", async () => {
+    const cardA = await setUpCachedCard(
+      'https://www.trademe.co.nz/search/a',
+      'https://example.com/item-a'
+    );
+    const cardB = await setUpCachedCard(
+      'https://www.trademe.co.nz/search/b',
+      'https://example.com/item-b'
+    );
+    stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t","price":10,"location":"","url":"https://example.com/item-a2","isAuction":false,"relevance":0}}\n',
+    ]);
+
+    await clearQuickSearchCacheAsync(cardA);
+
+    const dataB = urlCardData(cardB);
+    expect(dataB.searchedUrl).toBe('https://www.trademe.co.nz/search/b');
+    expect(dataB.listingUrls).toEqual(['https://example.com/item-b']);
+    expect(cardB.dom.cacheStatusElement.classList.contains('hidden')).toBe(false);
+  });
+
+  it('re-runs against fresh data — listingUrls reflect the new stream, and no stale cache badge remains', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/item-b","isAuction":false,"relevance":0}}\n',
+    ]);
+
+    await clearQuickSearchCacheAsync(card);
+
+    const data = urlCardData(card);
+    expect(data.searchStatus).toBe('done');
+    expect(data.searchedUrl).toBe(TRADEME_URL);
+    expect(data.listingUrls).toEqual(['https://example.com/item-b']);
+    expect(card.dom.cacheStatusElement.classList.contains('hidden')).toBe(true);
+    expect(card.dom.cacheStatusElement.innerHTML).toBe('');
+  });
+
+  it('surfaces the freshly streamed listing in listingsByUrl and keeps resultsSection visible', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    stubClearThenResearch([
+      'data: {"type":"listing","data":{"source":"trademe","title":"t2","price":20,"location":"","url":"https://example.com/item-b","isAuction":false,"relevance":0}}\n',
+    ]);
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(listingsByUrl.has('https://example.com/item-b')).toBe(true);
+    expect(getElement('resultsSection').classList.contains('hidden')).toBe(false);
+  });
+
+  it('surfaces an error and does not re-search when the cache-clear request fails', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    const calls: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        calls.push({ url });
+        return Promise.resolve({ ok: false } as Response);
+      })
+    );
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('/api/cache/clear');
+    const data = urlCardData(card);
+    expect(data.errorMessage).toBeTruthy();
+    expect(data.searchedUrl).toBe(TRADEME_URL);
+    expect(data.listingUrls).toEqual(['https://example.com/item-a']);
+  });
+
+  it('surfaces an error and does not re-search when the cache-clear request throws (network error)', async () => {
+    const card = await setUpCachedCard(TRADEME_URL, 'https://example.com/item-a');
+    const calls: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        calls.push({ url });
+        return Promise.reject(new Error('network down'));
+      })
+    );
+
+    await clearQuickSearchCacheAsync(card);
+
+    expect(calls).toHaveLength(1);
+    const data = urlCardData(card);
+    expect(data.errorMessage).toBeTruthy();
+    expect(data.listingUrls).toEqual(['https://example.com/item-a']);
   });
 });
 

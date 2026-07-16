@@ -9,10 +9,13 @@ import {
 } from '../../lib/validate';
 import {
   getDb,
+  isUniqueConstraintViolation,
   stmtDeleteSavedSearch,
   stmtGetSavedSearch,
+  stmtGetSavedSearchByName,
   stmtInsertSavedSearch,
   stmtListSavedSearches,
+  stmtUpdateSavedSearch,
   stmtUpdateSavedSearchAlert,
 } from '../db';
 import { readBody, sendJSON } from '../helpers';
@@ -98,16 +101,40 @@ export async function handleCreateSavedSearch(
   const aiFilter = rawBody.aiFilter;
   try {
     const database = getDb();
+    const existing = stmtGetSavedSearchByName(database).get(name.trim());
+    if (existing) {
+      sendJSON(response, 409, {
+        error: 'A saved search with this name already exists',
+        existingId: existing.id,
+      });
+      return;
+    }
     const id = crypto.randomUUID();
-    stmtInsertSavedSearch(database).run(
-      id,
-      name.trim(),
-      JSON.stringify(urls),
-      discoverInputsSerialized,
-      typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null,
-      Date.now(),
-      shouldAlertOnNewListings ? 1 : 0
-    );
+    try {
+      stmtInsertSavedSearch(database).run(
+        id,
+        name.trim(),
+        JSON.stringify(urls),
+        discoverInputsSerialized,
+        typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null,
+        Date.now(),
+        shouldAlertOnNewListings ? 1 : 0
+      );
+    } catch (insertErr) {
+      // Defense-in-depth: the SELECT above can't stop two concurrent creates
+      // both passing the check before either commits, so the UNIQUE index on
+      // `name` is the real guarantee — this just turns that race's failure
+      // into the same 409 shape the check-then-act path already returns.
+      if (isUniqueConstraintViolation(insertErr)) {
+        const existing = stmtGetSavedSearchByName(database).get(name.trim());
+        sendJSON(response, 409, {
+          error: 'A saved search with this name already exists',
+          existingId: existing?.id,
+        });
+        return;
+      }
+      throw insertErr;
+    }
     sendJSON(response, 200, { ok: true, id });
   } catch (err) {
     sendJSON(response, 500, { error: (err as Error).message });
@@ -142,4 +169,58 @@ export async function handlePatchSavedSearch(
 
   stmtUpdateSavedSearchAlert(database).run(shouldAlertOnNewListings ? 1 : 0, id);
   sendJSON(response, 200, { ok: true });
+}
+
+export async function handleUpdateSavedSearch(
+  request: IncomingMessage,
+  response: ServerResponse,
+  id: string
+): Promise<void> {
+  const database = getDb();
+  const row = stmtGetSavedSearch(database).get(id);
+  if (!row) {
+    sendJSON(response, 404, { error: 'Not found' });
+    return;
+  }
+
+  const body = await readBody(request).catch(() => null);
+  const rawBody = (body ?? {}) as Record<string, unknown>;
+
+  let name: string;
+  let urls: unknown[];
+  let discoverInputsSerialized: string | null;
+  try {
+    name = requireString(rawBody.name, 'name');
+    urls = requireArray(rawBody.urls, 'urls');
+    discoverInputsSerialized = parseDiscoverInputs(rawBody.discoverInputs);
+  } catch (err) {
+    sendJSON(response, 400, { error: (err as Error).message });
+    return;
+  }
+
+  const aiFilter = rawBody.aiFilter;
+  try {
+    stmtUpdateSavedSearch(database).run(
+      name.trim(),
+      JSON.stringify(urls),
+      discoverInputsSerialized,
+      typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null,
+      id
+    );
+    sendJSON(response, 200, { ok: true });
+  } catch (err) {
+    // Unlike create, this handler has no check-then-act step at all — the
+    // UNIQUE index on `name` is the only thing stopping a rename from
+    // colliding with another saved search, so its violation is the sole
+    // source of a 409 here.
+    if (isUniqueConstraintViolation(err)) {
+      const existing = stmtGetSavedSearchByName(database).get(name.trim());
+      sendJSON(response, 409, {
+        error: 'A saved search with this name already exists',
+        existingId: existing?.id,
+      });
+      return;
+    }
+    sendJSON(response, 500, { error: (err as Error).message });
+  }
 }

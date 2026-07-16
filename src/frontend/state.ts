@@ -60,6 +60,10 @@ export interface UrlCardData {
   lastProgress: QuickSearchProgress | null;
   errorMessage: string | null;
   wasCancelled: boolean;
+  // True from the edit button being clicked until a new search starts —
+  // keeps the input shown (instead of the link) without touching the
+  // previous search's criteria/status/cache display.
+  isEditing: boolean;
 }
 
 export interface SavedSearch {
@@ -91,6 +95,7 @@ export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
 ];
 
 export let currentSearchName: string | null = null;
+export let currentSearchId: string | null = null;
 // The mutable set stays private so every write goes through
 // setListingCategoryVisible — importers only see a ReadonlySet.
 const mutableVisibleListingCategories = new Set<ListingVisibilityCategory>(
@@ -136,6 +141,10 @@ export const cardIdByUrl = new Map<string, string>();
 
 export function setCurrentSearchName(name: string | null): void {
   currentSearchName = name;
+}
+
+export function setCurrentSearchId(id: string | null): void {
+  currentSearchId = id;
 }
 
 export function setIsDeepSearchRunning(value: boolean): void {
@@ -202,6 +211,7 @@ export function clearListings(): void {
 
 export function resetState(): void {
   currentSearchName = null;
+  currentSearchId = null;
   mutableVisibleListingCategories.clear();
   for (const category of ALL_LISTING_VISIBILITY_CATEGORIES)
     mutableVisibleListingCategories.add(category);

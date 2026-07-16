@@ -112,6 +112,7 @@ describe('runDeepSearchAsync — mixed success/failure batch', () => {
       lastProgress: null,
       errorMessage: null,
       wasCancelled: false,
+      isEditing: false,
     });
 
     stubDeepSearchStream([

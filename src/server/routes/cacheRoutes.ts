@@ -1,7 +1,13 @@
 // Server-side only — POST /api/cache/clear route handler.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { getDb, stmtClearDetails, stmtClearSearch, stmtCountDetails, stmtCountSearch } from '../db';
+import {
+  getDb,
+  stmtClearDetails,
+  stmtClearDetailsForUrl,
+  stmtClearSearch,
+  stmtClearSearchForUrl,
+} from '../db';
 import { readBody, sendJSON } from '../helpers';
 
 export async function handleCacheClear(
@@ -10,25 +16,33 @@ export async function handleCacheClear(
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const type = (body as Record<string, unknown>)?.type;
+  const url = (body as Record<string, unknown>)?.url;
+  const scopedUrl = typeof url === 'string' && url.length > 0 ? url : null;
 
   if (type === 'quick-search') {
     const database = getDb();
-    const searchRow = stmtCountSearch(database).get();
-    if (!searchRow) throw new Error('invariant: COUNT query returned no rows');
-    const { n: totalCount } = searchRow;
-    stmtClearSearch(database).run();
-    console.log(`[cache] cleared quick search cache (${totalCount} entries)`);
+    const { changes } = scopedUrl
+      ? stmtClearSearchForUrl(database).run(scopedUrl)
+      : stmtClearSearch(database).run();
+    console.log(
+      scopedUrl
+        ? `[cache] cleared quick search cache for ${scopedUrl} (${changes} entries)`
+        : `[cache] cleared quick search cache (${changes} entries)`
+    );
     sendJSON(response, 200, { ok: true });
     return;
   }
 
   if (type === 'deep-search') {
     const database = getDb();
-    const detailRow = stmtCountDetails(database).get();
-    if (!detailRow) throw new Error('invariant: COUNT query returned no rows');
-    const { n: totalCount } = detailRow;
-    stmtClearDetails(database).run();
-    console.log(`[cache] cleared deep search cache (${totalCount} entries)`);
+    const { changes } = scopedUrl
+      ? stmtClearDetailsForUrl(database).run(scopedUrl)
+      : stmtClearDetails(database).run();
+    console.log(
+      scopedUrl
+        ? `[cache] cleared deep search cache for ${scopedUrl} (${changes} entries)`
+        : `[cache] cleared deep search cache (${changes} entries)`
+    );
     sendJSON(response, 200, { ok: true });
     return;
   }

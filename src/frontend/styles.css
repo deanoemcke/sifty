@@ -187,6 +187,8 @@ header h1 {
 .url-row .url-input {
   flex: 1;
   min-width: 0;
+  resize: none;
+  overflow-wrap: anywhere;
 }
 
 /* ── Inputs ── */
@@ -322,14 +324,9 @@ label {
   text-decoration: underline;
 }
 .url-remove-btn,
+.url-edit-btn,
 .delete-saved-btn {
   color: var(--text);
-}
-.url-search-btn {
-  color: var(--primary);
-}
-.url-search-btn:disabled {
-  color: var(--text-muted);
 }
 /* Criteria lines below the status text */
 .url-criteria {
@@ -1101,17 +1098,11 @@ label {
   background: none;
 }
 
-/* Discovery action row: search button centred, save-favourite pinned right */
+/* Discovery action row: search button left, save-favourite right */
 .discovery-actions {
-  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-}
-.save-current-btn {
-  position: absolute;
-  right: 0;
-  color: var(--primary);
+  justify-content: space-between;
 }
 
 /* ── Misc ── */

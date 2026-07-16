@@ -18,7 +18,14 @@ import { esc } from './html';
 import { parseMaxPrice } from './parseUtils';
 import { searchUrlCardAsync } from './quickSearch';
 import { activateSidebarTab } from './sidebarTabs';
-import { currentSearchName, type SavedSearch, setCurrentSearchName } from './state';
+import {
+  currentSearchId,
+  currentSearchName,
+  type DiscoverInputs,
+  type SavedSearch,
+  setCurrentSearchId,
+  setCurrentSearchName,
+} from './state';
 import {
   createUrlCard,
   handleUrlInputChanged,
@@ -26,15 +33,16 @@ import {
   resetAllResults,
   X_ICON,
 } from './urlCardRow';
-import { urlCards } from './urlCardStore';
+import { readCardUrl, urlCards } from './urlCardStore';
 
 export function markDirty(): void {
-  getElement('saveCurrentBtn').classList.remove('hidden');
+  getElement<HTMLButtonElement>('saveCurrentBtn').disabled = false;
 }
 
-export function setSearchName(name: string | null): void {
+export function setSearchName(id: string | null, name: string | null): void {
+  setCurrentSearchId(id);
   setCurrentSearchName(name);
-  getElement('saveCurrentBtn').classList.add('hidden');
+  getElement<HTMLButtonElement>('saveCurrentBtn').disabled = true;
 }
 
 // ── Saved searches ────────────────────────────────────────────────────────────
@@ -77,21 +85,56 @@ export function renderSavedSearches(searches: SavedSearch[]): void {
     .join('');
 }
 
-export async function saveCurrentSearchAsync(name: string): Promise<void> {
-  const urls = urlCards.map((card) => card.dom.input.value.trim()).filter(Boolean);
-  if (!name.trim() || urls.length === 0) return;
+interface SaveSearchPayload {
+  name: string;
+  urls: string[];
+  discoverInputs: DiscoverInputs;
+  aiFilter: string | null;
+}
+
+function buildSaveSearchPayload(name: string): SaveSearchPayload | null {
+  const urls = urlCards.map(readCardUrl).filter(Boolean);
+  if (!name.trim() || urls.length === 0) return null;
+  return {
+    name: name.trim(),
+    urls,
+    discoverInputs: readDiscoverInputs(),
+    aiFilter: getElement<HTMLTextAreaElement>('aiFilter').value.trim() || null,
+  };
+}
+
+type CreateSavedSearchResult =
+  | { status: 'ok'; id: string }
+  | { status: 'conflict'; existingId: string }
+  | { status: 'error' };
+
+async function createSavedSearchAsync(
+  payload: SaveSearchPayload
+): Promise<CreateSavedSearchResult> {
   const response = await fetch('/api/saved-searches', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: name.trim(),
-      urls,
-      discoverInputs: readDiscoverInputs(),
-      aiFilter: getElement<HTMLTextAreaElement>('aiFilter').value.trim() || null,
-      shouldAlertOnNewListings: false,
-    }),
+    body: JSON.stringify({ ...payload, shouldAlertOnNewListings: false }),
   });
-  if (response.ok) await fetchSavedSearchesAsync();
+  if (response.status === 409) {
+    const data = (await response.json()) as { existingId: string };
+    return { status: 'conflict', existingId: data.existingId };
+  }
+  if (!response.ok) return { status: 'error' };
+  const data = (await response.json()) as { id: string };
+  return { status: 'ok', id: data.id };
+}
+
+async function updateSavedSearchAsync(
+  id: string,
+  payload: SaveSearchPayload
+): Promise<'ok' | 'error'> {
+  const response = await fetch(`/api/saved-searches/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => null);
+  return response?.ok ? 'ok' : 'error';
 }
 
 export async function deleteSavedSearchAsync(id: string): Promise<void> {
@@ -129,7 +172,7 @@ export function loadDiscoveryResults(
     createUrlCard(searchUrlCardAsync).dom.input.value = data.urls[urlIndex];
   }
   for (const card of urlCards) handleUrlInputChanged(card);
-  setSearchName(data.name);
+  setSearchName(null, data.name);
   markDirty();
   getElement<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
   // loadDiscoveryResults owns the dispatch: kick off a search for every configured card.
@@ -152,7 +195,7 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   }
   for (const card of urlCards) handleUrlInputChanged(card);
   getElement<HTMLTextAreaElement>('aiFilter').value = search.aiFilter ?? '';
-  setSearchName(search.name);
+  setSearchName(search.id, search.name);
   activateSidebarTab(document, 'search');
   // loadSavedSearchAsync owns the dispatch: kick off a search for every configured card.
   fireAllCardSearches(urlCards, searchUrlCardAsync);
@@ -225,6 +268,7 @@ export function openSaveSearchModal(): void {
   const input = getElement<HTMLInputElement>('saveSearchName');
   input.value = currentSearchName ?? '';
   input.select();
+  hideSaveSearchError();
   getElement('saveSearchModal').classList.remove('hidden');
   input.focus();
 }
@@ -233,17 +277,66 @@ export function closeSaveSearchModal(): void {
   getElement('saveSearchModal').classList.add('hidden');
 }
 
+function hideSaveSearchError(): void {
+  const errorElement = getElement<HTMLDivElement>('saveSearchError');
+  errorElement.style.display = 'none';
+  errorElement.textContent = '';
+}
+
+function showSaveSearchError(message: string): void {
+  const errorElement = getElement<HTMLDivElement>('saveSearchError');
+  errorElement.textContent = message;
+  errorElement.style.display = 'block';
+}
+
+async function finishSaveSearchAsync(id: string, name: string): Promise<void> {
+  await fetchSavedSearchesAsync();
+  setSearchName(id, name);
+  closeSaveSearchModal();
+  activateSidebarTab(document, 'favourites');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 export async function handleSaveSearchConfirmAsync(): Promise<void> {
   const name = getElement<HTMLInputElement>('saveSearchName').value.trim();
   if (!name) return;
+  const payload = buildSaveSearchPayload(name);
+  if (!payload) return;
+
   const confirmButton = getElement<HTMLButtonElement>('saveSearchConfirmBtn');
+  const saveFailedMessage = 'Could not save this favourite — try again.';
+  hideSaveSearchError();
   confirmButton.disabled = true;
-  await saveCurrentSearchAsync(name);
-  setSearchName(name);
-  closeSaveSearchModal();
-  confirmButton.disabled = false;
-  activateSidebarTab(document, 'favourites');
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  try {
+    if (name === currentSearchName && currentSearchId) {
+      const status = await updateSavedSearchAsync(currentSearchId, payload);
+      if (status === 'error') {
+        showSaveSearchError(saveFailedMessage);
+        return;
+      }
+      await finishSaveSearchAsync(currentSearchId, name);
+      return;
+    }
+
+    const result = await createSavedSearchAsync(payload);
+    if (result.status === 'conflict') {
+      if (!window.confirm(`A saved search named "${name}" already exists. Overwrite it?`)) return;
+      const status = await updateSavedSearchAsync(result.existingId, payload);
+      if (status === 'error') {
+        showSaveSearchError(saveFailedMessage);
+        return;
+      }
+      await finishSaveSearchAsync(result.existingId, name);
+      return;
+    }
+    if (result.status === 'ok') {
+      await finishSaveSearchAsync(result.id, name);
+    } else {
+      showSaveSearchError(saveFailedMessage);
+    }
+  } finally {
+    confirmButton.disabled = false;
+  }
 }
 
 // ── Saved-search list delegation ──────────────────────────────────────────────

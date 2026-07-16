@@ -10,7 +10,7 @@ import { collapseElementAsync, expandElement } from './heightAnimation';
 import { esc } from './html';
 import { CHEVRON_ICON } from './icons';
 import { recipeFaviconHtml } from './recipeDisplay';
-import { type UrlCard, urlCardData, urlCards } from './urlCardStore';
+import { readCardUrl, type UrlCard, urlCardData, urlCards } from './urlCardStore';
 import { computeUrlGroups, groupHeaderView, type UrlGroupMemberSnapshot } from './urlGroups';
 
 const urlGroupExpandedByGroupId = new Map<RecipeId, boolean>();
@@ -18,7 +18,7 @@ const urlGroupExpandedByGroupId = new Map<RecipeId, boolean>();
 export function urlGroupMemberSnapshot(card: UrlCard): UrlGroupMemberSnapshot {
   const data = urlCardData(card);
   return {
-    url: card.dom.input.value.trim(),
+    url: readCardUrl(card),
     searchStatus: data.searchStatus,
     listingUrls: data.listingUrls,
   };
@@ -51,15 +51,19 @@ export function buildUrlGroupElement(groupId: RecipeId): HTMLElement {
 export function syncUrlGroups(): void {
   const container = getElement('urlCardsContainer');
   const summaries = computeUrlGroups(urlCards.map(urlGroupMemberSnapshot));
-  for (const summary of summaries) {
+  summaries.forEach((summary, index) => {
     const groupEl = findUrlGroupElement(summary.groupId) ?? buildUrlGroupElement(summary.groupId);
-    container.appendChild(groupEl);
+    // appendChild always removes-then-reinserts, even when the node is
+    // already in the right place — which blurs a focused descendant (e.g. a
+    // card input mid-edit). Only move it when its position is actually wrong.
+    if (container.children[index] !== groupEl)
+      container.insertBefore(groupEl, container.children[index] ?? null);
     const rowsEl = requireChild<HTMLElement>(groupEl, '.url-group-rows');
     if (urlGroupExpandedByGroupId.get(summary.groupId)) rowsEl.classList.remove('hidden');
     groupEl.classList.toggle('expanded', urlGroupExpandedByGroupId.get(summary.groupId) ?? false);
-  }
+  });
   for (const card of urlCards) {
-    const groupId = recipeGroupIdForUrl(card.dom.input.value.trim());
+    const groupId = recipeGroupIdForUrl(readCardUrl(card));
     const rowEl = card.dom.containerElement;
     const targetParent =
       groupId === null
