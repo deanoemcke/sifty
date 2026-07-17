@@ -33,7 +33,8 @@ db.exec(`
     depth       INTEGER NOT NULL,
     parent_slug TEXT,
     top2        TEXT NOT NULL,
-    legacy_path TEXT NOT NULL
+    legacy_path TEXT NOT NULL,
+    embedding   TEXT
   );
 `);
 
@@ -94,7 +95,8 @@ insertAll();
 
 const depth2Count = rows.filter(r => r[2] === 2).length;
 console.log(`Inserted ${rows.length} rows total`);
-console.log(`  depth=2 categories available for step-1 discovery: ${depth2Count}`);
+console.log(`  depth=2 categories: ${depth2Count}`);
+console.log('  embeddings not yet populated — run scripts/embed-categories.ts next');
 
 // Spot-check
 const check = db.prepare('SELECT slug, display FROM trademe_categories WHERE slug LIKE ?');

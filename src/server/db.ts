@@ -38,7 +38,8 @@ export function initSchema(database: Database.Database): void {
       depth       INTEGER NOT NULL,
       parent_slug TEXT,
       top2        TEXT NOT NULL,
-      legacy_path TEXT NOT NULL
+      legacy_path TEXT NOT NULL,
+      embedding   TEXT
     );
     CREATE TABLE IF NOT EXISTS alerted_listings (
       saved_search_id TEXT NOT NULL,
@@ -163,6 +164,7 @@ export type SavedSearchRow = {
   has_completed_population_run: number;
 };
 export type CategoryRow = { slug: string; display: string };
+export type CategoryWithEmbeddingRow = { slug: string; display: string; embedding: string | null };
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
 export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
@@ -270,19 +272,9 @@ export function stmtInsertAlertedListing(database: Database.Database) {
     'INSERT OR IGNORE INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
   );
 }
-export function stmtGetCategoriesAtDepth2(database: Database.Database) {
-  return database.prepare<[], CategoryRow>(
-    'SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug'
-  );
-}
-export function stmtGetCategoriesByTop2(database: Database.Database) {
-  return database.prepare<[string], CategoryRow>(
-    'SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug'
-  );
-}
-export function stmtGetAllCategoryDisplays(database: Database.Database) {
-  return database.prepare<[], { slug: string; display: string }>(
-    'SELECT slug, display FROM trademe_categories'
+export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {
+  return database.prepare<[], CategoryWithEmbeddingRow>(
+    'SELECT slug, display, embedding FROM trademe_categories'
   );
 }
 export function stmtGetCategoryLegacyPath(database: Database.Database) {
