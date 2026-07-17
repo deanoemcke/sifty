@@ -1314,7 +1314,36 @@ describe('buildDiscoverUrlsAsync', () => {
   });
 
   describe('root search probe', () => {
-    it('returns the root URL only and skips AI category selection when totalCount is small', async () => {
+    it('starts AI category resolution synchronously alongside the probe, not after it settles', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+      const enqueuedUrlCountBefore = enqueuedUrls.length;
+
+      // Deliberately not awaited yet: buildDiscoverUrlsAsync runs synchronously up to
+      // its first await, so if the probe and AI resolution are kicked off together
+      // (rather than the AI call waiting on the probe's result), both of their
+      // synchronous prefixes — the probe's enqueue() call and AI resolution's
+      // embedTextAsync() call — must already have fired by the time this line returns.
+      const resultPromise = trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(enqueuedUrls.length).toBeGreaterThan(enqueuedUrlCountBefore);
+      expect(embedTextAsync).toHaveBeenCalledTimes(1);
+
+      // The probe still wins: its narrow root URL is returned, and AI resolution's
+      // (in-flight or since-completed) result is discarded rather than surfacing.
+      const result = await resultPromise;
+      expect(result.urls).toHaveLength(1);
+      const url = new URL(result.urls[0]);
+      expect(url.pathname).toBe('/a/marketplace/search');
+      expect(url.searchParams.get('search_string')).toBe('fisher price music box');
+    });
+
+    it('returns the root URL only and skips using AI category selection when totalCount is small', async () => {
       resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
 
       const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
@@ -1329,8 +1358,9 @@ describe('buildDiscoverUrlsAsync', () => {
       const url = new URL(result.urls[0]);
       expect(url.pathname).toBe('/a/marketplace/search');
       expect(url.searchParams.get('search_string')).toBe('fisher price music box');
-      expect(aiJSON).not.toHaveBeenCalled();
-      expect(embedTextAsync).not.toHaveBeenCalled();
+      // AI category resolution now runs concurrently with the probe rather than being
+      // skipped outright — it still fires, its result is just discarded once the probe hits.
+      expect(embedTextAsync).toHaveBeenCalled();
     });
 
     it('falls through to the AI category path when totalCount is zero', async () => {
@@ -1363,7 +1393,6 @@ describe('buildDiscoverUrlsAsync', () => {
 
       expect(result.urls).toHaveLength(1);
       expect(new URL(result.urls[0]).pathname).toBe('/a/marketplace/search');
-      expect(aiJSON).not.toHaveBeenCalled();
     });
 
     it('falls through to the AI category path just above the threshold (totalCount === 51)', async () => {
@@ -1415,7 +1444,6 @@ describe('buildDiscoverUrlsAsync', () => {
       expect(result.urls).toHaveLength(2);
       expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
       expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
-      expect(aiJSON).not.toHaveBeenCalled();
     });
 
     it('skips sold-item URLs and pushes a warning when includeSoldItems is true and the root path wins', async () => {

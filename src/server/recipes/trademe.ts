@@ -572,10 +572,25 @@ async function buildDiscoverUrlsAsync(
   context: DiscoverContext
 ): Promise<RecipeDiscoverResult> {
   const trimmedPrompt = prompt.trim();
-  const probe = await tryRootSearchProbeAsync(trimmedPrompt, context);
+
+  // Kick off the root-search probe and AI category resolution together rather than
+  // strictly sequentially. Neither needs the other's output to run (AI resolution's
+  // result is simply discarded when the probe hits), so awaiting the probe first was
+  // pure additive latency on the common case — a broad prompt where the probe misses
+  // (PR #41 review, Backend finding #3 / "Future Ticket" #2).
+  const probePromise = tryRootSearchProbeAsync(trimmedPrompt, context);
+  const categoriesPromise = resolveDiscoverCategoriesAsync(prompt, context.getAiConfig);
+  // If the probe hits, categoriesPromise's outcome (including a rejection) is
+  // discarded below without ever being awaited on that path — attach a no-op handler
+  // now so that discarded rejection can't surface as an unhandled promise rejection.
+  // `categoriesPromise` is still awaited directly further down when the probe misses,
+  // and throws there as normal.
+  categoriesPromise.catch(() => {});
+
+  const probe = await probePromise;
   if (probe.result !== null) return probe.result;
 
-  const { entries, warnings } = await resolveDiscoverCategoriesAsync(prompt, context.getAiConfig);
+  const { entries, warnings } = await categoriesPromise;
   const urls = entries.map((entry) =>
     buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue, 'used')
   );
