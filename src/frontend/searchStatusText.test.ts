@@ -22,7 +22,7 @@ describe('progressText', () => {
 
   it('describes paging with and without a known page total', () => {
     expect(progressText({ phase: 'paging', page: 1 })).toBe('Fetching page 1…');
-    expect(progressText({ phase: 'paging', page: 2, totalPages: 5 })).toBe('Fetching page 2/5…');
+    expect(progressText({ phase: 'paging', page: 2, totalPages: 5 })).toBe('Fetching page 2/5');
   });
 
   it('describes collecting with the loading-more variant', () => {
@@ -98,7 +98,7 @@ describe('cardStatusText', () => {
         searchStatus: 'searching',
         lastProgress: { phase: 'paging', page: 2, totalPages: 5 },
       })
-    ).toEqual({ text: 'Fetching page 2/5…', kind: 'info' });
+    ).toEqual({ text: 'Fetching page 2/5', kind: 'info' });
   });
 
   it('shows cancelling state', () => {
