@@ -81,7 +81,19 @@ export async function resolveDiscoverCategoriesAsync(
   getAiConfig: () => AiConfig
 ): Promise<{ entries: DiscoverEntry[]; warnings: string[] }> {
   const database = getDb();
-  const promptEmbedding = await embedTextAsync(prompt.trim());
+  let promptEmbedding: number[];
+  try {
+    promptEmbedding = await embedTextAsync(prompt.trim());
+  } catch (error) {
+    // embedTextAsync has no retry/multi-provider fallback (see embeddings.ts) — wrap so a
+    // Gemini failure surfaces as a diagnosable, discover-scoped error rather than a raw
+    // provider message, consistent with the other thrown errors in this function. The
+    // caller (buildDiscoverUrlsAsync -> discoverCategoriesAsync's Promise.allSettled)
+    // already keeps this from crashing the whole discover request.
+    throw new Error(`discover: category embedding unavailable — ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
   const allCategories = stmtGetAllCategoriesWithEmbeddings(database).all();
   const shortlist = rankCategoriesBySimilarity(allCategories, promptEmbedding, SHORTLIST_SIZE);
   if (shortlist.length === 0) throw new Error('no embedded categories available for discovery');

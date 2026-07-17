@@ -398,4 +398,26 @@ describe('resolveDiscoverCategoriesAsync', () => {
       'no embedded categories available'
     );
   });
+
+  // Backend/QA review of PR #41: embedTextAsync has no retry or fallback (by design —
+  // see embeddings.ts), so a Gemini failure must at least surface as a diagnosable error
+  // rather than an opaque provider message, consistent with this function's other thrown
+  // errors above. discover.ts's Promise.allSettled already keeps this from crashing the
+  // whole discover request; this pins the error's shape so it's actionable when it hits
+  // logs/warnings.
+  it('wraps an embedTextAsync failure in a diagnosable error instead of leaking the raw provider error', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockRejectedValue(
+      new Error('Gemini embedContent failed [429]: quota exceeded')
+    );
+    vi.mocked(aiJSON).mockClear();
+
+    await expect(resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG)).rejects.toThrow(
+      'discover: category embedding unavailable — Gemini embedContent failed [429]: quota exceeded'
+    );
+    expect(vi.mocked(aiJSON)).not.toHaveBeenCalled();
+  });
 });
