@@ -10,3 +10,11 @@ export const MAX_DEEP_SEARCH_ITEMS = 100;
 
 /** Maximum number of listings emitted from a single quick-search URL. */
 export const MAX_RESULTS_PER_URL = 100;
+
+// ── Discover root-probe threshold ────────────────────────────────────────────
+
+/**
+ * Upper bound (inclusive) on a categoryless root-search `TotalCount` for treating
+ * it as narrow enough to use directly, skipping AI category selection.
+ */
+export const ROOT_SEARCH_RESULT_THRESHOLD = 50;

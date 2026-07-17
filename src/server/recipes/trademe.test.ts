@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON } from '../ai';
+import { ROOT_SEARCH_RESULT_THRESHOLD } from '../constants';
 import {
   type CategoryLegacyPathRow,
   type CategoryWithEmbeddingRow,
@@ -13,8 +14,10 @@ import { embedTextAsync } from '../embeddings';
 import {
   buildListing,
   buildPhotosFromUrls,
+  buildRootMarketplaceSearchUrl,
   buildTrademeUrl,
   extractImplicitFilters,
+  fetchSearchPage1Async,
   fetchSingleListingDetailAsync,
   mapReserveState,
   parseListingDetailResponse,
@@ -45,81 +48,100 @@ vi.mock('../embeddings', async (importOriginal) => {
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
-const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker } = vi.hoisted(() => {
-  const queue: unknown[] = [];
+const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker, PROBE_FETCH_FAILURE } =
+  vi.hoisted(() => {
+    const queue: unknown[] = [];
+    // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
+    // failure on the next page.goto() call, rather than a successful-but-empty response.
+    const PROBE_FETCH_FAILURE = Symbol('probe-fetch-failure');
 
-  // Tracks how many mocked Chromium instances are live at once, so tests can
-  // assert that concurrent quick searches do (or don't) stack browser sessions.
-  const browserSessionTracker = {
-    activeCount: 0,
-    maxActiveCount: 0,
-    reset() {
-      this.activeCount = 0;
-      this.maxActiveCount = 0;
-    },
-  };
-
-  function makePage(data: unknown) {
-    const handlers: Array<(r: unknown) => void> = [];
-    return {
-      on: (_: string, h: (r: unknown) => void) => {
-        handlers.push(h);
-      },
-      off: () => {},
-      goto: async () => {
-        const response = {
-          url: () => 'https://api.trademe.co.nz/v1/search/general.json',
-          status: () => 200,
-          json: async () => data,
-        };
-        for (const h of [...handlers]) h(response);
-      },
-      close: async () => {},
-    };
-  }
-
-  // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
-  // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
-  // per test so the same factory covers the happy path, non-200, and no-response cases.
-  function makeDetailPage(
-    options: {
-      data?: unknown;
-      url?: string;
-      status?: number;
-      respond?: boolean;
-      jsonError?: boolean;
-    } = {}
-  ) {
-    const handlers: Array<(r: unknown) => void> = [];
-    return {
-      on: (_: string, h: (r: unknown) => void) => {
-        handlers.push(h);
-      },
-      off: () => {},
-      goto: async () => {
-        if (options.respond === false) return;
-        const response = {
-          url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
-          status: () => options.status ?? 200,
-          json: async () => {
-            if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
-            return options.data ?? {};
-          },
-        };
-        for (const h of [...handlers]) h(response);
+    // Tracks how many mocked Chromium instances are live at once, so tests can
+    // assert that concurrent quick searches do (or don't) stack browser sessions.
+    const browserSessionTracker = {
+      activeCount: 0,
+      maxActiveCount: 0,
+      reset() {
+        this.activeCount = 0;
+        this.maxActiveCount = 0;
       },
     };
-  }
 
-  return {
-    getNextPage: () => makePage(queue.shift() ?? {}),
-    resetPageQueue: (...items: unknown[]) => {
-      queue.splice(0, queue.length, ...items);
-    },
-    makeDetailPage,
-    browserSessionTracker,
-  };
-});
+    function makePage(data: unknown) {
+      const handlers: Array<(r: unknown) => void> = [];
+      return {
+        on: (_: string, h: (r: unknown) => void) => {
+          handlers.push(h);
+        },
+        off: () => {},
+        goto: async () => {
+          const response = {
+            url: () => 'https://api.trademe.co.nz/v1/search/general.json',
+            status: () => 200,
+            json: async () => data,
+          };
+          for (const h of [...handlers]) h(response);
+        },
+        close: async () => {},
+      };
+    }
+
+    // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
+    // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
+    // per test so the same factory covers the happy path, non-200, and no-response cases.
+    function makeDetailPage(
+      options: {
+        data?: unknown;
+        url?: string;
+        status?: number;
+        respond?: boolean;
+        jsonError?: boolean;
+      } = {}
+    ) {
+      const handlers: Array<(r: unknown) => void> = [];
+      return {
+        on: (_: string, h: (r: unknown) => void) => {
+          handlers.push(h);
+        },
+        off: () => {},
+        goto: async () => {
+          if (options.respond === false) return;
+          const response = {
+            url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
+            status: () => options.status ?? 200,
+            json: async () => {
+              if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
+              return options.data ?? {};
+            },
+          };
+          for (const h of [...handlers]) h(response);
+        },
+      };
+    }
+
+    function makeFailingPage() {
+      return {
+        on: () => {},
+        off: () => {},
+        goto: async () => {
+          throw new Error('net::ERR_CONNECTION_TIMED_OUT');
+        },
+        close: async () => {},
+      };
+    }
+
+    return {
+      getNextPage: () => {
+        const next = queue.shift();
+        return next === PROBE_FETCH_FAILURE ? makeFailingPage() : makePage(next ?? {});
+      },
+      resetPageQueue: (...items: unknown[]) => {
+        queue.splice(0, queue.length, ...items);
+      },
+      makeDetailPage,
+      browserSessionTracker,
+      PROBE_FETCH_FAILURE,
+    };
+  });
 
 vi.mock('playwright', () => ({
   chromium: {
@@ -989,6 +1011,82 @@ describe('buildTrademeUrl', () => {
   });
 });
 
+// ── fetchSearchPage1Async ──────────────────────────────────────────────────────
+
+describe('fetchSearchPage1Async', () => {
+  it('returns totalCount, pageSize, and listings from one mocked response', async () => {
+    resetPageQueue({
+      List: [
+        { Title: 'Item', PriceDisplay: '$1', Region: 'Auckland', CanonicalPath: '/listing/1' },
+      ],
+      TotalCount: 3,
+      PageSize: 25,
+    });
+
+    const result = await fetchSearchPage1Async(
+      'https://www.trademe.co.nz/a/marketplace/search?search_string=lamp'
+    );
+
+    expect(result.totalCount).toBe(3);
+    expect(result.pageSize).toBe(25);
+    expect(result.listings).toHaveLength(1);
+  });
+});
+
+// ── buildRootMarketplaceSearchUrl ───────────────────────────────────────────────
+
+describe('buildRootMarketplaceSearchUrl', () => {
+  it('builds a categoryless marketplace search URL with search_string and condition', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'used');
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/a/marketplace/search');
+    expect(parsed.searchParams.get('search_string')).toBe('lamp');
+    expect(parsed.searchParams.get('condition')).toBe('used');
+  });
+
+  it('never includes a category segment', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'used');
+    expect(new URL(url).pathname).toBe('/a/marketplace/search');
+  });
+
+  it('preserves the search string unmodified, including internal spaces', () => {
+    const url = buildRootMarketplaceSearchUrl(
+      'fisher price music box',
+      0,
+      'any',
+      undefined,
+      'used'
+    );
+    expect(new URL(url).searchParams.get('search_string')).toBe('fisher price music box');
+  });
+
+  it('appends price_max when maxPrice > 0', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 500, 'any', undefined, 'used');
+    expect(url).toContain('price_max=500');
+  });
+
+  it('omits price_max when maxPrice is 0', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'used');
+    expect(url).not.toContain('price_max');
+  });
+
+  it('adds pickup params when fulfillment is "pickup" and regionValue is set', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'pickup', '2', 'used');
+    expect(url).toContain('user_region=2');
+    expect(url).toContain('shipping_method=pickup');
+  });
+
+  it('does not add pickup params when fulfillment is "pickup" but regionValue is missing', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'pickup', undefined, 'used');
+    expect(url).not.toContain('shipping_method');
+  });
+
+  it('sets condition=new when condition is "new"', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'new');
+    expect(url).toContain('condition=new');
+  });
+});
+
 // ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
 
 describe('buildDiscoverUrlsAsync', () => {
@@ -1028,6 +1126,12 @@ describe('buildDiscoverUrlsAsync', () => {
       fakeCategoriesWithEmbeddingsStatement(MOCK_CATEGORIES)
     );
     vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    // buildDiscoverUrlsAsync now fires a root-search probe before AI category
+    // selection. Default it to a large TotalCount (well above
+    // ROOT_SEARCH_RESULT_THRESHOLD) so tests unrelated to the probe keep
+    // exercising the AI-fallback path unchanged; only the 'root search probe'
+    // tests below override this with their own resetPageQueue call.
+    resetPageQueue({ TotalCount: 5000, PageSize: 100, List: [] });
   });
 
   // resetAllMocks (not clearAllMocks): strips mock implementations between tests so any test
@@ -1207,6 +1311,128 @@ describe('buildDiscoverUrlsAsync', () => {
     ).rejects.toThrow('AI rate limited (discover-categories)');
 
     expect(markExhausted).toHaveBeenCalledWith('mock', cooldownUntilMs);
+  });
+
+  describe('root search probe', () => {
+    it('returns the root URL only and skips AI category selection when totalCount is small', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1);
+      const url = new URL(result.urls[0]);
+      expect(url.pathname).toBe('/a/marketplace/search');
+      expect(url.searchParams.get('search_string')).toBe('fisher price music box');
+      expect(aiJSON).not.toHaveBeenCalled();
+      expect(embedTextAsync).not.toHaveBeenCalled();
+    });
+
+    it('falls through to the AI category path when totalCount is zero', async () => {
+      resetPageQueue({ TotalCount: 0, PageSize: 25, List: [] });
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls[0]).toContain('electronics/laptops');
+    });
+
+    it('uses the root URL at the threshold boundary (totalCount === 50)', async () => {
+      resetPageQueue({ TotalCount: ROOT_SEARCH_RESULT_THRESHOLD, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('lamp', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1);
+      expect(new URL(result.urls[0]).pathname).toBe('/a/marketplace/search');
+      expect(aiJSON).not.toHaveBeenCalled();
+    });
+
+    it('falls through to the AI category path just above the threshold (totalCount === 51)', async () => {
+      resetPageQueue({ TotalCount: ROOT_SEARCH_RESULT_THRESHOLD + 1, PageSize: 25, List: [] });
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('lamp', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls[0]).toContain('electronics/laptops');
+    });
+
+    it('falls back to the AI category path when the probe fetch fails, without throwing', async () => {
+      resetPageQueue(PROBE_FETCH_FAILURE);
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('lamp', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls[0]).toContain('electronics/laptops');
+      expect(result.warnings.some((w) => w.includes('root search probe failed'))).toBe(true);
+    });
+
+    it('builds both used and new root URLs when includeNewItems is true and the root path wins', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
+      expect(aiJSON).not.toHaveBeenCalled();
+    });
+
+    it('skips sold-item URLs and pushes a warning when includeSoldItems is true and the root path wins', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1);
+      expect(vi.mocked(stmtGetCategoryLegacyPath)).not.toHaveBeenCalled();
+      expect(result.warnings.some((w) => w.toLowerCase().includes('sold'))).toBe(true);
+    });
   });
 
   describe('includeSoldItems', () => {

@@ -15,7 +15,11 @@ import type {
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { hashFingerprintParts } from '../alerts';
-import { MAX_PAGES_PER_SEARCH, MAX_RESULTS_PER_URL } from '../constants';
+import {
+  MAX_PAGES_PER_SEARCH,
+  MAX_RESULTS_PER_URL,
+  ROOT_SEARCH_RESULT_THRESHOLD,
+} from '../constants';
 import { getDb, stmtGetCategoryLegacyPath } from '../db';
 import { type DiscoverEntry, resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
 import { buildLegacySearchUrl } from './trademeExpired';
@@ -397,6 +401,25 @@ function waitForSearchApiResponseAsync(
   });
 }
 
+// Self-contained "make one live TradeMe search request" helper: launches its own
+// throwaway browser and closes it before returning, rather than sharing a session
+// with a caller's own browser/context. Used by the discover root-search probe,
+// which has no existing browser session to reuse.
+export async function fetchSearchPage1Async(
+  url: string
+): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const page = await context.newPage();
+    const responsePromise = waitForSearchApiResponseAsync(page);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    return await responsePromise;
+  } finally {
+    await browser.close();
+  }
+}
+
 const LISTING_DETAIL_API_PATTERN = /api\.trademe\.co\.nz\/v1\/listings\/.+\.json/;
 
 function waitForListingDetailResponseAsync(page: Page): Promise<DeepSearchDetail | null> {
@@ -466,15 +489,97 @@ export function buildTrademeUrl(
   return `https://www.trademe.co.nz/a/${urlSlug}/search${qs ? `?${qs}` : ''}`;
 }
 
+// A categoryless sibling of buildTrademeUrl for the discover root-search probe —
+// passing an empty slug through buildTrademeUrl would build a broken
+// `.../a/marketplace//search`, so this builds the bare `/a/marketplace/search` path directly.
+export function buildRootMarketplaceSearchUrl(
+  searchString: string,
+  maxPrice: number,
+  fulfillment: Fulfillment,
+  regionValue: string | undefined,
+  condition: ListingCondition
+): string {
+  const params = new URLSearchParams();
+  if (searchString) params.set('search_string', searchString);
+  if (maxPrice > 0) params.set('price_max', String(maxPrice));
+  if (fulfillment === 'pickup' && regionValue) {
+    params.set('user_region', regionValue);
+    params.set('shipping_method', 'pickup');
+  }
+  params.set('condition', condition);
+  const qs = params.toString();
+  return `https://www.trademe.co.nz/a/marketplace/search${qs ? `?${qs}` : ''}`;
+}
+
+// Fires a categoryless root-marketplace search on the raw prompt before falling back
+// to AI category selection. A small, non-zero TotalCount on that root search is itself
+// a strong "no narrowing needed" signal — the widest possible net already found the
+// right, small set of results — so it's used directly and the AI call is skipped
+// entirely. Zero results is treated as "the probe likely didn't match well" (not
+// "nothing exists") and falls through to AI category selection like a too-large count.
+// A probe failure (timeout/network error) also falls through silently, with a warning,
+// rather than failing the whole discover call.
+// `result` is non-null only when the probe won (narrow enough to use directly).
+// `warnings` carries a probe-failure message through to the caller even on a miss.
+async function tryRootSearchProbeAsync(
+  trimmedPrompt: string,
+  context: DiscoverContext
+): Promise<{ result: RecipeDiscoverResult | null; warnings: string[] }> {
+  const usedRootUrl = buildRootMarketplaceSearchUrl(
+    trimmedPrompt,
+    context.maxPrice,
+    context.fulfillment,
+    context.regionValue,
+    'used'
+  );
+
+  let totalCount: number;
+  try {
+    totalCount = (await enqueue(usedRootUrl, () => fetchSearchPage1Async(usedRootUrl))).totalCount;
+  } catch (error) {
+    return { result: null, warnings: [`root search probe failed: ${(error as Error).message}`] };
+  }
+
+  if (totalCount === 0 || totalCount > ROOT_SEARCH_RESULT_THRESHOLD)
+    return { result: null, warnings: [] };
+
+  const urls = [usedRootUrl];
+  const warnings: string[] = [];
+
+  if (context.includeNewItems) {
+    urls.push(
+      buildRootMarketplaceSearchUrl(
+        trimmedPrompt,
+        context.maxPrice,
+        context.fulfillment,
+        context.regionValue,
+        'new'
+      )
+    );
+  }
+
+  // The legacy sold-items URL builder requires a category's DB-stored legacy_path —
+  // there's no category to look one up for in the root-search case.
+  if (context.includeSoldItems) {
+    warnings.push('sold items are unavailable for a root (categoryless) search — skipped');
+  }
+
+  return { result: { urls, warnings }, warnings: [] };
+}
+
 async function buildDiscoverUrlsAsync(
   prompt: string,
   context: DiscoverContext
 ): Promise<RecipeDiscoverResult> {
+  const trimmedPrompt = prompt.trim();
+  const probe = await tryRootSearchProbeAsync(trimmedPrompt, context);
+  if (probe.result !== null) return probe.result;
+
   const { entries, warnings } = await resolveDiscoverCategoriesAsync(prompt, context.getAiConfig);
   const urls = entries.map((entry) =>
     buildTrademeUrl(entry, context.maxPrice, context.fulfillment, context.regionValue, 'used')
   );
-  const allWarnings = [...warnings];
+  const allWarnings = [...probe.warnings, ...warnings];
 
   if (context.includeNewItems) {
     for (const entry of entries) {
