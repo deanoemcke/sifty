@@ -37,7 +37,6 @@ export function initSchema(database: Database.Database): void {
       display     TEXT NOT NULL,
       depth       INTEGER NOT NULL,
       parent_slug TEXT,
-      top2        TEXT NOT NULL,
       legacy_path TEXT NOT NULL,
       embedding   TEXT,
       embedding_model TEXT
@@ -89,6 +88,9 @@ export function initSchema(database: Database.Database): void {
   }
   if (!categoryColumns.some((column) => column.name === 'embedding_model')) {
     database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding_model TEXT');
+  }
+  if (categoryColumns.some((column) => column.name === 'top2')) {
+    database.exec('ALTER TABLE trademe_categories DROP COLUMN top2');
   }
 
   // Backs the create/update handlers' duplicate-name rejection with a real DB

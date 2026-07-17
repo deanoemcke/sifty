@@ -228,14 +228,13 @@ type SeedCategory = {
   display: string;
   depth: number;
   parentSlug: string | null;
-  top2: string;
   embedding: number[];
   embeddingModel?: string;
 };
 
 function seedCategories(db: Database.Database, categories: SeedCategory[]): void {
   const insert = db.prepare(
-    'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
   for (const category of categories) {
     insert.run(
@@ -243,7 +242,6 @@ function seedCategories(db: Database.Database, categories: SeedCategory[]): void
       category.display,
       category.depth,
       category.parentSlug,
-      category.top2,
       `legacy/${category.slug}`,
       JSON.stringify(category.embedding),
       category.embeddingModel ?? EMBEDDING_MODEL
@@ -265,7 +263,6 @@ function seedLadderBugFixture(db: Database.Database): void {
       display: 'Building & renovation > Tools',
       depth: 2,
       parentSlug: 'building-renovation',
-      top2: 'building-renovation/tools',
       embedding: [0, 1],
     },
     {
@@ -273,7 +270,6 @@ function seedLadderBugFixture(db: Database.Database): void {
       display: 'Building & renovation > Tools > Hand tools',
       depth: 3,
       parentSlug: 'building-renovation/tools',
-      top2: 'building-renovation/tools',
       embedding: [0, 1],
     },
     {
@@ -281,7 +277,6 @@ function seedLadderBugFixture(db: Database.Database): void {
       display: 'Building & renovation > Building supplies',
       depth: 2,
       parentSlug: 'building-renovation',
-      top2: 'building-renovation/building-supplies',
       embedding: [0.2, 0.8],
     },
     {
@@ -289,7 +284,6 @@ function seedLadderBugFixture(db: Database.Database): void {
       display: 'Building & renovation > Building supplies > Scaffolding & ladders',
       depth: 3,
       parentSlug: 'building-renovation/building-supplies',
-      top2: 'building-renovation/building-supplies',
       embedding: [0.9, 0.1],
     },
     {
@@ -297,7 +291,6 @@ function seedLadderBugFixture(db: Database.Database): void {
       display: 'Building & renovation > Building supplies > Scaffolding & ladders > Ladders',
       depth: 4,
       parentSlug: 'building-renovation/building-supplies/scaffolding-ladders',
-      top2: 'building-renovation/building-supplies',
       embedding: [1, 0],
     },
   ]);
@@ -398,7 +391,6 @@ describe('resolveDiscoverCategoriesAsync', () => {
         display: 'Building & renovation > Tools',
         depth: 2,
         parentSlug: 'building-renovation',
-        top2: 'building-renovation/tools',
         embedding: [0, 1],
       },
     ]);
@@ -426,7 +418,6 @@ describe('resolveDiscoverCategoriesAsync', () => {
         display: 'Building & renovation > Tools',
         depth: 2,
         parentSlug: 'building-renovation',
-        top2: 'building-renovation/tools',
         embedding: [1, 0],
       },
       {
@@ -434,7 +425,6 @@ describe('resolveDiscoverCategoriesAsync', () => {
         display: 'Building & renovation > Building supplies > Ladders',
         depth: 3,
         parentSlug: 'building-renovation/building-supplies',
-        top2: 'building-renovation/building-supplies',
         embedding: [0, 1],
         embeddingModel: 'stale-model-v0',
       },
@@ -463,17 +453,15 @@ describe('resolveDiscoverCategoriesAsync', () => {
         display: 'Building & renovation > Tools',
         depth: 2,
         parentSlug: 'building-renovation',
-        top2: 'building-renovation/tools',
         embedding: [1, 0],
       },
     ]);
     db.prepare(
-      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(
       'building-renovation/building-supplies/scaffolding-ladders',
       'Building & renovation > Building supplies > Ladders',
       3,
-      'building-renovation/building-supplies',
       'building-renovation/building-supplies',
       'legacy/scaffolding-ladders',
       'not valid json',
@@ -597,7 +585,6 @@ describe('assertCategoryEmbeddingCoverage', () => {
         display: 'Building & renovation > Tools',
         depth: 2,
         parentSlug: 'building-renovation',
-        top2: 'building-renovation/tools',
         embedding: [1, 0],
       },
       {
@@ -605,7 +592,6 @@ describe('assertCategoryEmbeddingCoverage', () => {
         display: 'Building & renovation > Building supplies',
         depth: 2,
         parentSlug: 'building-renovation',
-        top2: 'building-renovation/building-supplies',
         embedding: [0, 1],
         embeddingModel: 'stale-model-v0',
       },

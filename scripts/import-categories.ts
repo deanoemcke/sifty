@@ -32,7 +32,6 @@ db.exec(`
     display     TEXT NOT NULL,
     depth       INTEGER NOT NULL,
     parent_slug TEXT,
-    top2        TEXT NOT NULL,
     legacy_path TEXT NOT NULL,
     embedding   TEXT,
     embedding_model TEXT
@@ -58,7 +57,7 @@ function topLevelSlug(name: string): string {
   return nameToSlug(name);
 }
 
-const rows: [string, string, number, string | null, string, string][] = [];
+const rows: [string, string, number, string | null, string][] = [];
 const seen = new Set<string>();
 
 function walk(node: Category, parentSlugParts: string[], parentDisplayParts: string[], depth: number): void {
@@ -69,11 +68,10 @@ function walk(node: Category, parentSlugParts: string[], parentDisplayParts: str
   const slug        = slugParts.join('/');
   const display     = displayParts.join(' > ');
   const parent_slug = parentSlugParts.length > 0 ? parentSlugParts.join('/') : null;
-  const top2        = slugParts.slice(0, 2).join('/');
 
   if (depth >= 2 && !seen.has(slug)) {
     seen.add(slug);
-    rows.push([slug, display, depth, parent_slug, top2, node.Number]);
+    rows.push([slug, display, depth, parent_slug, node.Number]);
   }
 
   for (const sub of node.Subcategories ?? []) {
@@ -87,10 +85,10 @@ for (const top of data.Subcategories ?? []) {
 }
 
 const insert = db.prepare(
-  'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
+  'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path) VALUES (?, ?, ?, ?, ?)'
 );
 const insertAll = db.transaction(() => {
-  for (const r of rows) insert.run(r[0], r[1], r[2], r[3], r[4], r[5]);
+  for (const r of rows) insert.run(r[0], r[1], r[2], r[3], r[4]);
 });
 insertAll();
 
