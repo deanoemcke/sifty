@@ -18,6 +18,7 @@ import { hashFingerprintParts } from '../alerts';
 import {
   MAX_PAGES_PER_SEARCH,
   MAX_RESULTS_PER_URL,
+  ROOT_SEARCH_COMBINED_RESULT_THRESHOLD,
   ROOT_SEARCH_RESULT_THRESHOLD,
 } from '../constants';
 import { getDb, stmtGetCategoryLegacyPath } from '../db';
@@ -497,7 +498,7 @@ export function buildRootMarketplaceSearchUrl(
   maxPrice: number,
   fulfillment: Fulfillment,
   regionValue: string | undefined,
-  condition: ListingCondition
+  condition: ListingCondition | null
 ): string {
   const params = new URLSearchParams();
   if (searchString) params.set('search_string', searchString);
@@ -506,7 +507,7 @@ export function buildRootMarketplaceSearchUrl(
     params.set('user_region', regionValue);
     params.set('shipping_method', 'pickup');
   }
-  params.set('condition', condition);
+  if (condition) params.set('condition', condition);
   const qs = params.toString();
   return `https://www.trademe.co.nz/a/marketplace/search${qs ? `?${qs}` : ''}`;
 }
@@ -521,6 +522,14 @@ export function buildRootMarketplaceSearchUrl(
 // rather than failing the whole discover call.
 // `result` is non-null only when the probe won (narrow enough to use directly).
 // `warnings` carries a probe-failure message through to the caller even on a miss.
+//
+// When `includeNewItems` is set, the eventual result includes both a used- and a
+// new-condition URL, so the narrowness check itself must cover both conditions —
+// checking the used count alone could pass "narrow enough" while new-condition
+// listings (never counted) are actually abundant (PR #41 review, QA finding #1).
+// Rather than doubling the probe's live-request cost with a second condition-scoped
+// query, a single condition-less query returns the combined new+used count in one
+// request, checked against a correspondingly higher threshold.
 async function tryRootSearchProbeAsync(
   trimmedPrompt: string,
   context: DiscoverContext
@@ -532,31 +541,42 @@ async function tryRootSearchProbeAsync(
     context.regionValue,
     'used'
   );
-
-  let totalCount: number;
-  try {
-    totalCount = (await enqueue(usedRootUrl, () => fetchSearchPage1Async(usedRootUrl))).totalCount;
-  } catch (error) {
-    return { result: null, warnings: [`root search probe failed: ${(error as Error).message}`] };
-  }
-
-  if (totalCount === 0 || totalCount > ROOT_SEARCH_RESULT_THRESHOLD)
-    return { result: null, warnings: [] };
-
-  const urls = [usedRootUrl];
-  const warnings: string[] = [];
-
-  if (context.includeNewItems) {
-    urls.push(
-      buildRootMarketplaceSearchUrl(
+  const newRootUrl = context.includeNewItems
+    ? buildRootMarketplaceSearchUrl(
         trimmedPrompt,
         context.maxPrice,
         context.fulfillment,
         context.regionValue,
         'new'
       )
-    );
+    : null;
+
+  const probeUrl = context.includeNewItems
+    ? buildRootMarketplaceSearchUrl(
+        trimmedPrompt,
+        context.maxPrice,
+        context.fulfillment,
+        context.regionValue,
+        null
+      )
+    : usedRootUrl;
+  const threshold = context.includeNewItems
+    ? ROOT_SEARCH_COMBINED_RESULT_THRESHOLD
+    : ROOT_SEARCH_RESULT_THRESHOLD;
+
+  let totalCount: number;
+  try {
+    totalCount = (await enqueue(probeUrl, () => fetchSearchPage1Async(probeUrl))).totalCount;
+  } catch (error) {
+    return { result: null, warnings: [`root search probe failed: ${(error as Error).message}`] };
   }
+
+  if (totalCount === 0 || totalCount > threshold) return { result: null, warnings: [] };
+
+  const urls = [usedRootUrl];
+  const warnings: string[] = [];
+
+  if (newRootUrl) urls.push(newRootUrl);
 
   // The legacy sold-items URL builder requires a category's DB-stored legacy_path —
   // there's no category to look one up for in the root-search case.

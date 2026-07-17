@@ -18,3 +18,11 @@ export const MAX_RESULTS_PER_URL = 100;
  * it as narrow enough to use directly, skipping AI category selection.
  */
 export const ROOT_SEARCH_RESULT_THRESHOLD = 50;
+
+/**
+ * Upper bound (inclusive) on a categoryless root-search `TotalCount` covering both
+ * used and new conditions in a single combined (condition-less) query, used in
+ * place of `ROOT_SEARCH_RESULT_THRESHOLD` when `includeNewItems` is set — since the
+ * combined count spans two conditions rather than one.
+ */
+export const ROOT_SEARCH_COMBINED_RESULT_THRESHOLD = 100;

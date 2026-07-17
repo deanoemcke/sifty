@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON } from '../ai';
-import { ROOT_SEARCH_RESULT_THRESHOLD } from '../constants';
+import { ROOT_SEARCH_COMBINED_RESULT_THRESHOLD, ROOT_SEARCH_RESULT_THRESHOLD } from '../constants';
 import {
   type CategoryLegacyPathRow,
   type CategoryWithEmbeddingRow,
@@ -1085,6 +1085,11 @@ describe('buildRootMarketplaceSearchUrl', () => {
     const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'new');
     expect(url).toContain('condition=new');
   });
+
+  it('omits the condition param entirely when condition is null', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, null);
+    expect(new URL(url).searchParams.has('condition')).toBe(false);
+  });
 });
 
 // ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
@@ -1455,6 +1460,60 @@ describe('buildDiscoverUrlsAsync', () => {
       expect(result.urls).toHaveLength(2);
       expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
       expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
+    });
+
+    it('probes a single condition-less (combined new+used) URL when includeNewItems is true', async () => {
+      resetPageQueue({ TotalCount: 80, PageSize: 25, List: [] });
+      const enqueuedUrlCountBefore = enqueuedUrls.length;
+
+      await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      const newlyEnqueued = enqueuedUrls.slice(enqueuedUrlCountBefore);
+      expect(newlyEnqueued).toHaveLength(1);
+      expect(new URL(newlyEnqueued[0]).searchParams.has('condition')).toBe(false);
+    });
+
+    it('uses the root path at the combined threshold boundary (totalCount === 100) when includeNewItems is true', async () => {
+      resetPageQueue({ TotalCount: ROOT_SEARCH_COMBINED_RESULT_THRESHOLD, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
+    });
+
+    it('falls through to the AI category path just above the combined threshold (totalCount === 101) when includeNewItems is true', async () => {
+      resetPageQueue({
+        TotalCount: ROOT_SEARCH_COMBINED_RESULT_THRESHOLD + 1,
+        PageSize: 25,
+        List: [],
+      });
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls.some((u) => u.includes('electronics/laptops'))).toBe(true);
     });
 
     it('skips sold-item URLs and pushes a warning when includeSoldItems is true and the root path wins', async () => {
