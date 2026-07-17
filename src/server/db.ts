@@ -76,6 +76,17 @@ export function initSchema(database: Database.Database): void {
     `);
   }
 
+  // Same CREATE TABLE IF NOT EXISTS limitation as saved_searches above: an
+  // existing on-disk trademe_categories table predating this column won't
+  // pick it up from the CREATE TABLE body, so it needs the same explicit,
+  // idempotency-checked ALTER TABLE.
+  const categoryColumns = database
+    .prepare<[], { name: string }>('PRAGMA table_info(trademe_categories)')
+    .all();
+  if (!categoryColumns.some((column) => column.name === 'embedding')) {
+    database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding TEXT');
+  }
+
   // Backs the create/update handlers' duplicate-name rejection with a real DB
   // guarantee — the app-level SELECT-then-INSERT check alone can't stop two
   // concurrent saves both passing the check before either commits. CREATE

@@ -176,6 +176,37 @@ describe('initSchema', () => {
     expect(rows.find((r) => r.id === 'newer')?.name).toBe('Duplicate name (newer)');
   });
 
+  it('trademe_categories has an embedding column, added idempotently, when migrating an existing on-disk database', () => {
+    // Simulates a pre-migration on-disk schema — no embedding column yet.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE trademe_categories (
+        slug        TEXT PRIMARY KEY,
+        display     TEXT NOT NULL,
+        depth       INTEGER NOT NULL,
+        parent_slug TEXT,
+        top2        TEXT NOT NULL,
+        legacy_path TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('electronics', 'Electronics', 1, null, 'electronics', '0124-');
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding');
+
+    const row = db
+      .prepare<[string], { slug: string; embedding: string | null }>(
+        'SELECT slug, embedding FROM trademe_categories WHERE slug = ?'
+      )
+      .get('electronics');
+    expect(row?.embedding).toBeNull();
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding');
+  });
+
   it('preserves existing data when called on an existing database', () => {
     const db = new Database(':memory:');
     initSchema(db);
