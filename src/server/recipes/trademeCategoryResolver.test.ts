@@ -35,6 +35,7 @@ import { aiJSON } from '../ai';
 import { initSchema } from '../db';
 import { EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 import {
+  assertCategoryEmbeddingCoverage,
   CATEGORY_SYSTEM_PROMPT,
   type CachedCategoryEmbedding,
   collapseEntries,
@@ -570,5 +571,56 @@ describe('resolveDiscoverCategoriesAsync', () => {
     await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
 
     expect(countCategoryTableReads(prepareSpy)).toBe(2);
+  });
+});
+
+// ── assertCategoryEmbeddingCoverage ─────────────────────────────────────────
+
+// PR #41 review (Data #2): a partially-completed embedding backfill silently makes some
+// categories unreachable via AI category selection, with zero signal anything is degraded.
+// Per the user's direction, this is enforced at server boot rather than as a per-request
+// warning — the app should refuse to start rather than silently serve degraded discovery.
+describe('assertCategoryEmbeddingCoverage', () => {
+  it('throws naming the import script when the categories table is empty', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+
+    expect(() => assertCategoryEmbeddingCoverage(db)).toThrow(/import-categories\.ts/);
+  });
+
+  it('throws naming the backfill script and the missing count when some categories lack a current-model embedding', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    seedCategories(db, [
+      {
+        slug: 'building-renovation/tools',
+        display: 'Building & renovation > Tools',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        top2: 'building-renovation/tools',
+        embedding: [1, 0],
+      },
+      {
+        slug: 'building-renovation/building-supplies',
+        display: 'Building & renovation > Building supplies',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        top2: 'building-renovation/building-supplies',
+        embedding: [0, 1],
+        embeddingModel: 'stale-model-v0',
+      },
+    ]);
+
+    expect(() => assertCategoryEmbeddingCoverage(db)).toThrow(
+      /1\/2 categories.*embed-categories\.ts/
+    );
+  });
+
+  it('does not throw when every category has a current-model embedding', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    seedLadderBugFixture(db);
+
+    expect(() => assertCategoryEmbeddingCoverage(db)).not.toThrow();
   });
 });

@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { defineConfig } from 'vite';
 import { createProviderCooldownStore } from './src/server/ai';
+import { getDb } from './src/server/db';
 import { loadServerEnv } from './src/server/env';
 import { parseFbCookies } from './src/server/recipes/facebook';
+import { assertCategoryEmbeddingCoverage } from './src/server/recipes/trademeCategoryResolver';
 import { handleAiFilter } from './src/server/routes/aiFilter';
 import { handleCacheClear } from './src/server/routes/cacheRoutes';
 import { handleCancelSearch } from './src/server/routes/cancelSearch';
@@ -44,6 +46,13 @@ export default defineConfig({
       configureServer(server) {
         const fbCookies = parseFbCookies(process.env.FB_COOKIES);
         console.log(`[startup] FB_COOKIES valid — ${fbCookies.length} cookie(s) loaded`);
+
+        // Vitest also loads this file as its test config and runs this hook, but tests
+        // mock ../db entirely rather than touching the real sifty.db — skip the real-DB
+        // check there so an incomplete backfill on disk can't fail the whole test suite.
+        if (!process.env.VITEST) {
+          assertCategoryEmbeddingCoverage(getDb());
+        }
 
         server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Next) => {
           const urlPath = req.url?.split('?')[0] ?? '';

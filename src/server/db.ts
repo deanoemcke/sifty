@@ -185,6 +185,7 @@ export type CategoryWithEmbeddingRow = {
   embedding: string | null;
   embedding_model: string | null;
 };
+export type CategoryEmbeddingCoverageRow = { total: number; embedded: number };
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
 export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
@@ -295,6 +296,11 @@ export function stmtInsertAlertedListing(database: Database.Database) {
 export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {
   return database.prepare<[], CategoryWithEmbeddingRow>(
     'SELECT slug, display, embedding, embedding_model FROM trademe_categories'
+  );
+}
+export function stmtGetCategoryEmbeddingCoverage(database: Database.Database) {
+  return database.prepare<[string], CategoryEmbeddingCoverageRow>(
+    'SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN embedding IS NOT NULL AND embedding_model = ? THEN 1 ELSE 0 END), 0) AS embedded FROM trademe_categories'
   );
 }
 export function stmtGetCategoryLegacyPath(database: Database.Database) {

@@ -10,6 +10,7 @@ import {
   stmtClearDetailsForUrl,
   stmtClearSearchForUrl,
   stmtCountAlertsForSavedSearch,
+  stmtGetCategoryEmbeddingCoverage,
   stmtGetDetail,
   stmtGetOldestAlertEnabledSavedSearch,
   stmtGetSavedSearchByName,
@@ -250,6 +251,45 @@ describe('initSchema', () => {
       .prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories')
       .get()?.n;
     expect(count).toBe(1);
+  });
+});
+
+describe('stmtGetCategoryEmbeddingCoverage', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  function insertCategory(
+    db: Database.Database,
+    slug: string,
+    embedding: string | null,
+    embeddingModel: string | null
+  ): void {
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(slug, slug, 1, null, slug, `legacy/${slug}`, embedding, embeddingModel);
+  }
+
+  it('reports total 0 and embedded 0 for an empty table', () => {
+    const db = freshDb();
+    expect(stmtGetCategoryEmbeddingCoverage(db).get('gemini-embedding-001')).toEqual({
+      total: 0,
+      embedded: 0,
+    });
+  });
+
+  it('counts only rows whose embedding is non-null and whose embedding_model matches the given model', () => {
+    const db = freshDb();
+    insertCategory(db, 'current', '[1,0]', 'gemini-embedding-001');
+    insertCategory(db, 'stale-model', '[0,1]', 'old-model');
+    insertCategory(db, 'never-embedded', null, null);
+
+    expect(stmtGetCategoryEmbeddingCoverage(db).get('gemini-embedding-001')).toEqual({
+      total: 3,
+      embedded: 1,
+    });
   });
 });
 

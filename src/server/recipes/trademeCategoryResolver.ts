@@ -6,7 +6,12 @@
 import type Database from 'better-sqlite3';
 import type { AiConfig } from '../../lib/recipes/base';
 import { aiJSON, applyAiJsonResult } from '../ai';
-import { type CategoryWithEmbeddingRow, getDb, stmtGetAllCategoriesWithEmbeddings } from '../db';
+import {
+  type CategoryWithEmbeddingRow,
+  getDb,
+  stmtGetAllCategoriesWithEmbeddings,
+  stmtGetCategoryEmbeddingCoverage,
+} from '../db';
 import { cosineSimilarity, EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 
 export type DiscoverEntry = { slug: string; searchString: string | null };
@@ -126,6 +131,27 @@ function loadCategoryEmbeddingsCache(database: Database.Database): CachedCategor
 
 export function invalidateCategoryEmbeddingsCache(): void {
   categoryEmbeddingsCache = null;
+}
+
+// Boot-time gate (called from vite.config.ts's configureServer, after getDb() has run
+// initSchema) — category search is core to this app, so an incomplete or never-run
+// embedding backfill must stop the server from starting rather than silently degrade
+// discovery request-by-request (PR #41 review, Data #2, escalated per explicit user
+// direction: a per-request warning is too easy to miss). Deliberately queries fresh
+// counts rather than the categoryEmbeddingsCache above, since that cache is scoped to
+// ranking and would just re-surface the same staleness problem this check exists to catch.
+export function assertCategoryEmbeddingCoverage(database: Database.Database): void {
+  const row = stmtGetCategoryEmbeddingCoverage(database).get(EMBEDDING_MODEL);
+  const total = row?.total ?? 0;
+  const embedded = row?.embedded ?? 0;
+  if (total === 0) {
+    throw new Error('trademe_categories is empty — run: npx ts-node scripts/import-categories.ts');
+  }
+  if (embedded < total) {
+    throw new Error(
+      `${total - embedded}/${total} categories have no current-model (${EMBEDDING_MODEL}) embedding — run: npx ts-node scripts/embed-categories.ts`
+    );
+  }
 }
 
 type SelectedCategory = { slug: string; searchString?: string | null };
