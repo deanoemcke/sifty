@@ -2,20 +2,22 @@ import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON } from '../ai';
+import { ROOT_SEARCH_COMBINED_RESULT_THRESHOLD, ROOT_SEARCH_RESULT_THRESHOLD } from '../constants';
 import {
   type CategoryLegacyPathRow,
-  type CategoryRow,
+  type CategoryWithEmbeddingRow,
   getDb,
-  stmtGetAllCategoryDisplays,
-  stmtGetCategoriesAtDepth2,
-  stmtGetCategoriesByTop2,
+  stmtGetAllCategoriesWithEmbeddings,
   stmtGetCategoryLegacyPath,
 } from '../db';
+import { EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 import {
   buildListing,
   buildPhotosFromUrls,
+  buildRootMarketplaceSearchUrl,
   buildTrademeUrl,
   extractImplicitFilters,
+  fetchSearchPage1Async,
   fetchSingleListingDetailAsync,
   mapReserveState,
   parseListingDetailResponse,
@@ -34,89 +36,112 @@ vi.mock('../ai', async (importOriginal) => {
 });
 vi.mock('../db', () => ({
   getDb: vi.fn(),
-  stmtGetAllCategoryDisplays: vi.fn(),
-  stmtGetCategoriesAtDepth2: vi.fn(),
-  stmtGetCategoriesByTop2: vi.fn(),
+  stmtGetAllCategoriesWithEmbeddings: vi.fn(),
   stmtGetCategoryLegacyPath: vi.fn(),
 }));
+// Only `embedTextAsync` is faked — `cosineSimilarity` stays real so the shortlist
+// ranking exercised by these tests is the actual implementation.
+vi.mock('../embeddings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../embeddings')>();
+  return { ...actual, embedTextAsync: vi.fn() };
+});
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
-const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker } = vi.hoisted(() => {
-  const queue: unknown[] = [];
+const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker, PROBE_FETCH_FAILURE } =
+  vi.hoisted(() => {
+    const queue: unknown[] = [];
+    // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
+    // failure on the next page.goto() call, rather than a successful-but-empty response.
+    const PROBE_FETCH_FAILURE = Symbol('probe-fetch-failure');
 
-  // Tracks how many mocked Chromium instances are live at once, so tests can
-  // assert that concurrent quick searches do (or don't) stack browser sessions.
-  const browserSessionTracker = {
-    activeCount: 0,
-    maxActiveCount: 0,
-    reset() {
-      this.activeCount = 0;
-      this.maxActiveCount = 0;
-    },
-  };
-
-  function makePage(data: unknown) {
-    const handlers: Array<(r: unknown) => void> = [];
-    return {
-      on: (_: string, h: (r: unknown) => void) => {
-        handlers.push(h);
-      },
-      off: () => {},
-      goto: async () => {
-        const response = {
-          url: () => 'https://api.trademe.co.nz/v1/search/general.json',
-          status: () => 200,
-          json: async () => data,
-        };
-        for (const h of [...handlers]) h(response);
-      },
-      close: async () => {},
-    };
-  }
-
-  // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
-  // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
-  // per test so the same factory covers the happy path, non-200, and no-response cases.
-  function makeDetailPage(
-    options: {
-      data?: unknown;
-      url?: string;
-      status?: number;
-      respond?: boolean;
-      jsonError?: boolean;
-    } = {}
-  ) {
-    const handlers: Array<(r: unknown) => void> = [];
-    return {
-      on: (_: string, h: (r: unknown) => void) => {
-        handlers.push(h);
-      },
-      off: () => {},
-      goto: async () => {
-        if (options.respond === false) return;
-        const response = {
-          url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
-          status: () => options.status ?? 200,
-          json: async () => {
-            if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
-            return options.data ?? {};
-          },
-        };
-        for (const h of [...handlers]) h(response);
+    // Tracks how many mocked Chromium instances are live at once, so tests can
+    // assert that concurrent quick searches do (or don't) stack browser sessions.
+    const browserSessionTracker = {
+      activeCount: 0,
+      maxActiveCount: 0,
+      reset() {
+        this.activeCount = 0;
+        this.maxActiveCount = 0;
       },
     };
-  }
 
-  return {
-    getNextPage: () => makePage(queue.shift() ?? {}),
-    resetPageQueue: (...items: unknown[]) => {
-      queue.splice(0, queue.length, ...items);
-    },
-    makeDetailPage,
-    browserSessionTracker,
-  };
-});
+    function makePage(data: unknown) {
+      const handlers: Array<(r: unknown) => void> = [];
+      return {
+        on: (_: string, h: (r: unknown) => void) => {
+          handlers.push(h);
+        },
+        off: () => {},
+        goto: async () => {
+          const response = {
+            url: () => 'https://api.trademe.co.nz/v1/search/general.json',
+            status: () => 200,
+            json: async () => data,
+          };
+          for (const h of [...handlers]) h(response);
+        },
+        close: async () => {},
+      };
+    }
+
+    // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
+    // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
+    // per test so the same factory covers the happy path, non-200, and no-response cases.
+    function makeDetailPage(
+      options: {
+        data?: unknown;
+        url?: string;
+        status?: number;
+        respond?: boolean;
+        jsonError?: boolean;
+      } = {}
+    ) {
+      const handlers: Array<(r: unknown) => void> = [];
+      return {
+        on: (_: string, h: (r: unknown) => void) => {
+          handlers.push(h);
+        },
+        off: () => {},
+        goto: async () => {
+          if (options.respond === false) return;
+          const response = {
+            url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
+            status: () => options.status ?? 200,
+            json: async () => {
+              if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
+              return options.data ?? {};
+            },
+          };
+          for (const h of [...handlers]) h(response);
+        },
+      };
+    }
+
+    function makeFailingPage() {
+      return {
+        on: () => {},
+        off: () => {},
+        goto: async () => {
+          throw new Error('net::ERR_CONNECTION_TIMED_OUT');
+        },
+        close: async () => {},
+      };
+    }
+
+    return {
+      getNextPage: () => {
+        const next = queue.shift();
+        return next === PROBE_FETCH_FAILURE ? makeFailingPage() : makePage(next ?? {});
+      },
+      resetPageQueue: (...items: unknown[]) => {
+        queue.splice(0, queue.length, ...items);
+      },
+      makeDetailPage,
+      browserSessionTracker,
+      PROBE_FETCH_FAILURE,
+    };
+  });
 
 vi.mock('playwright', () => ({
   chromium: {
@@ -986,11 +1011,98 @@ describe('buildTrademeUrl', () => {
   });
 });
 
+// ── fetchSearchPage1Async ──────────────────────────────────────────────────────
+
+describe('fetchSearchPage1Async', () => {
+  it('returns totalCount, pageSize, and listings from one mocked response', async () => {
+    resetPageQueue({
+      List: [
+        { Title: 'Item', PriceDisplay: '$1', Region: 'Auckland', CanonicalPath: '/listing/1' },
+      ],
+      TotalCount: 3,
+      PageSize: 25,
+    });
+
+    const result = await fetchSearchPage1Async(
+      'https://www.trademe.co.nz/a/marketplace/search?search_string=lamp'
+    );
+
+    expect(result.totalCount).toBe(3);
+    expect(result.pageSize).toBe(25);
+    expect(result.listings).toHaveLength(1);
+  });
+});
+
+// ── buildRootMarketplaceSearchUrl ───────────────────────────────────────────────
+
+describe('buildRootMarketplaceSearchUrl', () => {
+  it('builds a categoryless marketplace search URL with search_string and condition', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'used');
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/a/marketplace/search');
+    expect(parsed.searchParams.get('search_string')).toBe('lamp');
+    expect(parsed.searchParams.get('condition')).toBe('used');
+  });
+
+  it('never includes a category segment', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'used');
+    expect(new URL(url).pathname).toBe('/a/marketplace/search');
+  });
+
+  it('preserves the search string unmodified, including internal spaces', () => {
+    const url = buildRootMarketplaceSearchUrl(
+      'fisher price music box',
+      0,
+      'any',
+      undefined,
+      'used'
+    );
+    expect(new URL(url).searchParams.get('search_string')).toBe('fisher price music box');
+  });
+
+  it('appends price_max when maxPrice > 0', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 500, 'any', undefined, 'used');
+    expect(url).toContain('price_max=500');
+  });
+
+  it('omits price_max when maxPrice is 0', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'used');
+    expect(url).not.toContain('price_max');
+  });
+
+  it('adds pickup params when fulfillment is "pickup" and regionValue is set', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'pickup', '2', 'used');
+    expect(url).toContain('user_region=2');
+    expect(url).toContain('shipping_method=pickup');
+  });
+
+  it('does not add pickup params when fulfillment is "pickup" but regionValue is missing', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'pickup', undefined, 'used');
+    expect(url).not.toContain('shipping_method');
+  });
+
+  it('sets condition=new when condition is "new"', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, 'new');
+    expect(url).toContain('condition=new');
+  });
+
+  it('omits the condition param entirely when condition is null', () => {
+    const url = buildRootMarketplaceSearchUrl('lamp', 0, 'any', undefined, null);
+    expect(new URL(url).searchParams.has('condition')).toBe(false);
+  });
+});
+
 // ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
 
 describe('buildDiscoverUrlsAsync', () => {
-  const MOCK_BROAD = [{ display: 'Electronics', slug: 'electronics/electronics' }];
-  const MOCK_SUBS = [{ display: 'Laptops', slug: 'electronics/laptops' }];
+  const MOCK_CATEGORIES: CategoryWithEmbeddingRow[] = [
+    {
+      slug: 'electronics/laptops',
+      display: 'Laptops',
+      embedding: JSON.stringify([1, 0]),
+      embedding_model: EMBEDDING_MODEL,
+    },
+  ];
   const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
     markExhausted: () => {},
     getCooldownUntil: () => undefined,
@@ -1003,19 +1115,10 @@ describe('buildDiscoverUrlsAsync', () => {
     cooldownStore: STUB_COOLDOWN_STORE,
   };
 
-  function fakeCategoriesAtDepth2Statement(rows: CategoryRow[]) {
-    return { all: () => rows } as unknown as ReturnType<typeof stmtGetCategoriesAtDepth2>;
-  }
-
-  function fakeCategoriesByTop2Statement(all: (top2Slug: string) => CategoryRow[]) {
-    return { all } as unknown as ReturnType<typeof stmtGetCategoriesByTop2>;
-  }
-
-  // Default: no categories, so the deterministic keyword safety net in
-  // resolveDiscoverCategoriesAsync contributes nothing and these tests keep
-  // exercising step 1's LLM-picked categories only.
-  function fakeGetAllCategoryDisplaysStatement(rows: Array<{ slug: string; display: string }>) {
-    return { all: () => rows } as unknown as ReturnType<typeof stmtGetAllCategoryDisplays>;
+  function fakeCategoriesWithEmbeddingsStatement(rows: CategoryWithEmbeddingRow[]) {
+    return {
+      all: () => rows,
+    } as unknown as ReturnType<typeof stmtGetAllCategoriesWithEmbeddings>;
   }
 
   // aiJSON is mocked wholesale in this file, so its calls must resolve with the
@@ -1029,16 +1132,16 @@ describe('buildDiscoverUrlsAsync', () => {
 
   beforeEach(() => {
     vi.mocked(getDb).mockReturnValue({} as unknown as Database.Database);
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
-      fakeCategoriesAtDepth2Statement(MOCK_BROAD)
+    vi.mocked(stmtGetAllCategoriesWithEmbeddings).mockReturnValue(
+      fakeCategoriesWithEmbeddingsStatement(MOCK_CATEGORIES)
     );
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
-      fakeCategoriesByTop2Statement((top2Slug) => {
-        expect(top2Slug).toBe('electronics/electronics');
-        return MOCK_SUBS;
-      })
-    );
-    vi.mocked(stmtGetAllCategoryDisplays).mockReturnValue(fakeGetAllCategoryDisplaysStatement([]));
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    // buildDiscoverUrlsAsync now fires a root-search probe before AI category
+    // selection. Default it to a large TotalCount (well above
+    // ROOT_SEARCH_RESULT_THRESHOLD) so tests unrelated to the probe keep
+    // exercising the AI-fallback path unchanged; only the 'root search probe'
+    // tests below override this with their own resetPageQueue call.
+    resetPageQueue({ TotalCount: 5000, PageSize: 100, List: [] });
   });
 
   // resetAllMocks (not clearAllMocks): strips mock implementations between tests so any test
@@ -1046,17 +1149,9 @@ describe('buildDiscoverUrlsAsync', () => {
   afterEach(() => vi.resetAllMocks());
 
   it('returns Trade Me search URLs for AI-selected categories', async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics'],
-          searchLabel: 'laptops',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(
-        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
-      );
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+    );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
@@ -1071,17 +1166,9 @@ describe('buildDiscoverUrlsAsync', () => {
   });
 
   it('applies maxPrice to the generated URL', async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics'],
-          searchLabel: 'l',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(
-        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
-      );
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+    );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 800,
@@ -1094,17 +1181,9 @@ describe('buildDiscoverUrlsAsync', () => {
   });
 
   it('returns an empty warnings array on full success', async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics'],
-          searchLabel: 'l',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(
-        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
-      );
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+    );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
@@ -1116,16 +1195,8 @@ describe('buildDiscoverUrlsAsync', () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it('accumulates a warning for a step-2 null response and throws only when no URLs result', async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics'],
-          searchLabel: 'l',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(aiJsonOk(null));
+  it('throws when the AI response is null', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk(null));
 
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
@@ -1135,60 +1206,11 @@ describe('buildDiscoverUrlsAsync', () => {
         includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
-    ).rejects.toThrow('AI returned no valid specific categories');
+    ).rejects.toThrow('discover: expected object response with categories array');
   });
 
-  it('preserves valid categories from other step-2 calls when one returns null', async () => {
-    const MOCK_TWO_BROAD = [
-      { display: 'Electronics', slug: 'electronics/electronics' },
-      { display: 'Computers', slug: 'computers/computers' },
-    ];
-    const MOCK_TWO_SUBS = [{ display: 'Laptops', slug: 'computers/laptops' }];
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
-      fakeCategoriesAtDepth2Statement(MOCK_TWO_BROAD)
-    );
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
-      fakeCategoriesByTop2Statement((top2Slug) => {
-        expect(['electronics/electronics', 'computers/computers']).toContain(top2Slug);
-        return MOCK_TWO_SUBS;
-      })
-    );
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics', 'Computers'],
-          searchLabel: 'laptops',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(aiJsonOk(null))
-      .mockResolvedValueOnce(
-        aiJsonOk({ categories: [{ slug: 'computers/laptops', searchString: null }] })
-      );
-
-    const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
-      maxPrice: 0,
-      fulfillment: 'any',
-      includeSoldItems: false,
-      includeNewItems: false,
-      getAiConfig: () => MOCK_AI,
-    });
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain('step2:electronics/electronics');
-    expect(result.urls).toHaveLength(1);
-    expect(result.urls[0]).toContain('computers/laptops');
-  });
-
-  it('accumulates a warning for a step-2 malformed response and throws only when no URLs result', async () => {
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics'],
-          searchLabel: 'l',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(aiJsonOk({ notCategories: [] }));
+  it('throws when the AI response is malformed (missing categories array)', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ notCategories: [] }));
 
     await expect(
       trademeRecipe.buildDiscoverUrlsAsync('laptop', {
@@ -1198,36 +1220,36 @@ describe('buildDiscoverUrlsAsync', () => {
         includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
-    ).rejects.toThrow('AI returned no valid specific categories');
+    ).rejects.toThrow('discover: expected object response with categories array');
   });
 
-  it('filters out unrecognised step-1 slugs, adds a warning, and continues with valid ones', async () => {
-    const MOCK_TWO_BROAD = [
-      { display: 'Electronics', slug: 'electronics/electronics' },
-      { display: 'Computers', slug: 'computers/computers' },
+  it('filters out unrecognised slugs, adds a warning, and continues with valid ones', async () => {
+    const TWO_CATEGORIES: CategoryWithEmbeddingRow[] = [
+      {
+        slug: 'electronics/laptops',
+        display: 'Laptops',
+        embedding: JSON.stringify([1, 0]),
+        embedding_model: EMBEDDING_MODEL,
+      },
+      {
+        slug: 'computers/laptops',
+        display: 'Computer laptops',
+        embedding: JSON.stringify([0.9, 0.1]),
+        embedding_model: EMBEDDING_MODEL,
+      },
     ];
-    const MOCK_TWO_SUBS = [{ display: 'Laptops', slug: 'electronics/laptops' }];
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
-      fakeCategoriesAtDepth2Statement(MOCK_TWO_BROAD)
+    vi.mocked(stmtGetAllCategoriesWithEmbeddings).mockReturnValue(
+      fakeCategoriesWithEmbeddingsStatement(TWO_CATEGORIES)
     );
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
-      fakeCategoriesByTop2Statement((top2Slug) => {
-        expect(top2Slug).toBe('electronics/electronics');
-        return MOCK_TWO_SUBS;
+    // AI returns one valid category and one hallucinated one that doesn't exist in the shortlist
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({
+        categories: [
+          { slug: 'electronics/laptops', searchString: null },
+          { slug: 'hallucinated-slug', searchString: null },
+        ],
       })
     );
-    // AI returns one valid category and one hallucinated one that doesn't exist in MOCK_TWO_BROAD
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics', 'Hallucinated Category'],
-          searchLabel: 'laptops',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(
-        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
-      );
 
     const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
@@ -1237,17 +1259,18 @@ describe('buildDiscoverUrlsAsync', () => {
       getAiConfig: () => MOCK_AI,
     });
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain('Hallucinated Category');
+    expect(result.warnings[0]).toContain('hallucinated-slug');
     expect(result.urls).toHaveLength(1);
     expect(result.urls[0]).toContain('electronics/laptops');
   });
 
-  it('throws when all step-1 categories are unrecognised (zero valid slugs)', async () => {
+  it('throws when all AI-selected categories are unrecognised (zero valid slugs)', async () => {
     vi.mocked(aiJSON).mockResolvedValueOnce(
       aiJsonOk({
-        categories: ['Hallucinated Category A', 'Hallucinated Category B'],
-        searchLabel: 'laptops',
-        searchQuery: 'laptop',
+        categories: [
+          { slug: 'hallucinated-a', searchString: null },
+          { slug: 'hallucinated-b', searchString: null },
+        ],
       })
     );
 
@@ -1259,42 +1282,14 @@ describe('buildDiscoverUrlsAsync', () => {
         includeNewItems: false,
         getAiConfig: () => MOCK_AI,
       })
-    ).rejects.toThrow('AI returned no valid broad categories');
+    ).rejects.toThrow('AI returned no valid categories');
   });
 
-  it('re-resolves getAiConfig() before each step-2 call, so a rotated provider is used for later slugs', async () => {
-    const MOCK_TWO_BROAD = [
-      { display: 'Electronics', slug: 'electronics/electronics' },
-      { display: 'Computers', slug: 'computers/computers' },
-    ];
-    const MOCK_TWO_SUBS = [{ display: 'Laptops', slug: 'electronics/laptops' }];
-    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue(
-      fakeCategoriesAtDepth2Statement(MOCK_TWO_BROAD)
+  it('resolves getAiConfig() exactly once for the single AI call', async () => {
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
     );
-    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue(
-      fakeCategoriesByTop2Statement(() => MOCK_TWO_SUBS)
-    );
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics', 'Computers'],
-          searchLabel: 'laptops',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce(
-        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
-      )
-      .mockResolvedValueOnce(
-        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
-      );
-
-    const ROTATED_AI = { ...MOCK_AI, providerKey: 'rotated' };
-    const getAiConfig = vi
-      .fn()
-      .mockReturnValueOnce(MOCK_AI) // step 1
-      .mockReturnValueOnce(MOCK_AI) // step 2, first slug
-      .mockReturnValueOnce(ROTATED_AI); // step 2, second slug — provider rotated mid-pipeline
+    const getAiConfig = vi.fn().mockReturnValue(MOCK_AI);
 
     await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
       maxPrice: 0,
@@ -1304,12 +1299,10 @@ describe('buildDiscoverUrlsAsync', () => {
       getAiConfig,
     });
 
-    expect(getAiConfig).toHaveBeenCalledTimes(3);
-    expect(vi.mocked(aiJSON).mock.calls[1][0]).toBe(MOCK_AI);
-    expect(vi.mocked(aiJSON).mock.calls[2][0]).toBe(ROTATED_AI);
+    expect(getAiConfig).toHaveBeenCalledTimes(1);
   });
 
-  it("marks the resolved config's cooldown store exhausted and propagates the error when step1 is rate-limited", async () => {
+  it("marks the resolved config's cooldown store exhausted and propagates the error when the AI call is rate-limited", async () => {
     const markExhausted = vi.fn();
     const rateLimitedAiConfig = {
       ...MOCK_AI,
@@ -1320,7 +1313,7 @@ describe('buildDiscoverUrlsAsync', () => {
       kind: 'rate-limited',
       providerKey: 'mock',
       cooldownUntilMs,
-      message: 'AI rate limited (step1): provider asks to retry',
+      message: 'AI rate limited (discover-categories): provider asks to retry',
     });
 
     await expect(
@@ -1331,59 +1324,220 @@ describe('buildDiscoverUrlsAsync', () => {
         includeNewItems: false,
         getAiConfig: () => rateLimitedAiConfig,
       })
-    ).rejects.toThrow('AI rate limited (step1)');
+    ).rejects.toThrow('AI rate limited (discover-categories)');
 
     expect(markExhausted).toHaveBeenCalledWith('mock', cooldownUntilMs);
   });
 
-  it("marks the resolved config's cooldown store exhausted and propagates the error when a step2 call is rate-limited", async () => {
-    const markExhausted = vi.fn();
-    const rateLimitedAiConfig = {
-      ...MOCK_AI,
-      cooldownStore: { markExhausted, getCooldownUntil: () => undefined },
-    };
-    const cooldownUntilMs = Date.now() + 60_000;
-    vi.mocked(aiJSON)
-      .mockResolvedValueOnce(
-        aiJsonOk({
-          categories: ['Electronics'],
-          searchLabel: 'laptops',
-          searchQuery: 'laptop',
-        })
-      )
-      .mockResolvedValueOnce({
-        kind: 'rate-limited',
-        providerKey: 'mock',
-        cooldownUntilMs,
-        message: 'AI rate limited (step2:electronics/electronics): provider asks to retry',
-      });
+  describe('root search probe', () => {
+    it('starts AI category resolution synchronously alongside the probe, not after it settles', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+      const enqueuedUrlCountBefore = enqueuedUrls.length;
 
-    await expect(
-      trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+      // Deliberately not awaited yet: buildDiscoverUrlsAsync runs synchronously up to
+      // its first await, so if the probe and AI resolution are kicked off together
+      // (rather than the AI call waiting on the probe's result), both of their
+      // synchronous prefixes — the probe's enqueue() call and AI resolution's
+      // embedTextAsync() call — must already have fired by the time this line returns.
+      const resultPromise = trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
         maxPrice: 0,
         fulfillment: 'any',
         includeSoldItems: false,
         includeNewItems: false,
-        getAiConfig: () => rateLimitedAiConfig,
-      })
-    ).rejects.toThrow('AI rate limited (step2:electronics/electronics)');
+        getAiConfig: () => MOCK_AI,
+      });
 
-    expect(markExhausted).toHaveBeenCalledWith('mock', cooldownUntilMs);
+      expect(enqueuedUrls.length).toBeGreaterThan(enqueuedUrlCountBefore);
+      expect(embedTextAsync).toHaveBeenCalledTimes(1);
+
+      // The probe still wins: its narrow root URL is returned, and AI resolution's
+      // (in-flight or since-completed) result is discarded rather than surfacing.
+      const result = await resultPromise;
+      expect(result.urls).toHaveLength(1);
+      const url = new URL(result.urls[0]);
+      expect(url.pathname).toBe('/a/marketplace/search');
+      expect(url.searchParams.get('search_string')).toBe('fisher price music box');
+    });
+
+    it('returns the root URL only and skips using AI category selection when totalCount is small', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1);
+      const url = new URL(result.urls[0]);
+      expect(url.pathname).toBe('/a/marketplace/search');
+      expect(url.searchParams.get('search_string')).toBe('fisher price music box');
+      // AI category resolution now runs concurrently with the probe rather than being
+      // skipped outright — it still fires, its result is just discarded once the probe hits.
+      expect(embedTextAsync).toHaveBeenCalled();
+    });
+
+    it('falls through to the AI category path when totalCount is zero', async () => {
+      resetPageQueue({ TotalCount: 0, PageSize: 25, List: [] });
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls[0]).toContain('electronics/laptops');
+    });
+
+    it('uses the root URL at the threshold boundary (totalCount === 50)', async () => {
+      resetPageQueue({ TotalCount: ROOT_SEARCH_RESULT_THRESHOLD, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('lamp', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1);
+      expect(new URL(result.urls[0]).pathname).toBe('/a/marketplace/search');
+    });
+
+    it('falls through to the AI category path just above the threshold (totalCount === 51)', async () => {
+      resetPageQueue({ TotalCount: ROOT_SEARCH_RESULT_THRESHOLD + 1, PageSize: 25, List: [] });
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('lamp', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls[0]).toContain('electronics/laptops');
+    });
+
+    it('falls back to the AI category path when the probe fetch fails, without throwing', async () => {
+      resetPageQueue(PROBE_FETCH_FAILURE);
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('lamp', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls[0]).toContain('electronics/laptops');
+      expect(result.warnings.some((w) => w.includes('root search probe failed'))).toBe(true);
+    });
+
+    it('builds both used and new root URLs when includeNewItems is true and the root path wins', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
+    });
+
+    it('probes a single condition-less (combined new+used) URL when includeNewItems is true', async () => {
+      resetPageQueue({ TotalCount: 80, PageSize: 25, List: [] });
+      const enqueuedUrlCountBefore = enqueuedUrls.length;
+
+      await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      const newlyEnqueued = enqueuedUrls.slice(enqueuedUrlCountBefore);
+      expect(newlyEnqueued).toHaveLength(1);
+      expect(new URL(newlyEnqueued[0]).searchParams.has('condition')).toBe(false);
+    });
+
+    it('uses the root path at the combined threshold boundary (totalCount === 100) when includeNewItems is true', async () => {
+      resetPageQueue({ TotalCount: ROOT_SEARCH_COMBINED_RESULT_THRESHOLD, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(2);
+      expect(result.urls.some((u) => u.includes('condition=used'))).toBe(true);
+      expect(result.urls.some((u) => u.includes('condition=new'))).toBe(true);
+    });
+
+    it('falls through to the AI category path just above the combined threshold (totalCount === 101) when includeNewItems is true', async () => {
+      resetPageQueue({
+        TotalCount: ROOT_SEARCH_COMBINED_RESULT_THRESHOLD + 1,
+        PageSize: 25,
+        List: [],
+      });
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: false,
+        includeNewItems: true,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls.some((u) => u.includes('electronics/laptops'))).toBe(true);
+    });
+
+    it('skips sold-item URLs and pushes a warning when includeSoldItems is true and the root path wins', async () => {
+      resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      expect(result.urls).toHaveLength(1);
+      expect(vi.mocked(stmtGetCategoryLegacyPath)).not.toHaveBeenCalled();
+      expect(result.warnings.some((w) => w.toLowerCase().includes('sold'))).toBe(true);
+    });
   });
 
   describe('includeSoldItems', () => {
     beforeEach(() => {
-      vi.mocked(aiJSON)
-        .mockResolvedValueOnce(
-          aiJsonOk({
-            categories: ['Electronics'],
-            searchLabel: 'laptops',
-            searchQuery: 'laptop',
-          })
-        )
-        .mockResolvedValueOnce(
-          aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
-        );
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
+      );
     });
 
     it('does not build legacy sold-item URLs when false', async () => {
@@ -1439,17 +1593,9 @@ describe('buildDiscoverUrlsAsync', () => {
 
   describe('includeNewItems', () => {
     beforeEach(() => {
-      vi.mocked(aiJSON)
-        .mockResolvedValueOnce(
-          aiJsonOk({
-            categories: ['Electronics'],
-            searchLabel: 'laptops',
-            searchQuery: 'laptop',
-          })
-        )
-        .mockResolvedValueOnce(
-          aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
-        );
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: 'macbook pro' }] })
+      );
     });
 
     it('builds a single condition=used URL per resolved category when false', async () => {

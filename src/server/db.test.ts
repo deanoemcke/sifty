@@ -10,6 +10,7 @@ import {
   stmtClearDetailsForUrl,
   stmtClearSearchForUrl,
   stmtCountAlertsForSavedSearch,
+  stmtGetCategoryEmbeddingCoverage,
   stmtGetDetail,
   stmtGetOldestAlertEnabledSavedSearch,
   stmtGetSavedSearchByName,
@@ -176,17 +177,148 @@ describe('initSchema', () => {
     expect(rows.find((r) => r.id === 'newer')?.name).toBe('Duplicate name (newer)');
   });
 
+  it('trademe_categories has an embedding column, added idempotently, when migrating an existing on-disk database', () => {
+    // Simulates a pre-migration on-disk schema — no embedding column yet.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE trademe_categories (
+        slug        TEXT PRIMARY KEY,
+        display     TEXT NOT NULL,
+        depth       INTEGER NOT NULL,
+        parent_slug TEXT,
+        legacy_path TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path) VALUES (?, ?, ?, ?, ?)'
+    ).run('electronics', 'Electronics', 1, null, '0124-');
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding');
+
+    const row = db
+      .prepare<[string], { slug: string; embedding: string | null }>(
+        'SELECT slug, embedding FROM trademe_categories WHERE slug = ?'
+      )
+      .get('electronics');
+    expect(row?.embedding).toBeNull();
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding');
+  });
+
+  it('trademe_categories has an embedding_model column, added idempotently, when migrating an existing on-disk database', () => {
+    // Simulates a pre-migration on-disk schema — embedding column exists, embedding_model doesn't.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE trademe_categories (
+        slug        TEXT PRIMARY KEY,
+        display     TEXT NOT NULL,
+        depth       INTEGER NOT NULL,
+        parent_slug TEXT,
+        legacy_path TEXT NOT NULL,
+        embedding   TEXT
+      );
+    `);
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path, embedding) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('electronics', 'Electronics', 1, null, '0124-', '[0.1,0.2]');
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding_model');
+
+    const row = db
+      .prepare<[string], { slug: string; embedding_model: string | null }>(
+        'SELECT slug, embedding_model FROM trademe_categories WHERE slug = ?'
+      )
+      .get('electronics');
+    expect(row?.embedding_model).toBeNull();
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding_model');
+  });
+
+  it('trademe_categories drops the legacy top2 column, idempotently, when migrating an existing on-disk database', () => {
+    // Simulates a pre-migration on-disk schema — top2 column still present.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE trademe_categories (
+        slug        TEXT PRIMARY KEY,
+        display     TEXT NOT NULL,
+        depth       INTEGER NOT NULL,
+        parent_slug TEXT,
+        top2        TEXT NOT NULL,
+        legacy_path TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('electronics', 'Electronics', 1, null, 'electronics', '0124-');
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).not.toContain('top2');
+
+    const row = db
+      .prepare<[string], { slug: string; legacy_path: string }>(
+        'SELECT slug, legacy_path FROM trademe_categories WHERE slug = ?'
+      )
+      .get('electronics');
+    expect(row?.legacy_path).toBe('0124-');
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).not.toContain('top2');
+  });
+
   it('preserves existing data when called on an existing database', () => {
     const db = new Database(':memory:');
     initSchema(db);
     db.prepare(
-      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run('electronics', 'Electronics', 1, null, 'electronics', '0124-');
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path) VALUES (?, ?, ?, ?, ?)'
+    ).run('electronics', 'Electronics', 1, null, '0124-');
     initSchema(db);
     const count = db
       .prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories')
       .get()?.n;
     expect(count).toBe(1);
+  });
+});
+
+describe('stmtGetCategoryEmbeddingCoverage', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  function insertCategory(
+    db: Database.Database,
+    slug: string,
+    embedding: string | null,
+    embeddingModel: string | null
+  ): void {
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(slug, slug, 1, null, `legacy/${slug}`, embedding, embeddingModel);
+  }
+
+  it('reports total 0 and embedded 0 for an empty table', () => {
+    const db = freshDb();
+    expect(stmtGetCategoryEmbeddingCoverage(db).get('gemini-embedding-001')).toEqual({
+      total: 0,
+      embedded: 0,
+    });
+  });
+
+  it('counts only rows whose embedding is non-null and whose embedding_model matches the given model', () => {
+    const db = freshDb();
+    insertCategory(db, 'current', '[1,0]', 'gemini-embedding-001');
+    insertCategory(db, 'stale-model', '[0,1]', 'old-model');
+    insertCategory(db, 'never-embedded', null, null);
+
+    expect(stmtGetCategoryEmbeddingCoverage(db).get('gemini-embedding-001')).toEqual({
+      total: 3,
+      embedded: 1,
+    });
   });
 });
 

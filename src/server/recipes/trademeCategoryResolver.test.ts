@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiConfig, ProviderCooldownStore } from '../../lib/recipes/base';
 
 let _testDb: Database.Database | null = null;
@@ -24,25 +24,36 @@ vi.mock('../ai', async (importOriginal) => {
   return { ...actual, aiJSON: vi.fn() };
 });
 
+// Only `embedTextAsync` is faked — `cosineSimilarity` stays real so ranking
+// behaviour under test is the actual implementation.
+vi.mock('../embeddings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../embeddings')>();
+  return { ...actual, embedTextAsync: vi.fn() };
+});
+
 import { aiJSON } from '../ai';
 import { initSchema } from '../db';
+import { EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 import {
+  assertCategoryEmbeddingCoverage,
+  CATEGORY_SYSTEM_PROMPT,
+  type CachedCategoryEmbedding,
   collapseEntries,
   type DiscoverEntry,
-  extractSearchKeywords,
+  invalidateCategoryEmbeddingsCache,
+  rankCategoriesBySimilarity,
   resolveDiscoverCategoriesAsync,
-  STEP2_SYSTEM_PROMPT,
 } from './trademeCategoryResolver';
 
-describe('STEP2_SYSTEM_PROMPT', () => {
+describe('CATEGORY_SYSTEM_PROMPT', () => {
   it('contains the required JSON schema keywords for the AI response contract', () => {
-    expect(STEP2_SYSTEM_PROMPT).toContain('"categories"');
-    expect(STEP2_SYSTEM_PROMPT).toContain('"slug"');
-    expect(STEP2_SYSTEM_PROMPT).toContain('"searchString"');
+    expect(CATEGORY_SYSTEM_PROMPT).toContain('"categories"');
+    expect(CATEGORY_SYSTEM_PROMPT).toContain('"slug"');
+    expect(CATEGORY_SYSTEM_PROMPT).toContain('"searchString"');
   });
 
   it('instructs the AI to return JSON', () => {
-    expect(STEP2_SYSTEM_PROMPT).toContain('Return JSON');
+    expect(CATEGORY_SYSTEM_PROMPT).toContain('Return JSON');
   });
 });
 
@@ -169,32 +180,31 @@ describe('collapseEntries', () => {
   });
 });
 
-// ── extractSearchKeywords ──────────────────────────────────────────────────
+// ── rankCategoriesBySimilarity ─────────────────────────────────────────────
 
-describe('extractSearchKeywords', () => {
-  it('extracts a single word', () => {
-    expect(extractSearchKeywords('ladder')).toEqual(['ladder']);
+function embeddedCategory(
+  slug: string,
+  display: string,
+  embedding: number[] | null
+): CachedCategoryEmbedding {
+  return { slug, display, embedding };
+}
+
+describe('rankCategoriesBySimilarity', () => {
+  it('sorts by similarity descending and truncates to the shortlist size', () => {
+    const categories = [
+      embeddedCategory('a', 'A', [1, 0]),
+      embeddedCategory('b', 'B', [0.9, 0.1]),
+      embeddedCategory('c', 'C', [0, 1]),
+    ];
+    const result = rankCategoriesBySimilarity(categories, [1, 0], 2);
+    expect(result.map((c) => c.slug)).toEqual(['a', 'b']);
   });
 
-  it('drops words shorter than 4 characters', () => {
-    expect(extractSearchKeywords('I want a ladder')).toEqual(['want', 'ladder']);
-  });
-
-  it('lowercases words', () => {
-    expect(extractSearchKeywords('LADDER')).toEqual(['ladder']);
-  });
-
-  it('de-duplicates repeated words', () => {
-    expect(extractSearchKeywords('ladder ladder')).toEqual(['ladder']);
-  });
-
-  it('ignores punctuation and digits', () => {
-    expect(extractSearchKeywords('macbook-laptop (2021)!')).toEqual(['macbook', 'laptop']);
-  });
-
-  it('caps the number of keywords returned', () => {
-    const words = ['able', 'baker', 'coder', 'delta', 'eagle', 'fable', 'gable', 'haste', 'igloo'];
-    expect(extractSearchKeywords(words.join(' '))).toEqual(words.slice(0, 8));
+  it('excludes categories with a null embedding', () => {
+    const categories = [embeddedCategory('a', 'A', [1, 0]), embeddedCategory('b', 'B', null)];
+    const result = rankCategoriesBySimilarity(categories, [1, 0], 10);
+    expect(result.map((c) => c.slug)).toEqual(['a']);
   });
 });
 
@@ -218,12 +228,13 @@ type SeedCategory = {
   display: string;
   depth: number;
   parentSlug: string | null;
-  top2: string;
+  embedding: number[];
+  embeddingModel?: string;
 };
 
 function seedCategories(db: Database.Database, categories: SeedCategory[]): void {
   const insert = db.prepare(
-    'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
   for (const category of categories) {
     insert.run(
@@ -231,15 +242,20 @@ function seedCategories(db: Database.Database, categories: SeedCategory[]): void
       category.display,
       category.depth,
       category.parentSlug,
-      category.top2,
-      `legacy/${category.slug}`
+      `legacy/${category.slug}`,
+      JSON.stringify(category.embedding),
+      category.embeddingModel ?? EMBEDDING_MODEL
     );
   }
 }
 
-// Reproduces the reported bug: step 1 (mocked below) picks the plausible-but-wrong
-// "Tools" sibling for the prompt "ladder", so the correct "Ladders" leaf lives under
-// a completely different branch ("Building supplies") that step 1 never selected.
+// Reproduces the reported bug: with the old two-step design, step 1 had to guess a
+// broad bucket ("Tools") before ever seeing "Ladders", so the correct leaf — which
+// lives under a completely different branch ("Building supplies") — was structurally
+// unreachable except via a literal keyword-match coincidence. With the embedding
+// pre-filter there is no broad-bucket guess: "ladder" embeds close to the leaf and its
+// ancestor regardless of which top-level branch they sit under, so both surface
+// directly in the shortlist passed to the single AI call.
 function seedLadderBugFixture(db: Database.Database): void {
   seedCategories(db, [
     {
@@ -247,108 +263,350 @@ function seedLadderBugFixture(db: Database.Database): void {
       display: 'Building & renovation > Tools',
       depth: 2,
       parentSlug: 'building-renovation',
-      top2: 'building-renovation/tools',
+      embedding: [0, 1],
     },
     {
       slug: 'building-renovation/tools/hand-tools',
       display: 'Building & renovation > Tools > Hand tools',
       depth: 3,
       parentSlug: 'building-renovation/tools',
-      top2: 'building-renovation/tools',
+      embedding: [0, 1],
     },
     {
       slug: 'building-renovation/building-supplies',
       display: 'Building & renovation > Building supplies',
       depth: 2,
       parentSlug: 'building-renovation',
-      top2: 'building-renovation/building-supplies',
+      embedding: [0.2, 0.8],
     },
     {
       slug: 'building-renovation/building-supplies/scaffolding-ladders',
       display: 'Building & renovation > Building supplies > Scaffolding & ladders',
       depth: 3,
       parentSlug: 'building-renovation/building-supplies',
-      top2: 'building-renovation/building-supplies',
+      embedding: [0.9, 0.1],
     },
     {
       slug: 'building-renovation/building-supplies/scaffolding-ladders/ladders',
       display: 'Building & renovation > Building supplies > Scaffolding & ladders > Ladders',
       depth: 4,
       parentSlug: 'building-renovation/building-supplies/scaffolding-ladders',
-      top2: 'building-renovation/building-supplies',
+      embedding: [1, 0],
     },
   ]);
 }
 
-function mockAiJsonForLadderBugFixture(searchQuery: string | null = null): void {
-  vi.mocked(aiJSON).mockImplementation(async (_config, label) => {
-    if (label === 'step1') {
-      return {
-        kind: 'ok',
-        value: {
-          categories: ['Building & renovation > Tools'],
-          searchLabel: 'ladder',
-          searchQuery,
-        },
-      };
-    }
-    if (label === 'step2:building-renovation/tools') {
-      return {
-        kind: 'ok',
-        value: {
-          categories: [{ slug: 'building-renovation/tools/hand-tools', searchString: null }],
-        },
-      };
-    }
-    throw new Error(`unexpected aiJSON label in test: ${label}`);
-  });
+function aiJsonOk(value: unknown) {
+  return { kind: 'ok' as const, value };
 }
 
 describe('resolveDiscoverCategoriesAsync', () => {
-  it('finds the ladders branch via keyword match even when step 1 picks the wrong broad category', async () => {
+  // The categories-with-embeddings table is now cached at module scope (see
+  // loadCategoryEmbeddingsCache in trademeCategoryResolver.ts) — each test below seeds a
+  // fresh in-memory DB, so the cache from a previous test must not leak into the next one.
+  beforeEach(() => {
+    invalidateCategoryEmbeddingsCache();
+  });
+
+  it('surfaces the ladders branch directly via the embedding shortlist, with a single AI call and no broad-bucket guess', async () => {
     const db = new Database(':memory:');
     initSchema(db);
     _testDb = db;
     seedLadderBugFixture(db);
-    mockAiJsonForLadderBugFixture();
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({
+        categories: [
+          {
+            slug: 'building-renovation/building-supplies/scaffolding-ladders',
+            searchString: null,
+          },
+        ],
+      })
+    );
 
     const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
 
-    // The deeper "Ladders" leaf and its "Scaffolding & ladders" parent both match the
-    // keyword; collapseEntries' existing parent-wins rule keeps the shallower one.
     expect(entries.map((e) => e.slug)).toContain(
+      'building-renovation/building-supplies/scaffolding-ladders'
+    );
+    expect(vi.mocked(aiJSON)).toHaveBeenCalledTimes(1);
+    // The candidate list handed to the single AI call includes both branches — proof
+    // the embedding shortlist isn't gated behind a wrong broad-bucket pick.
+    const [, , , userMessage] = vi.mocked(aiJSON).mock.calls[0];
+    expect(userMessage).toContain('Building & renovation > Tools');
+    expect(userMessage).toContain('Scaffolding & ladders');
+  });
+
+  it('filters out AI-hallucinated slugs not present in the shortlist and warns', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({
+        categories: [
+          {
+            slug: 'building-renovation/building-supplies/scaffolding-ladders',
+            searchString: null,
+          },
+          { slug: 'not-a-real-category', searchString: null },
+        ],
+      })
+    );
+
+    const { entries, warnings } = await resolveDiscoverCategoriesAsync(
+      'ladder',
+      () => MOCK_AI_CONFIG
+    );
+
+    expect(entries.map((e) => e.slug)).toEqual([
+      'building-renovation/building-supplies/scaffolding-ladders',
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('not-a-real-category');
+  });
+
+  it('throws when the AI selects zero valid categories', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(aiJsonOk({ categories: [] }));
+
+    await expect(resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG)).rejects.toThrow(
+      'AI returned no valid categories'
+    );
+  });
+
+  it('throws when no categories in the DB have an embedding yet', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedCategories(db, [
+      {
+        slug: 'building-renovation/tools',
+        display: 'Building & renovation > Tools',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        embedding: [0, 1],
+      },
+    ]);
+    // Overwrite the seeded embedding with NULL to simulate a pre-backfill DB.
+    db.prepare('UPDATE trademe_categories SET embedding = NULL').run();
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+
+    await expect(resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG)).rejects.toThrow(
+      'no embedded categories available'
+    );
+  });
+
+  // PR #41 review (Data #3, QA #2, expanded): a stale embedding_model tag means the stored
+  // vector came from a previous EMBEDDING_MODEL — comparing it against a current-model prompt
+  // embedding could silently corrupt ranking (worse, with no error, if dimensions happen to
+  // match). Excluding it entirely — same treatment as a null embedding — guarantees the
+  // resolver never compares vectors across models, even mid-migration.
+  it('excludes a category whose embedding_model does not match the current model, same as a null embedding', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedCategories(db, [
+      {
+        slug: 'building-renovation/tools',
+        display: 'Building & renovation > Tools',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        embedding: [1, 0],
+      },
+      {
+        slug: 'building-renovation/building-supplies/scaffolding-ladders',
+        display: 'Building & renovation > Building supplies > Ladders',
+        depth: 3,
+        parentSlug: 'building-renovation/building-supplies',
+        embedding: [0, 1],
+        embeddingModel: 'stale-model-v0',
+      },
+    ]);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'building-renovation/tools', searchString: null }] })
+    );
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(entries.map((e) => e.slug)).not.toContain(
       'building-renovation/building-supplies/scaffolding-ladders'
     );
   });
 
-  it('adds the keyword-matched branch directly instead of routing it through step 2', async () => {
+  // PR #41 review (Data #3): a single malformed embedding row must not take down the whole
+  // discover request — it should be skipped, same as a null embedding, not thrown.
+  it('skips a category with malformed embedding JSON instead of throwing', async () => {
     const db = new Database(':memory:');
     initSchema(db);
     _testDb = db;
-    seedLadderBugFixture(db);
-    mockAiJsonForLadderBugFixture();
+    seedCategories(db, [
+      {
+        slug: 'building-renovation/tools',
+        display: 'Building & renovation > Tools',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        embedding: [1, 0],
+      },
+    ]);
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      'building-renovation/building-supplies/scaffolding-ladders',
+      'Building & renovation > Building supplies > Ladders',
+      3,
+      'building-renovation/building-supplies',
+      'legacy/scaffolding-ladders',
+      'not valid json',
+      EMBEDDING_MODEL
+    );
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'building-renovation/tools', searchString: null }] })
+    );
 
     const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
 
-    const calledLabels = vi.mocked(aiJSON).mock.calls.map((call) => call[1]);
-    expect(calledLabels).not.toContain('step2:building-renovation/building-supplies');
-    expect(entries.map((e) => e.slug)).toContain(
+    expect(entries.map((e) => e.slug)).toContain('building-renovation/tools');
+    expect(entries.map((e) => e.slug)).not.toContain(
       'building-renovation/building-supplies/scaffolding-ladders'
     );
   });
 
-  it("uses step 1's searchQuery as the searchString for keyword-matched entries", async () => {
+  // Backend/QA review of PR #41: embedTextAsync has no retry or fallback (by design —
+  // see embeddings.ts), so a Gemini failure must at least surface as a diagnosable error
+  // rather than an opaque provider message, consistent with this function's other thrown
+  // errors above. discover.ts's Promise.allSettled already keeps this from crashing the
+  // whole discover request; this pins the error's shape so it's actionable when it hits
+  // logs/warnings.
+  it('wraps an embedTextAsync failure in a diagnosable error instead of leaking the raw provider error', async () => {
     const db = new Database(':memory:');
     initSchema(db);
     _testDb = db;
     seedLadderBugFixture(db);
-    mockAiJsonForLadderBugFixture('extension ladder');
-
-    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
-
-    const keywordMatchedEntry = entries.find(
-      (e) => e.slug === 'building-renovation/building-supplies/scaffolding-ladders'
+    vi.mocked(embedTextAsync).mockRejectedValue(
+      new Error('Gemini embedContent failed [429]: quota exceeded')
     );
-    expect(keywordMatchedEntry?.searchString).toBe('extension ladder');
+    vi.mocked(aiJSON).mockClear();
+
+    await expect(resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG)).rejects.toThrow(
+      'discover: category embedding unavailable — Gemini embedContent failed [429]: quota exceeded'
+    );
+    expect(vi.mocked(aiJSON)).not.toHaveBeenCalled();
+  });
+
+  // Backend review of PR #41 (Future Ticket #1): the categories-with-embeddings table only
+  // changes via offline backfill scripts, so re-reading and re-parsing the full table on
+  // every discover request is wasted work. This pins the in-process cache: the DB is read
+  // (and each row's embedding JSON parsed) at most once across repeated calls.
+  function countCategoryTableReads(prepareSpy: ReturnType<typeof vi.spyOn>): number {
+    return prepareSpy.mock.calls.filter(([sql]: [string]) =>
+      sql.includes('FROM trademe_categories')
+    ).length;
+  }
+
+  it('reads the categories-with-embeddings table from the DB only once across repeated calls', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValue(
+      aiJsonOk({
+        categories: [
+          {
+            slug: 'building-renovation/building-supplies/scaffolding-ladders',
+            searchString: null,
+          },
+        ],
+      })
+    );
+    const prepareSpy = vi.spyOn(db, 'prepare');
+
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(countCategoryTableReads(prepareSpy)).toBe(1);
+  });
+
+  it('invalidateCategoryEmbeddingsCache forces a fresh DB read on the next call', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValue(
+      aiJsonOk({
+        categories: [
+          {
+            slug: 'building-renovation/building-supplies/scaffolding-ladders',
+            searchString: null,
+          },
+        ],
+      })
+    );
+    const prepareSpy = vi.spyOn(db, 'prepare');
+
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+    invalidateCategoryEmbeddingsCache();
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(countCategoryTableReads(prepareSpy)).toBe(2);
+  });
+});
+
+// ── assertCategoryEmbeddingCoverage ─────────────────────────────────────────
+
+// PR #41 review (Data #2): a partially-completed embedding backfill silently makes some
+// categories unreachable via AI category selection, with zero signal anything is degraded.
+// Per the user's direction, this is enforced at server boot rather than as a per-request
+// warning — the app should refuse to start rather than silently serve degraded discovery.
+describe('assertCategoryEmbeddingCoverage', () => {
+  it('throws naming the import script when the categories table is empty', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+
+    expect(() => assertCategoryEmbeddingCoverage(db)).toThrow(/import-categories\.ts/);
+  });
+
+  it('throws naming the backfill script and the missing count when some categories lack a current-model embedding', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    seedCategories(db, [
+      {
+        slug: 'building-renovation/tools',
+        display: 'Building & renovation > Tools',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        embedding: [1, 0],
+      },
+      {
+        slug: 'building-renovation/building-supplies',
+        display: 'Building & renovation > Building supplies',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        embedding: [0, 1],
+        embeddingModel: 'stale-model-v0',
+      },
+    ]);
+
+    expect(() => assertCategoryEmbeddingCoverage(db)).toThrow(
+      /1\/2 categories.*embed-categories\.ts/
+    );
+  });
+
+  it('does not throw when every category has a current-model embedding', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    seedLadderBugFixture(db);
+
+    expect(() => assertCategoryEmbeddingCoverage(db)).not.toThrow();
   });
 });

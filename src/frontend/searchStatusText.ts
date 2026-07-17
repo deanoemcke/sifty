@@ -31,7 +31,7 @@ export function progressText(progress: QuickSearchProgress): string {
     case 'paging':
       return progress.totalPages === undefined
         ? `Fetching page ${progress.page}…`
-        : `Fetching page ${progress.page}/${progress.totalPages}…`;
+        : `Fetching page ${progress.page}/${progress.totalPages}`;
     case 'collecting':
       return `Found ${listingsCountText(progress.foundSoFar)}${progress.isLoadingMore ? ', loading more…' : '…'}`;
   }

@@ -37,8 +37,9 @@ export function initSchema(database: Database.Database): void {
       display     TEXT NOT NULL,
       depth       INTEGER NOT NULL,
       parent_slug TEXT,
-      top2        TEXT NOT NULL,
-      legacy_path TEXT NOT NULL
+      legacy_path TEXT NOT NULL,
+      embedding   TEXT,
+      embedding_model TEXT
     );
     CREATE TABLE IF NOT EXISTS alerted_listings (
       saved_search_id TEXT NOT NULL,
@@ -73,6 +74,23 @@ export function initSchema(database: Database.Database): void {
       SET has_completed_population_run = 1
       WHERE id IN (SELECT DISTINCT saved_search_id FROM alerted_listings)
     `);
+  }
+
+  // Same CREATE TABLE IF NOT EXISTS limitation as saved_searches above: an
+  // existing on-disk trademe_categories table predating this column won't
+  // pick it up from the CREATE TABLE body, so it needs the same explicit,
+  // idempotency-checked ALTER TABLE.
+  const categoryColumns = database
+    .prepare<[], { name: string }>('PRAGMA table_info(trademe_categories)')
+    .all();
+  if (!categoryColumns.some((column) => column.name === 'embedding')) {
+    database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding TEXT');
+  }
+  if (!categoryColumns.some((column) => column.name === 'embedding_model')) {
+    database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding_model TEXT');
+  }
+  if (categoryColumns.some((column) => column.name === 'top2')) {
+    database.exec('ALTER TABLE trademe_categories DROP COLUMN top2');
   }
 
   // Backs the create/update handlers' duplicate-name rejection with a real DB
@@ -163,6 +181,13 @@ export type SavedSearchRow = {
   has_completed_population_run: number;
 };
 export type CategoryRow = { slug: string; display: string };
+export type CategoryWithEmbeddingRow = {
+  slug: string;
+  display: string;
+  embedding: string | null;
+  embedding_model: string | null;
+};
+export type CategoryEmbeddingCoverageRow = { total: number; embedded: number };
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
 export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
@@ -270,19 +295,14 @@ export function stmtInsertAlertedListing(database: Database.Database) {
     'INSERT OR IGNORE INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
   );
 }
-export function stmtGetCategoriesAtDepth2(database: Database.Database) {
-  return database.prepare<[], CategoryRow>(
-    'SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug'
+export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {
+  return database.prepare<[], CategoryWithEmbeddingRow>(
+    'SELECT slug, display, embedding, embedding_model FROM trademe_categories'
   );
 }
-export function stmtGetCategoriesByTop2(database: Database.Database) {
-  return database.prepare<[string], CategoryRow>(
-    'SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug'
-  );
-}
-export function stmtGetAllCategoryDisplays(database: Database.Database) {
-  return database.prepare<[], { slug: string; display: string }>(
-    'SELECT slug, display FROM trademe_categories'
+export function stmtGetCategoryEmbeddingCoverage(database: Database.Database) {
+  return database.prepare<[string], CategoryEmbeddingCoverageRow>(
+    'SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN embedding IS NOT NULL AND embedding_model = ? THEN 1 ELSE 0 END), 0) AS embedded FROM trademe_categories'
   );
 }
 export function stmtGetCategoryLegacyPath(database: Database.Database) {

@@ -1,61 +1,29 @@
 // Shared TradeMe category-discovery logic — turns a natural-language prompt into a
-// set of category slugs via a two-step AI pipeline. TradeMe's category taxonomy is the
-// same regardless of which recipe later turns a slug into a URL (modern `/a/marketplace/`
-// path vs legacy `cid`/`rptpath`), so this stays independent of any URL-building concern.
+// set of category slugs via an embedding pre-filter followed by a single AI call.
+// TradeMe's category taxonomy is the same regardless of which recipe later turns a
+// slug into a URL (modern `/a/marketplace/` path vs legacy `cid`/`rptpath`), so this
+// stays independent of any URL-building concern.
+import type Database from 'better-sqlite3';
 import type { AiConfig } from '../../lib/recipes/base';
 import { aiJSON, applyAiJsonResult } from '../ai';
-import type { CategoryRow } from '../db';
 import {
+  type CategoryWithEmbeddingRow,
   getDb,
-  stmtGetAllCategoryDisplays,
-  stmtGetCategoriesAtDepth2,
-  stmtGetCategoriesByTop2,
+  stmtGetAllCategoriesWithEmbeddings,
+  stmtGetCategoryEmbeddingCoverage,
 } from '../db';
+import { cosineSimilarity, EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 
 export type DiscoverEntry = { slug: string; searchString: string | null };
 
-// Bare category labels alone often can't disambiguate a single-word prompt (e.g. "ladder"
-// plausibly reads as either "Tools" or "Building supplies" to step 1's LLM call). This
-// deterministic word-boundary safety net runs alongside step 1: any category (at any depth)
-// whose display name literally contains a keyword from the prompt is added directly to the
-// final results, regardless of what step 1 picked — so a literal match is never structurally
-// unreachable just because the LLM guessed a different sibling, and it never costs an extra
-// AI call to confirm.
-const MIN_KEYWORD_LENGTH = 4;
-const MAX_KEYWORDS = 8;
+// Size of the embedding-ranked shortlist fed into the single AI call. The one parameter
+// that genuinely needs empirical tuning against real prompts post-implementation — too
+// low risks missing legitimate matches, too high reintroduces the over-inclusion problem
+// this design exists to avoid.
+const SHORTLIST_SIZE = 40;
 
-export function extractSearchKeywords(prompt: string): string[] {
-  const words = prompt.toLowerCase().match(/[a-z]+/g) ?? [];
-  return [...new Set(words.filter((word) => word.length >= MIN_KEYWORD_LENGTH))].slice(
-    0,
-    MAX_KEYWORDS
-  );
-}
-
-function findKeywordMatchedEntries(
-  database: ReturnType<typeof getDb>,
-  prompt: string,
-  searchString: string | null
-): DiscoverEntry[] {
-  const keywords = extractSearchKeywords(prompt);
-  if (keywords.length === 0) return [];
-  // Boundary before the keyword only (not after) so "ladder" still matches the plural
-  // "ladders", while "arm" no longer matches mid-word inside "Alarm" or "Farm".
-  const patterns = keywords.map((keyword) => new RegExp(`\\b${keyword}`, 'i'));
-  const matched = new Map<string, DiscoverEntry>();
-  for (const category of stmtGetAllCategoryDisplays(database).all()) {
-    if (patterns.some((pattern) => pattern.test(category.display))) {
-      matched.set(category.slug, { slug: category.slug, searchString });
-    }
-  }
-  return [...matched.values()];
-}
-
-export const STEP1_SYSTEM_PROMPT =
-  'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also suggest a short label for the search and a search query. Return JSON: { "categories": string[], "searchLabel": string, "searchQuery": string | null } using the exact category names from the list. For searchLabel: a short human-readable label for the search (e.g. "MacBook Pro laptops"). For searchQuery: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchQuery=\'macbook pro\'.';
-
-export const STEP2_SYSTEM_PROMPT =
-  'You are a TradeMe NZ shopping assistant. From the categories below pick all subcategories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { "categories": [{ "slug": string, "searchString": string | null }] }. Each slug must be a value shown in parentheses. For searchString: rule: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString=\'bookshelf\'; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchString=\'macbook pro\'.';
+export const CATEGORY_SYSTEM_PROMPT =
+  'You are a TradeMe NZ shopping assistant. From the candidate categories below pick all categories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { "categories": [{ "slug": string, "searchString": string | null }] }. Each slug must be a value shown in parentheses. For searchString: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString=\'bookshelf\'; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchString=\'macbook pro\'.';
 
 export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
   const allSlugs = new Set(allEntries.map((e) => e.slug));
@@ -90,103 +58,161 @@ export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
   return collapsed;
 }
 
-type Step2Category = { slug: string; searchString?: string | null };
+type ShortlistedCategory = { slug: string; display: string };
+
+// A categories-with-embeddings row with its embedding already parsed out of the JSON text
+// column — see loadCategoryEmbeddingsCache below, which parses each row exactly once.
+export type CachedCategoryEmbedding = { slug: string; display: string; embedding: number[] | null };
+
+export function rankCategoriesBySimilarity(
+  categories: CachedCategoryEmbedding[],
+  promptEmbedding: number[],
+  shortlistSize: number
+): ShortlistedCategory[] {
+  return categories
+    .filter(
+      (category): category is CachedCategoryEmbedding & { embedding: number[] } =>
+        category.embedding !== null
+    )
+    .map((category) => ({
+      slug: category.slug,
+      display: category.display,
+      similarity: cosineSimilarity(promptEmbedding, category.embedding),
+    }))
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, shortlistSize)
+    .map(({ slug, display }) => ({ slug, display }));
+}
+
+// ── In-process categories-with-embeddings cache ────────────────────────────────
+// `trademe_categories` only changes via the offline scripts/import-categories.ts and
+// scripts/embed-categories.ts jobs — never from a user-facing write — so re-reading and
+// re-JSON.parse-ing the full table on every discover request is pure waste (PR #41 review,
+// Backend finding #2). This module-level cache is lazily populated on first use (no work at
+// import time) and holds the parsed embedding vectors so JSON.parse only ever runs once per
+// row. Call invalidateCategoryEmbeddingsCache() to force the next call to re-read the DB —
+// e.g. after running the backfill script against a live server, or from a future check that
+// needs to see current (not cached) embedded/total counts.
+let categoryEmbeddingsCache: CachedCategoryEmbedding[] | null = null;
+
+// A row is treated as unembedded (excluded from ranking, same as a null embedding) if:
+// - it has no stored vector yet, or
+// - its embedding_model doesn't match the current EMBEDDING_MODEL — a stale-model vector
+//   must never be compared against a current-model prompt embedding, even if dimensions
+//   happen to coincide (PR #41 review, Data #3 / QA #2, expanded to cover model swaps), or
+// - its stored JSON is malformed — a single corrupt row must not crash the whole request
+//   (PR #41 review, Data #3).
+function parseCategoryEmbeddingRow(row: CategoryWithEmbeddingRow): CachedCategoryEmbedding {
+  if (row.embedding === null || row.embedding_model !== EMBEDDING_MODEL) {
+    return { slug: row.slug, display: row.display, embedding: null };
+  }
+  try {
+    return {
+      slug: row.slug,
+      display: row.display,
+      embedding: JSON.parse(row.embedding) as number[],
+    };
+  } catch {
+    console.warn(
+      `[trademeCategoryResolver] malformed embedding JSON for category ${row.slug} — skipping`
+    );
+    return { slug: row.slug, display: row.display, embedding: null };
+  }
+}
+
+function loadCategoryEmbeddingsCache(database: Database.Database): CachedCategoryEmbedding[] {
+  if (categoryEmbeddingsCache === null) {
+    categoryEmbeddingsCache = stmtGetAllCategoriesWithEmbeddings(database)
+      .all()
+      .map(parseCategoryEmbeddingRow);
+  }
+  return categoryEmbeddingsCache;
+}
+
+export function invalidateCategoryEmbeddingsCache(): void {
+  categoryEmbeddingsCache = null;
+}
+
+// Boot-time gate (called from vite.config.ts's configureServer, after getDb() has run
+// initSchema) — category search is core to this app, so an incomplete or never-run
+// embedding backfill must stop the server from starting rather than silently degrade
+// discovery request-by-request (PR #41 review, Data #2, escalated per explicit user
+// direction: a per-request warning is too easy to miss). Deliberately queries fresh
+// counts rather than the categoryEmbeddingsCache above, since that cache is scoped to
+// ranking and would just re-surface the same staleness problem this check exists to catch.
+export function assertCategoryEmbeddingCoverage(database: Database.Database): void {
+  const row = stmtGetCategoryEmbeddingCoverage(database).get(EMBEDDING_MODEL);
+  const total = row?.total ?? 0;
+  const embedded = row?.embedded ?? 0;
+  if (total === 0) {
+    throw new Error('trademe_categories is empty — run: npx ts-node scripts/import-categories.ts');
+  }
+  if (embedded < total) {
+    throw new Error(
+      `${total - embedded}/${total} categories have no current-model (${EMBEDDING_MODEL}) embedding — run: npx ts-node scripts/embed-categories.ts`
+    );
+  }
+}
+
+type SelectedCategory = { slug: string; searchString?: string | null };
 
 export async function resolveDiscoverCategoriesAsync(
   prompt: string,
   getAiConfig: () => AiConfig
 ): Promise<{ entries: DiscoverEntry[]; warnings: string[] }> {
   const database = getDb();
-  const broad = stmtGetCategoriesAtDepth2(database).all();
-  const broadDisplayList = broad.map((category) => category.display).join('\n');
-
-  // 512 output tokens: step-1 returns a tiny JSON object (3 string fields) — input size (~3 k tokens for 392 categories) is unlimited by this parameter.
-  const step1AiConfig = getAiConfig();
-  const broadCategoryPick = applyAiJsonResult(
-    step1AiConfig.cooldownStore,
-    await aiJSON(
-      step1AiConfig,
-      'step1',
-      STEP1_SYSTEM_PROMPT,
-      `I'm looking for: ${prompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
-      512
-    )
-  ) as Record<string, unknown> | null;
-  if (typeof broadCategoryPick !== 'object' || broadCategoryPick === null)
-    throw new Error('discover step1: expected object response');
-  const rawCategories = (
-    Array.isArray(broadCategoryPick.categories) ? broadCategoryPick.categories : []
-  ) as string[];
-  const selectedBroadSlugs: string[] = rawCategories
-    .map((display: string) => broad.find((category) => category.display === display)?.slug)
-    .filter((slug): slug is string => !!slug);
-  if (selectedBroadSlugs.length === 0) throw new Error('AI returned no valid broad categories');
-  const step1Warnings: string[] = [];
-  if (selectedBroadSlugs.length < rawCategories.length) {
-    const unrecognised = rawCategories.filter(
-      (display: string) => !broad.some((category) => category.display === display)
-    );
-    step1Warnings.push(`step1: unrecognised categories ignored: ${unrecognised.join(', ')}`);
-  }
-
-  const sharedSearchQuery =
-    typeof broadCategoryPick.searchQuery === 'string' ? broadCategoryPick.searchQuery : null;
-  const keywordMatchedEntries = findKeywordMatchedEntries(database, prompt, sharedSearchQuery);
-  if (keywordMatchedEntries.length > 0) {
-    step1Warnings.push(
-      `step1: added via keyword match: ${keywordMatchedEntries.map((entry) => entry.slug).join(', ')}`
-    );
-  }
-  // Sequential (not parallel) so concurrent bursts don't collide on the provider's TPM limit.
-  const subcategoryPickResults: Array<{
-    top2Slug: string;
-    candidates: CategoryRow[];
-    result: Record<string, unknown> | null;
-  }> = [];
-  for (const top2Slug of selectedBroadSlugs) {
-    const broadEntry = broad.find((category) => category.slug === top2Slug);
-    if (!broadEntry) throw new Error(`invariant: slug ${top2Slug} not found in broad categories`);
-    const candidates = stmtGetCategoriesByTop2(database).all(top2Slug);
-    const specificList = candidates
-      .map((category) => `${category.display} (slug: ${category.slug})`)
-      .join('\n');
-    // 1024 output tokens: step-2 returns a JSON array of slug+searchString pairs; a broad category can have dozens of subcategories, so 1024 gives headroom over step-1's 512.
-    // Re-resolved fresh per iteration (not hoisted) so a 429 on an earlier slug
-    // actually rotates to the next live provider for the remaining slugs.
-    const step2AiConfig = getAiConfig();
-    const result = applyAiJsonResult(
-      step2AiConfig.cooldownStore,
-      await aiJSON(
-        step2AiConfig,
-        `step2:${top2Slug}`,
-        STEP2_SYSTEM_PROMPT,
-        `I'm looking for: ${prompt.trim()}\n\nCategories within "${broadEntry.display}":\n${specificList}`,
-        1024
-      )
-    );
-    subcategoryPickResults.push({
-      top2Slug,
-      candidates,
-      result: result as Record<string, unknown> | null,
+  let promptEmbedding: number[];
+  try {
+    promptEmbedding = await embedTextAsync(prompt.trim());
+  } catch (error) {
+    // embedTextAsync has no retry/multi-provider fallback (see embeddings.ts) — wrap so a
+    // Gemini failure surfaces as a diagnosable, discover-scoped error rather than a raw
+    // provider message, consistent with the other thrown errors in this function. The
+    // caller (buildDiscoverUrlsAsync -> discoverCategoriesAsync's Promise.allSettled)
+    // already keeps this from crashing the whole discover request.
+    throw new Error(`discover: category embedding unavailable — ${(error as Error).message}`, {
+      cause: error,
     });
   }
+  const allCategories = loadCategoryEmbeddingsCache(database);
+  const shortlist = rankCategoriesBySimilarity(allCategories, promptEmbedding, SHORTLIST_SIZE);
+  if (shortlist.length === 0) throw new Error('no embedded categories available for discovery');
 
-  const allEntries: DiscoverEntry[] = [...keywordMatchedEntries];
+  const candidateList = shortlist
+    .map((category) => `${category.display} (slug: ${category.slug})`)
+    .join('\n');
+
+  // 1536 output tokens: response is a JSON array of up to SHORTLIST_SIZE slug+searchString
+  // pairs — comfortably fits within this budget.
+  const aiConfig = getAiConfig();
+  const result = applyAiJsonResult(
+    aiConfig.cooldownStore,
+    await aiJSON(
+      aiConfig,
+      'discover-categories',
+      CATEGORY_SYSTEM_PROMPT,
+      `I'm looking for: ${prompt.trim()}\n\nCandidate categories:\n${candidateList}`,
+      1536
+    )
+  ) as Record<string, unknown> | null;
+  if (result === null || !Array.isArray(result.categories))
+    throw new Error('discover: expected object response with categories array');
+
+  const rawCategories = result.categories as SelectedCategory[];
+  const validSlugs = new Set(shortlist.map((category) => category.slug));
+  const allEntries: DiscoverEntry[] = rawCategories
+    .filter((category) => validSlugs.has(category.slug))
+    .map((category) => ({ slug: category.slug, searchString: category.searchString ?? null }));
+
   const warnings: string[] = [];
-  for (const { top2Slug, candidates, result } of subcategoryPickResults) {
-    const validSlugs = new Set(candidates.map((category) => category.slug));
-    if (result === null || !Array.isArray(result.categories)) {
-      warnings.push(`step2:${top2Slug} unexpected result`);
-      continue;
-    }
-    for (const category of (result.categories as Step2Category[]).filter((category) =>
-      validSlugs.has(category.slug)
-    )) {
-      allEntries.push({ slug: category.slug, searchString: category.searchString ?? null });
-    }
+  if (allEntries.length < rawCategories.length) {
+    const unrecognised = rawCategories
+      .filter((category) => !validSlugs.has(category.slug))
+      .map((category) => category.slug);
+    warnings.push(`unrecognised categories ignored: ${unrecognised.join(', ')}`);
   }
 
   const entries = collapseEntries(allEntries);
-  if (entries.length === 0) throw new Error('AI returned no valid specific categories');
-  return { entries, warnings: [...step1Warnings, ...warnings] };
+  if (entries.length === 0) throw new Error('AI returned no valid categories');
+  return { entries, warnings };
 }
