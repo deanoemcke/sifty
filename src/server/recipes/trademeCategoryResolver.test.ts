@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiConfig, ProviderCooldownStore } from '../../lib/recipes/base';
 
 let _testDb: Database.Database | null = null;
@@ -32,12 +32,14 @@ vi.mock('../embeddings', async (importOriginal) => {
 });
 
 import { aiJSON } from '../ai';
-import { type CategoryWithEmbeddingRow, initSchema } from '../db';
+import { initSchema } from '../db';
 import { embedTextAsync } from '../embeddings';
 import {
   CATEGORY_SYSTEM_PROMPT,
+  type CachedCategoryEmbedding,
   collapseEntries,
   type DiscoverEntry,
+  invalidateCategoryEmbeddingsCache,
   rankCategoriesBySimilarity,
   resolveDiscoverCategoriesAsync,
 } from './trademeCategoryResolver';
@@ -183,8 +185,8 @@ function embeddedCategory(
   slug: string,
   display: string,
   embedding: number[] | null
-): CategoryWithEmbeddingRow {
-  return { slug, display, embedding: embedding === null ? null : JSON.stringify(embedding) };
+): CachedCategoryEmbedding {
+  return { slug, display, embedding };
 }
 
 describe('rankCategoriesBySimilarity', () => {
@@ -303,6 +305,13 @@ function aiJsonOk(value: unknown) {
 }
 
 describe('resolveDiscoverCategoriesAsync', () => {
+  // The categories-with-embeddings table is now cached at module scope (see
+  // loadCategoryEmbeddingsCache in trademeCategoryResolver.ts) — each test below seeds a
+  // fresh in-memory DB, so the cache from a previous test must not leak into the next one.
+  beforeEach(() => {
+    invalidateCategoryEmbeddingsCache();
+  });
+
   it('surfaces the ladders branch directly via the embedding shortlist, with a single AI call and no broad-bucket guess', async () => {
     const db = new Database(':memory:');
     initSchema(db);
@@ -419,5 +428,64 @@ describe('resolveDiscoverCategoriesAsync', () => {
       'discover: category embedding unavailable — Gemini embedContent failed [429]: quota exceeded'
     );
     expect(vi.mocked(aiJSON)).not.toHaveBeenCalled();
+  });
+
+  // Backend review of PR #41 (Future Ticket #1): the categories-with-embeddings table only
+  // changes via offline backfill scripts, so re-reading and re-parsing the full table on
+  // every discover request is wasted work. This pins the in-process cache: the DB is read
+  // (and each row's embedding JSON parsed) at most once across repeated calls.
+  function countCategoryTableReads(prepareSpy: ReturnType<typeof vi.spyOn>): number {
+    return prepareSpy.mock.calls.filter(([sql]: [string]) =>
+      sql.includes('FROM trademe_categories')
+    ).length;
+  }
+
+  it('reads the categories-with-embeddings table from the DB only once across repeated calls', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValue(
+      aiJsonOk({
+        categories: [
+          {
+            slug: 'building-renovation/building-supplies/scaffolding-ladders',
+            searchString: null,
+          },
+        ],
+      })
+    );
+    const prepareSpy = vi.spyOn(db, 'prepare');
+
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(countCategoryTableReads(prepareSpy)).toBe(1);
+  });
+
+  it('invalidateCategoryEmbeddingsCache forces a fresh DB read on the next call', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValue(
+      aiJsonOk({
+        categories: [
+          {
+            slug: 'building-renovation/building-supplies/scaffolding-ladders',
+            searchString: null,
+          },
+        ],
+      })
+    );
+    const prepareSpy = vi.spyOn(db, 'prepare');
+
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+    invalidateCategoryEmbeddingsCache();
+    await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(countCategoryTableReads(prepareSpy)).toBe(2);
   });
 });

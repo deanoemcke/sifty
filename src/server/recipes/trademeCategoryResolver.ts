@@ -3,6 +3,7 @@
 // TradeMe's category taxonomy is the same regardless of which recipe later turns a
 // slug into a URL (modern `/a/marketplace/` path vs legacy `cid`/`rptpath`), so this
 // stays independent of any URL-building concern.
+import type Database from 'better-sqlite3';
 import type { AiConfig } from '../../lib/recipes/base';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { type CategoryWithEmbeddingRow, getDb, stmtGetAllCategoriesWithEmbeddings } from '../db';
@@ -54,24 +55,60 @@ export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
 
 type ShortlistedCategory = { slug: string; display: string };
 
+// A categories-with-embeddings row with its embedding already parsed out of the JSON text
+// column — see loadCategoryEmbeddingsCache below, which parses each row exactly once.
+export type CachedCategoryEmbedding = { slug: string; display: string; embedding: number[] | null };
+
 export function rankCategoriesBySimilarity(
-  categories: CategoryWithEmbeddingRow[],
+  categories: CachedCategoryEmbedding[],
   promptEmbedding: number[],
   shortlistSize: number
 ): ShortlistedCategory[] {
   return categories
     .filter(
-      (category): category is CategoryWithEmbeddingRow & { embedding: string } =>
+      (category): category is CachedCategoryEmbedding & { embedding: number[] } =>
         category.embedding !== null
     )
     .map((category) => ({
       slug: category.slug,
       display: category.display,
-      similarity: cosineSimilarity(promptEmbedding, JSON.parse(category.embedding) as number[]),
+      similarity: cosineSimilarity(promptEmbedding, category.embedding),
     }))
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, shortlistSize)
     .map(({ slug, display }) => ({ slug, display }));
+}
+
+// ── In-process categories-with-embeddings cache ────────────────────────────────
+// `trademe_categories` only changes via the offline scripts/import-categories.ts and
+// scripts/embed-categories.ts jobs — never from a user-facing write — so re-reading and
+// re-JSON.parse-ing the full table on every discover request is pure waste (PR #41 review,
+// Backend finding #2). This module-level cache is lazily populated on first use (no work at
+// import time) and holds the parsed embedding vectors so JSON.parse only ever runs once per
+// row. Call invalidateCategoryEmbeddingsCache() to force the next call to re-read the DB —
+// e.g. after running the backfill script against a live server, or from a future check that
+// needs to see current (not cached) embedded/total counts.
+let categoryEmbeddingsCache: CachedCategoryEmbedding[] | null = null;
+
+function parseCategoryEmbeddingRow(row: CategoryWithEmbeddingRow): CachedCategoryEmbedding {
+  return {
+    slug: row.slug,
+    display: row.display,
+    embedding: row.embedding === null ? null : (JSON.parse(row.embedding) as number[]),
+  };
+}
+
+function loadCategoryEmbeddingsCache(database: Database.Database): CachedCategoryEmbedding[] {
+  if (categoryEmbeddingsCache === null) {
+    categoryEmbeddingsCache = stmtGetAllCategoriesWithEmbeddings(database)
+      .all()
+      .map(parseCategoryEmbeddingRow);
+  }
+  return categoryEmbeddingsCache;
+}
+
+export function invalidateCategoryEmbeddingsCache(): void {
+  categoryEmbeddingsCache = null;
 }
 
 type SelectedCategory = { slug: string; searchString?: string | null };
@@ -94,7 +131,7 @@ export async function resolveDiscoverCategoriesAsync(
       cause: error,
     });
   }
-  const allCategories = stmtGetAllCategoriesWithEmbeddings(database).all();
+  const allCategories = loadCategoryEmbeddingsCache(database);
   const shortlist = rankCategoriesBySimilarity(allCategories, promptEmbedding, SHORTLIST_SIZE);
   if (shortlist.length === 0) throw new Error('no embedded categories available for discovery');
 
