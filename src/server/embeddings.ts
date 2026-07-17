@@ -3,7 +3,7 @@
 // Reuses GEMINI_API_KEY (already configured for chat completions in ai.ts); embeddings
 // are Gemini-specific, so unlike aiJSON there is no multi-provider fallback here.
 
-const EMBEDDING_MODEL = 'gemini-embedding-2';
+export const EMBEDDING_MODEL = 'gemini-embedding-2';
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // Gemini's docs don't publish a documented per-request cap for batchEmbedContents —
@@ -145,6 +145,9 @@ export async function embedTextsBatchAsync(texts: string[]): Promise<number[][]>
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) {
+    throw new Error(`cosineSimilarity: dimension mismatch (${a.length} vs ${b.length})`);
+  }
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;

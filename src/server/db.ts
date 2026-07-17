@@ -39,7 +39,8 @@ export function initSchema(database: Database.Database): void {
       parent_slug TEXT,
       top2        TEXT NOT NULL,
       legacy_path TEXT NOT NULL,
-      embedding   TEXT
+      embedding   TEXT,
+      embedding_model TEXT
     );
     CREATE TABLE IF NOT EXISTS alerted_listings (
       saved_search_id TEXT NOT NULL,
@@ -85,6 +86,9 @@ export function initSchema(database: Database.Database): void {
     .all();
   if (!categoryColumns.some((column) => column.name === 'embedding')) {
     database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding TEXT');
+  }
+  if (!categoryColumns.some((column) => column.name === 'embedding_model')) {
+    database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding_model TEXT');
   }
 
   // Backs the create/update handlers' duplicate-name rejection with a real DB
@@ -175,7 +179,12 @@ export type SavedSearchRow = {
   has_completed_population_run: number;
 };
 export type CategoryRow = { slug: string; display: string };
-export type CategoryWithEmbeddingRow = { slug: string; display: string; embedding: string | null };
+export type CategoryWithEmbeddingRow = {
+  slug: string;
+  display: string;
+  embedding: string | null;
+  embedding_model: string | null;
+};
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
 export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
@@ -285,7 +294,7 @@ export function stmtInsertAlertedListing(database: Database.Database) {
 }
 export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {
   return database.prepare<[], CategoryWithEmbeddingRow>(
-    'SELECT slug, display, embedding FROM trademe_categories'
+    'SELECT slug, display, embedding, embedding_model FROM trademe_categories'
   );
 }
 export function stmtGetCategoryLegacyPath(database: Database.Database) {

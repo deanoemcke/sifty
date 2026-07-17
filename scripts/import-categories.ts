@@ -34,7 +34,8 @@ db.exec(`
     parent_slug TEXT,
     top2        TEXT NOT NULL,
     legacy_path TEXT NOT NULL,
-    embedding   TEXT
+    embedding   TEXT,
+    embedding_model TEXT
   );
 `);
 

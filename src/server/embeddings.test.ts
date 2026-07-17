@@ -53,6 +53,10 @@ describe('cosineSimilarity', () => {
   it('returns 0 when either vector is all zeros', () => {
     expect(cosineSimilarity([0, 0, 0], [1, 2, 3])).toBe(0);
   });
+
+  it('throws on a dimension mismatch instead of silently producing NaN', () => {
+    expect(() => cosineSimilarity([1, 2, 3], [1, 2])).toThrow(/dimension mismatch/);
+  });
 });
 
 describe('embedTextAsync', () => {

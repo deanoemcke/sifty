@@ -207,6 +207,38 @@ describe('initSchema', () => {
     expect(columnNames(db, 'trademe_categories')).toContain('embedding');
   });
 
+  it('trademe_categories has an embedding_model column, added idempotently, when migrating an existing on-disk database', () => {
+    // Simulates a pre-migration on-disk schema — embedding column exists, embedding_model doesn't.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE trademe_categories (
+        slug        TEXT PRIMARY KEY,
+        display     TEXT NOT NULL,
+        depth       INTEGER NOT NULL,
+        parent_slug TEXT,
+        top2        TEXT NOT NULL,
+        legacy_path TEXT NOT NULL,
+        embedding   TEXT
+      );
+    `);
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('electronics', 'Electronics', 1, null, 'electronics', '0124-', '[0.1,0.2]');
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding_model');
+
+    const row = db
+      .prepare<[string], { slug: string; embedding_model: string | null }>(
+        'SELECT slug, embedding_model FROM trademe_categories WHERE slug = ?'
+      )
+      .get('electronics');
+    expect(row?.embedding_model).toBeNull();
+
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'trademe_categories')).toContain('embedding_model');
+  });
+
   it('preserves existing data when called on an existing database', () => {
     const db = new Database(':memory:');
     initSchema(db);

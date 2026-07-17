@@ -33,7 +33,7 @@ vi.mock('../embeddings', async (importOriginal) => {
 
 import { aiJSON } from '../ai';
 import { initSchema } from '../db';
-import { embedTextAsync } from '../embeddings';
+import { EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 import {
   CATEGORY_SYSTEM_PROMPT,
   type CachedCategoryEmbedding,
@@ -229,11 +229,12 @@ type SeedCategory = {
   parentSlug: string | null;
   top2: string;
   embedding: number[];
+  embeddingModel?: string;
 };
 
 function seedCategories(db: Database.Database, categories: SeedCategory[]): void {
   const insert = db.prepare(
-    'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   );
   for (const category of categories) {
     insert.run(
@@ -243,7 +244,8 @@ function seedCategories(db: Database.Database, categories: SeedCategory[]): void
       category.parentSlug,
       category.top2,
       `legacy/${category.slug}`,
-      JSON.stringify(category.embedding)
+      JSON.stringify(category.embedding),
+      category.embeddingModel ?? EMBEDDING_MODEL
     );
   }
 }
@@ -405,6 +407,87 @@ describe('resolveDiscoverCategoriesAsync', () => {
 
     await expect(resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG)).rejects.toThrow(
       'no embedded categories available'
+    );
+  });
+
+  // PR #41 review (Data #3, QA #2, expanded): a stale embedding_model tag means the stored
+  // vector came from a previous EMBEDDING_MODEL — comparing it against a current-model prompt
+  // embedding could silently corrupt ranking (worse, with no error, if dimensions happen to
+  // match). Excluding it entirely — same treatment as a null embedding — guarantees the
+  // resolver never compares vectors across models, even mid-migration.
+  it('excludes a category whose embedding_model does not match the current model, same as a null embedding', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedCategories(db, [
+      {
+        slug: 'building-renovation/tools',
+        display: 'Building & renovation > Tools',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        top2: 'building-renovation/tools',
+        embedding: [1, 0],
+      },
+      {
+        slug: 'building-renovation/building-supplies/scaffolding-ladders',
+        display: 'Building & renovation > Building supplies > Ladders',
+        depth: 3,
+        parentSlug: 'building-renovation/building-supplies',
+        top2: 'building-renovation/building-supplies',
+        embedding: [0, 1],
+        embeddingModel: 'stale-model-v0',
+      },
+    ]);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'building-renovation/tools', searchString: null }] })
+    );
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(entries.map((e) => e.slug)).not.toContain(
+      'building-renovation/building-supplies/scaffolding-ladders'
+    );
+  });
+
+  // PR #41 review (Data #3): a single malformed embedding row must not take down the whole
+  // discover request — it should be skipped, same as a null embedding, not thrown.
+  it('skips a category with malformed embedding JSON instead of throwing', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedCategories(db, [
+      {
+        slug: 'building-renovation/tools',
+        display: 'Building & renovation > Tools',
+        depth: 2,
+        parentSlug: 'building-renovation',
+        top2: 'building-renovation/tools',
+        embedding: [1, 0],
+      },
+    ]);
+    db.prepare(
+      'INSERT INTO trademe_categories (slug, display, depth, parent_slug, top2, legacy_path, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      'building-renovation/building-supplies/scaffolding-ladders',
+      'Building & renovation > Building supplies > Ladders',
+      3,
+      'building-renovation/building-supplies',
+      'building-renovation/building-supplies',
+      'legacy/scaffolding-ladders',
+      'not valid json',
+      EMBEDDING_MODEL
+    );
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({ categories: [{ slug: 'building-renovation/tools', searchString: null }] })
+    );
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(entries.map((e) => e.slug)).toContain('building-renovation/tools');
+    expect(entries.map((e) => e.slug)).not.toContain(
+      'building-renovation/building-supplies/scaffolding-ladders'
     );
   });
 

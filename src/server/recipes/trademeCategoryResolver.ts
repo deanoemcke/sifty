@@ -7,7 +7,7 @@ import type Database from 'better-sqlite3';
 import type { AiConfig } from '../../lib/recipes/base';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { type CategoryWithEmbeddingRow, getDb, stmtGetAllCategoriesWithEmbeddings } from '../db';
-import { cosineSimilarity, embedTextAsync } from '../embeddings';
+import { cosineSimilarity, EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 
 export type DiscoverEntry = { slug: string; searchString: string | null };
 
@@ -90,12 +90,29 @@ export function rankCategoriesBySimilarity(
 // needs to see current (not cached) embedded/total counts.
 let categoryEmbeddingsCache: CachedCategoryEmbedding[] | null = null;
 
+// A row is treated as unembedded (excluded from ranking, same as a null embedding) if:
+// - it has no stored vector yet, or
+// - its embedding_model doesn't match the current EMBEDDING_MODEL — a stale-model vector
+//   must never be compared against a current-model prompt embedding, even if dimensions
+//   happen to coincide (PR #41 review, Data #3 / QA #2, expanded to cover model swaps), or
+// - its stored JSON is malformed — a single corrupt row must not crash the whole request
+//   (PR #41 review, Data #3).
 function parseCategoryEmbeddingRow(row: CategoryWithEmbeddingRow): CachedCategoryEmbedding {
-  return {
-    slug: row.slug,
-    display: row.display,
-    embedding: row.embedding === null ? null : (JSON.parse(row.embedding) as number[]),
-  };
+  if (row.embedding === null || row.embedding_model !== EMBEDDING_MODEL) {
+    return { slug: row.slug, display: row.display, embedding: null };
+  }
+  try {
+    return {
+      slug: row.slug,
+      display: row.display,
+      embedding: JSON.parse(row.embedding) as number[],
+    };
+  } catch {
+    console.warn(
+      `[trademeCategoryResolver] malformed embedding JSON for category ${row.slug} — skipping`
+    );
+    return { slug: row.slug, display: row.display, embedding: null };
+  }
 }
 
 function loadCategoryEmbeddingsCache(database: Database.Database): CachedCategoryEmbedding[] {

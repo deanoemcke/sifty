@@ -10,7 +10,7 @@ import {
   stmtGetAllCategoriesWithEmbeddings,
   stmtGetCategoryLegacyPath,
 } from '../db';
-import { embedTextAsync } from '../embeddings';
+import { EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 import {
   buildListing,
   buildPhotosFromUrls,
@@ -1091,7 +1091,12 @@ describe('buildRootMarketplaceSearchUrl', () => {
 
 describe('buildDiscoverUrlsAsync', () => {
   const MOCK_CATEGORIES: CategoryWithEmbeddingRow[] = [
-    { slug: 'electronics/laptops', display: 'Laptops', embedding: JSON.stringify([1, 0]) },
+    {
+      slug: 'electronics/laptops',
+      display: 'Laptops',
+      embedding: JSON.stringify([1, 0]),
+      embedding_model: EMBEDDING_MODEL,
+    },
   ];
   const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
     markExhausted: () => {},
@@ -1215,11 +1220,17 @@ describe('buildDiscoverUrlsAsync', () => {
 
   it('filters out unrecognised slugs, adds a warning, and continues with valid ones', async () => {
     const TWO_CATEGORIES: CategoryWithEmbeddingRow[] = [
-      { slug: 'electronics/laptops', display: 'Laptops', embedding: JSON.stringify([1, 0]) },
+      {
+        slug: 'electronics/laptops',
+        display: 'Laptops',
+        embedding: JSON.stringify([1, 0]),
+        embedding_model: EMBEDDING_MODEL,
+      },
       {
         slug: 'computers/laptops',
         display: 'Computer laptops',
         embedding: JSON.stringify([0.9, 0.1]),
+        embedding_model: EMBEDDING_MODEL,
       },
     ];
     vi.mocked(stmtGetAllCategoriesWithEmbeddings).mockReturnValue(
