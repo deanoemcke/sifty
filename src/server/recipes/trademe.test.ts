@@ -48,100 +48,159 @@ vi.mock('../embeddings', async (importOriginal) => {
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
-const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker, PROBE_FETCH_FAILURE } =
-  vi.hoisted(() => {
-    const queue: unknown[] = [];
-    // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
-    // failure on the next page.goto() call, rather than a successful-but-empty response.
-    const PROBE_FETCH_FAILURE = Symbol('probe-fetch-failure');
+const {
+  getNextPage,
+  resetPageQueue,
+  makeDetailPage,
+  browserSessionTracker,
+  PROBE_FETCH_FAILURE,
+  clickThroughScript,
+  CLICK_NO_RESPONSE,
+  CLICK_THROWS,
+} = vi.hoisted(() => {
+  const queue: unknown[] = [];
+  // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
+  // failure on the next page.goto() call, rather than a successful-but-empty response.
+  const PROBE_FETCH_FAILURE = Symbol('probe-fetch-failure');
+  // click() resolves but never triggers a matching /v1/search response — models a real
+  // click landing without the SPA firing its XHR, so waitForSearchApiResponseAsync's own
+  // 12s timeout is what eventually resolves it empty.
+  const CLICK_NO_RESPONSE = Symbol('click-no-response');
+  // click() itself rejects — models a missing/unclickable pager link.
+  const CLICK_THROWS = Symbol('click-throws');
 
-    // Tracks how many mocked Chromium instances are live at once, so tests can
-    // assert that concurrent quick searches do (or don't) stack browser sessions.
-    const browserSessionTracker = {
-      activeCount: 0,
-      maxActiveCount: 0,
-      reset() {
-        this.activeCount = 0;
-        this.maxActiveCount = 0;
-      },
+  // Wraps a sequence of per-call outcomes (page-1 goto() data, then one entry per
+  // subsequent click()) so getNextPage() can build a single continuous page object
+  // instead of the flat one-shot pages makePage() returns — matching runQuickSearchAsync's
+  // post-fix shape of one tab reused across every page via clicking, not one tab per page.
+  function clickThroughScript(...steps: unknown[]) {
+    return { __clickThroughSteps: steps };
+  }
+
+  function makeClickThroughPage(steps: unknown[]) {
+    let stepIndex = 0;
+    const handlers: Array<(r: unknown) => void> = [];
+    const fireResponse = (data: unknown) => {
+      const response = {
+        url: () => 'https://api.trademe.co.nz/v1/search/general.json',
+        status: () => 200,
+        json: async () => data,
+      };
+      for (const h of [...handlers]) h(response);
     };
-
-    function makePage(data: unknown) {
-      const handlers: Array<(r: unknown) => void> = [];
-      return {
-        on: (_: string, h: (r: unknown) => void) => {
-          handlers.push(h);
-        },
-        off: () => {},
-        goto: async () => {
-          const response = {
-            url: () => 'https://api.trademe.co.nz/v1/search/general.json',
-            status: () => 200,
-            json: async () => data,
-          };
-          for (const h of [...handlers]) h(response);
-        },
-        close: async () => {},
-      };
-    }
-
-    // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
-    // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
-    // per test so the same factory covers the happy path, non-200, and no-response cases.
-    function makeDetailPage(
-      options: {
-        data?: unknown;
-        url?: string;
-        status?: number;
-        respond?: boolean;
-        jsonError?: boolean;
-      } = {}
-    ) {
-      const handlers: Array<(r: unknown) => void> = [];
-      return {
-        on: (_: string, h: (r: unknown) => void) => {
-          handlers.push(h);
-        },
-        off: () => {},
-        goto: async () => {
-          if (options.respond === false) return;
-          const response = {
-            url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
-            status: () => options.status ?? 200,
-            json: async () => {
-              if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
-              return options.data ?? {};
-            },
-          };
-          for (const h of [...handlers]) h(response);
-        },
-      };
-    }
-
-    function makeFailingPage() {
-      return {
-        on: () => {},
-        off: () => {},
-        goto: async () => {
-          throw new Error('net::ERR_CONNECTION_TIMED_OUT');
-        },
-        close: async () => {},
-      };
-    }
-
+    const consumeStep = async () => {
+      const step = steps[stepIndex++];
+      if (step === CLICK_THROWS) throw new Error('pager link not found');
+      if (step === CLICK_NO_RESPONSE) return;
+      fireResponse(step ?? {});
+    };
     return {
-      getNextPage: () => {
-        const next = queue.shift();
-        return next === PROBE_FETCH_FAILURE ? makeFailingPage() : makePage(next ?? {});
+      on: (_: string, h: (r: unknown) => void) => {
+        handlers.push(h);
       },
-      resetPageQueue: (...items: unknown[]) => {
-        queue.splice(0, queue.length, ...items);
-      },
-      makeDetailPage,
-      browserSessionTracker,
-      PROBE_FETCH_FAILURE,
+      off: () => {},
+      goto: consumeStep,
+      click: async (_selector: string, _options?: unknown) => consumeStep(),
+      close: async () => {},
     };
-  });
+  }
+
+  // Tracks how many mocked Chromium instances are live at once, so tests can
+  // assert that concurrent quick searches do (or don't) stack browser sessions.
+  const browserSessionTracker = {
+    activeCount: 0,
+    maxActiveCount: 0,
+    reset() {
+      this.activeCount = 0;
+      this.maxActiveCount = 0;
+    },
+  };
+
+  function makePage(data: unknown) {
+    const handlers: Array<(r: unknown) => void> = [];
+    return {
+      on: (_: string, h: (r: unknown) => void) => {
+        handlers.push(h);
+      },
+      off: () => {},
+      goto: async () => {
+        const response = {
+          url: () => 'https://api.trademe.co.nz/v1/search/general.json',
+          status: () => 200,
+          json: async () => data,
+        };
+        for (const h of [...handlers]) h(response);
+      },
+      close: async () => {},
+    };
+  }
+
+  // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
+  // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
+  // per test so the same factory covers the happy path, non-200, and no-response cases.
+  function makeDetailPage(
+    options: {
+      data?: unknown;
+      url?: string;
+      status?: number;
+      respond?: boolean;
+      jsonError?: boolean;
+    } = {}
+  ) {
+    const handlers: Array<(r: unknown) => void> = [];
+    return {
+      on: (_: string, h: (r: unknown) => void) => {
+        handlers.push(h);
+      },
+      off: () => {},
+      goto: async () => {
+        if (options.respond === false) return;
+        const response = {
+          url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
+          status: () => options.status ?? 200,
+          json: async () => {
+            if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
+            return options.data ?? {};
+          },
+        };
+        for (const h of [...handlers]) h(response);
+      },
+    };
+  }
+
+  function makeFailingPage() {
+    return {
+      on: () => {},
+      off: () => {},
+      goto: async () => {
+        throw new Error('net::ERR_CONNECTION_TIMED_OUT');
+      },
+      close: async () => {},
+    };
+  }
+
+  return {
+    getNextPage: () => {
+      const next = queue.shift();
+      if (next === PROBE_FETCH_FAILURE) return makeFailingPage();
+      if (next && typeof next === 'object' && '__clickThroughSteps' in next) {
+        return makeClickThroughPage(
+          (next as { __clickThroughSteps: unknown[] }).__clickThroughSteps
+        );
+      }
+      return makePage(next ?? {});
+    },
+    resetPageQueue: (...items: unknown[]) => {
+      queue.splice(0, queue.length, ...items);
+    },
+    makeDetailPage,
+    browserSessionTracker,
+    PROBE_FETCH_FAILURE,
+    clickThroughScript,
+    CLICK_NO_RESPONSE,
+    CLICK_THROWS,
+  };
+});
 
 vi.mock('playwright', () => ({
   chromium: {
@@ -1650,45 +1709,59 @@ describe('buildDiscoverUrlsAsync', () => {
 // ── quickSearch multi-page accumulation ───────────────────────────────────────
 
 describe('quickSearch', () => {
-  it('emits listings from all pages when results span multiple pages', async () => {
-    const makeItem = (i: number) => ({
-      Title: `Item ${i}`,
-      PriceDisplay: '$1',
-      Region: 'Auckland',
-      CanonicalPath: `/listing/${i}`,
-    });
+  const makeItem = (i: number) => ({
+    Title: `Item ${i}`,
+    PriceDisplay: '$1',
+    Region: 'Auckland',
+    CanonicalPath: `/listing/${i}`,
+  });
 
+  beforeEach(() => {
+    enqueuedUrls.length = 0;
+  });
+
+  it('emits listings from all pages when results span multiple pages', async () => {
+    const searchUrl = 'https://www.trademe.co.nz/a/marketplace/computers/search';
     resetPageQueue(
-      { List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)), TotalCount: 27, PageSize: 22 },
-      { List: Array.from({ length: 5 }, (_, i) => makeItem(i + 23)), TotalCount: 27, PageSize: 22 }
+      clickThroughScript(
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+          TotalCount: 27,
+          PageSize: 22,
+        },
+        {
+          List: Array.from({ length: 5 }, (_, i) => makeItem(i + 23)),
+          TotalCount: 27,
+          PageSize: 22,
+        }
+      )
     );
 
     const collected: unknown[] = [];
-    await trademeRecipe.quickSearchAsync(
-      'https://www.trademe.co.nz/a/marketplace/computers/search',
-      (ev) => {
-        if (ev.type === 'listing') collected.push(ev.data);
-      }
-    );
+    await trademeRecipe.quickSearchAsync(searchUrl, (ev) => {
+      if (ev.type === 'listing') collected.push(ev.data);
+    });
 
     expect(collected).toHaveLength(27);
+    // Pages 2+ are now reached by clicking within the one tab that was already
+    // queued for — no per-page URL should ever hit the domain limiter.
+    expect(enqueuedUrls.filter((u) => u.includes('page='))).toHaveLength(0);
+    expect(enqueuedUrls.filter((u) => u === searchUrl)).toHaveLength(1);
   });
 
   it('caps emitted listings at MAX_RESULTS_PER_URL when totalCount exceeds it', async () => {
-    const makeItem = (i: number) => ({
-      Title: `Item ${i}`,
-      PriceDisplay: '$1',
-      Region: 'Auckland',
-      CanonicalPath: `/listing/${i}`,
-    });
-
     const pageSize = 40;
+    // TotalCount=200 at pageSize=40 implies 5 pages of raw results, but
+    // MAX_RESULTS_PER_URL=100 caps totalPages at ceil(100/40)=3 — only 3 script
+    // steps (1 goto + 2 clicks) are ever consumed.
     resetPageQueue(
-      ...Array.from({ length: 5 }, (_, pageIndex) => ({
-        List: Array.from({ length: pageSize }, (_, i) => makeItem(pageIndex * pageSize + i + 1)),
-        TotalCount: 200,
-        PageSize: pageSize,
-      }))
+      clickThroughScript(
+        ...Array.from({ length: 3 }, (_, pageIndex) => ({
+          List: Array.from({ length: pageSize }, (_, i) => makeItem(pageIndex * pageSize + i + 1)),
+          TotalCount: 200,
+          PageSize: pageSize,
+        }))
+      )
     );
 
     const collected: unknown[] = [];
@@ -1700,6 +1773,117 @@ describe('quickSearch', () => {
     );
 
     expect(collected).toHaveLength(100);
+  });
+
+  it('stops pagination and still completes when the pager link is missing/unclickable', async () => {
+    resetPageQueue(
+      clickThroughScript(
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+          TotalCount: 61,
+          PageSize: 22,
+        },
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
+          TotalCount: 61,
+          PageSize: 22,
+        },
+        CLICK_THROWS
+      )
+    );
+
+    const events: string[] = [];
+    const collected: unknown[] = [];
+    await trademeRecipe.quickSearchAsync(
+      'https://www.trademe.co.nz/a/marketplace/computers/search',
+      (ev) => {
+        events.push(ev.type);
+        if (ev.type === 'listing') collected.push(ev.data);
+      }
+    );
+
+    expect(events).toContain('complete');
+    expect(events).not.toContain('error');
+    expect(collected).toHaveLength(44); // page 1 + page 2 only — page 3's click never landed
+  });
+
+  it('stops pagination via isCancelled before fetching a further page', async () => {
+    resetPageQueue(
+      clickThroughScript(
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+          TotalCount: 61,
+          PageSize: 22,
+        },
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
+          TotalCount: 61,
+          PageSize: 22,
+        },
+        {
+          List: Array.from({ length: 5 }, (_, i) => makeItem(i + 999)),
+          TotalCount: 61,
+          PageSize: 22,
+        }
+      )
+    );
+
+    const collected: unknown[] = [];
+    await trademeRecipe.quickSearchAsync(
+      'https://www.trademe.co.nz/a/marketplace/computers/search',
+      (ev) => {
+        if (ev.type === 'listing') collected.push(ev.data);
+      },
+      () => collected.length >= 44 // flips true right after page 1 + page 2 are in
+    );
+
+    expect(collected).toHaveLength(44);
+    expect(collected.some((l) => (l as { title: string }).title.includes('999'))).toBe(false);
+  });
+
+  describe('when a click never triggers the search XHR', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('stops pagination and still completes, without discarding pages already gathered', async () => {
+      resetPageQueue(
+        clickThroughScript(
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          CLICK_NO_RESPONSE
+        )
+      );
+
+      const events: string[] = [];
+      const collected: unknown[] = [];
+      const promise = trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+          if (ev.type === 'listing') collected.push(ev.data);
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(12000);
+      await promise;
+
+      expect(events).toContain('complete');
+      expect(events).not.toContain('error');
+      expect(collected).toHaveLength(44); // page 1 + page 2 only — no page 3 exists
+    });
   });
 });
 

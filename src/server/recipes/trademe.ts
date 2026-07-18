@@ -377,6 +377,13 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
 
+const PAGER_NEXT_SELECTOR = 'a:has-text("Next")';
+// Bounds how long a single click is allowed to hang looking for/acting on the
+// pager before treating it as "no pager" and stopping pagination gracefully.
+// Kept well under waitForSearchApiResponseAsync's own 12000ms so a genuinely
+// missing pager fails fast rather than stacking two ~12s waits.
+const PAGER_CLICK_TIMEOUT_MS = 5000;
+
 function waitForSearchApiResponseAsync(
   page: Page
 ): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
@@ -696,33 +703,38 @@ async function runQuickSearchAsync(
 
     emit(p1Listings);
 
-    const pageNums = Array.from({ length: totalPages - 1 }, (_, pageIndex) => pageIndex + 2);
-    const extraPages = await Promise.all(pageNums.map(() => context.newPage()));
+    // Pages 2+: click the in-page "Next" pager sequentially on the same tab,
+    // instead of opening new tabs and goto()-ing a &page=N URL. A fresh goto()
+    // to that URL never fires the /v1/search XHR TradeMe's SPA depends on
+    // (live-verified against production: 0/24 fetches via goto for pages 2+
+    // fired it, vs. 24/24 real in-page clicks); only a genuine click does. One
+    // tab also means only the outer enqueue() call in quickSearchAsync ever
+    // holds a domain-limiter slot for the whole walk, rather than nesting
+    // further enqueue calls inside it.
+    for (let pageNumber = 2; pageNumber <= totalPages; pageNumber++) {
+      if (isCancelled?.()) break;
+      if (emittedCount >= MAX_RESULTS_PER_URL) break;
 
-    await Promise.all(
-      pageNums.map((pageNumber, pageIndex) => {
-        const pageUrlInstance = new URL(searchUrl);
-        pageUrlInstance.searchParams.set('page', String(pageNumber));
-        const pageUrl = pageUrlInstance.toString();
-        return enqueue(pageUrl, async () => {
-          const currentPage = extraPages[pageIndex];
-          if (isCancelled?.()) {
-            await currentPage.close();
-            return;
-          }
-          try {
-            onEvent({ type: 'progress', phase: 'paging', page: pageNumber, totalPages });
-            const promise = waitForSearchApiResponseAsync(currentPage);
-            await currentPage.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      onEvent({ type: 'progress', phase: 'paging', page: pageNumber, totalPages });
 
-            const { listings } = await promise;
-            emit(listings);
-          } finally {
-            await currentPage.close();
-          }
-        });
-      })
-    );
+      let listings: Listing[];
+      try {
+        const responsePromise = waitForSearchApiResponseAsync(page);
+        await page.click(PAGER_NEXT_SELECTOR, { timeout: PAGER_CLICK_TIMEOUT_MS });
+        ({ listings } = await responsePromise);
+      } catch {
+        // Pager missing/not clickable within PAGER_CLICK_TIMEOUT_MS. A partial
+        // result is a good result: stop here and still report success below.
+        break;
+      }
+
+      // Click landed but never triggered a matching /v1/search response before
+      // waitForSearchApiResponseAsync's own 12s timeout fell back to empty —
+      // same graceful stop as a missing pager.
+      if (listings.length === 0) break;
+
+      emit(listings);
+    }
 
     onEvent({ type: 'complete' });
   } catch (error) {
