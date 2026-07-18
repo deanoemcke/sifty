@@ -216,7 +216,9 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   const regionValue = getElement<HTMLSelectElement>('discoveryRegion').value || undefined;
   const discoveryButton = getElement<HTMLButtonElement>('discoveryBtn');
   const discoveryErrorElement = getElement<HTMLDivElement>('discoveryError');
+  const discoveryWarningsElement = getElement<HTMLDivElement>('discoveryWarnings');
   discoveryErrorElement.style.display = 'none';
+  discoveryWarningsElement.style.display = 'none';
   discoveryButton.disabled = true;
   discoveryButton.textContent = DISCOVERY_BUTTON_BUSY_LABEL;
   setUrlsSectionState('discovering');
@@ -240,6 +242,7 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
       urls?: string[];
       name?: string;
       error?: string;
+      warnings?: string[];
     };
     // A saved search was loaded while this request was in flight — its
     // result is stale and must not overwrite what the user is now looking at.
@@ -248,6 +251,10 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
       discoveryErrorElement.textContent = data.error ?? 'Discovery failed';
       discoveryErrorElement.style.display = 'block';
       return;
+    }
+    if (data.warnings?.length) {
+      discoveryWarningsElement.textContent = data.warnings.join(' · ');
+      discoveryWarningsElement.style.display = 'block';
     }
     loadDiscoveryResults(data as { urls: string[]; name: string }, prompt);
   } catch {
