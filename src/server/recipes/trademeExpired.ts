@@ -47,17 +47,36 @@ export function reconstructLegacyPathFromRptpath(rptpath: string): string {
 // from=advanced&advanced=true are required to avoid TradeMe 301-redirecting to the modern
 // site — verified empirically; omitting either one triggers the redirect.
 
-export function buildLegacySearchUrl(entry: DiscoverEntry, legacyPath: string): string {
-  const { cid, rptpath } = deriveLegacyCidAndRptpath(legacyPath);
+function buildLegacySearchParams(
+  cid: string,
+  rptpath: string,
+  searchString: string
+): URLSearchParams {
   const params = new URLSearchParams();
   params.set('cid', cid);
   params.set('rptpath', rptpath);
-  params.set('searchstring', entry.soldSearchString);
+  params.set('searchstring', searchString);
   params.set('current', '0');
   params.set('sort_order', 'bids_asc');
   params.set('searchregion', '100');
   params.set('advanced', 'true');
   params.set('from', 'advanced');
+  return params;
+}
+
+export function buildLegacySearchUrl(entry: DiscoverEntry, legacyPath: string): string {
+  const { cid, rptpath } = deriveLegacyCidAndRptpath(legacyPath);
+  const params = buildLegacySearchParams(cid, rptpath, entry.soldSearchString);
+  return `${TRADEME_ORIGIN}/Browse/SearchResults.aspx?${params.toString()}`;
+}
+
+// cid=0 & rptpath=all is TradeMe's own "all categories" sentinel on the legacy
+// SearchResults.aspx endpoint — verified empirically against a real search: it
+// returns closed listings spanning multiple categories rather than a redirect
+// or error. Lets the discover root-search-probe path (trademe.ts), which never
+// resolves an AI category, still build a sold-items URL without a legacy_path.
+export function buildRootLegacySearchUrl(searchString: string): string {
+  const params = buildLegacySearchParams('0', 'all', searchString);
   return `${TRADEME_ORIGIN}/Browse/SearchResults.aspx?${params.toString()}`;
 }
 

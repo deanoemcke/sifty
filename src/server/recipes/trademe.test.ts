@@ -1622,7 +1622,7 @@ describe('buildDiscoverUrlsAsync', () => {
       expect(result.urls.some((u) => u.includes('electronics/laptops'))).toBe(true);
     });
 
-    it('skips sold-item URLs and pushes a warning when includeSoldItems is true and the root path wins', async () => {
+    it('builds a root (categoryless) legacy sold-item URL when includeSoldItems is true and the root path wins', async () => {
       resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
 
       const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
@@ -1633,9 +1633,15 @@ describe('buildDiscoverUrlsAsync', () => {
         getAiConfig: () => MOCK_AI,
       });
 
-      expect(result.urls).toHaveLength(1);
+      expect(result.urls).toHaveLength(2);
+      const legacyUrl = result.urls.find((u) => u.includes('Browse/SearchResults.aspx'));
+      expect(legacyUrl).toBeDefined();
+      const parsed = new URL(legacyUrl as string);
+      expect(parsed.searchParams.get('cid')).toBe('0');
+      expect(parsed.searchParams.get('rptpath')).toBe('all');
+      expect(parsed.searchParams.get('searchstring')).toBe('fisher price music box');
       expect(vi.mocked(stmtGetCategoryLegacyPath)).not.toHaveBeenCalled();
-      expect(result.warnings.some((w) => w.toLowerCase().includes('sold'))).toBe(true);
+      expect(result.warnings).toEqual([]);
     });
   });
 

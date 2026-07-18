@@ -23,7 +23,7 @@ import {
 } from '../constants';
 import { getDb, stmtGetCategoryLegacyPath } from '../db';
 import { type DiscoverEntry, resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
-import { buildLegacySearchUrl } from './trademeExpired';
+import { buildLegacySearchUrl, buildRootLegacySearchUrl } from './trademeExpired';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -614,10 +614,11 @@ async function tryRootSearchProbeAsync(
 
   if (newRootUrl) urls.push(newRootUrl);
 
-  // The legacy sold-items URL builder requires a category's DB-stored legacy_path —
-  // there's no category to look one up for in the root-search case.
+  // TradeMe's legacy SearchResults.aspx accepts cid=0&rptpath=all as an "all
+  // categories" sentinel, so the root (categoryless) case can still get a
+  // sold-items URL without needing a resolved category's legacy_path.
   if (context.includeSoldItems) {
-    warnings.push('sold items are unavailable for a root (categoryless) search — skipped');
+    urls.push(buildRootLegacySearchUrl(trimmedPrompt));
   }
 
   return { result: { urls, warnings }, warnings: [] };

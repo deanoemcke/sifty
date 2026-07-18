@@ -8,6 +8,7 @@ import { MAX_RESULTS_PER_URL } from '../constants';
 import { getDb, stmtGetCategoryByLegacyPath } from '../db';
 import {
   buildLegacySearchUrl,
+  buildRootLegacySearchUrl,
   deriveLegacyCidAndRptpath,
   extractImplicitFilters,
   parseLegacySearchResultsHtml,
@@ -105,6 +106,24 @@ describe('buildLegacySearchUrl', () => {
       '0002-0356-'
     );
     expect(new URL(url).searchParams.get('searchstring')).toBe('laptop');
+  });
+});
+
+describe('buildRootLegacySearchUrl', () => {
+  it('builds a URL with the cid=0/rptpath=all "all categories" sentinel', () => {
+    const url = buildRootLegacySearchUrl('fisher price music box');
+    const parsed = new URL(url);
+    expect(parsed.origin + parsed.pathname).toBe(
+      'https://www.trademe.co.nz/Browse/SearchResults.aspx'
+    );
+    expect(parsed.searchParams.get('cid')).toBe('0');
+    expect(parsed.searchParams.get('rptpath')).toBe('all');
+    expect(parsed.searchParams.get('current')).toBe('0');
+    expect(parsed.searchParams.get('sort_order')).toBe('bids_asc');
+    expect(parsed.searchParams.get('searchregion')).toBe('100');
+    expect(parsed.searchParams.get('advanced')).toBe('true');
+    expect(parsed.searchParams.get('from')).toBe('advanced');
+    expect(parsed.searchParams.get('searchstring')).toBe('fisher price music box');
   });
 });
 
