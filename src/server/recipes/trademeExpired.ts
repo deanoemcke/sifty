@@ -52,7 +52,7 @@ export function buildLegacySearchUrl(entry: DiscoverEntry, legacyPath: string): 
   const params = new URLSearchParams();
   params.set('cid', cid);
   params.set('rptpath', rptpath);
-  if (entry.searchString) params.set('searchstring', entry.searchString);
+  params.set('searchstring', entry.searchString);
   params.set('current', '0');
   params.set('sort_order', 'bids_asc');
   params.set('searchregion', '100');

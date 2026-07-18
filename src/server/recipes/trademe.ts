@@ -515,7 +515,7 @@ export function buildTrademeUrl(
   const topLevel = entry.slug.split('/')[0];
   const urlSlug = TRADEME_SECTIONS.has(topLevel) ? entry.slug : `marketplace/${entry.slug}`;
   const params = new URLSearchParams();
-  if (entry.searchString) params.set('search_string', entry.searchString);
+  params.set('search_string', entry.searchString);
   if (maxPrice > 0) params.set('price_max', String(maxPrice));
   if (fulfillment === 'pickup' && regionValue) {
     params.set('user_region', regionValue);

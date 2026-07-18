@@ -1057,7 +1057,7 @@ describe('extractImplicitFilters', () => {
 
 // ── buildTrademeUrl ───────────────────────────────────────────────────────────
 
-function entry(slug: string, searchString: string | null = null): DiscoverEntry {
+function entry(slug: string, searchString = 'item'): DiscoverEntry {
   return { slug, searchString };
 }
 
@@ -1109,10 +1109,10 @@ describe('buildTrademeUrl', () => {
     expect(url).toContain('condition=new');
   });
 
-  it('produces a search URL with only the condition param when no other params apply', () => {
+  it('produces a search URL with only search_string and condition params when no other params apply', () => {
     const url = buildTrademeUrl(entry('computers/laptops'), 0, 'any', undefined, 'used');
     expect(url).toBe(
-      'https://www.trademe.co.nz/a/marketplace/computers/laptops/search?condition=used'
+      'https://www.trademe.co.nz/a/marketplace/computers/laptops/search?search_string=item&condition=used'
     );
   });
 });
@@ -1677,6 +1677,27 @@ describe('buildDiscoverUrlsAsync', () => {
       expect(modernUrl).toContain('electronics/laptops');
       expect(legacyUrl).toContain('cid=356');
       expect(legacyUrl).toContain('rptpath=2-356-');
+    });
+
+    it('still includes a non-empty searchstring on the sold URL when the AI leaves searchString null', async () => {
+      vi.mocked(aiJSON).mockReset();
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      const legacyUrl = result.urls.find((u) => u.includes('Browse/SearchResults.aspx'));
+      expect(legacyUrl).toContain('searchstring=Laptops');
     });
 
     it('warns instead of throwing when a resolved category has no legacy mapping', async () => {
