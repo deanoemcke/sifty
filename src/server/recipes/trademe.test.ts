@@ -1058,7 +1058,7 @@ describe('extractImplicitFilters', () => {
 // ── buildTrademeUrl ───────────────────────────────────────────────────────────
 
 function entry(slug: string, searchString: string | null = null): DiscoverEntry {
-  return { slug, searchString };
+  return { slug, searchString, soldSearchString: 'item' };
 }
 
 describe('buildTrademeUrl', () => {
@@ -1694,6 +1694,29 @@ describe('buildDiscoverUrlsAsync', () => {
 
       expect(result.urls).toHaveLength(1); // modern URL only
       expect(result.warnings.some((w) => w.includes('no legacy category mapping'))).toBe(true);
+    });
+
+    it('gives the sold URL a searchstring derived from the category display name while leaving the active URL keyword-free, when the AI leaves searchString null', async () => {
+      vi.mocked(aiJSON).mockReset();
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      const modernUrl = result.urls.find((u) => u.includes('trademe.co.nz/a/'));
+      const legacyUrl = result.urls.find((u) => u.includes('Browse/SearchResults.aspx'));
+      expect(modernUrl).not.toContain('search_string');
+      expect(legacyUrl).toContain('searchstring=Laptops');
     });
   });
 

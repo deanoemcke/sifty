@@ -80,9 +80,9 @@ describe('reconstructLegacyPathFromRptpath', () => {
 });
 
 describe('buildLegacySearchUrl', () => {
-  it('builds a URL with the hardcoded sold-only params', () => {
+  it('builds a URL with the hardcoded sold-only params, using soldSearchString for searchstring', () => {
     const url = buildLegacySearchUrl(
-      { slug: 'computers/laptops', searchString: 'macbook pro' },
+      { slug: 'computers/laptops', searchString: 'macbook pro', soldSearchString: 'macbook pro' },
       '0002-0356-'
     );
     const parsed = new URL(url);
@@ -99,12 +99,12 @@ describe('buildLegacySearchUrl', () => {
     expect(parsed.searchParams.get('searchstring')).toBe('macbook pro');
   });
 
-  it('omits searchstring when entry.searchString is null', () => {
+  it('always includes searchstring from soldSearchString, even when entry.searchString is null', () => {
     const url = buildLegacySearchUrl(
-      { slug: 'computers/laptops', searchString: null },
+      { slug: 'computers/laptops', searchString: null, soldSearchString: 'laptop' },
       '0002-0356-'
     );
-    expect(new URL(url).searchParams.has('searchstring')).toBe(false);
+    expect(new URL(url).searchParams.get('searchstring')).toBe('laptop');
   });
 });
 

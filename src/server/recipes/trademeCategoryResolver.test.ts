@@ -55,12 +55,20 @@ describe('CATEGORY_SYSTEM_PROMPT', () => {
   it('instructs the AI to return JSON', () => {
     expect(CATEGORY_SYSTEM_PROMPT).toContain('Return JSON');
   });
+
+  it('contains the soldSearchString key, kept separate from the nullable searchString', () => {
+    expect(CATEGORY_SYSTEM_PROMPT).toContain('"soldSearchString"');
+  });
 });
 
 // ── collapseEntries ───────────────────────────────────────────────────────────
 
-function entry(slug: string, searchString: string | null = null): DiscoverEntry {
-  return { slug, searchString };
+function entry(
+  slug: string,
+  searchString: string | null = null,
+  soldSearchString = 'item'
+): DiscoverEntry {
+  return { slug, searchString, soldSearchString };
 }
 
 describe('collapseEntries', () => {
@@ -82,12 +90,16 @@ describe('collapseEntries', () => {
 
   it('collapses two siblings with the same searchString to their parent', () => {
     const input = [
-      entry('marketplace/computers/laptops/apple', 'macbook'),
-      entry('marketplace/computers/laptops/dell', 'macbook'),
+      entry('marketplace/computers/laptops/apple', 'macbook', 'macbook pro'),
+      entry('marketplace/computers/laptops/dell', 'macbook', 'macbook pro'),
     ];
     const result = collapseEntries(input);
     expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ slug: 'marketplace/computers/laptops', searchString: 'macbook' });
+    expect(result[0]).toEqual({
+      slug: 'marketplace/computers/laptops',
+      searchString: 'macbook',
+      soldSearchString: 'macbook pro',
+    });
   });
 
   it('does not collapse siblings when their shared parent slug has fewer than 3 segments', () => {
@@ -121,7 +133,11 @@ describe('collapseEntries', () => {
     ];
     const result = collapseEntries(input);
     expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ slug: 'marketplace/computers/laptops', searchString: null });
+    expect(result[0]).toEqual({
+      slug: 'marketplace/computers/laptops',
+      searchString: null,
+      soldSearchString: 'item',
+    });
   });
 
   it('collapses one sibling group and leaves unrelated entries untouched', () => {
@@ -163,8 +179,8 @@ describe('collapseEntries', () => {
     // Regression guard: collapsing siblings in one group must not affect siblings in an
     // unrelated group that shares no ancestor. Each group produces its own parent entry.
     const input = [
-      entry('marketplace/computers/laptops/apple', 'macbook'),
-      entry('marketplace/computers/laptops/dell', 'macbook'),
+      entry('marketplace/computers/laptops/apple', 'macbook', 'macbook pro'),
+      entry('marketplace/computers/laptops/dell', 'macbook', 'macbook pro'),
       entry('marketplace/furniture/home/bedroom', null),
       entry('marketplace/furniture/home/living', null),
     ];
@@ -177,6 +193,9 @@ describe('collapseEntries', () => {
     const home = result.find((e) => e.slug === 'marketplace/furniture/home');
     expect(laptops?.searchString).toBe('macbook');
     expect(home?.searchString).toBeNull();
+    // soldSearchString rides along on a collapse the same way searchString does.
+    expect(laptops?.soldSearchString).toBe('macbook pro');
+    expect(home?.soldSearchString).toBe('item');
   });
 });
 
@@ -534,6 +553,75 @@ describe('resolveDiscoverCategoriesAsync', () => {
     await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
 
     expect(countCategoryTableReads(prepareSpy)).toBe(1);
+  });
+
+  it('keeps searchString null but derives soldSearchString from the leaf display name when the AI omits it', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({
+        categories: [{ slug: 'building-renovation/tools', searchString: null }],
+      })
+    );
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(entries).toEqual([
+      { slug: 'building-renovation/tools', searchString: null, soldSearchString: 'Tools' },
+    ]);
+  });
+
+  it('derives soldSearchString from the leaf display name when the AI returns an empty-string soldSearchString', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({
+        categories: [
+          { slug: 'building-renovation/tools', searchString: null, soldSearchString: '   ' },
+        ],
+      })
+    );
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(entries).toEqual([
+      { slug: 'building-renovation/tools', searchString: null, soldSearchString: 'Tools' },
+    ]);
+  });
+
+  it('uses the AI-provided soldSearchString as-is when present, independent of searchString', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    _testDb = db;
+    seedLadderBugFixture(db);
+    vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
+    vi.mocked(aiJSON).mockResolvedValueOnce(
+      aiJsonOk({
+        categories: [
+          {
+            slug: 'building-renovation/tools',
+            searchString: 'cordless drill',
+            soldSearchString: 'drill',
+          },
+        ],
+      })
+    );
+
+    const { entries } = await resolveDiscoverCategoriesAsync('ladder', () => MOCK_AI_CONFIG);
+
+    expect(entries).toEqual([
+      {
+        slug: 'building-renovation/tools',
+        searchString: 'cordless drill',
+        soldSearchString: 'drill',
+      },
+    ]);
   });
 
   it('invalidateCategoryEmbeddingsCache forces a fresh DB read on the next call', async () => {
