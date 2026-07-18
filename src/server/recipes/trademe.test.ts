@@ -20,6 +20,8 @@ import {
   fetchSearchPage1Async,
   fetchSingleListingDetailAsync,
   mapReserveState,
+  PAGER_CLICK_TIMEOUT_MS,
+  PAGER_NEXT_SELECTOR,
   parseListingDetailResponse,
   parseSearchApiResponse,
   parseTradeMeDate,
@@ -58,6 +60,7 @@ const {
   CLICK_NO_RESPONSE,
   CLICK_THROWS,
   getLastClickThroughPageListenerCount,
+  getLastClickThroughPageClickCalls,
 } = vi.hoisted(() => {
   const queue: unknown[] = [];
   // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
@@ -84,11 +87,18 @@ const {
   // (via page.off) immediately, rather than leaving it registered until its
   // internal 12s timeout eventually fires.
   let lastClickThroughPageHandlers: Array<(r: unknown) => void> | null = null;
+  // Tracks every page.click(selector, options) call made against the most
+  // recently constructed click-through page, so tests can assert the
+  // pagination loop calls click() with the real PAGER_NEXT_SELECTOR /
+  // PAGER_CLICK_TIMEOUT_MS values — a mock that swallowed its arguments
+  // couldn't fail a test on a typo'd selector or dropped timeout.
+  let lastClickThroughPageClickCalls: Array<{ selector: string; options?: unknown }> = [];
 
   function makeClickThroughPage(steps: unknown[]) {
     let stepIndex = 0;
     const handlers: Array<(r: unknown) => void> = [];
     lastClickThroughPageHandlers = handlers;
+    lastClickThroughPageClickCalls = [];
     const fireResponse = (data: unknown) => {
       const response = {
         url: () => 'https://api.trademe.co.nz/v1/search/general.json',
@@ -112,7 +122,10 @@ const {
         if (index !== -1) handlers.splice(index, 1);
       },
       goto: consumeStep,
-      click: async (_selector: string, _options?: unknown) => consumeStep(),
+      click: async (selector: string, options?: unknown) => {
+        lastClickThroughPageClickCalls.push({ selector, options });
+        return consumeStep();
+      },
       close: async () => {},
     };
   }
@@ -212,6 +225,7 @@ const {
     CLICK_NO_RESPONSE,
     CLICK_THROWS,
     getLastClickThroughPageListenerCount: () => lastClickThroughPageHandlers?.length ?? 0,
+    getLastClickThroughPageClickCalls: () => lastClickThroughPageClickCalls,
   };
 });
 
@@ -1760,6 +1774,12 @@ describe('quickSearch', () => {
     // queued for — no per-page URL should ever hit the domain limiter.
     expect(enqueuedUrls.filter((u) => u.includes('page='))).toHaveLength(0);
     expect(enqueuedUrls.filter((u) => u === searchUrl)).toHaveLength(1);
+    // Asserts the pager click uses the real selector/timeout, not just that
+    // *some* click happened — a typo'd PAGER_NEXT_SELECTOR or a dropped
+    // timeout option would otherwise still pass every test in this file.
+    expect(getLastClickThroughPageClickCalls()).toEqual([
+      { selector: PAGER_NEXT_SELECTOR, options: { timeout: PAGER_CLICK_TIMEOUT_MS } },
+    ]);
   });
 
   it('caps emitted listings at MAX_RESULTS_PER_URL when totalCount exceeds it', async () => {

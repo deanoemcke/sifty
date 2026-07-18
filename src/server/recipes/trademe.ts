@@ -377,12 +377,15 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
 
-const PAGER_NEXT_SELECTOR = 'a:has-text("Next")';
+// Exported so tests can assert the pagination loop's page.click() call actually
+// uses these values, rather than a mock that ignores its arguments — a typo'd
+// selector or dropped timeout would otherwise pass every test silently.
+export const PAGER_NEXT_SELECTOR = 'a:has-text("Next")';
 // Bounds how long a single click is allowed to hang looking for/acting on the
 // pager before treating it as "no pager" and stopping pagination gracefully.
 // Kept well under waitForSearchApiResponseAsync's own 12000ms so a genuinely
 // missing pager fails fast rather than stacking two ~12s waits.
-const PAGER_CLICK_TIMEOUT_MS = 5000;
+export const PAGER_CLICK_TIMEOUT_MS = 5000;
 
 // Returns both the eventual result and an explicit `cancel` handle so a caller
 // that abandons the wait early (e.g. the pager click that triggered it threw)
