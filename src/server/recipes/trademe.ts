@@ -386,6 +386,16 @@ export const PAGER_NEXT_SELECTOR = 'a:has-text("Next")';
 // Kept well under waitForSearchApiResponseAsync's own 12000ms so a genuinely
 // missing pager fails fast rather than stacking two ~12s waits.
 export const PAGER_CLICK_TIMEOUT_MS = 5000;
+// Caps total wall-clock time spent walking pages 2+ (pages 1 and the initial
+// listing count are not counted). Each page can cost up to PAGER_CLICK_TIMEOUT_MS
+// (5000ms) plus waitForSearchApiResponseAsync's own 12000ms fallback — up to ~17s
+// — and with MAX_PAGES_PER_SEARCH = 20 that's an unbounded-in-practice ~5.4
+// minutes worst case for a single search on a slow-but-not-failing walk. This
+// value is double the old goto()-based pagination's fixed ~30s worst case,
+// giving a genuinely slow (but working) walk real headroom, while still turning
+// an effectively unbounded hold on one of only 3 trademe.co.nz concurrency-limiter
+// slots into a predictable ceiling.
+export const PAGINATION_MAX_DURATION_MS = 60000;
 
 // Returns both the eventual result and an explicit `cancel` handle so a caller
 // that abandons the wait early (e.g. the pager click that triggered it threw)
@@ -732,9 +742,17 @@ async function runQuickSearchAsync(
     // tab also means only the outer enqueue() call in quickSearchAsync ever
     // holds a domain-limiter slot for the whole walk, rather than nesting
     // further enqueue calls inside it.
+    const paginationDeadline = Date.now() + PAGINATION_MAX_DURATION_MS;
+
     for (let pageNumber = 2; pageNumber <= totalPages; pageNumber++) {
       if (isCancelled?.()) break;
       if (emittedCount >= MAX_RESULTS_PER_URL) break;
+      if (Date.now() >= paginationDeadline) {
+        console.warn(
+          `[trademe] pagination deadline (${PAGINATION_MAX_DURATION_MS}ms) hit at page ${pageNumber} of ${totalPages} for ${searchUrl}`
+        );
+        break;
+      }
 
       onEvent({ type: 'progress', phase: 'paging', page: pageNumber, totalPages });
 

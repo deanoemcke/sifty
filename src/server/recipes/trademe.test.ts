@@ -22,6 +22,7 @@ import {
   mapReserveState,
   PAGER_CLICK_TIMEOUT_MS,
   PAGER_NEXT_SELECTOR,
+  PAGINATION_MAX_DURATION_MS,
   parseListingDetailResponse,
   parseSearchApiResponse,
   parseTradeMeDate,
@@ -59,6 +60,7 @@ const {
   clickThroughScript,
   CLICK_NO_RESPONSE,
   CLICK_THROWS,
+  delayedClickResponse,
   getLastClickThroughPageListenerCount,
   getLastClickThroughPageClickCalls,
 } = vi.hoisted(() => {
@@ -72,6 +74,14 @@ const {
   const CLICK_NO_RESPONSE = Symbol('click-no-response');
   // click() itself rejects — models a missing/unclickable pager link.
   const CLICK_THROWS = Symbol('click-throws');
+
+  // click() resolves with a genuine matching response, but only after `delayMs`
+  // of (fake-timer) wall-clock time — models a page that keeps working, just
+  // slowly, so tests can drive the pagination-deadline check without also
+  // tripping the unrelated "no response" stop condition.
+  function delayedClickResponse(data: unknown, delayMs: number) {
+    return { __delayedResponseData: data, __delayMs: delayMs };
+  }
 
   // Wraps a sequence of per-call outcomes (page-1 goto() data, then one entry per
   // subsequent click()) so getNextPage() can build a single continuous page object
@@ -111,6 +121,15 @@ const {
       const step = steps[stepIndex++];
       if (step === CLICK_THROWS) throw new Error('pager link not found');
       if (step === CLICK_NO_RESPONSE) return;
+      if (step && typeof step === 'object' && '__delayMs' in step) {
+        const { __delayedResponseData, __delayMs } = step as {
+          __delayedResponseData: unknown;
+          __delayMs: number;
+        };
+        await new Promise((resolve) => setTimeout(resolve, __delayMs));
+        fireResponse(__delayedResponseData ?? {});
+        return;
+      }
       fireResponse(step ?? {});
     };
     return {
@@ -224,6 +243,7 @@ const {
     clickThroughScript,
     CLICK_NO_RESPONSE,
     CLICK_THROWS,
+    delayedClickResponse,
     getLastClickThroughPageListenerCount: () => lastClickThroughPageHandlers?.length ?? 0,
     getLastClickThroughPageClickCalls: () => lastClickThroughPageClickCalls,
   };
@@ -1967,6 +1987,68 @@ describe('quickSearch', () => {
       expect(events).toContain('complete');
       expect(events).not.toContain('error');
       expect(collected).toHaveLength(44); // page 1 + page 2 only — no page 3 exists
+    });
+  });
+
+  // Guards the wall-clock cap on pages 2+ (PR #42 review, Backend finding #2):
+  // without it, a search where every page click keeps succeeding — just slowly
+  // — can walk all MAX_PAGES_PER_SEARCH pages sequentially, holding one of only
+  // 3 trademe.co.nz concurrency-limiter slots for however long that takes.
+  describe('when pagination runs past PAGINATION_MAX_DURATION_MS', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('stops pagination once the wall-clock deadline is hit, and still completes with a partial page count', async () => {
+      // pageSize=10, TotalCount=80 => totalPages=8. Each of pages 2-7 responds
+      // genuinely (not CLICK_NO_RESPONSE/CLICK_THROWS) but only after a delay
+      // kept below waitForSearchApiResponseAsync's own 12_000ms internal
+      // fallback (so that unrelated "no response arrived" path never fires).
+      // Six of them together (6 * 10_000ms = 60_000ms) exactly consume
+      // PAGINATION_MAX_DURATION_MS — the loop's next deadline check (before a
+      // would-be page 8 click) must then trip, short of totalPages.
+      const perPageDelayMs = 10000;
+      const pageCountBeforeDeadline = PAGINATION_MAX_DURATION_MS / perPageDelayMs; // 6
+      const makePageData = (pageIndex: number) => ({
+        List: Array.from({ length: 10 }, (_, i) => makeItem(pageIndex * 10 + i + 1)),
+        TotalCount: 80,
+        PageSize: 10,
+      });
+
+      resetPageQueue(
+        clickThroughScript(
+          makePageData(0),
+          ...Array.from({ length: pageCountBeforeDeadline }, (_, i) =>
+            delayedClickResponse(makePageData(i + 1), perPageDelayMs)
+          )
+        )
+      );
+
+      const events: string[] = [];
+      const collected: unknown[] = [];
+      const promise = trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+          if (ev.type === 'listing') collected.push(ev.data);
+        }
+      );
+
+      for (let i = 0; i < pageCountBeforeDeadline; i++) {
+        await vi.advanceTimersByTimeAsync(perPageDelayMs);
+      }
+      await promise;
+
+      expect(events).toContain('complete');
+      expect(events).not.toContain('error');
+      // Page 1 + pages 2-7 collected (70 listings); page 8 never reached even
+      // though totalPages=8 — the loop was cut off by the deadline, not by
+      // running out of pages.
+      expect(collected).toHaveLength(70);
     });
   });
 });
