@@ -384,29 +384,45 @@ const PAGER_NEXT_SELECTOR = 'a:has-text("Next")';
 // missing pager fails fast rather than stacking two ~12s waits.
 const PAGER_CLICK_TIMEOUT_MS = 5000;
 
-function waitForSearchApiResponseAsync(
-  page: Page
-): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
-  return new Promise((resolve) => {
-    let timer: ReturnType<typeof setTimeout>;
-    const handler = async (response: Response) => {
-      if (response.url().includes('api.trademe.co.nz/v1/search') && response.status() === 200) {
-        page.off('response', handler);
-        clearTimeout(timer);
-        try {
-          const data = (await response.json()) as Record<string, unknown>;
-          resolve(parseSearchApiResponse(data));
-        } catch {
-          resolve({ listings: [], totalCount: 0, pageSize: 1 });
+// Returns both the eventual result and an explicit `cancel` handle so a caller
+// that abandons the wait early (e.g. the pager click that triggered it threw)
+// can unregister the listener and clear the timer immediately, rather than
+// leaving both live for up to 12s — see the pagination loop in
+// runQuickSearchAsync below, which is the only caller that needs `cancel`.
+function waitForSearchApiResponseAsync(page: Page): {
+  promise: Promise<{ listings: Listing[]; totalCount: number; pageSize: number }>;
+  cancel: () => void;
+} {
+  let timer: ReturnType<typeof setTimeout>;
+  let handler: (response: Response) => Promise<void>;
+  const promise = new Promise<{ listings: Listing[]; totalCount: number; pageSize: number }>(
+    (resolve) => {
+      handler = async (response: Response) => {
+        if (response.url().includes('api.trademe.co.nz/v1/search') && response.status() === 200) {
+          page.off('response', handler);
+          clearTimeout(timer);
+          try {
+            const data = (await response.json()) as Record<string, unknown>;
+            resolve(parseSearchApiResponse(data));
+          } catch {
+            resolve({ listings: [], totalCount: 0, pageSize: 1 });
+          }
         }
-      }
-    };
-    page.on('response', handler);
-    timer = setTimeout(() => {
+      };
+      page.on('response', handler);
+      timer = setTimeout(() => {
+        page.off('response', handler);
+        resolve({ listings: [], totalCount: 0, pageSize: 1 });
+      }, 12000);
+    }
+  );
+  return {
+    promise,
+    cancel: () => {
+      clearTimeout(timer);
       page.off('response', handler);
-      resolve({ listings: [], totalCount: 0, pageSize: 1 });
-    }, 12000);
-  });
+    },
+  };
 }
 
 // Self-contained "make one live TradeMe search request" helper: launches its own
@@ -420,7 +436,7 @@ export async function fetchSearchPage1Async(
   try {
     const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
     const page = await context.newPage();
-    const responsePromise = waitForSearchApiResponseAsync(page);
+    const { promise: responsePromise } = waitForSearchApiResponseAsync(page);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     return await responsePromise;
   } finally {
@@ -676,7 +692,7 @@ async function runQuickSearchAsync(
     const page = await context.newPage();
 
     onEvent({ type: 'progress', phase: 'paging', page: 1 });
-    const p1Promise = waitForSearchApiResponseAsync(page);
+    const { promise: p1Promise } = waitForSearchApiResponseAsync(page);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
@@ -718,8 +734,8 @@ async function runQuickSearchAsync(
       onEvent({ type: 'progress', phase: 'paging', page: pageNumber, totalPages });
 
       let listings: Listing[];
+      const { promise: responsePromise, cancel } = waitForSearchApiResponseAsync(page);
       try {
-        const responsePromise = waitForSearchApiResponseAsync(page);
         await page.click(PAGER_NEXT_SELECTOR, { timeout: PAGER_CLICK_TIMEOUT_MS });
         ({ listings } = await responsePromise);
       } catch (error) {
@@ -729,6 +745,12 @@ async function runQuickSearchAsync(
         // was still expected (pageNumber <= totalPages) — a genuine last page
         // never gets here, so this is always worth distinguishing from a
         // broken pager selector.
+        //
+        // cancel() unregisters the response listener and clears the internal
+        // 12s timeout immediately — without it, both would stay live until
+        // the timeout fired on its own, by which point the outer `finally`
+        // has very likely already closed the browser they reference.
+        cancel();
         console.warn(
           `[trademe] pager click failed on page ${pageNumber} of ${totalPages} for ${searchUrl}`,
           error

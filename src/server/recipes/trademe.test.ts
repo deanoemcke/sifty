@@ -57,6 +57,7 @@ const {
   clickThroughScript,
   CLICK_NO_RESPONSE,
   CLICK_THROWS,
+  getLastClickThroughPageListenerCount,
 } = vi.hoisted(() => {
   const queue: unknown[] = [];
   // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
@@ -77,9 +78,17 @@ const {
     return { __clickThroughSteps: steps };
   }
 
+  // Tracks the most recently constructed click-through page's live `response`
+  // listener count, so tests can assert that a cancelled
+  // waitForSearchApiResponseAsync() call actually unregisters its listener
+  // (via page.off) immediately, rather than leaving it registered until its
+  // internal 12s timeout eventually fires.
+  let lastClickThroughPageHandlers: Array<(r: unknown) => void> | null = null;
+
   function makeClickThroughPage(steps: unknown[]) {
     let stepIndex = 0;
     const handlers: Array<(r: unknown) => void> = [];
+    lastClickThroughPageHandlers = handlers;
     const fireResponse = (data: unknown) => {
       const response = {
         url: () => 'https://api.trademe.co.nz/v1/search/general.json',
@@ -98,7 +107,10 @@ const {
       on: (_: string, h: (r: unknown) => void) => {
         handlers.push(h);
       },
-      off: () => {},
+      off: (_: string, h: (r: unknown) => void) => {
+        const index = handlers.indexOf(h);
+        if (index !== -1) handlers.splice(index, 1);
+      },
       goto: consumeStep,
       click: async (_selector: string, _options?: unknown) => consumeStep(),
       close: async () => {},
@@ -199,6 +211,7 @@ const {
     clickThroughScript,
     CLICK_NO_RESPONSE,
     CLICK_THROWS,
+    getLastClickThroughPageListenerCount: () => lastClickThroughPageHandlers?.length ?? 0,
   };
 });
 
@@ -1775,36 +1788,87 @@ describe('quickSearch', () => {
     expect(collected).toHaveLength(100);
   });
 
-  it('stops pagination and still completes when the pager link is missing/unclickable', async () => {
-    resetPageQueue(
-      clickThroughScript(
-        {
-          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
-          TotalCount: 61,
-          PageSize: 22,
-        },
-        {
-          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
-          TotalCount: 61,
-          PageSize: 22,
-        },
-        CLICK_THROWS
-      )
-    );
+  // Fake timers here guard against the exact regression this fix addresses:
+  // waitForSearchApiResponseAsync registers a page.on('response', ...) listener
+  // and a real 12s setTimeout *before* the click is awaited. Before the fix, a
+  // thrown click left both dangling until that internal timeout eventually
+  // fired — which, without fake timers, meant this test scheduled a genuine
+  // un-mocked 12s timer on every run. cancel() (called from the catch branch)
+  // now clears both immediately, so this test asserts that cleanup happens
+  // synchronously rather than relying on the timer ever firing.
+  describe('when the pager link is missing/unclickable', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
 
-    const events: string[] = [];
-    const collected: unknown[] = [];
-    await trademeRecipe.quickSearchAsync(
-      'https://www.trademe.co.nz/a/marketplace/computers/search',
-      (ev) => {
-        events.push(ev.type);
-        if (ev.type === 'listing') collected.push(ev.data);
-      }
-    );
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
-    expect(events).toContain('complete');
-    expect(events).not.toContain('error');
-    expect(collected).toHaveLength(44); // page 1 + page 2 only — page 3's click never landed
+    it('stops pagination and still completes', async () => {
+      resetPageQueue(
+        clickThroughScript(
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          CLICK_THROWS
+        )
+      );
+
+      const events: string[] = [];
+      const collected: unknown[] = [];
+      await trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+          if (ev.type === 'listing') collected.push(ev.data);
+        }
+      );
+
+      expect(events).toContain('complete');
+      expect(events).not.toContain('error');
+      expect(collected).toHaveLength(44); // page 1 + page 2 only — page 3's click never landed
+    });
+
+    it('cancels the pending response listener/timer immediately instead of leaving it until the 12s timeout', async () => {
+      resetPageQueue(
+        clickThroughScript(
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          CLICK_THROWS
+        )
+      );
+
+      const events: string[] = [];
+      await trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+        }
+      );
+
+      // The response listener registered just before the failed click must
+      // already be gone — proving cancel() ran synchronously in the catch
+      // branch, not merely that the (still-pending) internal timeout would
+      // eventually have removed it.
+      expect(getLastClickThroughPageListenerCount()).toBe(0);
+
+      // Advancing all the way past the internal 12s fallback must be a no-op:
+      // no further events, because there's nothing left listening or scheduled.
+      const eventCountBeforeAdvance = events.length;
+      await vi.advanceTimersByTimeAsync(12000);
+      expect(events).toHaveLength(eventCountBeforeAdvance);
+    });
   });
 
   it('stops pagination via isCancelled before fetching a further page', async () => {
