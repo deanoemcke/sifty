@@ -98,6 +98,14 @@ describe('buildLegacySearchUrl', () => {
     expect(parsed.searchParams.get('from')).toBe('advanced');
     expect(parsed.searchParams.get('searchstring')).toBe('macbook pro');
   });
+
+  it('omits searchstring when entry.searchString is null', () => {
+    const url = buildLegacySearchUrl(
+      { slug: 'computers/laptops', searchString: null },
+      '0002-0356-'
+    );
+    expect(new URL(url).searchParams.has('searchstring')).toBe(false);
+  });
 });
 
 describe('extractImplicitFilters', () => {
