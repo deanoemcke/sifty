@@ -722,16 +722,29 @@ async function runQuickSearchAsync(
         const responsePromise = waitForSearchApiResponseAsync(page);
         await page.click(PAGER_NEXT_SELECTOR, { timeout: PAGER_CLICK_TIMEOUT_MS });
         ({ listings } = await responsePromise);
-      } catch {
+      } catch (error) {
         // Pager missing/not clickable within PAGER_CLICK_TIMEOUT_MS. A partial
         // result is a good result: stop here and still report success below.
+        // Logged because the loop only reaches this branch when another page
+        // was still expected (pageNumber <= totalPages) — a genuine last page
+        // never gets here, so this is always worth distinguishing from a
+        // broken pager selector.
+        console.warn(
+          `[trademe] pager click failed on page ${pageNumber} of ${totalPages} for ${searchUrl}`,
+          error
+        );
         break;
       }
 
       // Click landed but never triggered a matching /v1/search response before
       // waitForSearchApiResponseAsync's own 12s timeout fell back to empty —
-      // same graceful stop as a missing pager.
-      if (listings.length === 0) break;
+      // same graceful stop as a missing pager, and logged for the same reason.
+      if (listings.length === 0) {
+        console.warn(
+          `[trademe] pager click on page ${pageNumber} of ${totalPages} landed but no search response arrived for ${searchUrl}`
+        );
+        break;
+      }
 
       emit(listings);
     }
