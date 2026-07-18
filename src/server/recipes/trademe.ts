@@ -676,9 +676,11 @@ async function quickSearchAsync(
 
   // A discover request can fan out several concurrent TradeMe search URLs per
   // category (used/new/sold), and this PR adds another multiplier on top of
-  // that. Route the launch through the per-domain concurrency limiter — the
-  // same one pagination already uses below — so concurrent searches can't
-  // stack unbounded headless browsers. The criteria event is emitted before
+  // that. Route the launch through the per-domain concurrency limiter so
+  // concurrent searches can't stack unbounded headless browsers. This is now
+  // the *only* enqueue() call for the whole search — pagination (below) walks
+  // pages 2+ by clicking within the same already-open tab/slot, not by taking
+  // further limiter slots of its own. The criteria event is emitted before
   // queueing so the card gets its filter chips immediately, even while the
   // search waits for a slot.
   await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));

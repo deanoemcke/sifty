@@ -1976,8 +1976,9 @@ describe('quickSearch', () => {
 // A discover request can fan out several concurrent TradeMe search URLs per
 // category (used/new/sold), and adding "include new items" pushes the
 // worst-case concurrent-launch count higher still — so the initial browser
-// launch must be routed through the same per-domain limiter that pagination
-// already uses, exactly like Facebook's quickSearchAsync.
+// launch must be routed through the per-domain limiter, exactly like
+// Facebook's quickSearchAsync. Pagination (pages 2+) reuses that same
+// already-open tab/slot rather than taking limiter slots of its own.
 
 describe('trademeRecipe.quickSearchAsync — domain concurrency limiting', () => {
   beforeEach(() => {
