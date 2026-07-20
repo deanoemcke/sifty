@@ -33,7 +33,7 @@ vi.mock('../embeddings', async (importOriginal) => {
 
 import { aiJSON } from '../ai';
 import { initSchema } from '../db';
-import { EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
+import { EMBEDDING_MODEL_TAG, embedTextAsync, floatsToBuffer } from '../embeddings';
 import {
   assertCategoryEmbeddingCoverage,
   CATEGORY_SYSTEM_PROMPT,
@@ -206,7 +206,7 @@ function embeddedCategory(
   display: string,
   embedding: number[] | null
 ): CachedCategoryEmbedding {
-  return { slug, display, embedding };
+  return { slug, display, embedding: embedding === null ? null : Float32Array.from(embedding) };
 }
 
 describe('rankCategoriesBySimilarity', () => {
@@ -262,8 +262,8 @@ function seedCategories(db: Database.Database, categories: SeedCategory[]): void
       category.depth,
       category.parentSlug,
       `legacy/${category.slug}`,
-      JSON.stringify(category.embedding),
-      category.embeddingModel ?? EMBEDDING_MODEL
+      floatsToBuffer(category.embedding),
+      category.embeddingModel ?? EMBEDDING_MODEL_TAG
     );
   }
 }
@@ -462,7 +462,7 @@ describe('resolveDiscoverCategoriesAsync', () => {
 
   // PR #41 review (Data #3): a single malformed embedding row must not take down the whole
   // discover request — it should be skipped, same as a null embedding, not thrown.
-  it('skips a category with malformed embedding JSON instead of throwing', async () => {
+  it('skips a category with corrupt embedding bytes instead of throwing', async () => {
     const db = new Database(':memory:');
     initSchema(db);
     _testDb = db;
@@ -483,8 +483,8 @@ describe('resolveDiscoverCategoriesAsync', () => {
       3,
       'building-renovation/building-supplies',
       'legacy/scaffolding-ladders',
-      'not valid json',
-      EMBEDDING_MODEL
+      Buffer.from([1, 2, 3]), // not a whole number of float32s
+      EMBEDDING_MODEL_TAG
     );
     vi.mocked(embedTextAsync).mockResolvedValue([1, 0]);
     vi.mocked(aiJSON).mockResolvedValueOnce(

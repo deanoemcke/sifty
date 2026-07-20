@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cosineSimilarity, embedTextAsync, embedTextsBatchAsync } from './embeddings';
+import {
+  bufferToFloats,
+  cosineSimilarity,
+  EMBEDDING_DIMENSIONS,
+  embedTextAsync,
+  embedTextsBatchAsync,
+  floatsToBuffer,
+} from './embeddings';
 
 function makeResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -57,6 +64,30 @@ describe('cosineSimilarity', () => {
   it('throws on a dimension mismatch instead of silently producing NaN', () => {
     expect(() => cosineSimilarity([1, 2, 3], [1, 2])).toThrow(/dimension mismatch/);
   });
+
+  it('accepts Float32Array inputs (the decoded on-disk storage format), not just number[]', () => {
+    expect(
+      cosineSimilarity(Float32Array.from([1, 2, 3]), Float32Array.from([1, 2, 3]))
+    ).toBeCloseTo(1);
+  });
+});
+
+describe('floatsToBuffer / bufferToFloats', () => {
+  it('round-trips values through the binary storage format', () => {
+    const values = [0.1, -0.25, 3, 0, -1.5];
+    const decoded = bufferToFloats(floatsToBuffer(values));
+    expect(Array.from(decoded)).toEqual(
+      Array.from(Float32Array.from(values)) // float32 precision, same rounding both sides
+    );
+  });
+
+  it('produces a buffer 4 bytes per dimension', () => {
+    expect(floatsToBuffer([1, 2, 3]).byteLength).toBe(12);
+  });
+
+  it('throws when the buffer length is not a whole number of float32s (corrupt data)', () => {
+    expect(() => bufferToFloats(Buffer.from([1, 2, 3]))).toThrow();
+  });
 });
 
 describe('embedTextAsync', () => {
@@ -77,6 +108,9 @@ describe('embedTextAsync', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain(':embedContent');
     expect((init?.headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
+    const requestBody = JSON.parse(init?.body as string);
+    expect(requestBody.outputDimensionality).toBe(768);
+    expect(EMBEDDING_DIMENSIONS).toBe(768);
   });
 
   it('throws on a non-ok response', async () => {
@@ -102,9 +136,11 @@ describe('embedTextsBatchAsync', () => {
 
   it('returns one embedding per input text, in order', async () => {
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      makeResponse(200, { embeddings: [{ values: [1, 0] }, { values: [0, 1] }] })
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        makeResponse(200, { embeddings: [{ values: [1, 0] }, { values: [0, 1] }] })
+      );
 
     const result = await embedTextsBatchAsync(['ladder', 'scaffolding']);
 
@@ -112,6 +148,11 @@ describe('embedTextsBatchAsync', () => {
       [1, 0],
       [0, 1],
     ]);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(requestBody.requests).toHaveLength(2);
+    for (const request of requestBody.requests) {
+      expect(request.outputDimensionality).toBe(768);
+    }
   });
 
   it('chunks requests larger than the per-request cap into multiple calls', async () => {

@@ -9,14 +9,18 @@
  * processed, and each chunk is persisted immediately after it's embedded, so a
  * re-run after a partial failure (network error, rate limit, etc.) resumes
  * without re-spending API calls on already-current-model rows. Tagging each row
- * with the model that produced it means a future EMBEDDING_MODEL bump is picked
+ * with the model that produced it means a future EMBEDDING_MODEL_TAG bump is picked
  * up automatically on the next run, instead of silently no-op'ing because every
  * row already has a (stale-model) embedding.
  */
 
 import Database from 'better-sqlite3';
 import { DB_PATH } from '../src/server/db';
-import { EMBEDDING_MODEL, embedTextsBatchAsync } from '../src/server/embeddings';
+import {
+  EMBEDDING_MODEL_TAG,
+  embedTextsBatchAsync,
+  floatsToBuffer,
+} from '../src/server/embeddings';
 import { loadServerEnv } from '../src/server/env';
 
 loadServerEnv();
@@ -38,7 +42,7 @@ async function run(): Promise<void> {
       [string],
       PendingRow
     >('SELECT slug, display FROM trademe_categories WHERE embedding IS NULL OR embedding_model IS NOT ?')
-    .all(EMBEDDING_MODEL);
+    .all(EMBEDDING_MODEL_TAG);
 
   if (pending.length === 0) {
     console.log('All categories already have embeddings.');
@@ -55,7 +59,7 @@ async function run(): Promise<void> {
     const embeddings = await embedTextsBatchAsync(chunk.map((row) => row.display));
     const persistChunk = db.transaction(() => {
       chunk.forEach((row, index) => {
-        update.run(JSON.stringify(embeddings[index]), EMBEDDING_MODEL, row.slug);
+        update.run(floatsToBuffer(embeddings[index]), EMBEDDING_MODEL_TAG, row.slug);
       });
     });
     persistChunk();
