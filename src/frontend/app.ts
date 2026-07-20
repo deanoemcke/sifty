@@ -52,6 +52,7 @@ import {
 } from './sortDropdown';
 import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
 import {
+  activeSidebarTab,
   type ListingVisibilityCategory,
   openModalListingUrl,
   setActiveSidebarTab,
@@ -85,6 +86,7 @@ function handleSortOptionChange(sortOption: SortOption): void {
 }
 
 function handleSidebarTabClick(tabName: SidebarTabName): void {
+  if (tabName === activeSidebarTab) return;
   setActiveSidebarTab(tabName);
   activateSidebarTab(document, tabName);
   syncUrlToState({ push: true });

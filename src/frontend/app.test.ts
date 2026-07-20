@@ -592,6 +592,20 @@ describe('initApp() wiring', () => {
       expect(replaceSpy).not.toHaveBeenCalled();
     });
 
+    it('clicking the already-active tab is a no-op: no history push and no replace', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+      const pushSpy = vi.spyOn(history, 'pushState');
+      const replaceSpy = vi.spyOn(history, 'replaceState');
+
+      // Search is the default active tab, so clicking it again should not
+      // touch history at all — not even a replace.
+      document.getElementById('searchTabBtn')?.dispatchEvent(new Event('click'));
+
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(replaceSpy).not.toHaveBeenCalled();
+    });
+
     it('changing the sort option replaces the URL rather than pushing a new entry', async () => {
       await import('./app');
       // Let the fire-and-forget boot-time applyUrlState/syncUrlToState chain
