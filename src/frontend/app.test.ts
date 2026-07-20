@@ -637,6 +637,46 @@ describe('initApp() wiring', () => {
       expect(pushSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('closing a modal this session opened calls history.back() to consume the pushed entry', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+      const { openListingCardModal } = await import('./listingDetail');
+      const stateModule = await import('./state');
+      // openListingCardModal is stubbed for this file — simulate what it
+      // would really have done to state on open.
+      vi.mocked(openListingCardModal).mockImplementation(() => {
+        stateModule.setOpenModalListingUrl('https://example.com/listing/1');
+      });
+      const { openArea } = appendListingCardFixture();
+      openArea.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+      document.getElementById('listingModalCloseBtn')?.dispatchEvent(new Event('click'));
+
+      expect(backSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closing a modal opened by a boot-time deep link (never pushed by this session) replaces the URL instead of calling history.back()', async () => {
+      const { listingsByUrl } = await import('./state');
+      const url = 'https://example.com/listing/1';
+      listingsByUrl.set(url, makeListingItemAt(url));
+      // Simulate arriving via a shared/bookmarked link that already contains
+      // the modal param — a real browser navigation, never pushState, so
+      // history.state carries no siftyPushed marker for this entry.
+      history.replaceState(null, '', `/?modal=${encodeURIComponent(url)}`);
+
+      await import('./app');
+      await vi.waitFor(() => {
+        expect(document.getElementById('listingModal')?.classList.contains('hidden')).toBe(false);
+      });
+
+      const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+      document.getElementById('listingModalCloseBtn')?.dispatchEvent(new Event('click'));
+
+      expect(backSpy).not.toHaveBeenCalled();
+      expect(new URLSearchParams(location.search).get('modal')).toBe(null);
+    });
+
     it('a real back navigation past an open modal closes it without calling history.back() again', async () => {
       await import('./app');
       const { openListingCardModal } = await import('./listingDetail');

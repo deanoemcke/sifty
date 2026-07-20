@@ -63,7 +63,7 @@ import { toggleUrlGroup } from './urlGroupsView';
 import {
   applyUrlState,
   currentLocationSearchParams,
-  isCurrentUrlModalEntryFor,
+  isAppPushedModalEntryFor,
   parseUrlState,
   syncUrlToState,
 } from './urlState';
@@ -101,7 +101,7 @@ function openListingCardModalAndSyncUrl(card: HTMLElement): void {
 function closeListingModalAndSyncUrl(): void {
   const closingUrl = openModalListingUrl;
   closeListingModal();
-  if (closingUrl && isCurrentUrlModalEntryFor(closingUrl)) history.back();
+  if (closingUrl && isAppPushedModalEntryFor(closingUrl)) history.back();
   else syncUrlToState({ push: false });
 }
 

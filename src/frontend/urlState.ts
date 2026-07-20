@@ -94,21 +94,32 @@ export function currentLocationSearchParams(): URLSearchParams {
 }
 
 // Sole writer of the address bar for in-app state changes. `push: true` adds
-// a real back-stop; `push: false` (replaceState) reflects the current state
-// without growing history — see the plan's push-vs-replace policy.
+// a real back-stop, tagging the new entry with URL_STATE_PUSH_MARKER so a
+// later close/back decision can tell "this app pushed this entry" apart from
+// "the address bar just happens to carry a matching URL" — e.g. a
+// boot-time deep link, which never goes through this function's push branch
+// (see isAppPushedModalEntryFor below and bootFromPersistedStateAsync in
+// app.ts). `push: false` (replaceState) reflects the current state without
+// growing history, carrying the existing entry's state (and marker, if any)
+// forward instead of clearing it.
+const URL_STATE_PUSH_MARKER = { siftyPushed: true } as const;
+
 export function syncUrlToState(options: { push: boolean }): void {
   const url = `${location.pathname}?${serializeStateToSearchParams().toString()}${location.hash}`;
-  if (options.push) history.pushState(null, '', url);
-  else history.replaceState(null, '', url);
+  if (options.push) history.pushState(URL_STATE_PUSH_MARKER, '', url);
+  else history.replaceState(history.state, '', url);
 }
 
-// Does the *current* address bar already carry this listing as the open
-// modal? Used instead of a separate history.state marker to decide whether
-// closing the modal should consume a real pushed entry (history.back()) or
-// just replace — see the plan's replacement of the old modalOverlay marker
-// hack for the listing modal specifically.
-export function isCurrentUrlModalEntryFor(listingUrl: string): boolean {
-  return currentLocationSearchParams().get('modal') === listingUrl;
+// Was the *current* history entry both pushed by this app (via
+// syncUrlToState({ push: true })) and does it still carry this listing as
+// the open modal? Both must hold before closing the modal may call
+// history.back() — a boot-time deep link (or any URL that merely happens to
+// match) carries no marker, so this correctly returns false for it and the
+// caller falls back to replacing the URL instead of calling back() with no
+// app-pushed entry to consume.
+export function isAppPushedModalEntryFor(listingUrl: string): boolean {
+  const state = history.state as { siftyPushed?: boolean } | null;
+  return state?.siftyPushed === true && currentLocationSearchParams().get('modal') === listingUrl;
 }
 
 async function fetchSavedSearchById(
