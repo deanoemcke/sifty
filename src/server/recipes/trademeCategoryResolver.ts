@@ -14,7 +14,13 @@ import {
 } from '../db';
 import { cosineSimilarity, EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
 
-export type DiscoverEntry = { slug: string; searchString: string | null };
+// searchString stays nullable — null means "browse the whole category, no keyword
+// filter", which is deliberately allowed for active-listing search (see
+// CATEGORY_SYSTEM_PROMPT). soldSearchString is a separate, always-non-empty field:
+// TradeMe's legacy sold-listings search requires a literal searchstring param to behave
+// correctly, so the sold URL path (buildLegacySearchUrl) always has a real term to use,
+// independent of whatever searchString ends up being for the active-listing URL.
+export type DiscoverEntry = { slug: string; searchString: string | null; soldSearchString: string };
 
 // Size of the embedding-ranked shortlist fed into the single AI call. The one parameter
 // that genuinely needs empirical tuning against real prompts post-implementation — too
@@ -23,7 +29,7 @@ export type DiscoverEntry = { slug: string; searchString: string | null };
 const SHORTLIST_SIZE = 40;
 
 export const CATEGORY_SYSTEM_PROMPT =
-  'You are a TradeMe NZ shopping assistant. From the candidate categories below pick all categories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { "categories": [{ "slug": string, "searchString": string | null }] }. Each slug must be a value shown in parentheses. For searchString: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. Examples: category=bookshelves → null; category=bedroom-furniture/other, item=bookshelf → searchString=\'bookshelf\'; category=apple-laptops, user wants \'Apple MacBook Pro M1 16gb 2021\' → searchString=\'macbook pro\'.';
+  "You are a TradeMe NZ shopping assistant. From the candidate categories below pick all categories where this item plausibly appears — err on the side of more coverage. Use a deep specific category when the user wants a particular brand/model, or a broader one when they want any item of that type. Never pick both a category and one of its subcategories — always choose the single most appropriate depth. Return JSON: { \"categories\": [{ \"slug\": string, \"searchString\": string | null, \"soldSearchString\": string }] }. Each slug must be a value shown in parentheses. For searchString: use the product name only — no chip names, RAM, year, storage size, or any other specs. If the category already names the item type, use null. soldSearchString is used for a separate sold-listings search that always needs a literal keyword, so it must never be null — when searchString is null, set soldSearchString to the category's own item name instead. Examples: category=bookshelves → searchString=null, soldSearchString='bookshelf'; category=bedroom-furniture/other, item=bookshelf → searchString='bookshelf', soldSearchString='bookshelf'; category=apple-laptops, user wants 'Apple MacBook Pro M1 16gb 2021' → searchString='macbook pro', soldSearchString='macbook pro'.";
 
 export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
   const allSlugs = new Set(allEntries.map((e) => e.slug));
@@ -50,7 +56,11 @@ export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
     ) {
       for (const sibling of siblings) consumed.add(sibling.slug);
       consumed.add(entry.slug);
-      collapsed.push({ slug: parentSlug, searchString: entry.searchString });
+      collapsed.push({
+        slug: parentSlug,
+        searchString: entry.searchString,
+        soldSearchString: entry.soldSearchString,
+      });
     } else {
       collapsed.push(entry);
     }
@@ -154,7 +164,23 @@ export function assertCategoryEmbeddingCoverage(database: Database.Database): vo
   }
 }
 
-type SelectedCategory = { slug: string; searchString?: string | null };
+type SelectedCategory = {
+  slug: string;
+  searchString?: string | null;
+  soldSearchString?: string | null;
+};
+
+// TradeMe's legacy sold-listings search (trademeExpired.ts's buildLegacySearchUrl)
+// requires a non-empty searchstring param to behave correctly, so soldSearchString must
+// always end up as a real term — the AI is instructed to always provide one, but this is
+// the boundary where that external (AI) output gets normalized: if it ever omits or
+// blanks soldSearchString anyway, fall back to the category's own leaf display segment
+// (e.g. display "Furniture > Bookshelves" → "Bookshelves"), which is exactly the term
+// the AI would have chosen per its own instructions for a self-naming category.
+function deriveFallbackSearchString(display: string): string {
+  const segments = display.split(' > ');
+  return segments[segments.length - 1].trim();
+}
 
 export async function resolveDiscoverCategoriesAsync(
   prompt: string,
@@ -199,15 +225,20 @@ export async function resolveDiscoverCategoriesAsync(
     throw new Error('discover: expected object response with categories array');
 
   const rawCategories = result.categories as SelectedCategory[];
-  const validSlugs = new Set(shortlist.map((category) => category.slug));
-  const allEntries: DiscoverEntry[] = rawCategories
-    .filter((category) => validSlugs.has(category.slug))
-    .map((category) => ({ slug: category.slug, searchString: category.searchString ?? null }));
+  const shortlistBySlug = new Map(shortlist.map((category) => [category.slug, category]));
+  const allEntries: DiscoverEntry[] = rawCategories.flatMap((category) => {
+    const shortlisted = shortlistBySlug.get(category.slug);
+    if (!shortlisted) return [];
+    const rawSoldSearchString =
+      typeof category.soldSearchString === 'string' ? category.soldSearchString.trim() : '';
+    const soldSearchString = rawSoldSearchString || deriveFallbackSearchString(shortlisted.display);
+    return [{ slug: category.slug, searchString: category.searchString ?? null, soldSearchString }];
+  });
 
   const warnings: string[] = [];
   if (allEntries.length < rawCategories.length) {
     const unrecognised = rawCategories
-      .filter((category) => !validSlugs.has(category.slug))
+      .filter((category) => !shortlistBySlug.has(category.slug))
       .map((category) => category.slug);
     warnings.push(`unrecognised categories ignored: ${unrecognised.join(', ')}`);
   }

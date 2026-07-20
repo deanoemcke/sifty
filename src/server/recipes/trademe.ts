@@ -23,7 +23,7 @@ import {
 } from '../constants';
 import { getDb, stmtGetCategoryLegacyPath } from '../db';
 import { type DiscoverEntry, resolveDiscoverCategoriesAsync } from './trademeCategoryResolver';
-import { buildLegacySearchUrl } from './trademeExpired';
+import { buildLegacySearchUrl, buildRootLegacySearchUrl } from './trademeExpired';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -377,29 +377,65 @@ export function parseListingDetailResponse(data: Record<string, unknown>): DeepS
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
 
-function waitForSearchApiResponseAsync(
-  page: Page
-): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
-  return new Promise((resolve) => {
-    let timer: ReturnType<typeof setTimeout>;
-    const handler = async (response: Response) => {
-      if (response.url().includes('api.trademe.co.nz/v1/search') && response.status() === 200) {
-        page.off('response', handler);
-        clearTimeout(timer);
-        try {
-          const data = (await response.json()) as Record<string, unknown>;
-          resolve(parseSearchApiResponse(data));
-        } catch {
-          resolve({ listings: [], totalCount: 0, pageSize: 1 });
+// Exported so tests can assert the pagination loop's page.click() call actually
+// uses these values, rather than a mock that ignores its arguments — a typo'd
+// selector or dropped timeout would otherwise pass every test silently.
+export const PAGER_NEXT_SELECTOR = 'a:has-text("Next")';
+// Bounds how long a single click is allowed to hang looking for/acting on the
+// pager before treating it as "no pager" and stopping pagination gracefully.
+// Kept well under waitForSearchApiResponseAsync's own 12000ms so a genuinely
+// missing pager fails fast rather than stacking two ~12s waits.
+export const PAGER_CLICK_TIMEOUT_MS = 5000;
+// Caps total wall-clock time spent walking pages 2+ (pages 1 and the initial
+// listing count are not counted). Each page can cost up to PAGER_CLICK_TIMEOUT_MS
+// (5000ms) plus waitForSearchApiResponseAsync's own 12000ms fallback — up to ~17s
+// — and with MAX_PAGES_PER_SEARCH = 20 that's an unbounded-in-practice ~5.4
+// minutes worst case for a single search on a slow-but-not-failing walk. This
+// value is double the old goto()-based pagination's fixed ~30s worst case,
+// giving a genuinely slow (but working) walk real headroom, while still turning
+// an effectively unbounded hold on one of only 3 trademe.co.nz concurrency-limiter
+// slots into a predictable ceiling.
+export const PAGINATION_MAX_DURATION_MS = 60000;
+
+// Returns both the eventual result and an explicit `cancel` handle so a caller
+// that abandons the wait early (e.g. the pager click that triggered it threw)
+// can unregister the listener and clear the timer immediately, rather than
+// leaving both live for up to 12s — see the pagination loop in
+// runQuickSearchAsync below, which is the only caller that needs `cancel`.
+function waitForSearchApiResponseAsync(page: Page): {
+  promise: Promise<{ listings: Listing[]; totalCount: number; pageSize: number }>;
+  cancel: () => void;
+} {
+  let timer: ReturnType<typeof setTimeout>;
+  let handler: (response: Response) => Promise<void>;
+  const promise = new Promise<{ listings: Listing[]; totalCount: number; pageSize: number }>(
+    (resolve) => {
+      handler = async (response: Response) => {
+        if (response.url().includes('api.trademe.co.nz/v1/search') && response.status() === 200) {
+          page.off('response', handler);
+          clearTimeout(timer);
+          try {
+            const data = (await response.json()) as Record<string, unknown>;
+            resolve(parseSearchApiResponse(data));
+          } catch {
+            resolve({ listings: [], totalCount: 0, pageSize: 1 });
+          }
         }
-      }
-    };
-    page.on('response', handler);
-    timer = setTimeout(() => {
+      };
+      page.on('response', handler);
+      timer = setTimeout(() => {
+        page.off('response', handler);
+        resolve({ listings: [], totalCount: 0, pageSize: 1 });
+      }, 12000);
+    }
+  );
+  return {
+    promise,
+    cancel: () => {
+      clearTimeout(timer);
       page.off('response', handler);
-      resolve({ listings: [], totalCount: 0, pageSize: 1 });
-    }, 12000);
-  });
+    },
+  };
 }
 
 // Self-contained "make one live TradeMe search request" helper: launches its own
@@ -413,7 +449,7 @@ export async function fetchSearchPage1Async(
   try {
     const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
     const page = await context.newPage();
-    const responsePromise = waitForSearchApiResponseAsync(page);
+    const { promise: responsePromise } = waitForSearchApiResponseAsync(page);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     return await responsePromise;
   } finally {
@@ -578,10 +614,11 @@ async function tryRootSearchProbeAsync(
 
   if (newRootUrl) urls.push(newRootUrl);
 
-  // The legacy sold-items URL builder requires a category's DB-stored legacy_path —
-  // there's no category to look one up for in the root-search case.
+  // TradeMe's legacy SearchResults.aspx accepts cid=0&rptpath=all as an "all
+  // categories" sentinel, so the root (categoryless) case can still get a
+  // sold-items URL without needing a resolved category's legacy_path.
   if (context.includeSoldItems) {
-    warnings.push('sold items are unavailable for a root (categoryless) search — skipped');
+    urls.push(buildRootLegacySearchUrl(trimmedPrompt));
   }
 
   return { result: { urls, warnings }, warnings: [] };
@@ -650,9 +687,11 @@ async function quickSearchAsync(
 
   // A discover request can fan out several concurrent TradeMe search URLs per
   // category (used/new/sold), and this PR adds another multiplier on top of
-  // that. Route the launch through the per-domain concurrency limiter — the
-  // same one pagination already uses below — so concurrent searches can't
-  // stack unbounded headless browsers. The criteria event is emitted before
+  // that. Route the launch through the per-domain concurrency limiter so
+  // concurrent searches can't stack unbounded headless browsers. This is now
+  // the *only* enqueue() call for the whole search — pagination (below) walks
+  // pages 2+ by clicking within the same already-open tab/slot, not by taking
+  // further limiter slots of its own. The criteria event is emitted before
   // queueing so the card gets its filter chips immediately, even while the
   // search waits for a slot.
   await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));
@@ -669,7 +708,7 @@ async function runQuickSearchAsync(
     const page = await context.newPage();
 
     onEvent({ type: 'progress', phase: 'paging', page: 1 });
-    const p1Promise = waitForSearchApiResponseAsync(page);
+    const { promise: p1Promise } = waitForSearchApiResponseAsync(page);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
@@ -696,33 +735,65 @@ async function runQuickSearchAsync(
 
     emit(p1Listings);
 
-    const pageNums = Array.from({ length: totalPages - 1 }, (_, pageIndex) => pageIndex + 2);
-    const extraPages = await Promise.all(pageNums.map(() => context.newPage()));
+    // Pages 2+: click the in-page "Next" pager sequentially on the same tab,
+    // instead of opening new tabs and goto()-ing a &page=N URL. A fresh goto()
+    // to that URL never fires the /v1/search XHR TradeMe's SPA depends on
+    // (live-verified against production: 0/24 fetches via goto for pages 2+
+    // fired it, vs. 24/24 real in-page clicks); only a genuine click does. One
+    // tab also means only the outer enqueue() call in quickSearchAsync ever
+    // holds a domain-limiter slot for the whole walk, rather than nesting
+    // further enqueue calls inside it.
+    const paginationDeadline = Date.now() + PAGINATION_MAX_DURATION_MS;
 
-    await Promise.all(
-      pageNums.map((pageNumber, pageIndex) => {
-        const pageUrlInstance = new URL(searchUrl);
-        pageUrlInstance.searchParams.set('page', String(pageNumber));
-        const pageUrl = pageUrlInstance.toString();
-        return enqueue(pageUrl, async () => {
-          const currentPage = extraPages[pageIndex];
-          if (isCancelled?.()) {
-            await currentPage.close();
-            return;
-          }
-          try {
-            onEvent({ type: 'progress', phase: 'paging', page: pageNumber, totalPages });
-            const promise = waitForSearchApiResponseAsync(currentPage);
-            await currentPage.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    for (let pageNumber = 2; pageNumber <= totalPages; pageNumber++) {
+      if (isCancelled?.()) break;
+      if (emittedCount >= MAX_RESULTS_PER_URL) break;
+      if (Date.now() >= paginationDeadline) {
+        console.warn(
+          `[trademe] pagination deadline (${PAGINATION_MAX_DURATION_MS}ms) hit at page ${pageNumber} of ${totalPages} for ${searchUrl}`
+        );
+        break;
+      }
 
-            const { listings } = await promise;
-            emit(listings);
-          } finally {
-            await currentPage.close();
-          }
-        });
-      })
-    );
+      onEvent({ type: 'progress', phase: 'paging', page: pageNumber, totalPages });
+
+      let listings: Listing[];
+      const { promise: responsePromise, cancel } = waitForSearchApiResponseAsync(page);
+      try {
+        await page.click(PAGER_NEXT_SELECTOR, { timeout: PAGER_CLICK_TIMEOUT_MS });
+        ({ listings } = await responsePromise);
+      } catch (error) {
+        // Pager missing/not clickable within PAGER_CLICK_TIMEOUT_MS. A partial
+        // result is a good result: stop here and still report success below.
+        // Logged because the loop only reaches this branch when another page
+        // was still expected (pageNumber <= totalPages) — a genuine last page
+        // never gets here, so this is always worth distinguishing from a
+        // broken pager selector.
+        //
+        // cancel() unregisters the response listener and clears the internal
+        // 12s timeout immediately — without it, both would stay live until
+        // the timeout fired on its own, by which point the outer `finally`
+        // has very likely already closed the browser they reference.
+        cancel();
+        console.warn(
+          `[trademe] pager click failed on page ${pageNumber} of ${totalPages} for ${searchUrl}`,
+          error
+        );
+        break;
+      }
+
+      // Click landed but never triggered a matching /v1/search response before
+      // waitForSearchApiResponseAsync's own 12s timeout fell back to empty —
+      // same graceful stop as a missing pager, and logged for the same reason.
+      if (listings.length === 0) {
+        console.warn(
+          `[trademe] pager click on page ${pageNumber} of ${totalPages} landed but no search response arrived for ${searchUrl}`
+        );
+        break;
+      }
+
+      emit(listings);
+    }
 
     onEvent({ type: 'complete' });
   } catch (error) {

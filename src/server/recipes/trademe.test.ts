@@ -20,6 +20,9 @@ import {
   fetchSearchPage1Async,
   fetchSingleListingDetailAsync,
   mapReserveState,
+  PAGER_CLICK_TIMEOUT_MS,
+  PAGER_NEXT_SELECTOR,
+  PAGINATION_MAX_DURATION_MS,
   parseListingDetailResponse,
   parseSearchApiResponse,
   parseTradeMeDate,
@@ -48,100 +51,203 @@ vi.mock('../embeddings', async (importOriginal) => {
 
 // ── Playwright mock for quickSearch integration tests ─────────────────────────
 
-const { getNextPage, resetPageQueue, makeDetailPage, browserSessionTracker, PROBE_FETCH_FAILURE } =
-  vi.hoisted(() => {
-    const queue: unknown[] = [];
-    // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
-    // failure on the next page.goto() call, rather than a successful-but-empty response.
-    const PROBE_FETCH_FAILURE = Symbol('probe-fetch-failure');
+const {
+  getNextPage,
+  resetPageQueue,
+  makeDetailPage,
+  browserSessionTracker,
+  PROBE_FETCH_FAILURE,
+  clickThroughScript,
+  CLICK_NO_RESPONSE,
+  CLICK_THROWS,
+  delayedClickResponse,
+  getLastClickThroughPageListenerCount,
+  getLastClickThroughPageClickCalls,
+} = vi.hoisted(() => {
+  const queue: unknown[] = [];
+  // Sentinel pushed into the page queue (via resetPageQueue) to simulate a network/timeout
+  // failure on the next page.goto() call, rather than a successful-but-empty response.
+  const PROBE_FETCH_FAILURE = Symbol('probe-fetch-failure');
+  // click() resolves but never triggers a matching /v1/search response — models a real
+  // click landing without the SPA firing its XHR, so waitForSearchApiResponseAsync's own
+  // 12s timeout is what eventually resolves it empty.
+  const CLICK_NO_RESPONSE = Symbol('click-no-response');
+  // click() itself rejects — models a missing/unclickable pager link.
+  const CLICK_THROWS = Symbol('click-throws');
 
-    // Tracks how many mocked Chromium instances are live at once, so tests can
-    // assert that concurrent quick searches do (or don't) stack browser sessions.
-    const browserSessionTracker = {
-      activeCount: 0,
-      maxActiveCount: 0,
-      reset() {
-        this.activeCount = 0;
-        this.maxActiveCount = 0;
-      },
+  // click() resolves with a genuine matching response, but only after `delayMs`
+  // of (fake-timer) wall-clock time — models a page that keeps working, just
+  // slowly, so tests can drive the pagination-deadline check without also
+  // tripping the unrelated "no response" stop condition.
+  function delayedClickResponse(data: unknown, delayMs: number) {
+    return { __delayedResponseData: data, __delayMs: delayMs };
+  }
+
+  // Wraps a sequence of per-call outcomes (page-1 goto() data, then one entry per
+  // subsequent click()) so getNextPage() can build a single continuous page object
+  // instead of the flat one-shot pages makePage() returns — matching runQuickSearchAsync's
+  // post-fix shape of one tab reused across every page via clicking, not one tab per page.
+  function clickThroughScript(...steps: unknown[]) {
+    return { __clickThroughSteps: steps };
+  }
+
+  // Tracks the most recently constructed click-through page's live `response`
+  // listener count, so tests can assert that a cancelled
+  // waitForSearchApiResponseAsync() call actually unregisters its listener
+  // (via page.off) immediately, rather than leaving it registered until its
+  // internal 12s timeout eventually fires.
+  let lastClickThroughPageHandlers: Array<(r: unknown) => void> | null = null;
+  // Tracks every page.click(selector, options) call made against the most
+  // recently constructed click-through page, so tests can assert the
+  // pagination loop calls click() with the real PAGER_NEXT_SELECTOR /
+  // PAGER_CLICK_TIMEOUT_MS values — a mock that swallowed its arguments
+  // couldn't fail a test on a typo'd selector or dropped timeout.
+  let lastClickThroughPageClickCalls: Array<{ selector: string; options?: unknown }> = [];
+
+  function makeClickThroughPage(steps: unknown[]) {
+    let stepIndex = 0;
+    const handlers: Array<(r: unknown) => void> = [];
+    lastClickThroughPageHandlers = handlers;
+    lastClickThroughPageClickCalls = [];
+    const fireResponse = (data: unknown) => {
+      const response = {
+        url: () => 'https://api.trademe.co.nz/v1/search/general.json',
+        status: () => 200,
+        json: async () => data,
+      };
+      for (const h of [...handlers]) h(response);
     };
-
-    function makePage(data: unknown) {
-      const handlers: Array<(r: unknown) => void> = [];
-      return {
-        on: (_: string, h: (r: unknown) => void) => {
-          handlers.push(h);
-        },
-        off: () => {},
-        goto: async () => {
-          const response = {
-            url: () => 'https://api.trademe.co.nz/v1/search/general.json',
-            status: () => 200,
-            json: async () => data,
-          };
-          for (const h of [...handlers]) h(response);
-        },
-        close: async () => {},
-      };
-    }
-
-    // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
-    // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
-    // per test so the same factory covers the happy path, non-200, and no-response cases.
-    function makeDetailPage(
-      options: {
-        data?: unknown;
-        url?: string;
-        status?: number;
-        respond?: boolean;
-        jsonError?: boolean;
-      } = {}
-    ) {
-      const handlers: Array<(r: unknown) => void> = [];
-      return {
-        on: (_: string, h: (r: unknown) => void) => {
-          handlers.push(h);
-        },
-        off: () => {},
-        goto: async () => {
-          if (options.respond === false) return;
-          const response = {
-            url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
-            status: () => options.status ?? 200,
-            json: async () => {
-              if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
-              return options.data ?? {};
-            },
-          };
-          for (const h of [...handlers]) h(response);
-        },
-      };
-    }
-
-    function makeFailingPage() {
-      return {
-        on: () => {},
-        off: () => {},
-        goto: async () => {
-          throw new Error('net::ERR_CONNECTION_TIMED_OUT');
-        },
-        close: async () => {},
-      };
-    }
-
+    const consumeStep = async () => {
+      const step = steps[stepIndex++];
+      if (step === CLICK_THROWS) throw new Error('pager link not found');
+      if (step === CLICK_NO_RESPONSE) return;
+      if (step && typeof step === 'object' && '__delayMs' in step) {
+        const { __delayedResponseData, __delayMs } = step as {
+          __delayedResponseData: unknown;
+          __delayMs: number;
+        };
+        await new Promise((resolve) => setTimeout(resolve, __delayMs));
+        fireResponse(__delayedResponseData ?? {});
+        return;
+      }
+      fireResponse(step ?? {});
+    };
     return {
-      getNextPage: () => {
-        const next = queue.shift();
-        return next === PROBE_FETCH_FAILURE ? makeFailingPage() : makePage(next ?? {});
+      on: (_: string, h: (r: unknown) => void) => {
+        handlers.push(h);
       },
-      resetPageQueue: (...items: unknown[]) => {
-        queue.splice(0, queue.length, ...items);
+      off: (_: string, h: (r: unknown) => void) => {
+        const index = handlers.indexOf(h);
+        if (index !== -1) handlers.splice(index, 1);
       },
-      makeDetailPage,
-      browserSessionTracker,
-      PROBE_FETCH_FAILURE,
+      goto: consumeStep,
+      click: async (selector: string, options?: unknown) => {
+        lastClickThroughPageClickCalls.push({ selector, options });
+        return consumeStep();
+      },
+      close: async () => {},
     };
-  });
+  }
+
+  // Tracks how many mocked Chromium instances are live at once, so tests can
+  // assert that concurrent quick searches do (or don't) stack browser sessions.
+  const browserSessionTracker = {
+    activeCount: 0,
+    maxActiveCount: 0,
+    reset() {
+      this.activeCount = 0;
+      this.maxActiveCount = 0;
+    },
+  };
+
+  function makePage(data: unknown) {
+    const handlers: Array<(r: unknown) => void> = [];
+    return {
+      on: (_: string, h: (r: unknown) => void) => {
+        handlers.push(h);
+      },
+      off: () => {},
+      goto: async () => {
+        const response = {
+          url: () => 'https://api.trademe.co.nz/v1/search/general.json',
+          status: () => 200,
+          json: async () => data,
+        };
+        for (const h of [...handlers]) h(response);
+      },
+      close: async () => {},
+    };
+  }
+
+  // Configurable detail-endpoint mock for fetchSingleListingDetailAsync tests —
+  // unlike makePage (fixed to the search endpoint), url/status/respond are tunable
+  // per test so the same factory covers the happy path, non-200, and no-response cases.
+  function makeDetailPage(
+    options: {
+      data?: unknown;
+      url?: string;
+      status?: number;
+      respond?: boolean;
+      jsonError?: boolean;
+    } = {}
+  ) {
+    const handlers: Array<(r: unknown) => void> = [];
+    return {
+      on: (_: string, h: (r: unknown) => void) => {
+        handlers.push(h);
+      },
+      off: () => {},
+      goto: async () => {
+        if (options.respond === false) return;
+        const response = {
+          url: () => options.url ?? 'https://api.trademe.co.nz/v1/listings/12345.json',
+          status: () => options.status ?? 200,
+          json: async () => {
+            if (options.jsonError) throw new SyntaxError('Unexpected end of JSON input');
+            return options.data ?? {};
+          },
+        };
+        for (const h of [...handlers]) h(response);
+      },
+    };
+  }
+
+  function makeFailingPage() {
+    return {
+      on: () => {},
+      off: () => {},
+      goto: async () => {
+        throw new Error('net::ERR_CONNECTION_TIMED_OUT');
+      },
+      close: async () => {},
+    };
+  }
+
+  return {
+    getNextPage: () => {
+      const next = queue.shift();
+      if (next === PROBE_FETCH_FAILURE) return makeFailingPage();
+      if (next && typeof next === 'object' && '__clickThroughSteps' in next) {
+        return makeClickThroughPage(
+          (next as { __clickThroughSteps: unknown[] }).__clickThroughSteps
+        );
+      }
+      return makePage(next ?? {});
+    },
+    resetPageQueue: (...items: unknown[]) => {
+      queue.splice(0, queue.length, ...items);
+    },
+    makeDetailPage,
+    browserSessionTracker,
+    PROBE_FETCH_FAILURE,
+    clickThroughScript,
+    CLICK_NO_RESPONSE,
+    CLICK_THROWS,
+    delayedClickResponse,
+    getLastClickThroughPageListenerCount: () => lastClickThroughPageHandlers?.length ?? 0,
+    getLastClickThroughPageClickCalls: () => lastClickThroughPageClickCalls,
+  };
+});
 
 vi.mock('playwright', () => ({
   chromium: {
@@ -952,7 +1058,7 @@ describe('extractImplicitFilters', () => {
 // ── buildTrademeUrl ───────────────────────────────────────────────────────────
 
 function entry(slug: string, searchString: string | null = null): DiscoverEntry {
-  return { slug, searchString };
+  return { slug, searchString, soldSearchString: 'item' };
 }
 
 describe('buildTrademeUrl', () => {
@@ -1516,7 +1622,7 @@ describe('buildDiscoverUrlsAsync', () => {
       expect(result.urls.some((u) => u.includes('electronics/laptops'))).toBe(true);
     });
 
-    it('skips sold-item URLs and pushes a warning when includeSoldItems is true and the root path wins', async () => {
+    it('builds a root (categoryless) legacy sold-item URL when includeSoldItems is true and the root path wins', async () => {
       resetPageQueue({ TotalCount: 6, PageSize: 25, List: [] });
 
       const result = await trademeRecipe.buildDiscoverUrlsAsync('fisher price music box', {
@@ -1527,9 +1633,15 @@ describe('buildDiscoverUrlsAsync', () => {
         getAiConfig: () => MOCK_AI,
       });
 
-      expect(result.urls).toHaveLength(1);
+      expect(result.urls).toHaveLength(2);
+      const legacyUrl = result.urls.find((u) => u.includes('Browse/SearchResults.aspx'));
+      expect(legacyUrl).toBeDefined();
+      const parsed = new URL(legacyUrl as string);
+      expect(parsed.searchParams.get('cid')).toBe('0');
+      expect(parsed.searchParams.get('rptpath')).toBe('all');
+      expect(parsed.searchParams.get('searchstring')).toBe('fisher price music box');
       expect(vi.mocked(stmtGetCategoryLegacyPath)).not.toHaveBeenCalled();
-      expect(result.warnings.some((w) => w.toLowerCase().includes('sold'))).toBe(true);
+      expect(result.warnings).toEqual([]);
     });
   });
 
@@ -1588,6 +1700,29 @@ describe('buildDiscoverUrlsAsync', () => {
 
       expect(result.urls).toHaveLength(1); // modern URL only
       expect(result.warnings.some((w) => w.includes('no legacy category mapping'))).toBe(true);
+    });
+
+    it('gives the sold URL a searchstring derived from the category display name while leaving the active URL keyword-free, when the AI leaves searchString null', async () => {
+      vi.mocked(aiJSON).mockReset();
+      vi.mocked(aiJSON).mockResolvedValueOnce(
+        aiJsonOk({ categories: [{ slug: 'electronics/laptops', searchString: null }] })
+      );
+      vi.mocked(stmtGetCategoryLegacyPath).mockReturnValue({
+        get: () => ({ legacy_path: '0002-0356-' }) as CategoryLegacyPathRow,
+      } as unknown as ReturnType<typeof stmtGetCategoryLegacyPath>);
+
+      const result = await trademeRecipe.buildDiscoverUrlsAsync('laptop', {
+        maxPrice: 0,
+        fulfillment: 'any',
+        includeSoldItems: true,
+        includeNewItems: false,
+        getAiConfig: () => MOCK_AI,
+      });
+
+      const modernUrl = result.urls.find((u) => u.includes('trademe.co.nz/a/'));
+      const legacyUrl = result.urls.find((u) => u.includes('Browse/SearchResults.aspx'));
+      expect(modernUrl).not.toContain('search_string');
+      expect(legacyUrl).toContain('searchstring=Laptops');
     });
   });
 
@@ -1650,45 +1785,65 @@ describe('buildDiscoverUrlsAsync', () => {
 // ── quickSearch multi-page accumulation ───────────────────────────────────────
 
 describe('quickSearch', () => {
-  it('emits listings from all pages when results span multiple pages', async () => {
-    const makeItem = (i: number) => ({
-      Title: `Item ${i}`,
-      PriceDisplay: '$1',
-      Region: 'Auckland',
-      CanonicalPath: `/listing/${i}`,
-    });
+  const makeItem = (i: number) => ({
+    Title: `Item ${i}`,
+    PriceDisplay: '$1',
+    Region: 'Auckland',
+    CanonicalPath: `/listing/${i}`,
+  });
 
+  beforeEach(() => {
+    enqueuedUrls.length = 0;
+  });
+
+  it('emits listings from all pages when results span multiple pages', async () => {
+    const searchUrl = 'https://www.trademe.co.nz/a/marketplace/computers/search';
     resetPageQueue(
-      { List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)), TotalCount: 27, PageSize: 22 },
-      { List: Array.from({ length: 5 }, (_, i) => makeItem(i + 23)), TotalCount: 27, PageSize: 22 }
+      clickThroughScript(
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+          TotalCount: 27,
+          PageSize: 22,
+        },
+        {
+          List: Array.from({ length: 5 }, (_, i) => makeItem(i + 23)),
+          TotalCount: 27,
+          PageSize: 22,
+        }
+      )
     );
 
     const collected: unknown[] = [];
-    await trademeRecipe.quickSearchAsync(
-      'https://www.trademe.co.nz/a/marketplace/computers/search',
-      (ev) => {
-        if (ev.type === 'listing') collected.push(ev.data);
-      }
-    );
+    await trademeRecipe.quickSearchAsync(searchUrl, (ev) => {
+      if (ev.type === 'listing') collected.push(ev.data);
+    });
 
     expect(collected).toHaveLength(27);
+    // Pages 2+ are now reached by clicking within the one tab that was already
+    // queued for — no per-page URL should ever hit the domain limiter.
+    expect(enqueuedUrls.filter((u) => u.includes('page='))).toHaveLength(0);
+    expect(enqueuedUrls.filter((u) => u === searchUrl)).toHaveLength(1);
+    // Asserts the pager click uses the real selector/timeout, not just that
+    // *some* click happened — a typo'd PAGER_NEXT_SELECTOR or a dropped
+    // timeout option would otherwise still pass every test in this file.
+    expect(getLastClickThroughPageClickCalls()).toEqual([
+      { selector: PAGER_NEXT_SELECTOR, options: { timeout: PAGER_CLICK_TIMEOUT_MS } },
+    ]);
   });
 
   it('caps emitted listings at MAX_RESULTS_PER_URL when totalCount exceeds it', async () => {
-    const makeItem = (i: number) => ({
-      Title: `Item ${i}`,
-      PriceDisplay: '$1',
-      Region: 'Auckland',
-      CanonicalPath: `/listing/${i}`,
-    });
-
     const pageSize = 40;
+    // TotalCount=200 at pageSize=40 implies 5 pages of raw results, but
+    // MAX_RESULTS_PER_URL=100 caps totalPages at ceil(100/40)=3 — only 3 script
+    // steps (1 goto + 2 clicks) are ever consumed.
     resetPageQueue(
-      ...Array.from({ length: 5 }, (_, pageIndex) => ({
-        List: Array.from({ length: pageSize }, (_, i) => makeItem(pageIndex * pageSize + i + 1)),
-        TotalCount: 200,
-        PageSize: pageSize,
-      }))
+      clickThroughScript(
+        ...Array.from({ length: 3 }, (_, pageIndex) => ({
+          List: Array.from({ length: pageSize }, (_, i) => makeItem(pageIndex * pageSize + i + 1)),
+          TotalCount: 200,
+          PageSize: pageSize,
+        }))
+      )
     );
 
     const collected: unknown[] = [];
@@ -1701,6 +1856,230 @@ describe('quickSearch', () => {
 
     expect(collected).toHaveLength(100);
   });
+
+  // Fake timers here guard against the exact regression this fix addresses:
+  // waitForSearchApiResponseAsync registers a page.on('response', ...) listener
+  // and a real 12s setTimeout *before* the click is awaited. Before the fix, a
+  // thrown click left both dangling until that internal timeout eventually
+  // fired — which, without fake timers, meant this test scheduled a genuine
+  // un-mocked 12s timer on every run. cancel() (called from the catch branch)
+  // now clears both immediately, so this test asserts that cleanup happens
+  // synchronously rather than relying on the timer ever firing.
+  describe('when the pager link is missing/unclickable', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('stops pagination and still completes', async () => {
+      resetPageQueue(
+        clickThroughScript(
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          CLICK_THROWS
+        )
+      );
+
+      const events: string[] = [];
+      const collected: unknown[] = [];
+      await trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+          if (ev.type === 'listing') collected.push(ev.data);
+        }
+      );
+
+      expect(events).toContain('complete');
+      expect(events).not.toContain('error');
+      expect(collected).toHaveLength(44); // page 1 + page 2 only — page 3's click never landed
+    });
+
+    it('cancels the pending response listener/timer immediately instead of leaving it until the 12s timeout', async () => {
+      resetPageQueue(
+        clickThroughScript(
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          CLICK_THROWS
+        )
+      );
+
+      const events: string[] = [];
+      await trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+        }
+      );
+
+      // The response listener registered just before the failed click must
+      // already be gone — proving cancel() ran synchronously in the catch
+      // branch, not merely that the (still-pending) internal timeout would
+      // eventually have removed it.
+      expect(getLastClickThroughPageListenerCount()).toBe(0);
+
+      // Advancing all the way past the internal 12s fallback must be a no-op:
+      // no further events, because there's nothing left listening or scheduled.
+      const eventCountBeforeAdvance = events.length;
+      await vi.advanceTimersByTimeAsync(12000);
+      expect(events).toHaveLength(eventCountBeforeAdvance);
+    });
+  });
+
+  it('stops pagination via isCancelled before fetching a further page', async () => {
+    resetPageQueue(
+      clickThroughScript(
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+          TotalCount: 61,
+          PageSize: 22,
+        },
+        {
+          List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
+          TotalCount: 61,
+          PageSize: 22,
+        },
+        {
+          List: Array.from({ length: 5 }, (_, i) => makeItem(i + 999)),
+          TotalCount: 61,
+          PageSize: 22,
+        }
+      )
+    );
+
+    const collected: unknown[] = [];
+    await trademeRecipe.quickSearchAsync(
+      'https://www.trademe.co.nz/a/marketplace/computers/search',
+      (ev) => {
+        if (ev.type === 'listing') collected.push(ev.data);
+      },
+      () => collected.length >= 44 // flips true right after page 1 + page 2 are in
+    );
+
+    expect(collected).toHaveLength(44);
+    expect(collected.some((l) => (l as { title: string }).title.includes('999'))).toBe(false);
+  });
+
+  describe('when a click never triggers the search XHR', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('stops pagination and still completes, without discarding pages already gathered', async () => {
+      resetPageQueue(
+        clickThroughScript(
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 1)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          {
+            List: Array.from({ length: 22 }, (_, i) => makeItem(i + 23)),
+            TotalCount: 61,
+            PageSize: 22,
+          },
+          CLICK_NO_RESPONSE
+        )
+      );
+
+      const events: string[] = [];
+      const collected: unknown[] = [];
+      const promise = trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+          if (ev.type === 'listing') collected.push(ev.data);
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(12000);
+      await promise;
+
+      expect(events).toContain('complete');
+      expect(events).not.toContain('error');
+      expect(collected).toHaveLength(44); // page 1 + page 2 only — no page 3 exists
+    });
+  });
+
+  // Guards the wall-clock cap on pages 2+ (PR #42 review, Backend finding #2):
+  // without it, a search where every page click keeps succeeding — just slowly
+  // — can walk all MAX_PAGES_PER_SEARCH pages sequentially, holding one of only
+  // 3 trademe.co.nz concurrency-limiter slots for however long that takes.
+  describe('when pagination runs past PAGINATION_MAX_DURATION_MS', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('stops pagination once the wall-clock deadline is hit, and still completes with a partial page count', async () => {
+      // pageSize=10, TotalCount=80 => totalPages=8. Each of pages 2-7 responds
+      // genuinely (not CLICK_NO_RESPONSE/CLICK_THROWS) but only after a delay
+      // kept below waitForSearchApiResponseAsync's own 12_000ms internal
+      // fallback (so that unrelated "no response arrived" path never fires).
+      // Six of them together (6 * 10_000ms = 60_000ms) exactly consume
+      // PAGINATION_MAX_DURATION_MS — the loop's next deadline check (before a
+      // would-be page 8 click) must then trip, short of totalPages.
+      const perPageDelayMs = 10000;
+      const pageCountBeforeDeadline = PAGINATION_MAX_DURATION_MS / perPageDelayMs; // 6
+      const makePageData = (pageIndex: number) => ({
+        List: Array.from({ length: 10 }, (_, i) => makeItem(pageIndex * 10 + i + 1)),
+        TotalCount: 80,
+        PageSize: 10,
+      });
+
+      resetPageQueue(
+        clickThroughScript(
+          makePageData(0),
+          ...Array.from({ length: pageCountBeforeDeadline }, (_, i) =>
+            delayedClickResponse(makePageData(i + 1), perPageDelayMs)
+          )
+        )
+      );
+
+      const events: string[] = [];
+      const collected: unknown[] = [];
+      const promise = trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/computers/search',
+        (ev) => {
+          events.push(ev.type);
+          if (ev.type === 'listing') collected.push(ev.data);
+        }
+      );
+
+      for (let i = 0; i < pageCountBeforeDeadline; i++) {
+        await vi.advanceTimersByTimeAsync(perPageDelayMs);
+      }
+      await promise;
+
+      expect(events).toContain('complete');
+      expect(events).not.toContain('error');
+      // Page 1 + pages 2-7 collected (70 listings); page 8 never reached even
+      // though totalPages=8 — the loop was cut off by the deadline, not by
+      // running out of pages.
+      expect(collected).toHaveLength(70);
+    });
+  });
 });
 
 // ── quickSearchAsync (domain concurrency limiting) ────────────────────────────
@@ -1708,8 +2087,9 @@ describe('quickSearch', () => {
 // A discover request can fan out several concurrent TradeMe search URLs per
 // category (used/new/sold), and adding "include new items" pushes the
 // worst-case concurrent-launch count higher still — so the initial browser
-// launch must be routed through the same per-domain limiter that pagination
-// already uses, exactly like Facebook's quickSearchAsync.
+// launch must be routed through the per-domain limiter, exactly like
+// Facebook's quickSearchAsync. Pagination (pages 2+) reuses that same
+// already-open tab/slot rather than taking limiter slots of its own.
 
 describe('trademeRecipe.quickSearchAsync — domain concurrency limiting', () => {
   beforeEach(() => {

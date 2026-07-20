@@ -27,6 +27,7 @@ beforeEach(() => {
     <div id="urlsSection" class="hidden">
       <div id="urlsCard" class="card">
         <div id="discoveryError" style="display:none"></div>
+        <div id="discoveryWarnings" style="display:none"></div>
         <div id="urlPlaceholder" class="hidden">
           <span class="spinner"></span><span>Discovering urls…</span>
         </div>
@@ -134,6 +135,45 @@ it('shows the discovery error and leaves the URL input blank when the discover r
   expect(urlCards[0].dom.input.value).toBe('');
   expect(document.getElementById('urlCardsContainer')?.classList.contains('hidden')).toBe(false);
   expect(document.getElementById('urlPlaceholder')?.classList.contains('hidden')).toBe(true);
+});
+
+it('shows non-fatal discover warnings alongside a successful result', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        urls: ['https://www.trademe.co.nz/x'],
+        name: 'lamp',
+        warnings: ['no legacy category mapping for slug "electronics/lamps"'],
+      }),
+    })
+  );
+
+  await handleDiscoverySubmitAsync();
+
+  expect(document.getElementById('discoveryWarnings')?.textContent).toBe(
+    'no legacy category mapping for slug "electronics/lamps"'
+  );
+  expect((document.getElementById('discoveryWarnings') as HTMLDivElement).style.display).toBe(
+    'block'
+  );
+});
+
+it('keeps discoveryWarnings hidden when the discover response has no warnings', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ urls: ['https://www.trademe.co.nz/x'], name: 'lamp' }),
+    })
+  );
+
+  await handleDiscoverySubmitAsync();
+
+  expect((document.getElementById('discoveryWarnings') as HTMLDivElement).style.display).toBe(
+    'none'
+  );
 });
 
 it('clears any existing URL card value immediately when a new discovery is submitted, before the fetch resolves', async () => {
