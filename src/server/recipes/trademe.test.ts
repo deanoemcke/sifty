@@ -10,7 +10,7 @@ import {
   stmtGetAllCategoriesWithEmbeddings,
   stmtGetCategoryLegacyPath,
 } from '../db';
-import { EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
+import { EMBEDDING_MODEL_TAG, embedTextAsync, floatsToBuffer } from '../embeddings';
 import {
   buildListing,
   buildPhotosFromUrls,
@@ -1205,8 +1205,8 @@ describe('buildDiscoverUrlsAsync', () => {
     {
       slug: 'electronics/laptops',
       display: 'Laptops',
-      embedding: JSON.stringify([1, 0]),
-      embedding_model: EMBEDDING_MODEL,
+      embedding: floatsToBuffer([1, 0]),
+      embedding_model: EMBEDDING_MODEL_TAG,
     },
   ];
   const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
@@ -1334,14 +1334,14 @@ describe('buildDiscoverUrlsAsync', () => {
       {
         slug: 'electronics/laptops',
         display: 'Laptops',
-        embedding: JSON.stringify([1, 0]),
-        embedding_model: EMBEDDING_MODEL,
+        embedding: floatsToBuffer([1, 0]),
+        embedding_model: EMBEDDING_MODEL_TAG,
       },
       {
         slug: 'computers/laptops',
         display: 'Computer laptops',
-        embedding: JSON.stringify([0.9, 0.1]),
-        embedding_model: EMBEDDING_MODEL,
+        embedding: floatsToBuffer([0.9, 0.1]),
+        embedding_model: EMBEDDING_MODEL_TAG,
       },
     ];
     vi.mocked(stmtGetAllCategoriesWithEmbeddings).mockReturnValue(

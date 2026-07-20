@@ -4,6 +4,16 @@
 // are Gemini-specific, so unlike aiJSON there is no multi-provider fallback here.
 
 export const EMBEDDING_MODEL = 'gemini-embedding-2';
+// gemini-embedding-2 is trained with Matryoshka Representation Learning, so truncating
+// its native 3072-dim output via outputDimensionality degrades gracefully — Google
+// documents this as a supported trade-off, not a hack. 768 keeps the category
+// pre-filter's ranking quality while cutting stored/compared vector size 4x.
+export const EMBEDDING_DIMENSIONS = 768;
+// Stored/compared against embedding_model instead of the raw EMBEDDING_MODEL id — the
+// dimensionality is baked into what's on disk, so a change to EMBEDDING_DIMENSIONS alone
+// (independent of an actual model swap) must still invalidate every existing row via the
+// same stale-model exclusion path trademeCategoryResolver.ts already has.
+export const EMBEDDING_MODEL_TAG = `${EMBEDDING_MODEL}-${EMBEDDING_DIMENSIONS}d`;
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // Gemini's docs don't publish a documented per-request cap for batchEmbedContents —
@@ -26,7 +36,10 @@ export async function embedTextAsync(text: string): Promise<number[]> {
   const response = await fetch(`${API_BASE}/${EMBEDDING_MODEL}:embedContent`, {
     method: 'POST',
     headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: { parts: [{ text }] } }),
+    body: JSON.stringify({
+      content: { parts: [{ text }] },
+      outputDimensionality: EMBEDDING_DIMENSIONS,
+    }),
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
@@ -103,6 +116,7 @@ async function embedTextsChunkAsync(
       requests: texts.map((text) => ({
         model: `models/${EMBEDDING_MODEL}`,
         content: { parts: [{ text }] },
+        outputDimensionality: EMBEDDING_DIMENSIONS,
       })),
     }),
   });
@@ -144,7 +158,26 @@ export async function embedTextsBatchAsync(texts: string[]): Promise<number[][]>
   return results;
 }
 
-export function cosineSimilarity(a: number[], b: number[]): number {
+// Binary storage format for embedding vectors: a raw float32 buffer instead of a JSON
+// array of decimal-text floats. At 4 bytes/dimension this is ~3x smaller on disk than the
+// text encoding and needs no parsing on read — bufferToFloats is a zero-copy view over the
+// bytes, not a decode pass.
+export function floatsToBuffer(values: number[]): Buffer {
+  return Buffer.from(Float32Array.from(values).buffer);
+}
+
+export function bufferToFloats(buffer: Buffer): Float32Array {
+  if (buffer.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
+    throw new Error(`bufferToFloats: buffer length ${buffer.byteLength} is not a multiple of 4`);
+  }
+  return new Float32Array(
+    buffer.buffer,
+    buffer.byteOffset,
+    buffer.byteLength / Float32Array.BYTES_PER_ELEMENT
+  );
+}
+
+export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
   if (a.length !== b.length) {
     throw new Error(`cosineSimilarity: dimension mismatch (${a.length} vs ${b.length})`);
   }

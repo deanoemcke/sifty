@@ -38,7 +38,7 @@ export function initSchema(database: Database.Database): void {
       depth       INTEGER NOT NULL,
       parent_slug TEXT,
       legacy_path TEXT NOT NULL,
-      embedding   TEXT,
+      embedding   BLOB,
       embedding_model TEXT
     );
     CREATE TABLE IF NOT EXISTS alerted_listings (
@@ -84,7 +84,7 @@ export function initSchema(database: Database.Database): void {
     .prepare<[], { name: string }>('PRAGMA table_info(trademe_categories)')
     .all();
   if (!categoryColumns.some((column) => column.name === 'embedding')) {
-    database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding TEXT');
+    database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding BLOB');
   }
   if (!categoryColumns.some((column) => column.name === 'embedding_model')) {
     database.exec('ALTER TABLE trademe_categories ADD COLUMN embedding_model TEXT');
@@ -184,7 +184,7 @@ export type CategoryRow = { slug: string; display: string };
 export type CategoryWithEmbeddingRow = {
   slug: string;
   display: string;
-  embedding: string | null;
+  embedding: Buffer | null;
   embedding_model: string | null;
 };
 export type CategoryEmbeddingCoverageRow = { total: number; embedded: number };

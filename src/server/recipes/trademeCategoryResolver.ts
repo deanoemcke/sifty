@@ -12,7 +12,12 @@ import {
   stmtGetAllCategoriesWithEmbeddings,
   stmtGetCategoryEmbeddingCoverage,
 } from '../db';
-import { cosineSimilarity, EMBEDDING_MODEL, embedTextAsync } from '../embeddings';
+import {
+  bufferToFloats,
+  cosineSimilarity,
+  EMBEDDING_MODEL_TAG,
+  embedTextAsync,
+} from '../embeddings';
 
 // searchString stays nullable — null means "browse the whole category, no keyword
 // filter", which is deliberately allowed for active-listing search (see
@@ -70,9 +75,13 @@ export function collapseEntries(allEntries: DiscoverEntry[]): DiscoverEntry[] {
 
 type ShortlistedCategory = { slug: string; display: string };
 
-// A categories-with-embeddings row with its embedding already parsed out of the JSON text
-// column — see loadCategoryEmbeddingsCache below, which parses each row exactly once.
-export type CachedCategoryEmbedding = { slug: string; display: string; embedding: number[] | null };
+// A categories-with-embeddings row with its embedding already decoded from the on-disk
+// binary column — see loadCategoryEmbeddingsCache below, which decodes each row exactly once.
+export type CachedCategoryEmbedding = {
+  slug: string;
+  display: string;
+  embedding: Float32Array | null;
+};
 
 export function rankCategoriesBySimilarity(
   categories: CachedCategoryEmbedding[],
@@ -107,24 +116,25 @@ let categoryEmbeddingsCache: CachedCategoryEmbedding[] | null = null;
 
 // A row is treated as unembedded (excluded from ranking, same as a null embedding) if:
 // - it has no stored vector yet, or
-// - its embedding_model doesn't match the current EMBEDDING_MODEL — a stale-model vector
-//   must never be compared against a current-model prompt embedding, even if dimensions
-//   happen to coincide (PR #41 review, Data #3 / QA #2, expanded to cover model swaps), or
-// - its stored JSON is malformed — a single corrupt row must not crash the whole request
-//   (PR #41 review, Data #3).
+// - its embedding_model doesn't match the current EMBEDDING_MODEL_TAG — a stale-model (or
+//   stale-dimensionality) vector must never be compared against a current-model prompt
+//   embedding, even if dimensions happen to coincide (PR #41 review, Data #3 / QA #2,
+//   expanded to cover model swaps), or
+// - its stored bytes are corrupt (not a whole number of float32s) — a single corrupt row
+//   must not crash the whole request (PR #41 review, Data #3).
 function parseCategoryEmbeddingRow(row: CategoryWithEmbeddingRow): CachedCategoryEmbedding {
-  if (row.embedding === null || row.embedding_model !== EMBEDDING_MODEL) {
+  if (row.embedding === null || row.embedding_model !== EMBEDDING_MODEL_TAG) {
     return { slug: row.slug, display: row.display, embedding: null };
   }
   try {
     return {
       slug: row.slug,
       display: row.display,
-      embedding: JSON.parse(row.embedding) as number[],
+      embedding: bufferToFloats(row.embedding),
     };
   } catch {
     console.warn(
-      `[trademeCategoryResolver] malformed embedding JSON for category ${row.slug} — skipping`
+      `[trademeCategoryResolver] malformed embedding bytes for category ${row.slug} — skipping`
     );
     return { slug: row.slug, display: row.display, embedding: null };
   }
@@ -151,7 +161,7 @@ export function invalidateCategoryEmbeddingsCache(): void {
 // counts rather than the categoryEmbeddingsCache above, since that cache is scoped to
 // ranking and would just re-surface the same staleness problem this check exists to catch.
 export function assertCategoryEmbeddingCoverage(database: Database.Database): void {
-  const row = stmtGetCategoryEmbeddingCoverage(database).get(EMBEDDING_MODEL);
+  const row = stmtGetCategoryEmbeddingCoverage(database).get(EMBEDDING_MODEL_TAG);
   const total = row?.total ?? 0;
   const embedded = row?.embedded ?? 0;
   if (total === 0) {
@@ -159,7 +169,7 @@ export function assertCategoryEmbeddingCoverage(database: Database.Database): vo
   }
   if (embedded < total) {
     throw new Error(
-      `${total - embedded}/${total} categories have no current-model (${EMBEDDING_MODEL}) embedding — run: npx ts-node scripts/embed-categories.ts`
+      `${total - embedded}/${total} categories have no current-model (${EMBEDDING_MODEL_TAG}) embedding — run: npx ts-node scripts/embed-categories.ts`
     );
   }
 }
