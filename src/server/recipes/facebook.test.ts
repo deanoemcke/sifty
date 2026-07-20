@@ -8,8 +8,10 @@ import {
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
   classifyInitialSearchStateAsync,
+  deriveFacebookDescriptionAndLocation,
   detectLoginWallAsync,
   extractImplicitFilters,
+  type FacebookDetailsCardData,
   facebookRecipe,
   fetchFacebookListingDetailAsync,
   installNameShim,
@@ -115,6 +117,7 @@ type FacebookPageOptions = {
   shellRendered?: boolean;
   cookieBannerVisible?: boolean;
   bodyText?: string;
+  detailsCardData?: FacebookDetailsCardData | null;
 };
 
 const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } = vi.hoisted(() => {
@@ -142,6 +145,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
       shellRendered = false,
       cookieBannerVisible = false,
       bodyText = '',
+      detailsCardData = null,
     } = options;
 
     const waitForSelectorCalls: string[] = [];
@@ -190,6 +194,9 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
         }
         if (fn.toString().includes('shellRendered')) {
           return { shellRendered, bodyText };
+        }
+        if (fn.name === 'extractFacebookDetailsCardData') {
+          return detailsCardData;
         }
         return bodyText;
       },
@@ -1173,6 +1180,74 @@ describe('parseFbCookies', () => {
   });
 });
 
+// ── deriveFacebookDescriptionAndLocation ────────────────────────────────────────
+//
+// Fixtures below are real `cardInnerText` values captured live from Facebook
+// Marketplace listing pages (the "Details" card, DOM-scoped away from the Ads/
+// Seller information/Today's picks sections that sit alongside it) — not
+// hand-authored — to guard against the punctuation/length heuristics that
+// previously mis-scraped ad copy into details and left real descriptions empty.
+
+describe('deriveFacebookDescriptionAndLocation', () => {
+  it('extracts a short, unpunctuated description that the old heuristic skipped as a detail line', () => {
+    const cardInnerText =
+      'Details\nCondition\nUsed – good\n1200 T-Bar Sash cramp\nLower Hutt, Lower Hutt City · Location is approximate';
+    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+      description: '1200 T-Bar Sash cramp',
+      pickupLocation: 'Lower Hutt, Lower Hutt City',
+    });
+  });
+
+  it('extracts a multi-line description with no attributes past the count, even with lines that look like keys', () => {
+    const cardInnerText = [
+      'Details',
+      'Condition',
+      'Used – like new',
+      'Colour',
+      'Black',
+      'Case type',
+      'Deepcool',
+      'Newly built custom PC with new 1440p monitor free delivery in the Wellington region',
+      'Spec',
+      'Intel Core Ultra 7 270K Plus CPU',
+      '24 Cores - 36MB Cache',
+      'FSP vita GM 850w gold fully modular psu',
+      'Lower Hutt, Lower Hutt City · Location is approximate',
+    ].join('\n');
+    const result = deriveFacebookDescriptionAndLocation(cardInnerText, 3);
+    expect(result.pickupLocation).toBe('Lower Hutt, Lower Hutt City');
+    expect(result.description).toContain('Spec');
+    expect(result.description).toContain('Newly built custom PC');
+    expect(result.description).not.toContain('Location is approximate');
+  });
+
+  it('returns an empty description when the listing has none', () => {
+    const cardInnerText =
+      'Details\nCondition\nUsed – good\nWellington, Wellington City · Location is approximate';
+    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+      description: '',
+      pickupLocation: 'Wellington, Wellington City',
+    });
+  });
+
+  it('strips a trailing "See less" toggle glued onto the last description line', () => {
+    const cardInnerText =
+      'Details\nCondition\nUsed – fair\nComputer table in poor condition with bits missing but it is usable. See less\nParaparaumu, Kapiti Coast District · Location is approximate';
+    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+      description: 'Computer table in poor condition with bits missing but it is usable.',
+      pickupLocation: 'Paraparaumu, Kapiti Coast District',
+    });
+  });
+
+  it('returns a null pickupLocation when no location line is present', () => {
+    const cardInnerText = 'Details\nCondition\nUsed – good\nA short description.';
+    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+      description: 'A short description.',
+      pickupLocation: null,
+    });
+  });
+});
+
 // ── fetchFacebookListingDetailAsync ───────────────────────────────────────────
 
 describe('fetchFacebookListingDetailAsync', () => {
@@ -1186,15 +1261,32 @@ describe('fetchFacebookListingDetailAsync', () => {
     ).rejects.toThrow(/Facebook requires login/);
   });
 
-  it('extracts the description when no login wall is present', async () => {
-    const bodyText =
-      'Item title\nDetails\nCondition\nUsed\nA lovely lamp in great condition.\nSee more\n';
-    const page = makeFacebookPage({ domLoginWall: false, bodyText });
+  it('extracts the description and attributes when no login wall is present', async () => {
+    const detailsCardData: FacebookDetailsCardData = {
+      cardInnerText:
+        'Details\nCondition\nUsed\nA lovely lamp in great condition.\nWellington, Wellington City · Location is approximate',
+      attributeRowCount: 1,
+      attributePairs: { Condition: 'Used' },
+    };
+    const page = makeFacebookPage({ domLoginWall: false, detailsCardData });
     const detail = await fetchFacebookListingDetailAsync(
       page as unknown as Parameters<typeof fetchFacebookListingDetailAsync>[0],
       'https://www.facebook.com/marketplace/item/123/'
     );
     expect(detail.description).toBe('A lovely lamp in great condition.');
+    expect(detail.extraAttributes).toEqual({ Condition: 'Used' });
+    expect(detail.pickupLocation).toBe('Wellington, Wellington City');
+  });
+
+  it('returns empty details when the page has no "Details" heading at all', async () => {
+    const page = makeFacebookPage({ domLoginWall: false, detailsCardData: null });
+    const detail = await fetchFacebookListingDetailAsync(
+      page as unknown as Parameters<typeof fetchFacebookListingDetailAsync>[0],
+      'https://www.facebook.com/marketplace/item/123/'
+    );
+    expect(detail.description).toBe('');
+    expect(detail.extraAttributes).toEqual({});
+    expect(detail.pickupLocation).toBeNull();
   });
 });
 
