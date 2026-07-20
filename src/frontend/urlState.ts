@@ -137,7 +137,16 @@ async function fetchSavedSearchById(
   }
 }
 
+// Invalidates any in-flight applyUrlState call so its eventual result can't
+// overwrite state applied by a newer, superseding call — mirrors the
+// discoveryRequestId guard in searchSession.ts for the same class of race
+// (rapid back/forward re-firing popstate before a prior applyUrlState's
+// saved-search fetch/load has resolved).
+let urlStateApplyRequestId = 0;
+
 export async function applyUrlState(parsed: ParsedUrlState): Promise<void> {
+  const requestId = ++urlStateApplyRequestId;
+
   setActiveSidebarTab(parsed.tab);
   activateSidebarTab(document, parsed.tab);
 
@@ -156,11 +165,18 @@ export async function applyUrlState(parsed: ParsedUrlState): Promise<void> {
       // it already was rather than surfacing an error — the URL may simply
       // be stale (the favourite was since deleted) or offline.
       const search = await fetchSavedSearchById(parsed.savedSearchId);
+      // A newer popstate superseded this call while the fetch was in
+      // flight — its result is stale and must not overwrite whatever the
+      // newer call has since applied.
+      if (requestId !== urlStateApplyRequestId) return;
       if (search) await loadSavedSearchAsync(search);
+      if (requestId !== urlStateApplyRequestId) return;
     }
   } else if (currentSearchId !== null) {
     unloadCurrentSearch();
   }
+
+  if (requestId !== urlStateApplyRequestId) return;
 
   if (parsed.modalListingUrl !== null) {
     const item = listingsByUrl.get(parsed.modalListingUrl);

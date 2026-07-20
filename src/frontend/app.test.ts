@@ -714,6 +714,72 @@ describe('initApp() wiring', () => {
       );
     });
 
+    it('an older popstate’s saved-search fetch resolving after a newer one does not overwrite the newer state', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+
+      const savedSearchA = {
+        id: 'aaa',
+        name: 'Search A',
+        urls: ['https://example.com/a'],
+        aiFilter: null,
+        createdAt: 0,
+        shouldAlertOnNewListings: false,
+      };
+      const savedSearchB = {
+        id: 'bbb',
+        name: 'Search B',
+        urls: ['https://example.com/b'],
+        aiFilter: null,
+        createdAt: 0,
+        shouldAlertOnNewListings: false,
+      };
+
+      let resolveFetchA!: (value: unknown) => void;
+      let resolveFetchB!: (value: unknown) => void;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === '/api/saved-searches/aaa') {
+            return new Promise((resolve) => {
+              resolveFetchA = resolve;
+            });
+          }
+          if (url === '/api/saved-searches/bbb') {
+            return new Promise((resolve) => {
+              resolveFetchB = resolve;
+            });
+          }
+          return Promise.reject(new Error(`unexpected fetch: ${url}`));
+        })
+      );
+
+      // Rapid back/forward: the popstate for "aaa" is still awaiting its
+      // saved-search fetch when the popstate for "bbb" fires.
+      history.pushState(null, '', '/?search=aaa');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      history.pushState(null, '', '/?search=bbb');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      // The newer request ("bbb") resolves first, as it would in the
+      // ordinary (non-adversarial) case.
+      resolveFetchB({ ok: true, json: async () => ({ search: savedSearchB }) });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const { urlCards } = await import('./urlCardStore');
+      expect(urlCards[0].dom.input.value).toBe('https://example.com/b');
+
+      // The older, now-superseded request ("aaa") resolves late — its
+      // result must be discarded rather than clobbering "bbb".
+      resolveFetchA({ ok: true, json: async () => ({ search: savedSearchA }) });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const state = await import('./state');
+      expect(state.currentSearchId).toBe('bbb');
+      expect(urlCards[0].dom.input.value).toBe('https://example.com/b');
+    });
+
     it('booting with a malformed query string applies defaults and self-corrects the address bar', async () => {
       history.pushState(null, '', '/?sort=bogus&show=nonsense&tab=bogus');
 
