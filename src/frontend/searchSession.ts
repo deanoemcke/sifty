@@ -179,7 +179,7 @@ export function loadDiscoveryResults(
   markDirty();
   getElement<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
   // loadDiscoveryResults owns the dispatch: kick off a search for every configured card.
-  fireAllCardSearches(urlCards, searchUrlCardAsync);
+  void fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
 // Invalidates any in-flight handleDiscoverySubmitAsync request so its
