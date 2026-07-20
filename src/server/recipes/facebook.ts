@@ -9,6 +9,7 @@ import type {
   Fulfillment,
   Listing,
   ListingCondition,
+  ListingPhoto,
   QuickSearchEvent,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
@@ -732,9 +733,42 @@ export function deriveFacebookDescriptionAndLocation(
 export function buildFacebookDeepSearchDetail(
   description: string,
   extraAttributes: Record<string, string>,
-  pickupLocation: string | null
+  pickupLocation: string | null,
+  photos?: ListingPhoto[]
 ): DeepSearchDetail {
-  return { description, extraAttributes, questionsAndAnswers: [], pickupLocation };
+  const detail: DeepSearchDetail = {
+    description,
+    extraAttributes,
+    questionsAndAnswers: [],
+    pickupLocation,
+  };
+  if (photos) detail.photos = photos;
+  return detail;
+}
+
+// ── Photo extraction ──────────────────────────────────────────────────────────
+//
+// Facebook tags each listing's own gallery images with a fixed, stable alt-text
+// pattern: "Product photo of <title>" — everything else on the detail page
+// (suggested-listing thumbnails, avatars, chat icons, loading placeholders) uses
+// a different alt pattern or none at all, so this is far more reliable than
+// filtering by image size or DOM position. Live-verified against 4 real
+// listings. Facebook's CDN URLs are signed and don't expose a separate
+// thumbnail/full-size pair the way TradeMe's photoserver URLs do, so the same
+// URL is used for both in buildFacebookPhotosFromUrls below.
+//
+// Self-contained for the same reason as extractFacebookDetailsCardData — this
+// is passed directly to page.evaluate().
+export function extractFacebookPhotoUrls(): string[] {
+  const urls = Array.from(document.querySelectorAll('img'))
+    .filter((img) => img.alt?.startsWith('Product photo of '))
+    .map((img) => img.src);
+  return Array.from(new Set(urls));
+}
+
+export function buildFacebookPhotosFromUrls(urls: string[]): ListingPhoto[] | undefined {
+  if (urls.length === 0) return undefined;
+  return urls.map((url) => ({ thumbnailUrl: url, fullSizeUrl: url }));
 }
 
 export async function fetchFacebookListingDetailAsync(
@@ -765,7 +799,10 @@ export async function fetchFacebookListingDetailAsync(
     ? deriveFacebookDescriptionAndLocation(cardData.cardInnerText, cardData.attributeRowCount)
     : { description: '', pickupLocation: null };
 
-  return buildFacebookDeepSearchDetail(description, extraAttributes, pickupLocation);
+  const photoUrls = await page.evaluate(extractFacebookPhotoUrls);
+  const photos = buildFacebookPhotosFromUrls(photoUrls);
+
+  return buildFacebookDeepSearchDetail(description, extraAttributes, pickupLocation, photos);
 }
 
 // ── Deep search ───────────────────────────────────────────────────────────────

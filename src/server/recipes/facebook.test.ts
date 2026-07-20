@@ -5,6 +5,7 @@ import { aiJSON } from '../ai';
 import {
   buildFacebookDeepSearchDetail,
   buildFacebookListing,
+  buildFacebookPhotosFromUrls,
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
   classifyInitialSearchStateAsync,
@@ -118,6 +119,7 @@ type FacebookPageOptions = {
   cookieBannerVisible?: boolean;
   bodyText?: string;
   detailsCardData?: FacebookDetailsCardData | null;
+  photoUrls?: string[];
 };
 
 const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } = vi.hoisted(() => {
@@ -146,6 +148,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
       cookieBannerVisible = false,
       bodyText = '',
       detailsCardData = null,
+      photoUrls = [],
     } = options;
 
     const waitForSelectorCalls: string[] = [];
@@ -197,6 +200,9 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
         }
         if (fn.name === 'extractFacebookDetailsCardData') {
           return detailsCardData;
+        }
+        if (fn.name === 'extractFacebookPhotoUrls') {
+          return photoUrls;
         }
         return bodyText;
       },
@@ -975,7 +981,7 @@ describe('buildDiscoverUrlsAsync', () => {
 });
 
 describe('buildFacebookDeepSearchDetail', () => {
-  it('returns exactly description, extraAttributes, questionsAndAnswers, and pickupLocation', () => {
+  it('returns exactly description, extraAttributes, questionsAndAnswers, and pickupLocation when no photos are given', () => {
     const detail = buildFacebookDeepSearchDetail('Nice lamp', { Condition: 'Used' }, 'Auckland');
     expect(detail).toEqual({
       description: 'Nice lamp',
@@ -991,6 +997,33 @@ describe('buildFacebookDeepSearchDetail', () => {
     expect(detail).not.toHaveProperty('reserveStatus');
     expect(detail).not.toHaveProperty('pickupAvailable');
     expect(detail).not.toHaveProperty('shippingAvailable');
+  });
+
+  it('includes photos when given', () => {
+    const photos = [
+      { thumbnailUrl: 'https://example.com/a.jpg', fullSizeUrl: 'https://example.com/a.jpg' },
+    ];
+    const detail = buildFacebookDeepSearchDetail('desc', {}, null, photos);
+    expect(detail.photos).toEqual(photos);
+  });
+
+  it('omits the photos key entirely when none are given, rather than an empty array', () => {
+    const detail = buildFacebookDeepSearchDetail('desc', {}, null);
+    expect(detail).not.toHaveProperty('photos');
+  });
+});
+
+describe('buildFacebookPhotosFromUrls', () => {
+  it('returns undefined for an empty list', () => {
+    expect(buildFacebookPhotosFromUrls([])).toBeUndefined();
+  });
+
+  it('maps each URL to a photo using the same URL for both thumbnail and full size', () => {
+    const urls = ['https://scontent.example.com/a.jpg', 'https://scontent.example.com/b.jpg'];
+    expect(buildFacebookPhotosFromUrls(urls)).toEqual([
+      { thumbnailUrl: urls[0], fullSizeUrl: urls[0] },
+      { thumbnailUrl: urls[1], fullSizeUrl: urls[1] },
+    ]);
   });
 });
 
@@ -1268,7 +1301,8 @@ describe('fetchFacebookListingDetailAsync', () => {
       attributeRowCount: 1,
       attributePairs: { Condition: 'Used' },
     };
-    const page = makeFacebookPage({ domLoginWall: false, detailsCardData });
+    const photoUrls = ['https://scontent.example.com/a.jpg', 'https://scontent.example.com/b.jpg'];
+    const page = makeFacebookPage({ domLoginWall: false, detailsCardData, photoUrls });
     const detail = await fetchFacebookListingDetailAsync(
       page as unknown as Parameters<typeof fetchFacebookListingDetailAsync>[0],
       'https://www.facebook.com/marketplace/item/123/'
@@ -1276,6 +1310,10 @@ describe('fetchFacebookListingDetailAsync', () => {
     expect(detail.description).toBe('A lovely lamp in great condition.');
     expect(detail.extraAttributes).toEqual({ Condition: 'Used' });
     expect(detail.pickupLocation).toBe('Wellington, Wellington City');
+    expect(detail.photos).toEqual([
+      { thumbnailUrl: photoUrls[0], fullSizeUrl: photoUrls[0] },
+      { thumbnailUrl: photoUrls[1], fullSizeUrl: photoUrls[1] },
+    ]);
   });
 
   it('returns empty details when the page has no "Details" heading at all', async () => {
@@ -1286,6 +1324,7 @@ describe('fetchFacebookListingDetailAsync', () => {
     );
     expect(detail.description).toBe('');
     expect(detail.extraAttributes).toEqual({});
+    expect(detail.photos).toBeUndefined();
     expect(detail.pickupLocation).toBeNull();
   });
 });
