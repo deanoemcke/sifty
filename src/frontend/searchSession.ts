@@ -14,6 +14,7 @@ import {
   updateDiscoveryBtn,
 } from './discoveryForm';
 import { getElement } from './domUtils';
+import { clearDraftSession, type DraftSession, scheduleDraftSessionSave } from './draftSession';
 import { esc } from './html';
 import { parseMaxPrice } from './parseUtils';
 import { searchUrlCardAsync } from './quickSearch';
@@ -23,6 +24,7 @@ import {
   currentSearchName,
   type DiscoverInputs,
   type SavedSearch,
+  setActiveSidebarTab,
   setCurrentSearchId,
   setCurrentSearchName,
 } from './state';
@@ -37,6 +39,7 @@ import { readCardUrl, urlCards } from './urlCardStore';
 
 export function markDirty(): void {
   getElement<HTMLButtonElement>('saveCurrentBtn').disabled = false;
+  scheduleDraftSessionSave();
 }
 
 export function setSearchName(id: string | null, name: string | null): void {
@@ -196,9 +199,46 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   for (const card of urlCards) handleUrlInputChanged(card);
   getElement<HTMLTextAreaElement>('aiFilter').value = search.aiFilter ?? '';
   setSearchName(search.id, search.name);
+  setActiveSidebarTab('search');
   activateSidebarTab(document, 'search');
-  // loadSavedSearchAsync owns the dispatch: kick off a search for every configured card.
-  fireAllCardSearches(urlCards, searchUrlCardAsync);
+  // A loaded favourite is already durable server-side (reachable via
+  // ?search=<id>), so any local draft of what preceded it is now moot.
+  clearDraftSession();
+  // loadSavedSearchAsync owns the dispatch: kick off a search for every
+  // configured card, and callers (e.g. urlState.ts resolving a deep-linked
+  // modal) rely on this resolving only once results have actually arrived.
+  await fireAllCardSearches(urlCards, searchUrlCardAsync);
+}
+
+// Restores an autosaved ad-hoc session (see draftSession.ts) on boot, when no
+// ?search=<id> is present in the URL — mirrors loadSavedSearchAsync's shape
+// minus the id/name/tab-activation, since a draft is never itself durable.
+export async function restoreDraftSessionAsync(draft: DraftSession): Promise<void> {
+  setUrlsSectionState('ready');
+  trimUrlCardsToOne();
+  applyLoadedDiscoverInputs(discoveryFormElements(), draft.discoverInputs);
+  getElement<HTMLTextAreaElement>('aiFilter').value = draft.aiFilter;
+  if (draft.urls.length === 0) return;
+  urlCards[0].dom.input.value = draft.urls[0];
+  for (let urlIndex = 1; urlIndex < draft.urls.length; urlIndex++) {
+    createUrlCard(searchUrlCardAsync).dom.input.value = draft.urls[urlIndex];
+  }
+  for (const card of urlCards) handleUrlInputChanged(card);
+  await fireAllCardSearches(urlCards, searchUrlCardAsync);
+}
+
+// Collapses back to a single blank session — used when URL/popstate handling
+// finds no saved-search id but one was previously loaded (e.g. the user
+// pressed Back past the point where they loaded a favourite). Any ad-hoc
+// content that existed before that favourite was loaded is not recoverable.
+export function unloadCurrentSearch(): void {
+  trimUrlCardsToOne();
+  urlCards[0].dom.input.value = '';
+  handleUrlInputChanged(urlCards[0]);
+  applyLoadedDiscoverInputs(discoveryFormElements(), { prompt: '', fulfillment: 'pickup' });
+  getElement<HTMLTextAreaElement>('aiFilter').value = '';
+  setSearchName(null, null);
+  setUrlsSectionState('idle');
 }
 
 // ── Discovery submit ──────────────────────────────────────────────────────────
@@ -300,15 +340,19 @@ async function finishSaveSearchAsync(id: string, name: string): Promise<void> {
   await fetchSavedSearchesAsync();
   setSearchName(id, name);
   closeSaveSearchModal();
+  setActiveSidebarTab('favourites');
   activateSidebarTab(document, 'favourites');
+  // The session is now durable server-side (reachable via ?search=<id>), so
+  // the local draft that shadowed it while unsaved is no longer needed.
+  clearDraftSession();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-export async function handleSaveSearchConfirmAsync(): Promise<void> {
+export async function handleSaveSearchConfirmAsync(): Promise<boolean> {
   const name = getElement<HTMLInputElement>('saveSearchName').value.trim();
-  if (!name) return;
+  if (!name) return false;
   const payload = buildSaveSearchPayload(name);
-  if (!payload) return;
+  if (!payload) return false;
 
   const confirmButton = getElement<HTMLButtonElement>('saveSearchConfirmBtn');
   const saveFailedMessage = 'Could not save this favourite — try again.';
@@ -319,28 +363,30 @@ export async function handleSaveSearchConfirmAsync(): Promise<void> {
       const status = await updateSavedSearchAsync(currentSearchId, payload);
       if (status === 'error') {
         showSaveSearchError(saveFailedMessage);
-        return;
+        return false;
       }
       await finishSaveSearchAsync(currentSearchId, name);
-      return;
+      return true;
     }
 
     const result = await createSavedSearchAsync(payload);
     if (result.status === 'conflict') {
-      if (!window.confirm(`A saved search named "${name}" already exists. Overwrite it?`)) return;
+      if (!window.confirm(`A saved search named "${name}" already exists. Overwrite it?`))
+        return false;
       const status = await updateSavedSearchAsync(result.existingId, payload);
       if (status === 'error') {
         showSaveSearchError(saveFailedMessage);
-        return;
+        return false;
       }
       await finishSaveSearchAsync(result.existingId, name);
-      return;
+      return true;
     }
     if (result.status === 'ok') {
       await finishSaveSearchAsync(result.id, name);
-    } else {
-      showSaveSearchError(saveFailedMessage);
+      return true;
     }
+    showSaveSearchError(saveFailedMessage);
+    return false;
   } finally {
     confirmButton.disabled = false;
   }
@@ -348,22 +394,26 @@ export async function handleSaveSearchConfirmAsync(): Promise<void> {
 
 // ── Saved-search list delegation ──────────────────────────────────────────────
 
-export async function handleSavedSearchListClickAsync(mouseEvent: MouseEvent): Promise<void> {
+export async function handleSavedSearchListClickAsync(
+  mouseEvent: MouseEvent
+): Promise<'loaded' | 'deleted' | 'none'> {
   const row = (mouseEvent.target as HTMLElement).closest<HTMLElement>('.saved-search-row');
-  if (!row) return;
+  if (!row) return 'none';
   const savedSearchId = row.dataset.id;
   if (!savedSearchId) throw new Error('saved-search-row missing data-id attribute');
   if ((mouseEvent.target as HTMLElement).closest('.delete-saved-btn')) {
     await deleteSavedSearchAsync(savedSearchId);
-    return;
+    return 'deleted';
   }
   if ((mouseEvent.target as HTMLElement).closest('.load-saved-btn')) {
     mouseEvent.preventDefault();
     const response = await fetch(`/api/saved-searches/${savedSearchId}`);
-    if (!response.ok) return;
+    if (!response.ok) return 'none';
     const { search } = (await response.json()) as { search: SavedSearch };
     await loadSavedSearchAsync(search);
+    return 'loaded';
   }
+  return 'none';
 }
 
 export async function handleSavedSearchAlertToggleAsync(changeEvent: Event): Promise<void> {

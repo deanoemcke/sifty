@@ -132,7 +132,7 @@ describe('runDeepSearchAsync — mixed success/failure batch', () => {
   });
 });
 
-describe('listing modal scroll lock / back-button history', () => {
+describe('listing modal scroll lock', () => {
   function makeSearchedItem(url: string): ListingItem {
     return makeListingItem({
       hasBeenDeepSearched: true,
@@ -140,25 +140,23 @@ describe('listing modal scroll lock / back-button history', () => {
     });
   }
 
-  it('locks body scroll and pushes a history entry on open', async () => {
+  it('locks body scroll on open, without touching history itself', async () => {
+    const pushSpy = vi.spyOn(history, 'pushState');
     await openListingModalAsync(makeSearchedItem('https://example.com/a'));
     expect(document.body.classList.contains('scroll-locked')).toBe(true);
-    expect((history.state as { siftyModalOpen?: boolean } | null)?.siftyModalOpen).toBe(true);
+    expect(pushSpy).not.toHaveBeenCalled();
   });
 
-  it('unlocks body scroll and consumes the history entry on a normal close', async () => {
+  it('unlocks body scroll on close, without touching history itself', async () => {
     const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
     await openListingModalAsync(makeSearchedItem('https://example.com/a'));
     closeListingModal();
     expect(document.body.classList.contains('scroll-locked')).toBe(false);
-    expect(backSpy).toHaveBeenCalledTimes(1);
+    expect(backSpy).not.toHaveBeenCalled();
   });
 
-  it('does not call history.back() when closing with isPopStateTriggered', async () => {
-    const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+  it('takes no arguments', async () => {
     await openListingModalAsync(makeSearchedItem('https://example.com/a'));
-    closeListingModal({ isPopStateTriggered: true });
-    expect(document.body.classList.contains('scroll-locked')).toBe(false);
-    expect(backSpy).not.toHaveBeenCalled();
+    expect(closeListingModal.length).toBe(0);
   });
 });

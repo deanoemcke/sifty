@@ -93,15 +93,30 @@ describe('initApp() wiring', () => {
     // or a later test would see calls recorded by an earlier one.
     vi.clearAllMocks();
     document.body.innerHTML = loadIndexHtmlBodyFixture();
+    // history/localStorage persist across tests within this file (only JS
+    // module state is reset by vi.resetModules()) — reset both so no test
+    // leaks address-bar or draft-session state into the next one.
+    history.replaceState(null, '', '/');
+    localStorage.clear();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockRejectedValue(new Error('network disabled in app.test.ts wiring tests'))
     );
+    // markDirty()/discover-input changes now schedule a real debounced
+    // draft-session save (see draftSession.ts) — fake timers by default so
+    // afterEach's vi.clearAllTimers() can deterministically drop any pending
+    // one, instead of it firing later against a DOM a subsequent test tore down.
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    // Undoes any vi.spyOn(history, ...) from the test that just ran — without
+    // this, spies on native methods like history.pushState/replaceState pile
+    // up across tests instead of being torn down.
+    vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
 
@@ -552,6 +567,143 @@ describe('initApp() wiring', () => {
       removeButtons[removeButtons.length - 1].click();
 
       expect(saveCurrentBtn.disabled).toBe(false);
+    });
+  });
+
+  describe('URL state / browser history integration', () => {
+    it('switching to the Favourites tab pushes ?tab=favourites; switching back removes it', async () => {
+      await import('./app');
+      document.getElementById('favouritesTabBtn')?.dispatchEvent(new Event('click'));
+      expect(new URLSearchParams(location.search).get('tab')).toBe('favourites');
+
+      document.getElementById('searchTabBtn')?.dispatchEvent(new Event('click'));
+      expect(new URLSearchParams(location.search).get('tab')).toBe(null);
+    });
+
+    it('switching tabs pushes a real history entry (not just a replace)', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+      const pushSpy = vi.spyOn(history, 'pushState');
+      const replaceSpy = vi.spyOn(history, 'replaceState');
+
+      document.getElementById('favouritesTabBtn')?.dispatchEvent(new Event('click'));
+
+      expect(pushSpy).toHaveBeenCalledTimes(1);
+      expect(replaceSpy).not.toHaveBeenCalled();
+    });
+
+    it('changing the sort option replaces the URL rather than pushing a new entry', async () => {
+      await import('./app');
+      // Let the fire-and-forget boot-time applyUrlState/syncUrlToState chain
+      // (which also calls replaceState once) settle before counting calls.
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useFakeTimers();
+      const pushSpy = vi.spyOn(history, 'pushState');
+      const replaceSpy = vi.spyOn(history, 'replaceState');
+
+      const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
+      bestMatchRadio.checked = true;
+      bestMatchRadio.dispatchEvent(new Event('change'));
+
+      expect(new URLSearchParams(location.search).get('sort')).toBe('best-match');
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(replaceSpy).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(20);
+    });
+
+    it('toggling a Show filter replaces the URL rather than pushing a new entry', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+      const pushSpy = vi.spyOn(history, 'pushState');
+      const replaceSpy = vi.spyOn(history, 'replaceState');
+
+      const soldCheckbox = document.getElementById('showSold') as HTMLInputElement;
+      soldCheckbox.checked = false;
+      soldCheckbox.dispatchEvent(new Event('change'));
+
+      expect(new URLSearchParams(location.search).get('show')).toBe('used,new,filtered');
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(replaceSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('opening a listing card modal pushes a new history entry', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+      const { openArea } = appendListingCardFixture();
+      const pushSpy = vi.spyOn(history, 'pushState');
+
+      openArea.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      expect(pushSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('a real back navigation past an open modal closes it without calling history.back() again', async () => {
+      await import('./app');
+      const { openListingCardModal } = await import('./listingDetail');
+      const stateModule = await import('./state');
+      // openListingCardModal is stubbed for this file — simulate what it
+      // would really have done to state on open.
+      vi.mocked(openListingCardModal).mockImplementation(() => {
+        stateModule.setOpenModalListingUrl('https://example.com/listing/1');
+      });
+      const { openArea } = appendListingCardFixture();
+      openArea.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      // Simulate the browser having already navigated back to the entry that
+      // predates the modal (no modal param) — that's what a real back-button
+      // press does before the popstate event ever fires.
+      history.replaceState(null, '', '/');
+
+      const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      expect(backSpy).not.toHaveBeenCalled();
+    });
+
+    it('a popstate event re-applies tab/sort/show from the current URL', async () => {
+      await import('./app');
+      history.pushState(null, '', '/?tab=favourites&sort=lowest-price&show=used');
+
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      const state = await import('./state');
+      expect(state.activeSidebarTab).toBe('favourites');
+      expect(state.sortBy).toBe('lowest-price');
+      expect([...state.visibleListingCategories]).toEqual(['used']);
+      expect(document.getElementById('savedSearchesPanel')?.classList.contains('hidden')).toBe(
+        false
+      );
+    });
+
+    it('booting with a malformed query string applies defaults and self-corrects the address bar', async () => {
+      history.pushState(null, '', '/?sort=bogus&show=nonsense&tab=bogus');
+
+      await import('./app');
+      await vi.waitFor(() => {
+        expect(new URLSearchParams(location.search).get('sort')).toBe(null);
+      });
+
+      const state = await import('./state');
+      expect(state.sortBy).toBe('source-url');
+      expect(state.activeSidebarTab).toBe('search');
+      expect([...state.visibleListingCategories].sort()).toEqual(
+        ['filtered', 'new', 'sold', 'used'].sort()
+      );
+      expect(new URLSearchParams(location.search).get('show')).toBe(null);
+      expect(new URLSearchParams(location.search).get('tab')).toBe(null);
+    });
+
+    it('editing a discover-form field schedules a debounced draft-session save', async () => {
+      await import('./app');
+      vi.useFakeTimers();
+      const { loadDraftSession } = await import('./draftSession');
+
+      const promptInput = document.getElementById('discoveryPrompt') as HTMLTextAreaElement;
+      promptInput.value = 'lamp';
+      promptInput.dispatchEvent(new Event('input'));
+
+      expect(loadDraftSession()).toBe(null);
+      vi.runAllTimers();
+      expect(loadDraftSession()).not.toBe(null);
     });
   });
 });
