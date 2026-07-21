@@ -287,6 +287,31 @@ describe('buildExtrasHtml', () => {
     expect(buildExtrasHtml(makeListing())).not.toContain('photo-gallery');
   });
 
+  it('falls back to the quick-scrape thumbnail when there are no deep-search photos', () => {
+    const html = buildExtrasHtml(
+      makeListing({ thumbnailUrl: 'https://example.com/quick-thumb.jpg' })
+    );
+    expect(html).toContain('photo-gallery');
+    expect(html).toContain('src="https://example.com/quick-thumb.jpg"');
+    expect(html).toContain('href="https://example.com/quick-thumb.jpg"');
+  });
+
+  it('prefers deep-search photos over the quick-scrape thumbnail when both are present', () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        thumbnailUrl: 'https://example.com/quick-thumb.jpg',
+        photos: [
+          {
+            thumbnailUrl: 'https://example.com/thumb1.jpg',
+            fullSizeUrl: 'https://example.com/full1.jpg',
+          },
+        ],
+      })
+    );
+    expect(html).not.toContain('quick-thumb.jpg');
+    expect(html).toContain('src="https://example.com/thumb1.jpg"');
+  });
+
   it('renders listing dates and category path', () => {
     const html = buildExtrasHtml(
       makeListing({

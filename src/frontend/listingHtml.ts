@@ -121,8 +121,15 @@ function buildPickupRowHtml(
   return `<span class="details-key">Pickup</span><span class="details-val">${value}</span>`;
 }
 
-function buildPhotoGalleryHtml(photos: Listing['photos']): string {
-  const photoList = photos ?? [];
+// Falls back to the quick-scrape `thumbnailUrl` when deep search hasn't run
+// (or didn't return photos) yet, so the modal always shows the best image
+// currently known rather than nothing.
+export function buildPhotoGalleryHtml(listing: Pick<Listing, 'photos' | 'thumbnailUrl'>): string {
+  const photoList =
+    listing.photos ??
+    (listing.thumbnailUrl
+      ? [{ thumbnailUrl: listing.thumbnailUrl, fullSizeUrl: listing.thumbnailUrl }]
+      : []);
   if (photoList.length === 0) return '';
   return `<div class="deep-section">
       <div class="deep-section-label">Photos</div>
@@ -158,7 +165,7 @@ export function buildExtrasHtml(listing: Listing): string {
   let body = '';
 
   // ── Photos ────────────────────────────────────────────────────────────────
-  body += buildPhotoGalleryHtml(listing.photos);
+  body += buildPhotoGalleryHtml(listing);
 
   // ── Listing info (dates, category) ──────────────────────────────────────
   body += buildListingInfoHtml(listing);

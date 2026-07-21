@@ -13,6 +13,7 @@ import {
   buildCardPriceHtml,
   buildDetailPriceHtml,
   buildExtrasHtml,
+  buildPhotoGalleryHtml,
 } from './listingHtml';
 import {
   lockBodyScroll,
@@ -75,7 +76,7 @@ export function setDeepSearchBusy(busy: boolean): void {
 export function listingModalExtrasHtml(item: ListingItem, errorMessage: string | null): string {
   if (errorMessage) return `<p class="deep-empty">Couldn't load details — ${esc(errorMessage)}</p>`;
   if (item.hasBeenDeepSearched) return buildExtrasHtml(item.data);
-  return `<div class="modal-loading"><span class="spinner"></span><span>Fetching details…</span></div>`;
+  return `${buildPhotoGalleryHtml(item.data)}<div class="modal-loading"><span class="spinner"></span><span>Fetching details…</span></div>`;
 }
 
 export function renderListingModalContent(
