@@ -32,6 +32,35 @@ function setAiFilterReason(url: string, reason: string): void {
   (listingsByUrl.get(url) as ListingItem).aiFilterReason = reason;
 }
 
+// Stubs window.matchMedia, which jsdom doesn't implement, so tests can
+// exercise the mobile full-screen-sheet branch of renderAiFilterButton
+// without a real viewport. Mirrors dropdownPanel.test.ts's helper of the same
+// name.
+function stubMobileMatchMedia(matches: boolean): () => void {
+  const originalMatchMedia = window.matchMedia;
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+  return () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: originalMatchMedia,
+    });
+  };
+}
+
 function addCardWithListings(listingUrls: string[]): void {
   const data: UrlCardData = {
     searchStatus: 'done',
@@ -156,6 +185,43 @@ describe('renderDerived', () => {
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
     expect(filterBtn.disabled).toBe(false);
     expect(filterBtn.textContent).toBe('Filter');
+  });
+
+  it('shows a live pass/total count on the mobile full-screen sheet instead of "Filter"', () => {
+    const restore = stubMobileMatchMedia(true);
+    addCardWithListings(['https://l/1', 'https://l/2']);
+    setAiFilterReason('https://l/2', 'too old');
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
+    renderDerived();
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.textContent).toBe('Filtering 1 / 2 results');
+    restore();
+  });
+
+  it('keeps the desktop "Filter"/"Filtering.." label when the mobile breakpoint is not active', () => {
+    const restore = stubMobileMatchMedia(false);
+    addCardWithListings(['https://l/1', 'https://l/2']);
+    setAiFilterReason('https://l/2', 'too old');
+    renderDerived();
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.textContent).toBe('Filter');
+    restore();
+  });
+
+  it('updates the mobile pass/total count on repeated renders without recreating the spinner', () => {
+    const restore = stubMobileMatchMedia(true);
+    addCardWithListings(['https://l/1', 'https://l/2']);
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
+    setIsAiFilterRunning(true);
+    renderDerived();
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    const spinnerElement = filterBtn.querySelector('.spinner');
+    expect(filterBtn.textContent).toBe('Filtering 2 / 2 results');
+    setAiFilterReason('https://l/2', 'too old');
+    renderDerived();
+    expect(filterBtn.textContent).toBe('Filtering 1 / 2 results');
+    expect(filterBtn.querySelector('.spinner')).toBe(spinnerElement);
+    restore();
   });
 
   it('builds the ordered listing list only once per render tick', () => {

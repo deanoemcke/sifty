@@ -112,7 +112,7 @@ export function buildDropdownShell(ids: DropdownShellIds, title: string, icon: s
 // stub `window.matchMedia` to exercise the mobile branch.
 const MOBILE_SHEET_MEDIA_QUERY = '(max-width: 640px)';
 
-function isMobileSheetActive(): boolean {
+export function isMobileSheetActive(): boolean {
   return (
     typeof window.matchMedia === 'function' && window.matchMedia(MOBILE_SHEET_MEDIA_QUERY).matches
   );

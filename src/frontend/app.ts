@@ -247,7 +247,9 @@ function initApp(): void {
     'input',
     debouncedRequestAiFilterRun
   );
-  getElement<HTMLTextAreaElement>('aiFilter').addEventListener('input', renderAiFilterButton);
+  getElement<HTMLTextAreaElement>('aiFilter').addEventListener('input', () =>
+    renderAiFilterButton()
+  );
   getElement<HTMLButtonElement>('aiFilterDropdownBtn').addEventListener('click', () =>
     toggleAiFilterDropdownPanel()
   );
