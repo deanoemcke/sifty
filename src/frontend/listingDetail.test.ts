@@ -5,6 +5,7 @@ import {
   closeListingModal,
   deepSearchListingAsync,
   openListingModalAsync,
+  renderListingModalContent,
   runDeepSearchAsync,
 } from './listingDetail';
 import { populateShowControls } from './showDropdown';
@@ -129,6 +130,32 @@ describe('runDeepSearchAsync — mixed success/failure batch', () => {
 
     expect(okItem.hasBeenDeepSearched).toBe(true);
     expect(failedItem.hasBeenDeepSearched).toBe(false);
+  });
+});
+
+describe('renderListingModalContent header', () => {
+  it('does not render a thumbnail', () => {
+    const item = makeItem('https://example.com/no-thumb');
+    setOpenModalListingUrl(item.data.url);
+
+    renderListingModalContent(item);
+
+    expect(getElement('listingModalBody').innerHTML).not.toContain('listing-modal-thumb');
+  });
+
+  it("shows the listing's url as the link text, directly below the title", () => {
+    const item = makeItem('https://example.com/link-text-test');
+    setOpenModalListingUrl(item.data.url);
+
+    renderListingModalContent(item);
+
+    const html = getElement('listingModalBody').innerHTML;
+    expect(html).toContain(`>${item.data.url}<`);
+    const titleIndex = html.indexOf('listing-modal-title');
+    const linkIndex = html.indexOf('listing-modal-original-link');
+    const metaIndex = html.indexOf('listing-meta');
+    expect(titleIndex).toBeLessThan(linkIndex);
+    expect(linkIndex).toBeLessThan(metaIndex);
   });
 });
 

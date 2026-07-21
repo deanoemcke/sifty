@@ -77,19 +77,19 @@ export function buildCardFooterHtml(listing: Listing): string {
 }
 
 export function buildDetailPriceHtml(listing: Listing): string {
-  let left = '';
+  let badgesHtml = '';
   if (listing.isAuction) {
     const reserveStatus = listing.reserveStatus ?? '';
     const reserve = formatReserveText(reserveStatus);
     if (reserve)
-      left += `<span class="badge badge-${reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
+      badgesHtml += `<span class="badge badge-${reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
     const buyNowPrice = listing.buyNowPrice;
     if (buyNowPrice != null) {
-      left += `<span class="badge badge-buynow">Buy Now: <strong>$${Math.round(buyNowPrice).toLocaleString()}</strong></span>`;
+      badgesHtml += `<span class="badge badge-buynow">Buy Now: <strong>$${Math.round(buyNowPrice).toLocaleString()}</strong></span>`;
     }
   }
   const price = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
-  return `<span class="price-left">${left}</span>${price}`;
+  return `${price}<span class="price-badges">${badgesHtml}</span>`;
 }
 
 function buildQaAttributionHtml(name: string | undefined, iso: string | undefined): string {

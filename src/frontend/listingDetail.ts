@@ -20,7 +20,6 @@ import {
   pushModalHistoryEntry,
   unlockBodyScroll,
 } from './modalOverlay';
-import { sourceBadgeHtml } from './recipeDisplay';
 import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
 import {
   bulkDeepSearchUrls,
@@ -88,9 +87,6 @@ export function renderListingModalContent(
   if (openModalListingUrl !== item.data.url) return;
 
   const listing = item.data;
-  const thumb = listing.thumbnailUrl
-    ? `<img class="listing-modal-thumb" src="${esc(listing.thumbnailUrl)}" alt="">`
-    : `<div class="listing-modal-thumb-placeholder"></div>`;
   const metaHtml = buildCardMetaHtml(listing);
   const priceHtml = item.hasBeenDeepSearched
     ? buildDetailPriceHtml(listing)
@@ -98,12 +94,11 @@ export function renderListingModalContent(
 
   getElement('listingModalBody').innerHTML = `
     <div class="listing-modal-header">
-      <div class="listing-modal-thumb-wrap">${thumb}${sourceBadgeHtml(listing.source, 32)}</div>
       <div class="listing-modal-heading">
         <div class="listing-modal-title">${esc(listing.title)}</div>
+        <a class="listing-modal-original-link" href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.url)}</a>
         <div class="listing-meta">${metaHtml}</div>
         <div class="listing-prices">${priceHtml}</div>
-        <a class="listing-modal-original-link" href="${esc(listing.url)}" target="_blank" rel="noopener">View original listing ↗</a>
       </div>
     </div>
     <div class="listing-modal-extras">${listingModalExtrasHtml(item, errorMessage)}</div>

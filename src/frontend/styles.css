@@ -857,7 +857,7 @@ label {
   margin-top: auto;
   padding-top: 0.35rem;
 }
-.price-left {
+.price-badges {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1146,28 +1146,9 @@ label {
   right: 0.6rem;
 }
 .listing-modal-header {
-  display: flex;
-  gap: 1rem;
   margin-bottom: 0.75rem;
 }
-.listing-modal-thumb-wrap {
-  position: relative;
-  flex-shrink: 0;
-  width: 140px;
-}
-.listing-modal-thumb,
-.listing-modal-thumb-placeholder {
-  width: 140px;
-  aspect-ratio: 1 / 1;
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  display: block;
-}
 .listing-modal-heading {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -1178,8 +1159,13 @@ label {
   line-height: 1.35;
 }
 .listing-modal-original-link {
+  display: block;
   font-size: 0.8rem;
   color: var(--primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .listing-modal-extras {
   padding-top: 0.75rem;

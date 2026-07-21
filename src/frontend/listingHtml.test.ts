@@ -149,14 +149,14 @@ describe('buildDetailPriceHtml', () => {
     expect(html).not.toContain('badge-unknown');
   });
 
-  it('places the reserve and buy-now badges in price-left, ahead of the price', () => {
+  it('places the reserve and buy-now badges in price-badges, after the price', () => {
     const html = buildDetailPriceHtml(
       makeListing({ price: 1000, isAuction: true, reserveStatus: 'MET', buyNowPrice: 1500 })
     );
-    const priceLeftIndex = html.indexOf('price-left');
     const priceIndex = html.indexOf('<span class="price">');
-    expect(priceLeftIndex).toBeGreaterThanOrEqual(0);
-    expect(priceLeftIndex).toBeLessThan(priceIndex);
+    const priceBadgesIndex = html.indexOf('price-badges');
+    expect(priceIndex).toBeGreaterThanOrEqual(0);
+    expect(priceIndex).toBeLessThan(priceBadgesIndex);
   });
 });
 
