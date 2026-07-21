@@ -14,6 +14,7 @@ import {
   updateDiscoveryBtn,
 } from './discoveryForm';
 import { getElement } from './domUtils';
+import { loadDraftSession, scheduleDraftSessionSave } from './draftSession';
 import {
   handleDropdownPopState,
   handleDropdownTabKey,
@@ -34,6 +35,7 @@ import {
   handleSaveSearchConfirmAsync,
   markDirty,
   openSaveSearchModal,
+  restoreDraftSessionAsync,
 } from './searchSession';
 import {
   closeShowDropdownPanel,
@@ -41,7 +43,7 @@ import {
   renderShowControls,
   toggleShowDropdownPanel,
 } from './showDropdown';
-import { activateSidebarTab } from './sidebarTabs';
+import { activateSidebarTab, type SidebarTabName } from './sidebarTabs';
 import {
   closeSortDropdownPanel,
   populateSortControls,
@@ -49,9 +51,23 @@ import {
   toggleSortDropdownPanel,
 } from './sortDropdown';
 import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
-import { type ListingVisibilityCategory, setListingCategoryVisible, setSortBy } from './state';
+import {
+  activeSidebarTab,
+  type ListingVisibilityCategory,
+  openModalListingUrl,
+  setActiveSidebarTab,
+  setListingCategoryVisible,
+  setSortBy,
+} from './state';
 import { cancelGroupSearches, createUrlCard } from './urlCardRow';
 import { toggleUrlGroup } from './urlGroupsView';
+import {
+  applyUrlState,
+  currentLocationSearchParams,
+  isAppPushedModalEntryFor,
+  parseUrlState,
+  syncUrlToState,
+} from './urlState';
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
 
@@ -59,12 +75,50 @@ function handleShowCategoryToggle(category: ListingVisibilityCategory, isVisible
   setListingCategoryVisible(category, isVisible);
   applyClientFilters();
   renderShowControls();
+  syncUrlToState({ push: false });
 }
 
 function handleSortOptionChange(sortOption: SortOption): void {
   setSortBy(sortOption);
   renderSortControls(sortOption);
   renderDerived();
+  syncUrlToState({ push: false });
+}
+
+function handleSidebarTabClick(tabName: SidebarTabName): void {
+  if (tabName === activeSidebarTab) return;
+  setActiveSidebarTab(tabName);
+  activateSidebarTab(document, tabName);
+  syncUrlToState({ push: true });
+}
+
+// Every openListingCardModal/closeListingModal call site lives here, so the
+// decision of whether a close consumes a pushed history entry (history.back())
+// or just replaces can live here too, rather than inside listingDetail.ts.
+function openListingCardModalAndSyncUrl(card: HTMLElement): void {
+  openListingCardModal(card);
+  syncUrlToState({ push: true });
+}
+
+function closeListingModalAndSyncUrl(): void {
+  const closingUrl = openModalListingUrl;
+  closeListingModal();
+  if (closingUrl && isAppPushedModalEntryFor(closingUrl)) history.back();
+  else syncUrlToState({ push: false });
+}
+
+async function bootFromPersistedStateAsync(): Promise<void> {
+  const parsed = parseUrlState(currentLocationSearchParams());
+  // A ?search=<id> link is authoritative — only fall back to a locally
+  // autosaved draft (see draftSession.ts) when there's no favourite to load.
+  if (parsed.savedSearchId === null) {
+    const draft = loadDraftSession();
+    if (draft) await restoreDraftSessionAsync(draft);
+  }
+  await applyUrlState(parsed);
+  // Canonicalize the address bar once, at boot only — normalizes away any
+  // malformed/unresolvable params applyUrlState just rejected to a default.
+  syncUrlToState({ push: false });
 }
 
 function initApp(): void {
@@ -102,14 +156,14 @@ function initApp(): void {
     handleDropdownTabKey(keyboardEvent);
   });
 
-  // The browser back button closes whichever modal-style overlay is open
-  // (the listing modal, or the Show/Sort dropdowns' mobile full-screen
-  // sheet) instead of navigating away — see modalOverlay.ts for the history
-  // push/pop half of this.
+  // The browser back/forward buttons move through real app state now (tab,
+  // sort, filters, open listing modal, loaded favourite) — see urlState.ts.
+  // The Show/Sort dropdowns' mobile full-screen sheet stay outside that
+  // schema and keep using the older marker-based history close (see
+  // modalOverlay.ts), so handleDropdownPopState still runs alongside it.
   window.addEventListener('popstate', () => {
     handleDropdownPopState();
-    if (!getElement('listingModal').classList.contains('hidden'))
-      closeListingModal({ isPopStateTriggered: true });
+    void applyUrlState(parseUrlState(currentLocationSearchParams()));
   });
 
   // Populate region dropdown and wire the allow-shipping checkbox
@@ -127,17 +181,34 @@ function initApp(): void {
       /* regions unavailable — dropdown stays empty */
     });
 
-  getElement<HTMLInputElement>('discoveryAllowShipping').addEventListener(
+  getElement<HTMLInputElement>('discoveryAllowShipping').addEventListener('change', () => {
+    updateDiscoveryBtn();
+    scheduleDraftSessionSave();
+  });
+  getElement<HTMLSelectElement>('discoveryRegion').addEventListener('change', () => {
+    updateDiscoveryBtn();
+    scheduleDraftSessionSave();
+  });
+  getElement<HTMLInputElement>('discoveryIncludeSoldItems').addEventListener(
     'change',
-    updateDiscoveryBtn
+    scheduleDraftSessionSave
   );
-  getElement<HTMLSelectElement>('discoveryRegion').addEventListener('change', updateDiscoveryBtn);
+  getElement<HTMLInputElement>('discoveryIncludeNewItems').addEventListener(
+    'change',
+    scheduleDraftSessionSave
+  );
 
-  getElement<HTMLTextAreaElement>('discoveryPrompt').addEventListener('input', updateDiscoveryBtn);
-  getElement<HTMLInputElement>('discoveryMaxPrice').addEventListener('input', updateDiscoveryBtn);
-  getElement<HTMLButtonElement>('discoveryBtn').addEventListener('click', () =>
-    handleDiscoverySubmitAsync()
-  );
+  getElement<HTMLTextAreaElement>('discoveryPrompt').addEventListener('input', () => {
+    updateDiscoveryBtn();
+    scheduleDraftSessionSave();
+  });
+  getElement<HTMLInputElement>('discoveryMaxPrice').addEventListener('input', () => {
+    updateDiscoveryBtn();
+    scheduleDraftSessionSave();
+  });
+  getElement<HTMLButtonElement>('discoveryBtn').addEventListener('click', () => {
+    void handleDiscoverySubmitAsync().then(() => syncUrlToState({ push: false }));
+  });
 
   const submitDiscoveryForm = (): void => getElement<HTMLButtonElement>('discoveryBtn').click();
   getElement<HTMLTextAreaElement>('discoveryPrompt').addEventListener(
@@ -195,20 +266,18 @@ function initApp(): void {
     if (!openArea) return;
     const card = openArea.closest<HTMLElement>('.listing-card');
     if (!card) return;
-    openListingCardModal(card);
+    openListingCardModalAndSyncUrl(card);
   });
 
   getElement('listingsContainer').addEventListener('keydown', (keyboardEvent: KeyboardEvent) =>
-    handleListingCardKeydown(keyboardEvent, openListingCardModal)
+    handleListingCardKeydown(keyboardEvent, openListingCardModalAndSyncUrl)
   );
 
   // ── Sidebar tabs / saved searches UI ──────────────────────────────────────────
 
-  getElement('searchTabBtn').addEventListener('click', () =>
-    activateSidebarTab(document, 'search')
-  );
+  getElement('searchTabBtn').addEventListener('click', () => handleSidebarTabClick('search'));
   getElement('favouritesTabBtn').addEventListener('click', () => {
-    activateSidebarTab(document, 'favourites');
+    handleSidebarTabClick('favourites');
     fetchSavedSearchesAsync();
   });
   // Populate the tab's count badge without waiting for the first tab switch.
@@ -222,9 +291,11 @@ function initApp(): void {
     if (mouseEvent.target === getElement('saveSearchModal')) closeSaveSearchModal();
   });
 
-  getElement('saveSearchConfirmBtn').addEventListener('click', () =>
-    handleSaveSearchConfirmAsync()
-  );
+  getElement('saveSearchConfirmBtn').addEventListener('click', () => {
+    void handleSaveSearchConfirmAsync().then((saved) => {
+      if (saved) syncUrlToState({ push: true });
+    });
+  });
 
   getElement<HTMLInputElement>('saveSearchName').addEventListener(
     'keydown',
@@ -235,10 +306,10 @@ function initApp(): void {
     }
   );
 
-  getElement('listingModalCloseBtn').addEventListener('click', () => closeListingModal());
+  getElement('listingModalCloseBtn').addEventListener('click', () => closeListingModalAndSyncUrl());
 
   getElement('listingModal').addEventListener('click', (mouseEvent: MouseEvent) => {
-    if (mouseEvent.target === getElement('listingModal')) closeListingModal();
+    if (mouseEvent.target === getElement('listingModal')) closeListingModalAndSyncUrl();
   });
 
   document.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
@@ -246,17 +317,21 @@ function initApp(): void {
       keyboardEvent.key === 'Escape' &&
       !getElement('listingModal').classList.contains('hidden')
     ) {
-      closeListingModal();
+      closeListingModalAndSyncUrl();
     }
   });
 
   getElement('savedSearchesList').addEventListener('click', (mouseEvent: MouseEvent) => {
-    void handleSavedSearchListClickAsync(mouseEvent);
+    void handleSavedSearchListClickAsync(mouseEvent).then((result) => {
+      if (result === 'loaded') syncUrlToState({ push: true });
+    });
   });
 
   getElement('savedSearchesList').addEventListener('change', (changeEvent: Event) => {
     void handleSavedSearchAlertToggleAsync(changeEvent);
   });
+
+  void bootFromPersistedStateAsync();
 }
 
 initApp();

@@ -1,20 +1,42 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadDraftSession, saveDraftSession } from './draftSession';
 import {
   handleDiscoverySubmitAsync,
   handleSavedSearchAlertToggleAsync,
+  handleSavedSearchListClickAsync,
   handleSaveSearchConfirmAsync,
   loadSavedSearchAsync,
+  markDirty,
   renderSavedSearches,
+  restoreDraftSessionAsync,
+  unloadCurrentSearch,
 } from './searchSession';
 import { populateShowControls } from './showDropdown';
-import { currentSearchId, currentSearchName, resetState, type SavedSearch } from './state';
+import {
+  activeSidebarTab,
+  currentSearchId,
+  currentSearchName,
+  resetState,
+  type SavedSearch,
+} from './state';
 import { createUrlCard } from './urlCardRow';
 import { resetUrlCardStore, urlCards } from './urlCardStore';
+
+function mockStreamingFetchResolved(): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      body: { getReader: () => ({ read: async () => ({ value: undefined, done: true }) }) },
+    })
+  );
+}
 
 beforeEach(() => {
   resetState();
   resetUrlCardStore();
+  localStorage.clear();
   document.body.innerHTML = `
     <textarea id="discoveryPrompt">lamp</textarea>
     <input id="discoveryMaxPrice" />
@@ -299,6 +321,229 @@ function makeSavedSearch(overrides: Partial<SavedSearch> = {}): SavedSearch {
     ...overrides,
   };
 }
+
+describe('loadSavedSearchAsync — url state / draft interaction', () => {
+  it('sets activeSidebarTab to search and clears any existing draft session', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/draft';
+    saveDraftSession();
+    expect(loadDraftSession()).not.toBe(null);
+
+    mockStreamingFetchResolved();
+    await loadSavedSearchAsync(makeSavedSearch());
+
+    expect(activeSidebarTab).toBe('search');
+    expect(loadDraftSession()).toBe(null);
+  });
+
+  it('resolves only after every url card search has completed', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveFetch = resolve;
+          })
+      )
+    );
+
+    const loadPromise = loadSavedSearchAsync(
+      makeSavedSearch({ urls: ['https://www.trademe.co.nz/saved'] })
+    );
+    let settled = false;
+    loadPromise.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveFetch({
+      ok: true,
+      body: { getReader: () => ({ read: async () => ({ value: undefined, done: true }) }) },
+    });
+    await loadPromise;
+    expect(settled).toBe(true);
+  });
+});
+
+describe('finishSaveSearchAsync (via handleSaveSearchConfirmAsync)', () => {
+  it('sets activeSidebarTab to favourites and clears any existing draft session on save', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    saveDraftSession();
+    expect(loadDraftSession()).not.toBe(null);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, id: 'new-id' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ searches: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    (document.getElementById('saveSearchName') as HTMLInputElement).value = 'New search';
+
+    await handleSaveSearchConfirmAsync();
+
+    expect(activeSidebarTab).toBe('favourites');
+    expect(loadDraftSession()).toBe(null);
+  });
+});
+
+describe('markDirty', () => {
+  it('schedules a debounced draft-session save', () => {
+    vi.useFakeTimers();
+    try {
+      urlCards[0].dom.input.value = 'https://example.com/x';
+      markDirty();
+      expect(loadDraftSession()).toBe(null);
+
+      vi.runAllTimers();
+
+      expect(loadDraftSession()).not.toBe(null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('unloadCurrentSearch', () => {
+  it('collapses url cards to one blank card and clears search name/id/discover inputs/aiFilter', async () => {
+    mockStreamingFetchResolved();
+    await loadSavedSearchAsync(
+      makeSavedSearch({
+        urls: ['https://example.com/a', 'https://example.com/b'],
+        discoverInputs: { prompt: 'lamp', fulfillment: 'any' },
+      })
+    );
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'no cracks';
+    expect(urlCards).toHaveLength(2);
+
+    unloadCurrentSearch();
+
+    expect(urlCards).toHaveLength(1);
+    expect(urlCards[0].dom.input.value).toBe('');
+    expect(currentSearchId).toBe(null);
+    expect(currentSearchName).toBe(null);
+    expect((document.getElementById('discoveryPrompt') as HTMLTextAreaElement).value).toBe('');
+    expect((document.getElementById('aiFilter') as HTMLTextAreaElement).value).toBe('');
+  });
+});
+
+describe('restoreDraftSessionAsync', () => {
+  it('populates url cards, discover inputs, and AI-filter text, resolving once searches complete', async () => {
+    mockStreamingFetchResolved();
+
+    await restoreDraftSessionAsync({
+      urls: ['https://www.trademe.co.nz/draft-a', 'https://www.trademe.co.nz/draft-b'],
+      discoverInputs: { prompt: 'lamp', fulfillment: 'any' },
+      aiFilter: 'no cracks',
+    });
+
+    expect(urlCards).toHaveLength(2);
+    expect(urlCards[0].dom.input.value).toBe('https://www.trademe.co.nz/draft-a');
+    expect(urlCards[1].dom.input.value).toBe('https://www.trademe.co.nz/draft-b');
+    expect((document.getElementById('discoveryPrompt') as HTMLTextAreaElement).value).toBe('lamp');
+    expect((document.getElementById('aiFilter') as HTMLTextAreaElement).value).toBe('no cracks');
+  });
+
+  it('does not attempt any search when the draft has no urls', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await restoreDraftSessionAsync({
+      urls: [],
+      discoverInputs: { prompt: 'lamp', fulfillment: 'pickup' },
+      aiFilter: '',
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleSavedSearchListClickAsync — result', () => {
+  it("resolves 'none' for a click that hits neither the load nor delete button", async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a' })]);
+    const row = document.querySelector('.saved-search-row') as HTMLElement;
+
+    const result = await handleSavedSearchListClickAsync({ target: row } as unknown as MouseEvent);
+
+    expect(result).toBe('none');
+  });
+
+  it("resolves 'deleted' after deleting a saved search", async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a' })]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ searches: [] }) })
+    );
+    const deleteButton = document.querySelector('.delete-saved-btn') as HTMLElement;
+
+    const result = await handleSavedSearchListClickAsync({
+      target: deleteButton,
+    } as unknown as MouseEvent);
+
+    expect(result).toBe('deleted');
+  });
+
+  it("resolves 'loaded' after loading a saved search", async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a' })]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ search: makeSavedSearch({ id: 'a', urls: [] }) }),
+      })
+    );
+    const loadLink = document.querySelector('.load-saved-btn') as HTMLElement;
+
+    const result = await handleSavedSearchListClickAsync({
+      target: loadLink,
+      preventDefault: () => {},
+    } as unknown as MouseEvent);
+
+    expect(result).toBe('loaded');
+  });
+
+  it("resolves 'none' when the saved search fails to load", async () => {
+    renderSavedSearches([makeSavedSearch({ id: 'a' })]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+    const loadLink = document.querySelector('.load-saved-btn') as HTMLElement;
+
+    const result = await handleSavedSearchListClickAsync({
+      target: loadLink,
+      preventDefault: () => {},
+    } as unknown as MouseEvent);
+
+    expect(result).toBe('none');
+  });
+});
+
+describe('handleSaveSearchConfirmAsync — result', () => {
+  it('resolves false when the name is blank', async () => {
+    expect(await handleSaveSearchConfirmAsync()).toBe(false);
+  });
+
+  it('resolves true after successfully creating a new favourite', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, id: 'new-id' }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ searches: [] }) })
+    );
+    (document.getElementById('saveSearchName') as HTMLInputElement).value = 'New search';
+
+    expect(await handleSaveSearchConfirmAsync()).toBe(true);
+  });
+
+  it('resolves false when creating a new favourite fails', async () => {
+    urlCards[0].dom.input.value = 'https://example.com/x';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 500 }));
+    (document.getElementById('saveSearchName') as HTMLInputElement).value = 'New search';
+
+    expect(await handleSaveSearchConfirmAsync()).toBe(false);
+  });
+});
 
 describe('renderSavedSearches', () => {
   it('hides the header row when there are no saved searches', () => {

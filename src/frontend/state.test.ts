@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { listingDedupeKey } from '../lib/listingDedup';
 import {
   ALL_LISTING_VISIBILITY_CATEGORIES,
+  activeSidebarTab,
   addListingItem,
   aiFilterPendingRun,
   bulkDeepSearchUrls,
@@ -16,6 +17,7 @@ import {
   openModalListingUrl,
   removeListingByUrl,
   resetState,
+  setActiveSidebarTab,
   setAiFilterPendingRun,
   setBulkDeepSearchUrls,
   setIsAiFilterRunning,
@@ -118,6 +120,27 @@ describe('openModalListingUrl', () => {
     setOpenModalListingUrl('https://trademe.co.nz/listing/1');
     resetState();
     expect(openModalListingUrl).toBe(null);
+  });
+});
+
+describe('activeSidebarTab', () => {
+  beforeEach(() => resetState());
+
+  it('defaults to search', () => {
+    expect(activeSidebarTab).toBe('search');
+  });
+
+  it('setActiveSidebarTab updates the value', () => {
+    setActiveSidebarTab('favourites');
+    expect(activeSidebarTab).toBe('favourites');
+    setActiveSidebarTab('search');
+    expect(activeSidebarTab).toBe('search');
+  });
+
+  it('resetState restores it to search', () => {
+    setActiveSidebarTab('favourites');
+    resetState();
+    expect(activeSidebarTab).toBe('search');
   });
 });
 
