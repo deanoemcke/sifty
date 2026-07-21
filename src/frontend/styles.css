@@ -865,7 +865,7 @@ label {
   min-width: 0;
 }
 .price {
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 700;
 }
 
@@ -1136,14 +1136,31 @@ label {
 .modal-listing {
   width: min(640px, 92vw);
   max-height: 85vh;
-  overflow-y: auto;
   position: relative;
-  padding-top: 2.5rem;
+  display: flex;
+  flex-direction: column;
+}
+.listing-modal-scroll {
+  overflow-y: auto;
+  min-height: 0;
 }
 .modal-close-btn {
   position: absolute;
   top: 0.6rem;
   right: 0.6rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+.modal-close-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
 }
 .listing-modal-header {
   margin-bottom: 0.75rem;
@@ -1154,7 +1171,7 @@ label {
   gap: 0.4rem;
 }
 .listing-modal-title {
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 700;
   line-height: 1.35;
 }
