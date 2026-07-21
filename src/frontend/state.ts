@@ -94,12 +94,18 @@ export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
   'filtered',
 ];
 
+// 'filtered' starts hidden — those listings were excluded by the AI filter,
+// so the default view shouldn't show them until the user opts back in.
+const DEFAULT_VISIBLE_LISTING_CATEGORIES = ALL_LISTING_VISIBILITY_CATEGORIES.filter(
+  (category) => category !== 'filtered'
+);
+
 export let currentSearchName: string | null = null;
 export let currentSearchId: string | null = null;
 // The mutable set stays private so every write goes through
 // setListingCategoryVisible — importers only see a ReadonlySet.
 const mutableVisibleListingCategories = new Set<ListingVisibilityCategory>(
-  ALL_LISTING_VISIBILITY_CATEGORIES
+  DEFAULT_VISIBLE_LISTING_CATEGORIES
 );
 export const visibleListingCategories: ReadonlySet<ListingVisibilityCategory> =
   mutableVisibleListingCategories;
@@ -213,7 +219,7 @@ export function resetState(): void {
   currentSearchName = null;
   currentSearchId = null;
   mutableVisibleListingCategories.clear();
-  for (const category of ALL_LISTING_VISIBILITY_CATEGORIES)
+  for (const category of DEFAULT_VISIBLE_LISTING_CATEGORIES)
     mutableVisibleListingCategories.add(category);
   isDeepSearchRunning = false;
   deepSearchId = null;

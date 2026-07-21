@@ -93,6 +93,7 @@ describe('renderDerived', () => {
   it('counts all listings as visible when filtered listings are shown', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
+    setListingCategoryVisible('filtered', true);
     renderDerived();
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('2 of 2 results');
   });

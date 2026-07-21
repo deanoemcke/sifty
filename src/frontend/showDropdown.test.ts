@@ -23,12 +23,16 @@ beforeEach(() => {
 
 describe('populateShowControls', () => {
   it('builds a checkbox row with a label and a count span per category', () => {
-    for (const id of ['showUsed', 'showSold', 'showNew', 'showFiltered']) {
+    for (const id of ['showUsed', 'showSold', 'showNew']) {
       const checkbox = document.getElementById(id) as HTMLInputElement;
       expect(checkbox.type).toBe('checkbox');
       expect(checkbox.checked).toBe(true);
       expect(document.getElementById(`${id}Count`)).not.toBeNull();
     }
+    const filteredCheckbox = document.getElementById('showFiltered') as HTMLInputElement;
+    expect(filteredCheckbox.type).toBe('checkbox');
+    expect(filteredCheckbox.checked).toBe(false);
+    expect(document.getElementById('showFilteredCount')).not.toBeNull();
     const rowLabels = Array.from(document.querySelectorAll('#showDropdownOptions label')).map(
       (row) => row.querySelector('span:not(.dropdown-option-count)')?.textContent
     );
@@ -67,7 +71,7 @@ describe('renderShowControls', () => {
     expect((document.getElementById('showUsed') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('showSold') as HTMLInputElement).checked).toBe(false);
     expect((document.getElementById('showNew') as HTMLInputElement).checked).toBe(true);
-    expect((document.getElementById('showFiltered') as HTMLInputElement).checked).toBe(true);
+    expect((document.getElementById('showFiltered') as HTMLInputElement).checked).toBe(false);
   });
 });
 
