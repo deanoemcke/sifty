@@ -710,16 +710,56 @@ const SEE_MORE_OR_LESS_SUFFIX_REGEX = /\s*See (more|less)\s*$/;
 
 export function deriveFacebookDescriptionAndLocation(
   cardInnerText: string,
-  attributeRowCount: number
+  attributeRowCount: number,
+  attributePairs: Record<string, string>
 ): { description: string; pickupLocation: string | null } {
   const lines = cardInnerText
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-  // Skip the "Details" heading plus the known count of key/value attribute
-  // lines — counted from the DOM, not guessed from line shape.
-  let remaining = lines.slice(1 + attributeRowCount * 2);
+  // Skip the "Details" heading plus the attribute label/value lines. The
+  // naive assumption is 2 lines per row (one label, one value), but that only
+  // holds if every value renders on a single line — a value with an embedded
+  // line break (a long wrapped value, an embedded list, a <br>) takes more.
+  // `attributePairs` is read from the same innerText, so its value strings
+  // already carry any such internal breaks; counting them gives the real
+  // per-row line count instead of assuming a fixed 2.
+  const attributeValues = Object.values(attributePairs);
+  const naiveAttributeLineCount = attributeRowCount * 2;
+  let attributeLineCount = naiveAttributeLineCount;
+  if (attributeValues.length === attributeRowCount) {
+    attributeLineCount = attributeValues.reduce(
+      (total, value) => total + 1 + value.split('\n').length,
+      0
+    );
+    if (attributeLineCount !== naiveAttributeLineCount) {
+      console.warn(
+        '[facebook] deriveFacebookDescriptionAndLocation: an attribute value spans more than one ' +
+          `line — derived ${attributeLineCount} attribute lines from ${attributeRowCount} rows ` +
+          `instead of the naive ${naiveAttributeLineCount}; using the derived count so the ` +
+          'description does not start mid-value'
+      );
+    }
+  } else {
+    console.warn(
+      `[facebook] deriveFacebookDescriptionAndLocation: attributePairs has ${attributeValues.length} ` +
+        `entries but attributeRowCount is ${attributeRowCount} — cannot cross-check the line slice, ` +
+        'falling back to the naive attributeRowCount * 2 offset'
+    );
+  }
+
+  const expectedBoundary = 1 + attributeLineCount;
+  if (lines.length < expectedBoundary) {
+    console.warn(
+      `[facebook] deriveFacebookDescriptionAndLocation: expected at least ${expectedBoundary} text ` +
+        `lines for ${attributeRowCount} attribute rows but only found ${lines.length} — clamping ` +
+        'instead of slicing past the end of the text'
+    );
+  }
+  const boundary = Math.min(expectedBoundary, lines.length);
+
+  let remaining = lines.slice(boundary);
 
   let pickupLocation: string | null = null;
   if (remaining.length > 0) {
@@ -855,7 +895,11 @@ export async function fetchFacebookListingDetailAsync(
   // Facebook Marketplace has no auctions/reserves and no structured fulfillment
   // data — only pickupLocation has a real signal here, so that's all we add.
   const { description, pickupLocation } = cardData
-    ? deriveFacebookDescriptionAndLocation(cardData.cardInnerText, cardData.attributeRowCount)
+    ? deriveFacebookDescriptionAndLocation(
+        cardData.cardInnerText,
+        cardData.attributeRowCount,
+        cardData.attributePairs
+      )
     : { description: '', pickupLocation: null };
 
   const photoUrls = await page.evaluate(extractFacebookPhotoUrls, MAX_PHOTOS_PER_LISTING);

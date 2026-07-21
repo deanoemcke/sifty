@@ -1434,7 +1434,9 @@ describe('deriveFacebookDescriptionAndLocation', () => {
   it('extracts a short, unpunctuated description that the old heuristic skipped as a detail line', () => {
     const cardInnerText =
       'Details\nCondition\nUsed – good\n1200 T-Bar Sash cramp\nLower Hutt, Lower Hutt City · Location is approximate';
-    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+    expect(
+      deriveFacebookDescriptionAndLocation(cardInnerText, 1, { Condition: 'Used – good' })
+    ).toEqual({
       description: '1200 T-Bar Sash cramp',
       pickupLocation: 'Lower Hutt, Lower Hutt City',
     });
@@ -1456,7 +1458,11 @@ describe('deriveFacebookDescriptionAndLocation', () => {
       'FSP vita GM 850w gold fully modular psu',
       'Lower Hutt, Lower Hutt City · Location is approximate',
     ].join('\n');
-    const result = deriveFacebookDescriptionAndLocation(cardInnerText, 3);
+    const result = deriveFacebookDescriptionAndLocation(cardInnerText, 3, {
+      Condition: 'Used – like new',
+      Colour: 'Black',
+      'Case type': 'Deepcool',
+    });
     expect(result.pickupLocation).toBe('Lower Hutt, Lower Hutt City');
     expect(result.description).toContain('Spec');
     expect(result.description).toContain('Newly built custom PC');
@@ -1466,7 +1472,9 @@ describe('deriveFacebookDescriptionAndLocation', () => {
   it('returns an empty description when the listing has none', () => {
     const cardInnerText =
       'Details\nCondition\nUsed – good\nWellington, Wellington City · Location is approximate';
-    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+    expect(
+      deriveFacebookDescriptionAndLocation(cardInnerText, 1, { Condition: 'Used – good' })
+    ).toEqual({
       description: '',
       pickupLocation: 'Wellington, Wellington City',
     });
@@ -1475,7 +1483,9 @@ describe('deriveFacebookDescriptionAndLocation', () => {
   it('strips a trailing "See less" toggle glued onto the last description line', () => {
     const cardInnerText =
       'Details\nCondition\nUsed – fair\nComputer table in poor condition with bits missing but it is usable. See less\nParaparaumu, Kapiti Coast District · Location is approximate';
-    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+    expect(
+      deriveFacebookDescriptionAndLocation(cardInnerText, 1, { Condition: 'Used – fair' })
+    ).toEqual({
       description: 'Computer table in poor condition with bits missing but it is usable.',
       pickupLocation: 'Paraparaumu, Kapiti Coast District',
     });
@@ -1483,10 +1493,75 @@ describe('deriveFacebookDescriptionAndLocation', () => {
 
   it('returns a null pickupLocation when no location line is present', () => {
     const cardInnerText = 'Details\nCondition\nUsed – good\nA short description.';
-    expect(deriveFacebookDescriptionAndLocation(cardInnerText, 1)).toEqual({
+    expect(
+      deriveFacebookDescriptionAndLocation(cardInnerText, 1, { Condition: 'Used – good' })
+    ).toEqual({
       description: 'A short description.',
       pickupLocation: null,
     });
+  });
+
+  it('does not warn when the attribute row count and line shape agree', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const cardInnerText =
+        'Details\nCondition\nUsed – good\nA short description.\nWellington, Wellington City · Location is approximate';
+      deriveFacebookDescriptionAndLocation(cardInnerText, 1, { Condition: 'Used – good' });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('derives the correct split — instead of scrambling the description — when an attribute value wraps onto an extra line, and warns', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const cardInnerText = [
+        'Details',
+        'Condition',
+        'Used – good',
+        'Colour',
+        'Red, and a really long shade',
+        'that wraps across two lines',
+        'This is the real description of the item.',
+        'Wellington, Wellington City · Location is approximate',
+      ].join('\n');
+      const attributePairs = {
+        Condition: 'Used – good',
+        Colour: 'Red, and a really long shade\nthat wraps across two lines',
+      };
+
+      const result = deriveFacebookDescriptionAndLocation(cardInnerText, 2, attributePairs);
+
+      expect(result).toEqual({
+        description: 'This is the real description of the item.',
+        pickupLocation: 'Wellington, Wellington City',
+      });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[facebook]'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('clamps instead of slicing past the end of the text when there are fewer lines than the attribute rows imply, and warns', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // 3 attribute rows claimed, but the text only has 2 lines after the
+      // heading — simulates a card structure change desyncing the DOM count
+      // from the rendered text.
+      const cardInnerText = 'Details\nCondition\nUsed – good';
+
+      const result = deriveFacebookDescriptionAndLocation(cardInnerText, 3, {
+        Condition: 'Used – good',
+        Colour: 'Black',
+        Brand: 'Acme',
+      });
+
+      expect(result).toEqual({ description: '', pickupLocation: null });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[facebook]'));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
