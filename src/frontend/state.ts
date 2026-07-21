@@ -4,6 +4,7 @@
 
 import { listingDedupeKey } from '../lib/listingDedup';
 import type { Fulfillment, Listing, QuickSearchProgress } from '../lib/recipes/base';
+import type { SidebarTabName } from './sidebarTabs';
 import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ export const ALL_LISTING_VISIBILITY_CATEGORIES: ListingVisibilityCategory[] = [
 
 // 'filtered' starts hidden — those listings were excluded by the AI filter,
 // so the default view shouldn't show them until the user opts back in.
-const DEFAULT_VISIBLE_LISTING_CATEGORIES = ALL_LISTING_VISIBILITY_CATEGORIES.filter(
+export const DEFAULT_VISIBLE_LISTING_CATEGORIES = ALL_LISTING_VISIBILITY_CATEGORIES.filter(
   (category) => category !== 'filtered'
 );
 
@@ -115,6 +116,7 @@ export let deepSearchCancellationRequested = false;
 export let isAiFilterRunning = false;
 export let aiFilterPendingRun = false;
 export let sortBy: SortOption = DEFAULT_SORT_OPTION;
+export let activeSidebarTab: SidebarTabName = 'search';
 // Which listing's detail modal is open, if any — used to guard against a
 // stale deep-search response writing into a modal that has since closed or
 // switched to a different listing.
@@ -177,6 +179,10 @@ export function setSortBy(value: SortOption): void {
   sortBy = value;
 }
 
+export function setActiveSidebarTab(tabName: SidebarTabName): void {
+  activeSidebarTab = tabName;
+}
+
 export function setListingCategoryVisible(
   category: ListingVisibilityCategory,
   isVisible: boolean
@@ -227,6 +233,7 @@ export function resetState(): void {
   isAiFilterRunning = false;
   aiFilterPendingRun = false;
   sortBy = DEFAULT_SORT_OPTION;
+  activeSidebarTab = 'search';
   openModalListingUrl = null;
   bulkDeepSearchUrls = null;
   singleDeepSearchInFlightUrls.clear();

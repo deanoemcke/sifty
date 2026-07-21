@@ -15,12 +15,7 @@ import {
   buildExtrasHtml,
   buildPhotoGalleryHtml,
 } from './listingHtml';
-import {
-  lockBodyScroll,
-  popModalHistoryEntryIfPresent,
-  pushModalHistoryEntry,
-  unlockBodyScroll,
-} from './modalOverlay';
+import { lockBodyScroll, unlockBodyScroll } from './modalOverlay';
 import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
 import {
   bulkDeepSearchUrls,
@@ -145,7 +140,6 @@ export async function openListingModalAsync(item: ListingItem): Promise<void> {
   setOpenModalListingUrl(item.data.url);
   getElement('listingModal').classList.remove('hidden');
   lockBodyScroll();
-  pushModalHistoryEntry();
   renderListingModalContent(item);
   const action = decideModalDeepSearchAction({
     hasBeenDeepSearched: item.hasBeenDeepSearched,
@@ -155,18 +149,13 @@ export async function openListingModalAsync(item: ListingItem): Promise<void> {
   if (action === 'start') await deepSearchListingAsync(item);
 }
 
-export interface CloseListingModalOptions {
-  // Set when this close is a reaction to a popstate event (the user pressed
-  // the browser back button), so we don't call history.back() again for an
-  // entry the back button has already consumed.
-  isPopStateTriggered?: boolean;
-}
-
-export function closeListingModal(options: CloseListingModalOptions = {}): void {
+// History handling for the modal (deciding whether a close should consume a
+// pushed URL entry via history.back() or just replace) lives in app.ts, the
+// sole caller of this function — see urlState.ts/closeListingModalAndSyncUrl.
+export function closeListingModal(): void {
   getElement('listingModal').classList.add('hidden');
   setOpenModalListingUrl(null);
   unlockBodyScroll();
-  if (!options.isPopStateTriggered) popModalHistoryEntryIfPresent();
 }
 
 // ── Bulk deep search ──────────────────────────────────────────────────────────

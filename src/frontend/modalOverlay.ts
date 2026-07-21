@@ -1,9 +1,9 @@
 // ── Modal overlay primitives ─────────────────────────────────────────────────
-// Shared by the listing detail modal and the Show/Sort dropdowns' mobile
-// full-screen sheet — both are true modals (background inert, back button
-// closes them instead of navigating away) even though they're built from
-// otherwise-unrelated DOM. Kept here so the scroll-lock class and the
-// history push/pop marker each have a single implementation.
+// Scroll-lock is shared by the listing detail modal and the Show/Sort
+// dropdowns' mobile full-screen sheet. The history push/pop marker below is
+// used only by the dropdowns' mobile sheet now — the listing modal's
+// back-button handling moved to real URL state (see urlState.ts/app.ts),
+// since dropdowns are intentionally outside the URL schema.
 
 const SCROLL_LOCK_CLASS = 'scroll-locked';
 
