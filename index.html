@@ -100,13 +100,16 @@
 <main class="main-pane">
   <!-- Results header — sticky above the listings -->
   <div id="resultsSection" class="results-header hidden">
-      <div class="results-header-row ai-filter-row">
+      <div class="results-header-row ai-filter-row" id="aiFilterPanel">
         <label for="aiFilter" class="ai-filter-label">AI filter</label>
         <textarea id="aiFilter" rows="1" placeholder="Add more detail to filter your search results"></textarea>
         <button id="aiFilterBtn" class="btn btn-primary ai-filter-btn" type="button" disabled>Filter</button>
       </div>
       <div class="results-header-row sort-row">
-        <!-- Trigger/panel markup built by buildDropdownShell (dropdownPanel.ts) -->
+        <!-- Trigger/panel markup built by buildDropdownShell / buildDropdownTriggerHtml (dropdownPanel.ts) -->
+        <div class="dropdown-group">
+          <div class="dropdown-control" id="aiFilterDropdown"></div>
+        </div>
         <div class="dropdown-group">
           <label for="showDropdownBtn" class="dropdown-external-label">Showing</label>
           <div class="dropdown-control" id="showDropdown"></div>
@@ -115,7 +118,10 @@
           <label for="sortDropdownBtn" class="dropdown-external-label">Sort by</label>
           <div class="dropdown-control" id="sortDropdown"></div>
         </div>
-        <button id="deepBtn" class="cache-clear-btn hidden" type="button">deep search</button>
+        <button id="deepBtn" class="cache-clear-btn hidden" type="button">
+          <span class="dropdown-trigger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg></span>
+          <span class="dropdown-trigger-label">deep search</span>
+        </button>
       </div>
   </div>
   <div id="listingsContainer"></div>

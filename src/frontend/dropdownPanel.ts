@@ -21,6 +21,12 @@ export interface DropdownElements {
   trigger: HTMLButtonElement;
   panel: HTMLElement;
   footer: HTMLButtonElement;
+  // Class toggled on the panel to open/close it. Defaults to the global
+  // `.hidden` (Show/Sort: closed at every width until toggled open). The AI
+  // filter panel must stay visible at all times above the mobile breakpoint,
+  // so it uses a dedicated class scoped to the `≤640px` media query instead —
+  // see aiFilterDropdown.ts.
+  closedClass: string;
 }
 
 export interface DropdownElementIds {
@@ -28,6 +34,7 @@ export interface DropdownElementIds {
   trigger: string;
   panel: string;
   footer: string;
+  closedClass?: string;
 }
 
 // Superset of DropdownElementIds used only by buildDropdownShell, since the
@@ -37,12 +44,15 @@ export interface DropdownShellIds extends DropdownElementIds {
   options: string;
 }
 
+const DEFAULT_CLOSED_CLASS = 'hidden';
+
 export function getDropdownElements(ids: DropdownElementIds): DropdownElements {
   return {
     root: getElement(ids.root),
     trigger: getElement<HTMLButtonElement>(ids.trigger),
     panel: getElement(ids.panel),
     footer: getElement<HTMLButtonElement>(ids.footer),
+    closedClass: ids.closedClass ?? DEFAULT_CLOSED_CLASS,
   };
 }
 
@@ -51,18 +61,38 @@ export function getDropdownElements(ids: DropdownElementIds): DropdownElements {
 // here rather than hand-copied, so the SVG markup itself has one source.
 const DROPDOWN_CARET_ICON = CHEVRON_ICON.replace('<svg ', '<svg class="dropdown-caret" ');
 
+export interface DropdownTriggerIds {
+  trigger: string;
+  panel: string;
+}
+
+// Trigger button markup shared by buildDropdownShell and any other control
+// (e.g. the AI filter) that needs an identical text+icon trigger without the
+// options-list/footer shell that comes with it. `icon` is shown only at the
+// `≤640px` breakpoint (styles.css), where `title`/the caret are hidden and
+// the trigger collapses to an icon-only button — see the .dropdown-trigger-*
+// rules.
+export function buildDropdownTriggerHtml(
+  ids: DropdownTriggerIds,
+  title: string,
+  icon: string
+): string {
+  return `<button id="${ids.trigger}" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="${ids.panel}">
+      <span class="dropdown-trigger-icon">${icon}</span><span class="dropdown-trigger-label">${title}</span>${DROPDOWN_CARET_ICON}
+    </button>`;
+}
+
 // Builds the full trigger-button + panel DOM for one dropdown into its mount
 // point (a bare `<div id="...">` in index.html), so the shell markup has a
 // single source instead of being hand-mirrored across index.html and test
 // fixtures. `title` seeds the trigger/footer text and the (mobile-only,
 // always-visible) panel header; populate*Controls() callers overwrite the
 // trigger/footer text via setDropdownLabel immediately after, so in practice
-// `title` only persists in the panel header.
-export function buildDropdownShell(ids: DropdownShellIds, title: string): void {
+// `title` only persists in the panel header. `icon` is the trigger's
+// mobile-only icon-button glyph (see buildDropdownTriggerHtml).
+export function buildDropdownShell(ids: DropdownShellIds, title: string, icon: string): void {
   getElement(ids.root).innerHTML = `
-    <button id="${ids.trigger}" class="dropdown-trigger-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="${ids.panel}">
-      <span class="dropdown-trigger-label">${title}</span>${DROPDOWN_CARET_ICON}
-    </button>
+    ${buildDropdownTriggerHtml(ids, title, icon)}
     <div id="${ids.panel}" class="dropdown-panel hidden" role="group" aria-label="${title}">
       <div class="dropdown-panel-header">${title}</div>
       <div class="dropdown-panel-options" id="${ids.options}"></div>
@@ -100,6 +130,7 @@ function toDropdownElementIds(elements: DropdownElements): DropdownElementIds {
     trigger: elements.trigger.id,
     panel: elements.panel.id,
     footer: elements.footer.id,
+    closedClass: elements.closedClass,
   };
 }
 
@@ -109,7 +140,7 @@ export function openDropdownPanel(elements: DropdownElements): void {
   if (openDropdownIds && openDropdownIds.panel !== elements.panel.id) {
     closeDropdownPanel(getDropdownElements(openDropdownIds));
   }
-  elements.panel.classList.remove('hidden');
+  elements.panel.classList.remove(elements.closedClass);
   elements.trigger.setAttribute('aria-expanded', 'true');
   if (isMobileSheetActive()) {
     lockBodyScroll();
@@ -133,7 +164,7 @@ export function closeDropdownPanel(
   // <body>; return it to the trigger instead. The guard means mouse
   // dismissals (which have already moved focus elsewhere) are left alone.
   const isFocusInsidePanel = elements.panel.contains(document.activeElement);
-  elements.panel.classList.add('hidden');
+  elements.panel.classList.add(elements.closedClass);
   elements.trigger.setAttribute('aria-expanded', 'false');
   unlockBodyScroll();
   if (!options.isPopStateTriggered) popModalHistoryEntryIfPresent();
@@ -142,7 +173,7 @@ export function closeDropdownPanel(
 }
 
 export function toggleDropdownPanel(elements: DropdownElements): void {
-  if (elements.panel.classList.contains('hidden')) openDropdownPanel(elements);
+  if (elements.panel.classList.contains(elements.closedClass)) openDropdownPanel(elements);
   else closeDropdownPanel(elements);
 }
 

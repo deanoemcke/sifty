@@ -586,6 +586,18 @@ label {
 .dropdown-trigger-btn[aria-expanded="true"] .dropdown-caret {
   transform: rotate(180deg);
 }
+/* Trigger icon: hidden on desktop (text label + caret carry the trigger),
+   shown icon-only at the mobile breakpoint below — shared by the Show/Sort
+   triggers and the Deep search button so all 4 results-header controls
+   collapse to the same icon-button look at once. */
+.dropdown-trigger-icon {
+  display: none;
+}
+/* The AI filter row is always inline on desktop (no trigger needed); its
+   trigger only exists for the mobile full-screen sheet, revealed below. */
+#aiFilterDropdown {
+  display: none;
+}
 .dropdown-panel {
   position: absolute;
   top: calc(100% + 0.3rem);
@@ -681,6 +693,73 @@ label {
   }
   .dropdown-footer-btn:hover {
     background: var(--primary-hover);
+  }
+
+  /* Results header controls collapse to a single row of 4 icon-only
+     buttons: the AI filter, Show and Sort triggers all share
+     .dropdown-trigger-btn, and Deep search is restyled to match. Each
+     control's modal/sheet (.dropdown-panel, or #aiFilterPanel below) is
+     unaffected by this — only the trigger's own appearance changes. */
+  .dropdown-external-label {
+    display: none;
+  }
+  .dropdown-trigger-label,
+  .dropdown-caret {
+    display: none;
+  }
+  .dropdown-trigger-icon {
+    display: inline-flex;
+  }
+  .dropdown-trigger-btn {
+    padding: 0.5rem;
+    justify-content: center;
+  }
+  #aiFilterDropdown {
+    display: block;
+  }
+  #deepBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    border: 1.5px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+  }
+  #deepBtn:hover {
+    border-color: #cbd5e1;
+  }
+
+  /* AI filter panel: unlike the Show/Sort .dropdown-panel, this row must
+     stay visible at all times above this breakpoint (there's no trigger for
+     it there), so its open/closed state is driven by
+     .ai-filter-panel-collapsed rather than the global .hidden class — see
+     aiFilterDropdown.ts. */
+  .ai-filter-panel-collapsed {
+    display: none;
+  }
+  #aiFilterPanel {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 1rem;
+    background: var(--surface);
+  }
+  .ai-filter-label {
+    font-weight: 600;
+    font-size: 1rem;
+  }
+  #aiFilterBtn {
+    position: sticky;
+    bottom: 0;
+    width: 100%;
+    padding: 0.75rem;
   }
 }
 

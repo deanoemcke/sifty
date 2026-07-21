@@ -14,6 +14,7 @@ import {
   setDropdownLabel,
   toggleDropdownPanel,
 } from './dropdownPanel';
+import { SORT_ICON } from './icons';
 import { SORT_OPTIONS, type SortOption } from './sortListings';
 
 const SORT_RADIO_ID_BY_OPTION: Record<SortOption, string> = {
@@ -51,7 +52,7 @@ export function populateSortControls(
   defaultValue: SortOption,
   onSortOptionChange: (option: SortOption) => void = () => {}
 ): void {
-  buildDropdownShell(SORT_DROPDOWN_IDS, 'Sort by');
+  buildDropdownShell(SORT_DROPDOWN_IDS, 'Sort by', SORT_ICON);
   const optionsContainer = getElement(SORT_DROPDOWN_IDS.options);
   for (const { value, label } of SORT_OPTIONS) {
     const radioId = SORT_RADIO_ID_BY_OPTION[value];

@@ -4,6 +4,11 @@ import {
   requestAiFilterRun,
   requestAiFilterRunIfPromptLongEnough,
 } from './aiFilter';
+import {
+  closeAiFilterDropdownPanel,
+  populateAiFilterDropdown,
+  toggleAiFilterDropdownPanel,
+} from './aiFilterDropdown';
 import { debounce } from './debounce';
 import {
   DEFAULT_REGION_DISPLAY,
@@ -70,6 +75,7 @@ function handleSortOptionChange(sortOption: SortOption): void {
 function initApp(): void {
   applyBrandTitle(__WORKTREE_LABEL__);
   getElement('discoveryBtn').textContent = DISCOVERY_BUTTON_LABEL;
+  populateAiFilterDropdown();
   populateShowControls(handleShowCategoryToggle);
   populateSortControls(DEFAULT_SORT_OPTION, handleSortOptionChange);
   createUrlCard(searchUrlCardAsync);
@@ -159,9 +165,13 @@ function initApp(): void {
     debouncedRequestAiFilterRun
   );
   getElement<HTMLTextAreaElement>('aiFilter').addEventListener('input', renderAiFilterButton);
-  getElement<HTMLButtonElement>('aiFilterBtn').addEventListener('click', () =>
-    requestAiFilterRun()
+  getElement<HTMLButtonElement>('aiFilterDropdownBtn').addEventListener('click', () =>
+    toggleAiFilterDropdownPanel()
   );
+  getElement<HTMLButtonElement>('aiFilterBtn').addEventListener('click', () => {
+    requestAiFilterRun();
+    closeAiFilterDropdownPanel();
+  });
   const submitAiFilterForm = (): void => getElement<HTMLButtonElement>('aiFilterBtn').click();
   getElement<HTMLTextAreaElement>('aiFilter').addEventListener(
     'keydown',
