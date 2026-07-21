@@ -199,7 +199,11 @@ function isLabelForOpenTrigger(target: Node, trigger: HTMLButtonElement): boolea
 export function handleOutsideClick(target: Node): void {
   if (!openDropdownIds) return;
   const elements = getDropdownElements(openDropdownIds);
-  if (elements.root.contains(target)) return;
+  // Checked as trigger-or-panel rather than a shared root: Show/Sort nest
+  // both under one root mount, but the AI filter's trigger and panel are
+  // separate top-level elements, so a root-containment check would miss
+  // clicks on the panel's own content (see aiFilterDropdown.ts).
+  if (elements.trigger.contains(target) || elements.panel.contains(target)) return;
   if (isLabelForOpenTrigger(target, elements.trigger)) return;
   closeDropdownPanel(elements);
 }

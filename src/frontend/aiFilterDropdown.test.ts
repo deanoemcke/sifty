@@ -90,4 +90,15 @@ describe('interop with other dropdowns sharing dropdownPanel.ts state', () => {
     handleOutsideClick(outsideNode);
     expect(panel.classList.contains('ai-filter-panel-collapsed')).toBe(true);
   });
+
+  // The AI filter's trigger (#aiFilterDropdown) and panel (#aiFilterPanel)
+  // are separate top-level elements rather than sharing one wrapping root
+  // like Show/Sort do — a click on the panel's own content (the textarea,
+  // its label, ...) must not be mistaken for a click outside the dropdown.
+  it('a click inside the panel content does not close the panel', () => {
+    const panel = document.getElementById('aiFilterPanel') as HTMLElement;
+    toggleAiFilterDropdownPanel();
+    handleOutsideClick(document.getElementById('aiFilter') as HTMLElement);
+    expect(panel.classList.contains('ai-filter-panel-collapsed')).toBe(false);
+  });
 });
