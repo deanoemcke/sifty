@@ -18,8 +18,8 @@ import { getElement } from './domUtils';
 import {
   buildDropdownTriggerHtml,
   closeDropdownPanel,
-  type DropdownElementIds,
   type DropdownElements,
+  type DropdownMountIds,
   getDropdownElements,
   toggleDropdownPanel,
 } from './dropdownPanel';
@@ -27,7 +27,11 @@ import { FILTER_ICON } from './icons';
 
 const AI_FILTER_PANEL_COLLAPSED_CLASS = 'ai-filter-panel-collapsed';
 
-const AI_FILTER_DROPDOWN_IDS: DropdownElementIds = {
+// DropdownMountIds (not DropdownElementIds) because `root` is used below as
+// the mount point for the trigger button only — the panel itself is
+// `#aiFilterPanel`, already present in index.html outside of `root`. `root`
+// plays no part in open/close/dismiss mechanics; see dropdownPanel.ts.
+const AI_FILTER_DROPDOWN_IDS: DropdownMountIds = {
   root: 'aiFilterDropdown',
   trigger: 'aiFilterDropdownBtn',
   panel: 'aiFilterPanel',

@@ -16,8 +16,15 @@ import {
   unlockBodyScroll,
 } from './modalOverlay';
 
+// Deliberately has no `root` field. Show/Sort nest trigger+panel under one
+// shared mount (built by buildDropdownShell from DropdownMountIds below), but
+// the AI filter's trigger and panel are separate top-level elements with no
+// shared ancestor — so a root element can never be a reliable part of the
+// runtime contract. The trigger-or-panel containment check in
+// handleOutsideClick below is the actual, first-class contract for all
+// consumers, not a workaround scoped to one of them; a future dropdown must
+// not assume `elements.root.contains(target)` still works.
 export interface DropdownElements {
-  root: HTMLElement;
   trigger: HTMLButtonElement;
   panel: HTMLElement;
   footer: HTMLButtonElement;
@@ -25,22 +32,34 @@ export interface DropdownElements {
   // `.hidden` (Show/Sort: closed at every width until toggled open). The AI
   // filter panel must stay visible at all times above the mobile breakpoint,
   // so it uses a dedicated class scoped to the `≤640px` media query instead —
-  // see aiFilterDropdown.ts.
+  // see aiFilterDropdown.ts. Split trigger/panel DOM plus a custom
+  // closedClass is intentional, supported shape for a dropdown, not a
+  // one-off exception.
   closedClass: string;
 }
 
 export interface DropdownElementIds {
-  root: string;
   trigger: string;
   panel: string;
   footer: string;
   closedClass?: string;
 }
 
-// Superset of DropdownElementIds used only by buildDropdownShell, since the
+// Superset of DropdownElementIds carrying `root`: the id of the element a
+// dropdown's trigger+panel markup is mounted into (buildDropdownShell for
+// Show/Sort; populateAiFilterDropdown mounts only the trigger for the AI
+// filter, whose panel lives elsewhere in index.html). `root` is a build-time
+// mount point only — it plays no part in open/close/dismiss mechanics, so it
+// is not resolved onto DropdownElements/getDropdownElements; see the comment
+// on DropdownElements above.
+export interface DropdownMountIds extends DropdownElementIds {
+  root: string;
+}
+
+// Superset of DropdownMountIds used only by buildDropdownShell, since the
 // options container has no runtime element (open/close/focus mechanics never
 // touch it) and so has no place on DropdownElements/getDropdownElements.
-export interface DropdownShellIds extends DropdownElementIds {
+export interface DropdownShellIds extends DropdownMountIds {
   options: string;
 }
 
@@ -48,7 +67,6 @@ const DEFAULT_CLOSED_CLASS = 'hidden';
 
 export function getDropdownElements(ids: DropdownElementIds): DropdownElements {
   return {
-    root: getElement(ids.root),
     trigger: getElement<HTMLButtonElement>(ids.trigger),
     panel: getElement(ids.panel),
     footer: getElement<HTMLButtonElement>(ids.footer),
@@ -126,7 +144,6 @@ export function isMobileSheetActive(): boolean {
 // panel was open).
 function toDropdownElementIds(elements: DropdownElements): DropdownElementIds {
   return {
-    root: elements.root.id,
     trigger: elements.trigger.id,
     panel: elements.panel.id,
     footer: elements.footer.id,
@@ -199,10 +216,8 @@ function isLabelForOpenTrigger(target: Node, trigger: HTMLButtonElement): boolea
 export function handleOutsideClick(target: Node): void {
   if (!openDropdownIds) return;
   const elements = getDropdownElements(openDropdownIds);
-  // Checked as trigger-or-panel rather than a shared root: Show/Sort nest
-  // both under one root mount, but the AI filter's trigger and panel are
-  // separate top-level elements, so a root-containment check would miss
-  // clicks on the panel's own content (see aiFilterDropdown.ts).
+  // Checked as trigger-or-panel, not a shared root — see the comment on
+  // DropdownElements for why no root element is tracked at runtime at all.
   if (elements.trigger.contains(target) || elements.panel.contains(target)) return;
   if (isLabelForOpenTrigger(target, elements.trigger)) return;
   closeDropdownPanel(elements);

@@ -56,7 +56,6 @@ function buildDropdownFixture(prefix: string): DropdownElements {
   `;
   document.body.appendChild(root);
   return getDropdownElements({
-    root: `${prefix}Root`,
     trigger: `${prefix}Btn`,
     panel: `${prefix}Panel`,
     footer: `${prefix}FooterBtn`,
@@ -126,7 +125,6 @@ describe('custom closedClass', () => {
     `;
     document.body.appendChild(root);
     return getDropdownElements({
-      root: `${prefix}Root`,
       trigger: `${prefix}Btn`,
       panel: `${prefix}Panel`,
       footer: `${prefix}FooterBtn`,
