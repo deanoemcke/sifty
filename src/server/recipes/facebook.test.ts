@@ -1,3 +1,4 @@
+import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import { makeListing } from '../../lib/testFixtures';
@@ -11,6 +12,7 @@ import {
   classifyInitialSearchStateAsync,
   deriveFacebookDescriptionAndLocation,
   detectLoginWallAsync,
+  extractFacebookPhotoUrls,
   extractImplicitFilters,
   type FacebookDetailsCardData,
   facebookRecipe,
@@ -1010,6 +1012,138 @@ describe('buildFacebookDeepSearchDetail', () => {
   it('omits the photos key entirely when none are given, rather than an empty array', () => {
     const detail = buildFacebookDeepSearchDetail('desc', {}, null);
     expect(detail).not.toHaveProperty('photos');
+  });
+});
+
+// ── extractFacebookPhotoUrls ──────────────────────────────────────────────────
+//
+// This function is written to run in the browser via page.evaluate() and reads
+// the global `document`, so it's exercised here against a real jsdom document
+// swapped onto `globalThis.document` for the duration of each test — the same
+// technique the module already uses `jsdom` for elsewhere (trademeExpired.ts).
+// jsdom has no layout engine, so `offsetParent` is always null by default;
+// tests that need to simulate a "visible" heading override it explicitly,
+// mirroring how a real browser reports an off-screen/display:none element vs.
+// a rendered one.
+
+describe('extractFacebookPhotoUrls', () => {
+  const realDocument = globalThis.document;
+
+  afterEach(() => {
+    globalThis.document = realDocument;
+  });
+
+  function useFixture(html: string): Document {
+    const dom = new JSDOM(html);
+    globalThis.document = dom.window.document as unknown as Document;
+    return dom.window.document as unknown as Document;
+  }
+
+  function markVisible(el: Element | null): void {
+    if (!el) throw new Error('markVisible: element not found in fixture');
+    Object.defineProperty(el, 'offsetParent', { value: el.parentElement, configurable: true });
+  }
+
+  it('only returns the current listing\'s own photos, excluding a same-page "Today\'s picks" carousel that reuses the same alt-text pattern', () => {
+    const fixture = useFixture(`
+      <body>
+        <h1>Chats</h1>
+        <div id="page">
+          <div id="listingPane">
+            <h1>MacBook Pro 2017</h1>
+            <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-1.jpg" />
+            <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-2.jpg" />
+            <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-3.jpg" />
+            <h2>Details</h2>
+          </div>
+          <div id="picksPane">
+            <h2>Today's picks</h2>
+            <img alt="Product photo of Vintage lamp" src="https://scontent.example.com/lamp-1.jpg" />
+            <img alt="Product photo of Vintage lamp" src="https://scontent.example.com/lamp-2.jpg" />
+          </div>
+        </div>
+      </body>
+    `);
+    // The "Chats" h1 stays invisible (offsetParent null, jsdom default); only
+    // the real listing title is marked visible, so it's the one used to find
+    // the scope boundary.
+    markVisible(fixture.querySelectorAll('h1')[1]);
+
+    const urls = extractFacebookPhotoUrls(20);
+
+    expect(urls).toEqual([
+      'https://scontent.example.com/mbp-1.jpg',
+      'https://scontent.example.com/mbp-2.jpg',
+      'https://scontent.example.com/mbp-3.jpg',
+    ]);
+  });
+
+  it('deduplicates repeated photo URLs', () => {
+    const fixture = useFixture(`
+      <body>
+        <h1>MacBook Pro 2017</h1>
+        <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-1.jpg" />
+        <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-1.jpg" />
+      </body>
+    `);
+    markVisible(fixture.querySelector('h1'));
+
+    expect(extractFacebookPhotoUrls(20)).toEqual(['https://scontent.example.com/mbp-1.jpg']);
+  });
+
+  it('caps the number of photos returned at maxPhotos', () => {
+    const fixture = useFixture(`
+      <body>
+        <h1>MacBook Pro 2017</h1>
+        <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-1.jpg" />
+        <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-2.jpg" />
+        <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-3.jpg" />
+      </body>
+    `);
+    markVisible(fixture.querySelector('h1'));
+
+    expect(extractFacebookPhotoUrls(2)).toEqual([
+      'https://scontent.example.com/mbp-1.jpg',
+      'https://scontent.example.com/mbp-2.jpg',
+    ]);
+  });
+
+  it('has nothing to guard against and returns the page\'s photos unscoped when there is no "Today\'s picks" section', () => {
+    const fixture = useFixture(`
+      <body>
+        <h1>Chats</h1>
+        <h1>MacBook Pro 2017</h1>
+        <img alt="Product photo of MacBook Pro 2017" src="https://scontent.example.com/mbp-1.jpg" />
+      </body>
+    `);
+    // Deliberately leave both h1s "invisible" — with no "Today's picks" section
+    // present there's no unrelated carousel to guard against, so scoping must
+    // not depend on finding a visible title heading in this case.
+    void fixture;
+
+    expect(extractFacebookPhotoUrls(20)).toEqual(['https://scontent.example.com/mbp-1.jpg']);
+  });
+
+  it('falls back to the whole document and warns when a "Today\'s picks" section is present but no visible title heading can be found', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      useFixture(`
+        <body>
+          <h1>Chats</h1>
+          <h2>Today's picks</h2>
+          <img alt="Product photo of Vintage lamp" src="https://scontent.example.com/lamp-1.jpg" />
+        </body>
+      `);
+      // No h1 is marked visible, simulating a page variant where the title
+      // heading can't be structurally identified.
+
+      const urls = extractFacebookPhotoUrls(20);
+
+      expect(urls).toEqual(['https://scontent.example.com/lamp-1.jpg']);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[facebook]'));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

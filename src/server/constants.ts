@@ -11,6 +11,9 @@ export const MAX_DEEP_SEARCH_ITEMS = 100;
 /** Maximum number of listings emitted from a single quick-search URL. */
 export const MAX_RESULTS_PER_URL = 100;
 
+/** Maximum number of photo URLs kept per scraped listing detail page. */
+export const MAX_PHOTOS_PER_LISTING = 20;
+
 // ── Discover root-probe threshold ────────────────────────────────────────────
 
 /**

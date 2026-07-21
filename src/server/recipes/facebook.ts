@@ -15,7 +15,7 @@ import type {
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { hashFingerprintParts } from '../alerts';
-import { MAX_RESULTS_PER_URL } from '../constants';
+import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
 import { getRegions, type RegionEntry } from '../services/regions';
 
 const USER_AGENT =
@@ -752,18 +752,62 @@ export function buildFacebookDeepSearchDetail(
 // pattern: "Product photo of <title>" — everything else on the detail page
 // (suggested-listing thumbnails, avatars, chat icons, loading placeholders) uses
 // a different alt pattern or none at all, so this is far more reliable than
-// filtering by image size or DOM position. Live-verified against 4 real
+// filtering by image size or DOM position. Live-verified against several real
 // listings. Facebook's CDN URLs are signed and don't expose a separate
 // thumbnail/full-size pair the way TradeMe's photoserver URLs do, so the same
 // URL is used for both in buildFacebookPhotosFromUrls below.
 //
+// The alt-text filter alone doesn't guarantee the matched images belong to
+// *this* listing: the same detail page also renders a "Today's picks"
+// related-listings carousel lower down, and if Facebook ever reuses the same
+// media component there, its thumbnails could start matching the same alt
+// pattern and get silently attached to this listing. Live inspection of real
+// listing pages (2026-07) found a reliable structural boundary: the page has
+// exactly one *visible* <h1> — the listing's own title (a second, hidden
+// "Chats" nav landmark is also an <h1>, so visibility, via `offsetParent`, is
+// what disambiguates it) — and the smallest ancestor of that heading that does
+// NOT also contain the "Today's picks" <h2> wraps the whole gallery (plus the
+// Details/Ads/Seller-information sections, none of which carry
+// "Product photo of" images) while excluding the carousel. If a "Today's
+// picks" section is present but the title heading can't be found, scoping
+// falls back to the whole document and logs a warning rather than silently
+// over-scoping; if there's no "Today's picks" section at all there's nothing
+// to guard against, so the whole document is used with no warning.
+//
 // Self-contained for the same reason as extractFacebookDetailsCardData — this
-// is passed directly to page.evaluate().
-export function extractFacebookPhotoUrls(): string[] {
-  const urls = Array.from(document.querySelectorAll('img'))
+// is passed directly to page.evaluate(). `maxPhotos` is passed in as an
+// evaluate() argument (see MAX_PHOTOS_PER_LISTING at the call site) rather
+// than closed over, for the same reason.
+export function extractFacebookPhotoUrls(maxPhotos: number): string[] {
+  const picksHeading = Array.from(document.querySelectorAll('h2')).find(
+    (heading) => heading.textContent?.trim() === "Today's picks"
+  );
+
+  let scope: ParentNode = document;
+  if (picksHeading) {
+    const visibleTitleHeading = Array.from(document.querySelectorAll('h1')).find(
+      (heading) => heading.offsetParent !== null
+    );
+
+    if (visibleTitleHeading) {
+      let ancestor: HTMLElement = visibleTitleHeading;
+      while (ancestor.parentElement && !ancestor.parentElement.contains(picksHeading)) {
+        ancestor = ancestor.parentElement;
+      }
+      scope = ancestor;
+    } else {
+      console.warn(
+        '[facebook] extractFacebookPhotoUrls: a "Today\'s picks" section is present but no ' +
+          'visible listing-title heading was found to scope against — falling back to the ' +
+          "whole page, which risks pulling in that section's photos"
+      );
+    }
+  }
+
+  const urls = Array.from(scope.querySelectorAll('img'))
     .filter((img) => img.alt?.startsWith('Product photo of '))
     .map((img) => img.src);
-  return Array.from(new Set(urls));
+  return Array.from(new Set(urls)).slice(0, maxPhotos);
 }
 
 export function buildFacebookPhotosFromUrls(urls: string[]): ListingPhoto[] | undefined {
@@ -799,7 +843,7 @@ export async function fetchFacebookListingDetailAsync(
     ? deriveFacebookDescriptionAndLocation(cardData.cardInnerText, cardData.attributeRowCount)
     : { description: '', pickupLocation: null };
 
-  const photoUrls = await page.evaluate(extractFacebookPhotoUrls);
+  const photoUrls = await page.evaluate(extractFacebookPhotoUrls, MAX_PHOTOS_PER_LISTING);
   const photos = buildFacebookPhotosFromUrls(photoUrls);
 
   return buildFacebookDeepSearchDetail(description, extraAttributes, pickupLocation, photos);
