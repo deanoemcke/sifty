@@ -18,6 +18,7 @@ import {
   ALL_LISTING_VISIBILITY_CATEGORIES,
   activeSidebarTab,
   currentSearchId,
+  DEFAULT_VISIBLE_LISTING_CATEGORIES,
   type ListingVisibilityCategory,
   listingsByUrl,
   openModalListingUrl,
@@ -49,7 +50,7 @@ export function serializeStateToSearchParams(): URLSearchParams {
   const visibleTokens = SHOW_TOKEN_ORDER.filter((category) =>
     visibleListingCategories.has(category)
   );
-  if (visibleTokens.length !== ALL_LISTING_VISIBILITY_CATEGORIES.length) {
+  if (visibleTokens.join(',') !== DEFAULT_VISIBLE_LISTING_CATEGORIES.join(',')) {
     params.set('show', visibleTokens.join(','));
   }
   if (openModalListingUrl !== null) params.set('modal', openModalListingUrl);
@@ -70,13 +71,13 @@ function parseSort(params: URLSearchParams): SortOption {
 
 function parseVisibleCategories(params: URLSearchParams): ReadonlySet<ListingVisibilityCategory> {
   const raw = params.get('show');
-  if (raw === null) return new Set(ALL_LISTING_VISIBILITY_CATEGORIES);
+  if (raw === null) return new Set(DEFAULT_VISIBLE_LISTING_CATEGORIES);
   const tokens = raw
     .split(',')
     .filter((token): token is ListingVisibilityCategory =>
       (ALL_LISTING_VISIBILITY_CATEGORIES as string[]).includes(token)
     );
-  return tokens.length > 0 ? new Set(tokens) : new Set(ALL_LISTING_VISIBILITY_CATEGORIES);
+  return tokens.length > 0 ? new Set(tokens) : new Set(DEFAULT_VISIBLE_LISTING_CATEGORIES);
 }
 
 export function parseUrlState(params: URLSearchParams): ParsedUrlState {

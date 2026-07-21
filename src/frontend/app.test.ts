@@ -635,7 +635,7 @@ describe('initApp() wiring', () => {
       soldCheckbox.checked = false;
       soldCheckbox.dispatchEvent(new Event('change'));
 
-      expect(new URLSearchParams(location.search).get('show')).toBe('used,new,filtered');
+      expect(new URLSearchParams(location.search).get('show')).toBe('used,new');
       expect(pushSpy).not.toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledTimes(1);
     });
@@ -836,9 +836,7 @@ describe('initApp() wiring', () => {
       const state = await import('./state');
       expect(state.sortBy).toBe('source-url');
       expect(state.activeSidebarTab).toBe('search');
-      expect([...state.visibleListingCategories].sort()).toEqual(
-        ['filtered', 'new', 'sold', 'used'].sort()
-      );
+      expect([...state.visibleListingCategories].sort()).toEqual(['new', 'sold', 'used'].sort());
       expect(new URLSearchParams(location.search).get('show')).toBe(null);
       expect(new URLSearchParams(location.search).get('tab')).toBe(null);
     });

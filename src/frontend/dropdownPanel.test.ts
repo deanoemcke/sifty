@@ -56,7 +56,6 @@ function buildDropdownFixture(prefix: string): DropdownElements {
   `;
   document.body.appendChild(root);
   return getDropdownElements({
-    root: `${prefix}Root`,
     trigger: `${prefix}Btn`,
     panel: `${prefix}Panel`,
     footer: `${prefix}FooterBtn`,
@@ -105,6 +104,48 @@ describe('openDropdownPanel / closeDropdownPanel / toggleDropdownPanel', () => {
     openDropdownPanel(b);
     expect(a.panel.classList.contains('hidden')).toBe(true);
     expect(a.trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(b.panel.classList.contains('hidden')).toBe(false);
+  });
+});
+
+describe('custom closedClass', () => {
+  function buildDropdownFixtureWithClosedClass(
+    prefix: string,
+    closedClass: string
+  ): DropdownElements {
+    const root = document.createElement('div');
+    root.id = `${prefix}Root`;
+    root.innerHTML = `
+      <button id="${prefix}Btn" type="button" aria-expanded="false">
+        <span class="dropdown-trigger-label">${prefix}</span>
+        <svg class="dropdown-caret"></svg>
+      </button>
+      <div id="${prefix}Panel" class="${closedClass}"></div>
+      <button id="${prefix}FooterBtn" type="button">${prefix}</button>
+    `;
+    document.body.appendChild(root);
+    return getDropdownElements({
+      trigger: `${prefix}Btn`,
+      panel: `${prefix}Panel`,
+      footer: `${prefix}FooterBtn`,
+      closedClass,
+    });
+  }
+
+  it('opens/closes by toggling the given class instead of "hidden"', () => {
+    const a = buildDropdownFixtureWithClosedClass('a', 'ai-filter-panel-collapsed');
+    openDropdownPanel(a);
+    expect(a.panel.classList.contains('ai-filter-panel-collapsed')).toBe(false);
+    closeDropdownPanel(a);
+    expect(a.panel.classList.contains('ai-filter-panel-collapsed')).toBe(true);
+  });
+
+  it('closing one dropdown with a custom closedClass still closes a differently-classed open dropdown', () => {
+    const a = buildDropdownFixtureWithClosedClass('a', 'ai-filter-panel-collapsed');
+    const b = buildDropdownFixture('b');
+    openDropdownPanel(a);
+    openDropdownPanel(b);
+    expect(a.panel.classList.contains('ai-filter-panel-collapsed')).toBe(true);
     expect(b.panel.classList.contains('hidden')).toBe(false);
   });
 });
@@ -246,11 +287,13 @@ describe('buildDropdownShell', () => {
     footer: 'shellFooterBtn',
   };
 
+  const ICON = '<svg class="test-icon"></svg>';
+
   function buildShellFixture(): HTMLElement {
     const root = document.createElement('div');
     root.id = ids.root;
     document.body.appendChild(root);
-    buildDropdownShell(ids, 'Show');
+    buildDropdownShell(ids, 'Show', ICON);
     return root;
   }
 
@@ -301,8 +344,14 @@ describe('buildDropdownShell', () => {
 
   it('is safe to call repeatedly on the same root (rebuilds the shell)', () => {
     const root = buildShellFixture();
-    buildDropdownShell(ids, 'Show');
+    buildDropdownShell(ids, 'Show', ICON);
     expect(root.querySelectorAll(`#${ids.trigger}`)).toHaveLength(1);
+  });
+
+  it('renders the given icon inside a dropdown-trigger-icon span', () => {
+    buildShellFixture();
+    const iconSpan = document.getElementById(ids.trigger)?.querySelector('.dropdown-trigger-icon');
+    expect(iconSpan?.innerHTML).toBe(ICON);
   });
 });
 

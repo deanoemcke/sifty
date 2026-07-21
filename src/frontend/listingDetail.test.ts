@@ -4,7 +4,9 @@ import { getElement } from './domUtils';
 import {
   closeListingModal,
   deepSearchListingAsync,
+  listingModalExtrasHtml,
   openListingModalAsync,
+  renderListingModalContent,
   runDeepSearchAsync,
 } from './listingDetail';
 import { populateShowControls } from './showDropdown';
@@ -129,6 +131,77 @@ describe('runDeepSearchAsync — mixed success/failure batch', () => {
 
     expect(okItem.hasBeenDeepSearched).toBe(true);
     expect(failedItem.hasBeenDeepSearched).toBe(false);
+  });
+});
+
+describe('renderListingModalContent header', () => {
+  it('does not render a thumbnail', () => {
+    const item = makeItem('https://example.com/no-thumb');
+    setOpenModalListingUrl(item.data.url);
+
+    renderListingModalContent(item);
+
+    expect(getElement('listingModalBody').innerHTML).not.toContain('listing-modal-thumb');
+  });
+
+  it("shows the listing's url as the link text, directly below the title", () => {
+    const item = makeItem('https://example.com/link-text-test');
+    setOpenModalListingUrl(item.data.url);
+
+    renderListingModalContent(item);
+
+    const html = getElement('listingModalBody').innerHTML;
+    expect(html).toContain(`>${item.data.url}<`);
+    const titleIndex = html.indexOf('listing-modal-title');
+    const linkIndex = html.indexOf('listing-modal-original-link');
+    const metaIndex = html.indexOf('listing-meta');
+    expect(titleIndex).toBeLessThan(linkIndex);
+    expect(linkIndex).toBeLessThan(metaIndex);
+  });
+});
+
+describe('listingModalExtrasHtml', () => {
+  it('shows the quick-scrape thumbnail under Photos while deep search is still pending', () => {
+    const item = makeListingItem({
+      hasBeenDeepSearched: false,
+      data: makeListing({ thumbnailUrl: 'https://example.com/quick-thumb.jpg' }),
+    });
+
+    const html = listingModalExtrasHtml(item, null);
+
+    expect(html).toContain('photo-gallery');
+    expect(html).toContain('src="https://example.com/quick-thumb.jpg"');
+    expect(html).toContain('Fetching details…');
+  });
+
+  it('omits the Photos section while pending when no quick-scrape thumbnail is known', () => {
+    const item = makeListingItem({ hasBeenDeepSearched: false, data: makeListing() });
+
+    const html = listingModalExtrasHtml(item, null);
+
+    expect(html).not.toContain('photo-gallery');
+    expect(html).toContain('Fetching details…');
+  });
+
+  it('renders the deep-search photos once deep search has completed', () => {
+    const item = makeListingItem({
+      hasBeenDeepSearched: true,
+      data: makeListing({
+        thumbnailUrl: 'https://example.com/quick-thumb.jpg',
+        photos: [
+          {
+            thumbnailUrl: 'https://example.com/full-thumb.jpg',
+            fullSizeUrl: 'https://example.com/full.jpg',
+          },
+        ],
+      }),
+    });
+
+    const html = listingModalExtrasHtml(item, null);
+
+    expect(html).toContain('src="https://example.com/full-thumb.jpg"');
+    expect(html).not.toContain('quick-thumb.jpg');
+    expect(html).not.toContain('Fetching details…');
   });
 });
 

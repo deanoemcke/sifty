@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  ALL_LISTING_VISIBILITY_CATEGORIES,
+  DEFAULT_VISIBLE_LISTING_CATEGORIES,
   resetState,
   setActiveSidebarTab,
   setCurrentSearchId,
@@ -71,7 +71,7 @@ describe('parseUrlState', () => {
     expect(parsed).toEqual({
       tab: 'search',
       sort: 'source-url',
-      visibleCategories: new Set(ALL_LISTING_VISIBILITY_CATEGORIES),
+      visibleCategories: new Set(DEFAULT_VISIBLE_LISTING_CATEGORIES),
       modalListingUrl: null,
       savedSearchId: null,
     });
@@ -93,9 +93,9 @@ describe('parseUrlState', () => {
     expect(parseUrlState(new URLSearchParams('sort=highest-price')).sort).toBe('highest-price');
   });
 
-  it('falls back to the full category set when show is entirely unrecognised', () => {
+  it('falls back to the default category set when show is entirely unrecognised', () => {
     const parsed = parseUrlState(new URLSearchParams('show=bogus'));
-    expect(parsed.visibleCategories).toEqual(new Set(ALL_LISTING_VISIBILITY_CATEGORIES));
+    expect(parsed.visibleCategories).toEqual(new Set(DEFAULT_VISIBLE_LISTING_CATEGORIES));
   });
 
   it('keeps only recognised category tokens', () => {

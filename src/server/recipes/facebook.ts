@@ -9,12 +9,13 @@ import type {
   Fulfillment,
   Listing,
   ListingCondition,
+  ListingPhoto,
   QuickSearchEvent,
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { hashFingerprintParts } from '../alerts';
-import { MAX_RESULTS_PER_URL } from '../constants';
+import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
 import { getRegions, type RegionEntry } from '../services/regions';
 
 const USER_AGENT =
@@ -645,75 +646,225 @@ async function runQuickSearchAsync(
 }
 
 // ── Detail extraction ─────────────────────────────────────────────────────────
-
-export function extractFacebookDescription(bodyText: string): string {
-  // Description sits after the Details section's key-value pairs and before "See more"
-  const detailsIdx = bodyText.indexOf('\nDetails\n');
-  if (detailsIdx === -1) return '';
-  const afterDetails = bodyText.slice(detailsIdx + '\nDetails\n'.length);
-
-  let end = afterDetails.length;
-  const seeMoreIdx = afterDetails.indexOf('\nSee more\n');
-  if (seeMoreIdx !== -1) end = Math.min(end, seeMoreIdx);
-  const approxIdx = afterDetails.search(/\n.+·\s*Location is approximate/);
-  if (approxIdx !== -1) end = Math.min(end, approxIdx);
-
-  const lines = afterDetails
-    .slice(0, end)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  // Skip leading detail key-value pairs (short lines, no sentence-ending punctuation)
-  let lineIndex = 0;
-  while (
-    lineIndex < lines.length &&
-    lines[lineIndex].length < 30 &&
-    !/[.!?]/.test(lines[lineIndex])
-  )
-    lineIndex++;
-
-  return lines.slice(lineIndex).join('\n').trim();
+//
+// Facebook renders "Details", "Ads", "Seller information", and "Today's picks"
+// as sibling <h2> sections sharing identical (Facebook-hashed) CSS classes, so
+// there's no stable class/testid to scope to. But the Details heading's own
+// card is structurally the smallest ancestor of its <h2> that contains exactly
+// one <h2> descendant — climbing further would pull in the next section's
+// heading too. That gives a DOM-structural boundary that keeps ad copy, seller
+// info, and suggested-listing titles out of the scraped data entirely, instead
+// of relying on string/punctuation heuristics to skip them after the fact.
+//
+// Attribute rows (Condition, Colour, ...) use a real DOM attribute —
+// `justify="all"` on a two-child row — so they're read directly rather than
+// guessed from line length/punctuation.
+//
+// This function is passed directly to page.evaluate() (Playwright serializes
+// it via toString() and runs it in-browser), so it must stay self-contained —
+// no closures over outer module consts, only DOM globals.
+export interface FacebookDetailsCardData {
+  cardInnerText: string;
+  attributeRowCount: number;
+  attributePairs: Record<string, string>;
 }
 
-export function extractFacebookDetails(bodyText: string): Array<{ key: string; value: string }> {
-  const details: Array<{ key: string; value: string }> = [];
-  const detailsIdx = bodyText.indexOf('\nDetails\n');
-  if (detailsIdx === -1) return [];
+export function extractFacebookDetailsCardData(): FacebookDetailsCardData | null {
+  const headings = Array.from(document.querySelectorAll('h2'));
+  const detailsHeading = headings.find((heading) => heading.textContent?.trim() === 'Details');
+  if (!detailsHeading) {
+    console.warn(
+      '[facebook] extractFacebookDetailsCardData: no "Details" heading found on the page'
+    );
+    return null;
+  }
 
-  const lines = bodyText
-    .slice(detailsIdx + '\nDetails\n'.length)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  let ancestor: HTMLElement | null = detailsHeading;
+  let cardEl: HTMLElement = detailsHeading;
+  let depth = 0;
+  for (; ancestor && depth < 12; depth++) {
+    if (ancestor.querySelectorAll('h2').length === 1) cardEl = ancestor;
+    ancestor = ancestor.parentElement;
+  }
+  if (depth === 12) {
+    console.warn(
+      '[facebook] extractFacebookDetailsCardData: ancestor climb hit its depth cap (12) ' +
+        'before running out of parents — the Details card boundary may lie further up the DOM'
+    );
+  }
 
-  let lineIndex = 0;
-  while (lineIndex + 1 < lines.length) {
-    const key = lines[lineIndex];
-    const currentValue = lines[lineIndex + 1];
-    // A detail pair: key is short/simple, value is short/simple (not prose)
-    if (
-      key.length < 30 &&
-      !/[.!?]/.test(key) &&
-      currentValue.length < 60 &&
-      !/[.!?]{2}/.test(currentValue)
-    ) {
-      details.push({ key, value: currentValue });
-      lineIndex += 2;
-    } else {
-      break;
+  const rows = Array.from(cardEl.querySelectorAll('div[justify="all"]'));
+  const attributePairs: Record<string, string> = {};
+  for (const row of rows) {
+    const children = Array.from(row.children) as HTMLElement[];
+    if (children.length === 2) {
+      attributePairs[children[0].innerText.trim()] = children[1].innerText.trim();
     }
   }
 
-  return details;
+  return { cardInnerText: cardEl.innerText, attributeRowCount: rows.length, attributePairs };
+}
+
+const LOCATION_LINE_REGEX = /^(.*?)\s*·\s*Location is approximate$/;
+const SEE_MORE_OR_LESS_SUFFIX_REGEX = /\s*See (more|less)\s*$/;
+
+export function deriveFacebookDescriptionAndLocation(
+  cardInnerText: string,
+  attributeRowCount: number,
+  attributePairs: Record<string, string>
+): { description: string; pickupLocation: string | null } {
+  const lines = cardInnerText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  // Skip the "Details" heading plus the attribute label/value lines. The
+  // naive assumption is 2 lines per row (one label, one value), but that only
+  // holds if every value renders on a single line — a value with an embedded
+  // line break (a long wrapped value, an embedded list, a <br>) takes more.
+  // `attributePairs` is read from the same innerText, so its value strings
+  // already carry any such internal breaks; counting them gives the real
+  // per-row line count instead of assuming a fixed 2.
+  const attributeValues = Object.values(attributePairs);
+  const naiveAttributeLineCount = attributeRowCount * 2;
+  let attributeLineCount = naiveAttributeLineCount;
+  if (attributeValues.length === attributeRowCount) {
+    attributeLineCount = attributeValues.reduce(
+      (total, value) => total + 1 + value.split('\n').length,
+      0
+    );
+    if (attributeLineCount !== naiveAttributeLineCount) {
+      console.warn(
+        '[facebook] deriveFacebookDescriptionAndLocation: an attribute value spans more than one ' +
+          `line — derived ${attributeLineCount} attribute lines from ${attributeRowCount} rows ` +
+          `instead of the naive ${naiveAttributeLineCount}; using the derived count so the ` +
+          'description does not start mid-value'
+      );
+    }
+  } else {
+    console.warn(
+      `[facebook] deriveFacebookDescriptionAndLocation: attributePairs has ${attributeValues.length} ` +
+        `entries but attributeRowCount is ${attributeRowCount} — cannot cross-check the line slice, ` +
+        'falling back to the naive attributeRowCount * 2 offset'
+    );
+  }
+
+  const expectedBoundary = 1 + attributeLineCount;
+  if (lines.length < expectedBoundary) {
+    console.warn(
+      `[facebook] deriveFacebookDescriptionAndLocation: expected at least ${expectedBoundary} text ` +
+        `lines for ${attributeRowCount} attribute rows but only found ${lines.length} — clamping ` +
+        'instead of slicing past the end of the text'
+    );
+  }
+  const boundary = Math.min(expectedBoundary, lines.length);
+
+  let remaining = lines.slice(boundary);
+
+  let pickupLocation: string | null = null;
+  if (remaining.length > 0) {
+    const locationMatch = remaining[remaining.length - 1].match(LOCATION_LINE_REGEX);
+    if (locationMatch) {
+      pickupLocation = locationMatch[1].trim();
+      remaining = remaining.slice(0, -1);
+    }
+  }
+
+  // Facebook glues the "See more"/"See less" toggle onto the end of the last
+  // content line inline, rather than rendering it as its own line.
+  if (remaining.length > 0) {
+    remaining[remaining.length - 1] = remaining[remaining.length - 1]
+      .replace(SEE_MORE_OR_LESS_SUFFIX_REGEX, '')
+      .trim();
+    remaining = remaining.filter((line) => line.length > 0);
+  }
+
+  return { description: remaining.join('\n').trim(), pickupLocation };
 }
 
 export function buildFacebookDeepSearchDetail(
   description: string,
   extraAttributes: Record<string, string>,
-  pickupLocation: string | null
+  pickupLocation: string | null,
+  photos?: ListingPhoto[]
 ): DeepSearchDetail {
-  return { description, extraAttributes, questionsAndAnswers: [], pickupLocation };
+  const detail: DeepSearchDetail = {
+    description,
+    extraAttributes,
+    questionsAndAnswers: [],
+    pickupLocation,
+  };
+  if (photos) detail.photos = photos;
+  return detail;
+}
+
+// ── Photo extraction ──────────────────────────────────────────────────────────
+//
+// Facebook tags each listing's own gallery images with a fixed, stable alt-text
+// pattern: "Product photo of <title>" — everything else on the detail page
+// (suggested-listing thumbnails, avatars, chat icons, loading placeholders) uses
+// a different alt pattern or none at all, so this is far more reliable than
+// filtering by image size or DOM position. Live-verified against several real
+// listings. Facebook's CDN URLs are signed and don't expose a separate
+// thumbnail/full-size pair the way TradeMe's photoserver URLs do, so the same
+// URL is used for both in buildFacebookPhotosFromUrls below.
+//
+// The alt-text filter alone doesn't guarantee the matched images belong to
+// *this* listing: the same detail page also renders a "Today's picks"
+// related-listings carousel lower down, and if Facebook ever reuses the same
+// media component there, its thumbnails could start matching the same alt
+// pattern and get silently attached to this listing. Live inspection of real
+// listing pages (2026-07) found a reliable structural boundary: the page has
+// exactly one *visible* <h1> — the listing's own title (a second, hidden
+// "Chats" nav landmark is also an <h1>, so visibility, via `offsetParent`, is
+// what disambiguates it) — and the smallest ancestor of that heading that does
+// NOT also contain the "Today's picks" <h2> wraps the whole gallery (plus the
+// Details/Ads/Seller-information sections, none of which carry
+// "Product photo of" images) while excluding the carousel. If a "Today's
+// picks" section is present but the title heading can't be found, scoping
+// falls back to the whole document and logs a warning rather than silently
+// over-scoping; if there's no "Today's picks" section at all there's nothing
+// to guard against, so the whole document is used with no warning.
+//
+// Self-contained for the same reason as extractFacebookDetailsCardData — this
+// is passed directly to page.evaluate(). `maxPhotos` is passed in as an
+// evaluate() argument (see MAX_PHOTOS_PER_LISTING at the call site) rather
+// than closed over, for the same reason.
+export function extractFacebookPhotoUrls(maxPhotos: number): string[] {
+  const picksHeading = Array.from(document.querySelectorAll('h2')).find(
+    (heading) => heading.textContent?.trim() === "Today's picks"
+  );
+
+  let scope: ParentNode = document;
+  if (picksHeading) {
+    const visibleTitleHeading = Array.from(document.querySelectorAll('h1')).find(
+      (heading) => heading.offsetParent !== null
+    );
+
+    if (visibleTitleHeading) {
+      let ancestor: HTMLElement = visibleTitleHeading;
+      while (ancestor.parentElement && !ancestor.parentElement.contains(picksHeading)) {
+        ancestor = ancestor.parentElement;
+      }
+      scope = ancestor;
+    } else {
+      console.warn(
+        '[facebook] extractFacebookPhotoUrls: a "Today\'s picks" section is present but no ' +
+          'visible listing-title heading was found to scope against — falling back to the ' +
+          "whole page, which risks pulling in that section's photos"
+      );
+    }
+  }
+
+  const urls = Array.from(scope.querySelectorAll('img'))
+    .filter((img) => img.alt?.startsWith('Product photo of '))
+    .map((img) => img.src);
+  return Array.from(new Set(urls)).slice(0, maxPhotos);
+}
+
+export function buildFacebookPhotosFromUrls(urls: string[]): ListingPhoto[] | undefined {
+  if (urls.length === 0) return undefined;
+  return urls.map((url) => ({ thumbnailUrl: url, fullSizeUrl: url }));
 }
 
 export async function fetchFacebookListingDetailAsync(
@@ -735,19 +886,26 @@ export async function fetchFacebookListingDetailAsync(
     await page.waitForTimeout(500);
   }
 
-  const bodyText: string = await page.evaluate(() => document.body.innerText);
+  const cardData = await page.evaluate(extractFacebookDetailsCardData);
+  if (!cardData) {
+    console.warn(`[facebook] no Details card found for ${url} — description will be empty`);
+  }
 
-  const extraAttributes: Record<string, string> = {};
-  for (const { key, value } of extractFacebookDetails(bodyText)) extraAttributes[key] = value;
-
+  const extraAttributes = cardData?.attributePairs ?? {};
   // Facebook Marketplace has no auctions/reserves and no structured fulfillment
   // data — only pickupLocation has a real signal here, so that's all we add.
-  const locationMatch = bodyText.match(/Listed in ([^\n·]+)/);
-  const pickupLocation = locationMatch?.[1]?.trim() ?? null;
+  const { description, pickupLocation } = cardData
+    ? deriveFacebookDescriptionAndLocation(
+        cardData.cardInnerText,
+        cardData.attributeRowCount,
+        cardData.attributePairs
+      )
+    : { description: '', pickupLocation: null };
 
-  const description = extractFacebookDescription(bodyText);
+  const photoUrls = await page.evaluate(extractFacebookPhotoUrls, MAX_PHOTOS_PER_LISTING);
+  const photos = buildFacebookPhotosFromUrls(photoUrls);
 
-  return buildFacebookDeepSearchDetail(description, extraAttributes, pickupLocation);
+  return buildFacebookDeepSearchDetail(description, extraAttributes, pickupLocation, photos);
 }
 
 // ── Deep search ───────────────────────────────────────────────────────────────

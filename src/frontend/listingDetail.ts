@@ -11,12 +11,11 @@ import { esc } from './html';
 import {
   buildCardMetaHtml,
   buildCardPriceHtml,
-  buildDetailMetaHtml,
   buildDetailPriceHtml,
   buildExtrasHtml,
+  buildPhotoGalleryHtml,
 } from './listingHtml';
 import { lockBodyScroll, unlockBodyScroll } from './modalOverlay';
-import { sourceBadgeHtml } from './recipeDisplay';
 import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
 import {
   bulkDeepSearchUrls,
@@ -72,7 +71,7 @@ export function setDeepSearchBusy(busy: boolean): void {
 export function listingModalExtrasHtml(item: ListingItem, errorMessage: string | null): string {
   if (errorMessage) return `<p class="deep-empty">Couldn't load details — ${esc(errorMessage)}</p>`;
   if (item.hasBeenDeepSearched) return buildExtrasHtml(item.data);
-  return `<div class="modal-loading"><span class="spinner"></span><span>Fetching details…</span></div>`;
+  return `${buildPhotoGalleryHtml(item.data)}<div class="modal-loading"><span class="spinner"></span><span>Fetching details…</span></div>`;
 }
 
 export function renderListingModalContent(
@@ -84,24 +83,18 @@ export function renderListingModalContent(
   if (openModalListingUrl !== item.data.url) return;
 
   const listing = item.data;
-  const thumb = listing.thumbnailUrl
-    ? `<img class="listing-modal-thumb" src="${esc(listing.thumbnailUrl)}" alt="">`
-    : `<div class="listing-modal-thumb-placeholder"></div>`;
-  const metaHtml = item.hasBeenDeepSearched
-    ? buildDetailMetaHtml(listing)
-    : buildCardMetaHtml(listing);
+  const metaHtml = buildCardMetaHtml(listing);
   const priceHtml = item.hasBeenDeepSearched
     ? buildDetailPriceHtml(listing)
     : buildCardPriceHtml(listing);
 
   getElement('listingModalBody').innerHTML = `
     <div class="listing-modal-header">
-      <div class="listing-modal-thumb-wrap">${thumb}${sourceBadgeHtml(listing.source, 32)}</div>
       <div class="listing-modal-heading">
         <div class="listing-modal-title">${esc(listing.title)}</div>
+        <a class="listing-modal-original-link" href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.url)}</a>
         <div class="listing-meta">${metaHtml}</div>
         <div class="listing-prices">${priceHtml}</div>
-        <a class="listing-modal-original-link" href="${esc(listing.url)}" target="_blank" rel="noopener">View original listing ↗</a>
       </div>
     </div>
     <div class="listing-modal-extras">${listingModalExtrasHtml(item, errorMessage)}</div>

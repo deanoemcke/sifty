@@ -77,24 +77,19 @@ export function buildCardFooterHtml(listing: Listing): string {
 }
 
 export function buildDetailPriceHtml(listing: Listing): string {
-  let html = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
-  const buyNowPrice = listing.buyNowPrice;
-  if (listing.isAuction && buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${Math.round(buyNowPrice).toLocaleString()}</strong></span>`;
-  }
-  return html;
-}
-
-export function buildDetailMetaHtml(listing: Listing): string {
-  const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
-  let html = '';
+  let badgesHtml = '';
   if (listing.isAuction) {
     const reserveStatus = listing.reserveStatus ?? '';
     const reserve = formatReserveText(reserveStatus);
     if (reserve)
-      html += `<span class="badge badge-${reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
+      badgesHtml += `<span class="badge badge-${reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
+    const buyNowPrice = listing.buyNowPrice;
+    if (buyNowPrice != null) {
+      badgesHtml += `<span class="badge badge-buynow">Buy Now: <strong>$${Math.round(buyNowPrice).toLocaleString()}</strong></span>`;
+    }
   }
-  return `${left}<span class="meta-right">${html}</span>`;
+  const price = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
+  return `${price}<span class="price-badges">${badgesHtml}</span>`;
 }
 
 function buildQaAttributionHtml(name: string | undefined, iso: string | undefined): string {
@@ -126,8 +121,15 @@ function buildPickupRowHtml(
   return `<span class="details-key">Pickup</span><span class="details-val">${value}</span>`;
 }
 
-function buildPhotoGalleryHtml(photos: Listing['photos']): string {
-  const photoList = photos ?? [];
+// Falls back to the quick-scrape `thumbnailUrl` when deep search hasn't run
+// (or didn't return photos) yet, so the modal always shows the best image
+// currently known rather than nothing.
+export function buildPhotoGalleryHtml(listing: Pick<Listing, 'photos' | 'thumbnailUrl'>): string {
+  const photoList =
+    listing.photos ??
+    (listing.thumbnailUrl
+      ? [{ thumbnailUrl: listing.thumbnailUrl, fullSizeUrl: listing.thumbnailUrl }]
+      : []);
   if (photoList.length === 0) return '';
   return `<div class="deep-section">
       <div class="deep-section-label">Photos</div>
@@ -163,7 +165,7 @@ export function buildExtrasHtml(listing: Listing): string {
   let body = '';
 
   // ── Photos ────────────────────────────────────────────────────────────────
-  body += buildPhotoGalleryHtml(listing.photos);
+  body += buildPhotoGalleryHtml(listing);
 
   // ── Listing info (dates, category) ──────────────────────────────────────
   body += buildListingInfoHtml(listing);

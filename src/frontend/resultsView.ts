@@ -5,6 +5,7 @@
 
 import { requirePattern } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
+import { isMobileSheetActive } from './dropdownPanel';
 import { esc } from './html';
 import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
@@ -126,29 +127,50 @@ export function renderDerived(): void {
     'hidden',
     isDeepSearchRunning || isAnyCardSearching || !hasUnscraped
   );
-  renderAiFilterButton();
+  renderAiFilterButton(listings);
   scheduleSortOrderUpdate(listings);
   updateUrlGroupHeaders();
 }
 
+// On the mobile full-screen sheet, aiFilterBtn doubles as the sheet's sticky
+// "apply and close" footer button (aiFilterDropdown.ts wires it as the
+// dropdown's footer), so — matching the Show/Sort footer's live-count
+// convention (setDropdownLabel in showDropdown.ts) — its label previews how
+// many listings currently pass the AI filter instead of the bare "Filter" CTA
+// that's all there's room for inline on desktop.
+function aiFilterButtonLabel(listings: ListingItem[]): string {
+  if (!isMobileSheetActive()) return isAiFilterRunning ? 'Filtering..' : 'Filter';
+  const passingCount = listings.filter((item) => item.aiFilterReason === null).length;
+  return `Filtering ${passingCount} / ${listings.length} results`;
+}
+
 // Sole writer of the ai-filter button's disabled/label state — disabled with
 // a spinner while a run is in flight, disabled with no criteria typed yet,
-// otherwise enabled and ready to submit.
-export function renderAiFilterButton(): void {
+// otherwise enabled and ready to submit. `listings` defaults to
+// getOrderedListings() for the standalone 'input' listener wired in app.ts;
+// renderDerived() passes its own already-computed list instead, so this
+// doesn't recompute it a second time on every streamed listing.
+export function renderAiFilterButton(listings: ListingItem[] = getOrderedListings()): void {
   const filterBtn = getElement<HTMLButtonElement>('aiFilterBtn');
   const promptIsEmpty = getElement<HTMLTextAreaElement>('aiFilter').value.trim() === '';
   filterBtn.disabled = isAiFilterRunning || promptIsEmpty;
-  // The innerHTML below is fully determined by isAiFilterRunning, so skip the
-  // write when the rendered state hasn't changed: renderDerived() fires once
-  // per streamed listing, and recreating the spinner node on each call would
-  // restart its CSS animation mid-run. data-state is a render cache key, not
-  // business state — isAiFilterRunning in state.ts stays the source of truth.
+  // The wrapper markup below (spinner + label span) is fully determined by
+  // isAiFilterRunning, so skip recreating it when that hasn't changed:
+  // renderDerived() fires once per streamed listing, and recreating the
+  // spinner node on each call would restart its CSS animation mid-run.
+  // data-state is a render cache key, not business state — isAiFilterRunning
+  // in state.ts stays the source of truth. The label text itself is always
+  // refreshed below, since the mobile pass/total count changes independently
+  // of that running/idle state.
   const desiredButtonState = isAiFilterRunning ? 'running' : 'idle';
-  if (filterBtn.dataset.state === desiredButtonState) return;
-  filterBtn.dataset.state = desiredButtonState;
-  filterBtn.innerHTML = isAiFilterRunning
-    ? '<span class="spinner"></span><span>Filtering..</span>'
-    : 'Filter';
+  if (filterBtn.dataset.state !== desiredButtonState) {
+    filterBtn.dataset.state = desiredButtonState;
+    filterBtn.innerHTML = isAiFilterRunning
+      ? '<span class="spinner"></span><span class="ai-filter-btn-label"></span>'
+      : '<span class="ai-filter-btn-label"></span>';
+  }
+  requireChild<HTMLElement>(filterBtn, '.ai-filter-btn-label').textContent =
+    aiFilterButtonLabel(listings);
 }
 
 export function applyClientFilters(): void {

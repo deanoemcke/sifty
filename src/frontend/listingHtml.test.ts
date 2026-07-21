@@ -3,7 +3,6 @@ import {
   buildCardFooterHtml,
   buildCardMetaHtml,
   buildCardPriceHtml,
-  buildDetailMetaHtml,
   buildDetailPriceHtml,
   buildExternalLinkButtonHtml,
   buildExtrasHtml,
@@ -108,11 +107,13 @@ describe('buildDetailPriceHtml', () => {
     expect(html).not.toContain('Buy Now');
   });
 
-  it('adds a formatted buy-now price for auctions', () => {
+  it('adds a buy-now badge for auctions', () => {
     const html = buildDetailPriceHtml(
       makeListing({ price: 1000, isAuction: true, buyNowPrice: 1500 })
     );
-    expect(html).toContain(`Buy Now: <strong>$${(1500).toLocaleString()}</strong>`);
+    expect(html).toContain(
+      `<span class="badge badge-buynow">Buy Now: <strong>$${(1500).toLocaleString()}</strong></span>`
+    );
   });
 
   it('rounds the buy-now price to the nearest whole dollar', () => {
@@ -131,23 +132,31 @@ describe('buildDetailPriceHtml', () => {
     const html = buildDetailPriceHtml(makeListing({ price: null }));
     expect(html).toContain('Price on request');
   });
-});
 
-describe('buildDetailMetaHtml', () => {
   it('derives the reserve badge class from the status', () => {
-    const html = buildDetailMetaHtml(makeListing({ isAuction: true, reserveStatus: 'NOT_MET' }));
+    const html = buildDetailPriceHtml(makeListing({ isAuction: true, reserveStatus: 'NOT_MET' }));
     expect(html).toContain('badge-not-met');
     expect(html).toContain('Reserve not met');
   });
 
-  it('shows no badge for non-auctions', () => {
-    const html = buildDetailMetaHtml(makeListing({ reserveStatus: 'MET' }));
-    expect(html).not.toContain('badge');
+  it('shows no reserve badge for non-auctions', () => {
+    const html = buildDetailPriceHtml(makeListing({ isAuction: false, reserveStatus: 'MET' }));
+    expect(html).not.toContain('badge-met');
   });
 
-  it('shows no badge for unknown reserve statuses', () => {
-    const html = buildDetailMetaHtml(makeListing({ isAuction: true, reserveStatus: 'UNKNOWN' }));
-    expect(html).toContain(`<span class="meta-right"></span>`);
+  it('shows no reserve badge for unknown reserve statuses', () => {
+    const html = buildDetailPriceHtml(makeListing({ isAuction: true, reserveStatus: 'UNKNOWN' }));
+    expect(html).not.toContain('badge-unknown');
+  });
+
+  it('places the reserve and buy-now badges in price-badges, after the price', () => {
+    const html = buildDetailPriceHtml(
+      makeListing({ price: 1000, isAuction: true, reserveStatus: 'MET', buyNowPrice: 1500 })
+    );
+    const priceIndex = html.indexOf('<span class="price">');
+    const priceBadgesIndex = html.indexOf('price-badges');
+    expect(priceIndex).toBeGreaterThanOrEqual(0);
+    expect(priceIndex).toBeLessThan(priceBadgesIndex);
   });
 });
 
@@ -276,6 +285,31 @@ describe('buildExtrasHtml', () => {
 
   it('omits the photo gallery when there are no photos', () => {
     expect(buildExtrasHtml(makeListing())).not.toContain('photo-gallery');
+  });
+
+  it('falls back to the quick-scrape thumbnail when there are no deep-search photos', () => {
+    const html = buildExtrasHtml(
+      makeListing({ thumbnailUrl: 'https://example.com/quick-thumb.jpg' })
+    );
+    expect(html).toContain('photo-gallery');
+    expect(html).toContain('src="https://example.com/quick-thumb.jpg"');
+    expect(html).toContain('href="https://example.com/quick-thumb.jpg"');
+  });
+
+  it('prefers deep-search photos over the quick-scrape thumbnail when both are present', () => {
+    const html = buildExtrasHtml(
+      makeListing({
+        thumbnailUrl: 'https://example.com/quick-thumb.jpg',
+        photos: [
+          {
+            thumbnailUrl: 'https://example.com/thumb1.jpg',
+            fullSizeUrl: 'https://example.com/full1.jpg',
+          },
+        ],
+      })
+    );
+    expect(html).not.toContain('quick-thumb.jpg');
+    expect(html).toContain('src="https://example.com/thumb1.jpg"');
   });
 
   it('renders listing dates and category path', () => {

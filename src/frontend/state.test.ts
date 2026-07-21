@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { listingDedupeKey } from '../lib/listingDedup';
 import {
-  ALL_LISTING_VISIBILITY_CATEGORIES,
   activeSidebarTab,
   addListingItem,
   aiFilterPendingRun,
@@ -147,19 +146,15 @@ describe('activeSidebarTab', () => {
 describe('visibleListingCategories', () => {
   beforeEach(() => resetState());
 
-  it('defaults to all three categories', () => {
-    expect([...visibleListingCategories].sort()).toEqual(
-      [...ALL_LISTING_VISIBILITY_CATEGORIES].sort()
-    );
+  it('defaults to every category except filtered', () => {
+    expect([...visibleListingCategories].sort()).toEqual(['new', 'sold', 'used']);
   });
 
-  it('resetState refills it after entries are removed', () => {
+  it('resetState refills it back to the default, excluding filtered', () => {
     setListingCategoryVisible('sold', false);
-    setListingCategoryVisible('filtered', false);
+    setListingCategoryVisible('filtered', true);
     resetState();
-    expect([...visibleListingCategories].sort()).toEqual(
-      [...ALL_LISTING_VISIBILITY_CATEGORIES].sort()
-    );
+    expect([...visibleListingCategories].sort()).toEqual(['new', 'sold', 'used']);
   });
 });
 

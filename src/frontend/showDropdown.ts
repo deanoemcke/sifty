@@ -17,6 +17,7 @@ import {
   setDropdownLabel,
   toggleDropdownPanel,
 } from './dropdownPanel';
+import { EYE_ICON } from './icons';
 import {
   ALL_LISTING_VISIBILITY_CATEGORIES,
   getListingCategory,
@@ -59,7 +60,7 @@ function getShowDropdownElements(): DropdownElements {
 export function populateShowControls(
   onCategoryToggle: (category: ListingVisibilityCategory, isVisible: boolean) => void = () => {}
 ): void {
-  buildDropdownShell(SHOW_DROPDOWN_IDS, 'Show');
+  buildDropdownShell(SHOW_DROPDOWN_IDS, 'Show', EYE_ICON);
   const optionsContainer = getElement(SHOW_DROPDOWN_IDS.options);
   for (const { value, label } of SHOW_OPTIONS) {
     const checkboxId = SHOW_CHECKBOX_ID_BY_CATEGORY[value];
