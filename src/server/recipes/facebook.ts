@@ -672,13 +672,25 @@ export interface FacebookDetailsCardData {
 export function extractFacebookDetailsCardData(): FacebookDetailsCardData | null {
   const headings = Array.from(document.querySelectorAll('h2'));
   const detailsHeading = headings.find((heading) => heading.textContent?.trim() === 'Details');
-  if (!detailsHeading) return null;
+  if (!detailsHeading) {
+    console.warn(
+      '[facebook] extractFacebookDetailsCardData: no "Details" heading found on the page'
+    );
+    return null;
+  }
 
   let ancestor: HTMLElement | null = detailsHeading;
   let cardEl: HTMLElement = detailsHeading;
-  for (let depth = 0; ancestor && depth < 12; depth++) {
+  let depth = 0;
+  for (; ancestor && depth < 12; depth++) {
     if (ancestor.querySelectorAll('h2').length === 1) cardEl = ancestor;
     ancestor = ancestor.parentElement;
+  }
+  if (depth === 12) {
+    console.warn(
+      '[facebook] extractFacebookDetailsCardData: ancestor climb hit its depth cap (12) ' +
+        'before running out of parents — the Details card boundary may lie further up the DOM'
+    );
   }
 
   const rows = Array.from(cardEl.querySelectorAll('div[justify="all"]'));
@@ -835,6 +847,9 @@ export async function fetchFacebookListingDetailAsync(
   }
 
   const cardData = await page.evaluate(extractFacebookDetailsCardData);
+  if (!cardData) {
+    console.warn(`[facebook] no Details card found for ${url} — description will be empty`);
+  }
 
   const extraAttributes = cardData?.attributePairs ?? {};
   // Facebook Marketplace has no auctions/reserves and no structured fulfillment

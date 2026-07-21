@@ -12,6 +12,7 @@ import {
   classifyInitialSearchStateAsync,
   deriveFacebookDescriptionAndLocation,
   detectLoginWallAsync,
+  extractFacebookDetailsCardData,
   extractFacebookPhotoUrls,
   extractImplicitFilters,
   type FacebookDetailsCardData,
@@ -1015,6 +1016,80 @@ describe('buildFacebookDeepSearchDetail', () => {
   });
 });
 
+// ── extractFacebookDetailsCardData ────────────────────────────────────────────
+//
+// Same jsdom-swap technique as extractFacebookPhotoUrls below — this function
+// also runs in the browser via page.evaluate() and reads the global `document`.
+
+describe('extractFacebookDetailsCardData', () => {
+  const realDocument = globalThis.document;
+
+  afterEach(() => {
+    globalThis.document = realDocument;
+  });
+
+  function useFixture(html: string): Document {
+    const dom = new JSDOM(html);
+    globalThis.document = dom.window.document as unknown as Document;
+    return dom.window.document as unknown as Document;
+  }
+
+  it('warns and returns null when no "Details" heading is present on the page', () => {
+    useFixture('<body><h1>Some other page</h1></body>');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(extractFacebookDetailsCardData()).toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no "Details" heading found'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('warns when the ancestor climb hits its depth cap without running out of parents', () => {
+    // Nest the "Details" heading under more than 12 wrapper <div>s so the
+    // depth < 12 climb in extractFacebookDetailsCardData exhausts its cap
+    // while ancestor elements still remain above it — the condition the
+    // depth-cap warning exists to catch.
+    let html = '<h2>Details</h2>';
+    for (let i = 0; i < 15; i++) {
+      html = `<div>${html}</div>`;
+    }
+    useFixture(`<body>${html}</body>`);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = extractFacebookDetailsCardData();
+      expect(result).not.toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('depth cap'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn when the card boundary is found comfortably within the depth cap', () => {
+    // No `div[justify="all"]` attribute rows here — jsdom doesn't implement
+    // `innerText` (a rendering-dependent property with no layout engine
+    // behind it), and the row-reading branch below calls `.innerText.trim()`
+    // on each row's children, so a fixture with real rows would need a
+    // different rendering technique. This fixture only needs to exercise the
+    // depth-cap warning, not attribute-row parsing.
+    useFixture(`
+      <body>
+        <div id="card">
+          <h2>Details</h2>
+        </div>
+      </body>
+    `);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = extractFacebookDetailsCardData();
+      expect(result).not.toBeNull();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
 // ── extractFacebookPhotoUrls ──────────────────────────────────────────────────
 //
 // This function is written to run in the browser via page.evaluate() and reads
@@ -1428,7 +1503,7 @@ describe('fetchFacebookListingDetailAsync', () => {
     ).rejects.toThrow(/Facebook requires login/);
   });
 
-  it('extracts the description and attributes when no login wall is present', async () => {
+  it('extracts the description and attributes when no login wall is present, without warning', async () => {
     const detailsCardData: FacebookDetailsCardData = {
       cardInnerText:
         'Details\nCondition\nUsed\nA lovely lamp in great condition.\nWellington, Wellington City · Location is approximate',
@@ -1437,29 +1512,43 @@ describe('fetchFacebookListingDetailAsync', () => {
     };
     const photoUrls = ['https://scontent.example.com/a.jpg', 'https://scontent.example.com/b.jpg'];
     const page = makeFacebookPage({ domLoginWall: false, detailsCardData, photoUrls });
-    const detail = await fetchFacebookListingDetailAsync(
-      page as unknown as Parameters<typeof fetchFacebookListingDetailAsync>[0],
-      'https://www.facebook.com/marketplace/item/123/'
-    );
-    expect(detail.description).toBe('A lovely lamp in great condition.');
-    expect(detail.extraAttributes).toEqual({ Condition: 'Used' });
-    expect(detail.pickupLocation).toBe('Wellington, Wellington City');
-    expect(detail.photos).toEqual([
-      { thumbnailUrl: photoUrls[0], fullSizeUrl: photoUrls[0] },
-      { thumbnailUrl: photoUrls[1], fullSizeUrl: photoUrls[1] },
-    ]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const detail = await fetchFacebookListingDetailAsync(
+        page as unknown as Parameters<typeof fetchFacebookListingDetailAsync>[0],
+        'https://www.facebook.com/marketplace/item/123/'
+      );
+      expect(detail.description).toBe('A lovely lamp in great condition.');
+      expect(detail.extraAttributes).toEqual({ Condition: 'Used' });
+      expect(detail.pickupLocation).toBe('Wellington, Wellington City');
+      expect(detail.photos).toEqual([
+        { thumbnailUrl: photoUrls[0], fullSizeUrl: photoUrls[0] },
+        { thumbnailUrl: photoUrls[1], fullSizeUrl: photoUrls[1] },
+      ]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
-  it('returns empty details when the page has no "Details" heading at all', async () => {
+  it('returns empty details and warns when the page has no "Details" heading at all', async () => {
     const page = makeFacebookPage({ domLoginWall: false, detailsCardData: null });
-    const detail = await fetchFacebookListingDetailAsync(
-      page as unknown as Parameters<typeof fetchFacebookListingDetailAsync>[0],
-      'https://www.facebook.com/marketplace/item/123/'
-    );
-    expect(detail.description).toBe('');
-    expect(detail.extraAttributes).toEqual({});
-    expect(detail.photos).toBeUndefined();
-    expect(detail.pickupLocation).toBeNull();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const url = 'https://www.facebook.com/marketplace/item/123/';
+      const detail = await fetchFacebookListingDetailAsync(
+        page as unknown as Parameters<typeof fetchFacebookListingDetailAsync>[0],
+        url
+      );
+      expect(detail.description).toBe('');
+      expect(detail.extraAttributes).toEqual({});
+      expect(detail.photos).toBeUndefined();
+      expect(detail.pickupLocation).toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(url));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no Details card found'));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
