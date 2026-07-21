@@ -77,24 +77,19 @@ export function buildCardFooterHtml(listing: Listing): string {
 }
 
 export function buildDetailPriceHtml(listing: Listing): string {
-  let html = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
-  const buyNowPrice = listing.buyNowPrice;
-  if (listing.isAuction && buyNowPrice != null) {
-    html += `<span class="price-buynow">Buy Now: <strong>$${Math.round(buyNowPrice).toLocaleString()}</strong></span>`;
-  }
-  return html;
-}
-
-export function buildDetailMetaHtml(listing: Listing): string {
-  const left = `<span class="meta-left"><span class="meta-text">${esc(listing.location)}</span></span>`;
-  let html = '';
+  let left = '';
   if (listing.isAuction) {
     const reserveStatus = listing.reserveStatus ?? '';
     const reserve = formatReserveText(reserveStatus);
     if (reserve)
-      html += `<span class="badge badge-${reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
+      left += `<span class="badge badge-${reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
+    const buyNowPrice = listing.buyNowPrice;
+    if (buyNowPrice != null) {
+      left += `<span class="badge badge-buynow">Buy Now: <strong>$${Math.round(buyNowPrice).toLocaleString()}</strong></span>`;
+    }
   }
-  return `${left}<span class="meta-right">${html}</span>`;
+  const price = `<span class="price">${esc(formatListingPrice(listing.price))}</span>`;
+  return `<span class="price-left">${left}</span>${price}`;
 }
 
 function buildQaAttributionHtml(name: string | undefined, iso: string | undefined): string {

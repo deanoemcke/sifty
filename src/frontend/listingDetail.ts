@@ -11,7 +11,6 @@ import { esc } from './html';
 import {
   buildCardMetaHtml,
   buildCardPriceHtml,
-  buildDetailMetaHtml,
   buildDetailPriceHtml,
   buildExtrasHtml,
 } from './listingHtml';
@@ -92,9 +91,7 @@ export function renderListingModalContent(
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-modal-thumb" src="${esc(listing.thumbnailUrl)}" alt="">`
     : `<div class="listing-modal-thumb-placeholder"></div>`;
-  const metaHtml = item.hasBeenDeepSearched
-    ? buildDetailMetaHtml(listing)
-    : buildCardMetaHtml(listing);
+  const metaHtml = buildCardMetaHtml(listing);
   const priceHtml = item.hasBeenDeepSearched
     ? buildDetailPriceHtml(listing)
     : buildCardPriceHtml(listing);

@@ -850,22 +850,22 @@ label {
 .listing-prices {
   display: flex;
   align-items: baseline;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 0.75rem;
   flex-wrap: wrap;
   margin-top: auto;
   padding-top: 0.35rem;
 }
+.price-left {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+}
 .price {
   font-size: 1.05rem;
   font-weight: 700;
-}
-.price-buynow {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-.price-buynow strong {
-  color: var(--text);
 }
 
 .listing-meta {
@@ -898,7 +898,7 @@ label {
   background: #d1fae5;
   color: #065f46;
 }
-.badge-notmet {
+.badge-not-met {
   background: var(--yellow-bg);
   color: var(--yellow);
 }
@@ -906,9 +906,9 @@ label {
   background: var(--bg);
   color: var(--text-muted);
 }
-.badge-pickup {
-  background: #fef3c7;
-  color: #92400e;
+.badge-buynow {
+  background: var(--primary-light);
+  color: var(--primary);
 }
 .meta-text {
   font-size: 0.78rem;
