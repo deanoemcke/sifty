@@ -18,7 +18,7 @@ import {
   type RegionOption,
   updateDiscoveryBtn,
 } from './discoveryForm';
-import { getElement } from './domUtils';
+import { getElement, requireChild } from './domUtils';
 import { loadDraftSession, scheduleDraftSessionSave } from './draftSession';
 import {
   handleDropdownPopState,
@@ -26,6 +26,7 @@ import {
   handleEscapeKey,
   handleOutsideClick,
 } from './dropdownPanel';
+import { SEARCH_ICON } from './icons';
 import { handleListingCardKeydown, resolveListingCardOpenArea } from './listingCardActivation';
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from './listingDetail';
 import { applyBrandTitle } from './pageTitle';
@@ -142,7 +143,9 @@ function initApp(): void {
     newCard.dom.containerElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 
-  getElement<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearchAsync());
+  const deepBtn = getElement<HTMLButtonElement>('deepBtn');
+  requireChild<HTMLSpanElement>(deepBtn, '.dropdown-trigger-icon').innerHTML = SEARCH_ICON;
+  deepBtn.addEventListener('click', () => runDeepSearchAsync());
 
   getElement('showDropdownBtn').addEventListener('click', () => toggleShowDropdownPanel());
   getElement('showDropdownFooterBtn').addEventListener('click', () => closeShowDropdownPanel());
