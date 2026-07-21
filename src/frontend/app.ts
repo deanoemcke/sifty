@@ -53,6 +53,7 @@ import {
 import { DEFAULT_SORT_OPTION, type SortOption } from './sortListings';
 import {
   activeSidebarTab,
+  currentSearchId,
   type ListingVisibilityCategory,
   openModalListingUrl,
   setActiveSidebarTab,
@@ -207,7 +208,18 @@ function initApp(): void {
     scheduleDraftSessionSave();
   });
   getElement<HTMLButtonElement>('discoveryBtn').addEventListener('click', () => {
-    void handleDiscoverySubmitAsync().then(() => syncUrlToState({ push: false }));
+    // A saved search's history entry (pushed by the savedSearchesList handler
+    // below) must survive a subsequent discover-and-submit, or Back skips
+    // past it. Only a *successful* submit clears currentSearchId (see
+    // loadDiscoveryResults in searchSession.ts); an empty prompt, network
+    // error, or superseded request leaves it unchanged and correctly falls
+    // back to a replace.
+    const searchIdBeforeSubmit = currentSearchId;
+    void handleDiscoverySubmitAsync().then(() => {
+      syncUrlToState({
+        push: searchIdBeforeSubmit !== null && currentSearchId !== searchIdBeforeSubmit,
+      });
+    });
   });
 
   const submitDiscoveryForm = (): void => getElement<HTMLButtonElement>('discoveryBtn').click();

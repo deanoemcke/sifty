@@ -640,6 +640,37 @@ describe('initApp() wiring', () => {
       expect(replaceSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('submitting the discovery form after a saved search was loaded pushes a new entry, preserving the saved search as a back-stop', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+
+      const state = await import('./state');
+      state.setCurrentSearchId('abc');
+      history.replaceState(null, '', '/?search=abc');
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ urls: ['https://example.com/x'], name: 'New search' }),
+        })
+      );
+
+      const promptInput = document.getElementById('discoveryPrompt') as HTMLTextAreaElement;
+      promptInput.value = 'lamp';
+      promptInput.dispatchEvent(new Event('input'));
+
+      const pushSpy = vi.spyOn(history, 'pushState');
+      const replaceSpy = vi.spyOn(history, 'replaceState');
+
+      document.getElementById('discoveryBtn')?.dispatchEvent(new Event('click'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(pushSpy).toHaveBeenCalledTimes(1);
+      expect(replaceSpy).not.toHaveBeenCalled();
+      expect(new URLSearchParams(location.search).get('search')).toBe(null);
+    });
+
     it('opening a listing card modal pushes a new history entry', async () => {
       await import('./app');
       await vi.advanceTimersByTimeAsync(0);
