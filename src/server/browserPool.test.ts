@@ -1,15 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { launchCalls, makeBrowser } = vi.hoisted(() => {
+const { launchCalls, closeCalls, makeBrowser } = vi.hoisted(() => {
   const launchCalls: string[] = [];
-  function makeBrowser(id: string, connected = true) {
+  const closeCalls: string[] = [];
+  function makeBrowser(id: string, options: { connected?: boolean; contexts?: unknown[] } = {}) {
+    const { connected = true, contexts = [] } = options;
     return {
       id,
-      connected,
       isConnected: () => connected,
+      contexts: () => contexts,
+      close: async () => {
+        closeCalls.push(id);
+      },
     };
   }
-  return { launchCalls, makeBrowser };
+  return { launchCalls, closeCalls, makeBrowser };
 });
 
 let nextBrowser: ReturnType<typeof makeBrowser>;
@@ -23,11 +28,16 @@ vi.mock('playwright', () => ({
   },
 }));
 
-import { getSharedBrowserAsync } from './browserPool';
+import { getSharedBrowserAsync, MAX_USES_BEFORE_RECYCLE } from './browserPool';
 
 describe('getSharedBrowserAsync', () => {
   beforeEach(() => {
     launchCalls.length = 0;
+    closeCalls.length = 0;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('launches a browser on first use', async () => {
@@ -63,14 +73,75 @@ describe('getSharedBrowserAsync', () => {
 
   it('relaunches if the pooled browser has disconnected', async () => {
     const key = 'facebook-test-4';
-    nextBrowser = makeBrowser('e', false);
+    nextBrowser = makeBrowser('e', { connected: false });
     const first = await getSharedBrowserAsync(key);
     expect(first.isConnected()).toBe(false);
 
-    nextBrowser = makeBrowser('f', true);
+    nextBrowser = makeBrowser('f', { connected: true });
     const second = await getSharedBrowserAsync(key);
 
     expect(second).toBe(nextBrowser);
     expect(launchCalls).toEqual(['e', 'f']);
+  });
+
+  it('recycles the browser after MAX_USES_BEFORE_RECYCLE checkouts', async () => {
+    const key = 'facebook-test-recycle';
+    nextBrowser = makeBrowser('g');
+
+    for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
+      const browser = await getSharedBrowserAsync(key);
+      expect(browser).toBe(nextBrowser);
+    }
+    expect(launchCalls).toEqual(['g']);
+
+    nextBrowser = makeBrowser('h');
+    const recycled = await getSharedBrowserAsync(key);
+
+    expect(recycled).toBe(nextBrowser);
+    expect(launchCalls).toEqual(['g', 'h']);
+  });
+
+  it('waits for a retiring browser’s open contexts to close before closing it', async () => {
+    vi.useFakeTimers();
+    const key = 'facebook-test-drain';
+    const openContexts: unknown[] = [{}];
+    nextBrowser = makeBrowser('old', { contexts: openContexts });
+
+    for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
+      await getSharedBrowserAsync(key);
+    }
+
+    nextBrowser = makeBrowser('new');
+    const recycled = await getSharedBrowserAsync(key);
+    expect(recycled).toBe(nextBrowser);
+
+    // The old browser's context is still open — it must not be closed yet.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(closeCalls).not.toContain('old');
+
+    // Once the caller closes its context, the next poll tick closes the browser.
+    openContexts.length = 0;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(closeCalls).toContain('old');
+  });
+
+  it('force-closes a retiring browser after the drain timeout even if contexts remain open', async () => {
+    vi.useFakeTimers();
+    const key = 'facebook-test-force-close';
+    const stuckContexts: unknown[] = [{}];
+    nextBrowser = makeBrowser('stuck', { contexts: stuckContexts });
+
+    for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
+      await getSharedBrowserAsync(key);
+    }
+
+    nextBrowser = makeBrowser('fresh');
+    await getSharedBrowserAsync(key);
+
+    // Mirrors browserPool's RETIRE_DRAIN_TIMEOUT_MS (5 minutes) — the context
+    // deliberately never closes, so this exercises the force-close fallback.
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 2000);
+
+    expect(closeCalls).toContain('stuck');
   });
 });
