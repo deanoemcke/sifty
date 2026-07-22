@@ -105,7 +105,14 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           };
           addListingItem(item);
           renderCard(item);
-          renderDerived();
+          // Not just renderDerived(): a category may already be hidden by
+          // the Show dropdown (e.g. the user unchecked "Used" while this
+          // search was still streaming), and applyClientFilters() is the
+          // only thing that sets a newly-rendered card's display:none to
+          // match it — renderDerived() alone only refreshes the dropdown's
+          // count/label, leaving the card itself visible until the next
+          // filter change or this card's search finishes.
+          applyClientFilters();
         } else {
           // Listing already known — either the exact URL, or the same
           // underlying listing under a different URL from another card
@@ -119,7 +126,11 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           if (existingItem && isNewFromThisSearch && !existingItem.isNewFromSearch) {
             existingItem.isNewFromSearch = true;
             renderCard(existingItem);
-            renderDerived();
+            // This flips the item's category (used → new), which can flip
+            // its Show-dropdown visibility too — applyClientFilters(), not
+            // just renderDerived(), keeps the card in sync (see the comment
+            // on the sibling call above).
+            applyClientFilters();
           }
           // The group count may still change, since it dedupes per group
           // rather than globally.
