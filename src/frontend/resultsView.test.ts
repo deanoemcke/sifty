@@ -135,11 +135,15 @@ describe('renderDerived', () => {
     expect(document.getElementById('showFilteredCount')?.textContent).toBe('(1)');
   });
 
-  it('disables the ai-filter button and shows the empty state when the prompt is blank', () => {
+  it('visually disables (but keeps clickable) the ai-filter button when the prompt is blank', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     renderDerived();
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
-    expect(filterBtn.disabled).toBe(true);
+    // Not the native `disabled` attribute: on the mobile full-screen sheet
+    // this button is also the sheet's sole dismiss control, so it must stay
+    // clickable even with a blank prompt — see renderAiFilterButton.
+    expect(filterBtn.disabled).toBe(false);
+    expect(filterBtn.getAttribute('aria-disabled')).toBe('true');
     expect(filterBtn.textContent).toBe('Filter');
   });
 
@@ -149,6 +153,7 @@ describe('renderDerived', () => {
     renderDerived();
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
     expect(filterBtn.disabled).toBe(false);
+    expect(filterBtn.hasAttribute('aria-disabled')).toBe(false);
   });
 
   it('shows a spinner and disables the ai-filter button while the ai filter is running', () => {

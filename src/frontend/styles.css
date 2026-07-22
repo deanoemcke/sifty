@@ -434,7 +434,7 @@ label {
   background: var(--primary);
   color: white;
 }
-.btn-primary:hover:not(:disabled) {
+.btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--primary-hover);
   box-shadow: 0 1px 4px rgba(37, 99, 235, 0.3);
 }
@@ -455,6 +455,13 @@ label {
   background: #fee2e2;
 }
 .btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* #aiFilterBtn with a blank prompt: looks disabled but stays clickable, since
+   on the mobile full-screen sheet it's also the sheet's only dismiss control —
+   see renderAiFilterButton in resultsView.ts. */
+.btn[aria-disabled="true"] {
   opacity: 0.4;
   cursor: not-allowed;
 }

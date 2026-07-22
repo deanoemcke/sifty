@@ -303,6 +303,49 @@ describe('initApp() wiring', () => {
       await vi.waitFor(() => expect(aiFilterBtn.disabled).toBe(false));
       expect(aiFilterBtn.textContent).toBe('Filter');
     });
+
+    // On the mobile full-screen sheet, #aiFilterBtn is the only dismiss
+    // control (no outside-tap region, no close icon — see aiFilterDropdown.ts
+    // and the `≤640px` rules in styles.css). It must stay clickable even with
+    // a blank prompt, or the sheet becomes stuck open: a native `disabled`
+    // button never fires `click` in any browser, regardless of what the
+    // handler would have done.
+    it('closes the mobile sheet when tapped with a blank prompt', async () => {
+      const originalMatchMedia = window.matchMedia;
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: (query: string) => ({
+          matches: true,
+          media: query,
+          onchange: null,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }),
+      });
+
+      const { toggleAiFilterDropdownPanel } = await import('./aiFilterDropdown');
+      await import('./app');
+
+      const aiFilterPanel = document.getElementById('aiFilterPanel') as HTMLElement;
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+
+      toggleAiFilterDropdownPanel();
+      expect(aiFilterPanel.classList.contains('ai-filter-panel-collapsed')).toBe(false);
+
+      aiFilterBtn.click();
+
+      expect(aiFilterPanel.classList.contains('ai-filter-panel-collapsed')).toBe(true);
+
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    });
   });
 
   describe('Sort dropdown control', () => {
