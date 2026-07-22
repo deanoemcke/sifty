@@ -875,6 +875,15 @@ const DETAILS_HEADING_SELECTOR = 'h2:has-text("Details")';
 const LOGIN_WALL_PROBE_SELECTOR =
   '#login_popup_cta_form, form[action*="/login/device-based/"], input[name="email"]';
 
+// Timeout for waiting on listing details to render. Capped near the pre-pooling
+// fixed-sleep baseline (3000ms) rather than the login-wall race's unrelated
+// 8000ms figure — for listings with no Details card at all (an expected case,
+// noted below), waiting longer than ~4s is regression, not a necessary wait.
+// Trade-off: a genuinely slow (but real) Details card rendering between 4s–8s
+// will now be missed. This timeout should ideally be tuned to real observed
+// listing-load latencies rather than an inherited default.
+const DETAIL_WAIT_TIMEOUT_MS = 4000;
+
 // Facebook's detail page has no "hydration complete" event to await, so this
 // races two real DOM signals instead of guessing a fixed delay: the "Details"
 // card heading (the strongest signal listing content has rendered) and the
@@ -885,8 +894,8 @@ const LOGIN_WALL_PROBE_SELECTOR =
 // uses for the equivalent quick-search case.
 async function waitForListingDetailReadyAsync(page: Page): Promise<void> {
   await Promise.any([
-    page.waitForSelector(DETAILS_HEADING_SELECTOR, { timeout: 8000 }),
-    page.waitForSelector(LOGIN_WALL_PROBE_SELECTOR, { timeout: 8000 }),
+    page.waitForSelector(DETAILS_HEADING_SELECTOR, { timeout: DETAIL_WAIT_TIMEOUT_MS }),
+    page.waitForSelector(LOGIN_WALL_PROBE_SELECTOR, { timeout: DETAIL_WAIT_TIMEOUT_MS }),
   ]).catch(() => undefined);
 }
 
