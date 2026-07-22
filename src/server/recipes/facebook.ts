@@ -1,4 +1,4 @@
-import { type Browser, type BrowserContext, chromium, type Page } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import { enqueue } from '../../lib/queue';
 import type {
   AiConfig,
@@ -482,10 +482,10 @@ async function runQuickSearchAsync(
   onEvent: (event: QuickSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
   try {
-    browser = await chromium.launch({ headless: true });
-    const context = await createFbContext(browser);
+    const browser = await getSharedBrowserAsync('facebook');
+    context = await createFbContext(browser);
     const page = await context.newPage();
     await maskHeadless(page);
 
@@ -641,7 +641,7 @@ async function runQuickSearchAsync(
     console.log(`[facebook] error:`, error);
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser?.close();
+    await context?.close();
   }
 }
 

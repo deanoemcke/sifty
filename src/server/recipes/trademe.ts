@@ -703,10 +703,12 @@ async function runQuickSearchAsync(
   onEvent: (event: QuickSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  const browser = await chromium.launch({ headless: true });
+  let context: BrowserContext | undefined;
   try {
-    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
-    const page = await context.newPage();
+    const browser = await getSharedBrowserAsync('trademe');
+    const activeContext = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    context = activeContext;
+    const page = await activeContext.newPage();
 
     onEvent({ type: 'progress', phase: 'paging', page: 1 });
     const { promise: p1Promise } = waitForSearchApiResponseAsync(page);
@@ -800,7 +802,7 @@ async function runQuickSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser.close();
+    await context?.close();
   }
 }
 

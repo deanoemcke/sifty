@@ -149,8 +149,11 @@ const {
     };
   }
 
-  // Tracks how many mocked Chromium instances are live at once, so tests can
-  // assert that concurrent quick searches do (or don't) stack browser sessions.
+  // Tracks how many browser contexts are live at once, so tests can assert
+  // that concurrent quick searches do (or don't) stack overlapping sessions.
+  // Counted at the context level rather than chromium.launch() — quick search
+  // and deep search now share one pooled browser (see browserPool.ts), so a
+  // fresh context per call is the real per-session resource, not a fresh browser.
   const browserSessionTracker = {
     activeCount: 0,
     maxActiveCount: 0,
@@ -251,19 +254,23 @@ const {
 
 vi.mock('playwright', () => ({
   chromium: {
-    launch: async () => {
-      browserSessionTracker.activeCount++;
-      browserSessionTracker.maxActiveCount = Math.max(
-        browserSessionTracker.maxActiveCount,
-        browserSessionTracker.activeCount
-      );
-      return {
-        newContext: async () => ({ newPage: async () => getNextPage() }),
-        close: async () => {
-          browserSessionTracker.activeCount--;
-        },
-      };
-    },
+    launch: async () => ({
+      newContext: async () => {
+        browserSessionTracker.activeCount++;
+        browserSessionTracker.maxActiveCount = Math.max(
+          browserSessionTracker.maxActiveCount,
+          browserSessionTracker.activeCount
+        );
+        return {
+          newPage: async () => getNextPage(),
+          close: async () => {
+            browserSessionTracker.activeCount--;
+          },
+        };
+      },
+      close: async () => {},
+      isConnected: () => true,
+    }),
   },
 }));
 
