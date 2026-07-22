@@ -157,6 +157,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
     const waitForSelectorCalls: string[] = [];
     const wheelCalls = { count: 0 };
     const listingsSelectorAttemptCounts = { count: 0 };
+    const waitForTimeoutCalls: number[] = [];
 
     return {
       goto: async () => {},
@@ -175,7 +176,9 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
           click: async () => {},
         }),
       }),
-      waitForTimeout: async () => {},
+      waitForTimeout: async (ms: number) => {
+        waitForTimeoutCalls.push(ms);
+      },
       waitForSelector: async (selector: string) => {
         waitForSelectorCalls.push(selector);
         // Model page state ("listings selector starts matching after N asks"),
@@ -218,6 +221,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } =
       close: async () => {},
       waitForSelectorCalls,
       wheelCalls,
+      waitForTimeoutCalls,
     };
   }
 
@@ -242,10 +246,12 @@ vi.mock('playwright', () => ({
         newContext: async () => ({
           newPage: async () => getNextPage(),
           addCookies: async () => {},
+          close: async () => {},
         }),
         close: async () => {
           browserSessionTracker.activeCount--;
         },
+        isConnected: () => true,
       };
     },
   },
@@ -2082,5 +2088,24 @@ describe('facebookRecipe.deepSearchAsync', () => {
     expect(detailErrorEvent).toBeDefined();
     expect(detailErrorEvent?.message).toMatch(/Facebook requires login/);
     expect(events).toContainEqual({ type: 'complete' });
+  });
+
+  it('waits on real DOM signals instead of a fixed sleep before reading the page', async () => {
+    const okBodyText = 'Item\nDetails\nCondition\nUsed\nA great chair.\nSee more\n';
+    const okPage = makeFacebookPage({ domLoginWall: false, bodyText: okBodyText });
+    resetPageQueue(okPage);
+
+    const listingOk = buildFacebookListing(
+      'https://www.facebook.com/marketplace/item/1/',
+      undefined,
+      'Chair',
+      50,
+      'Auckland'
+    );
+
+    await facebookRecipe.deepSearchAsync([listingOk], () => {});
+
+    expect(okPage.waitForSelectorCalls).toContain('h2:has-text("Details")');
+    expect(okPage.waitForTimeoutCalls).toEqual([]);
   });
 });

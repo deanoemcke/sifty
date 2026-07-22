@@ -1,4 +1,4 @@
-import { chromium, type Page, type Response } from 'playwright';
+import { type BrowserContext, chromium, type Page, type Response } from 'playwright';
 import { enqueue } from '../../lib/queue';
 import type {
   DeepSearchDetail,
@@ -15,6 +15,7 @@ import type {
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { hashFingerprintParts } from '../alerts';
+import { getSharedBrowserAsync } from '../browserPool';
 import {
   MAX_PAGES_PER_SEARCH,
   MAX_RESULTS_PER_URL,
@@ -808,14 +809,16 @@ async function deepSearchAsync(
   onEvent: (event: DeepSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  const browser = await chromium.launch({ headless: true });
+  let context: BrowserContext | undefined;
   try {
-    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const browser = await getSharedBrowserAsync('trademe');
+    const activeContext = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    context = activeContext;
 
     await Promise.all(
       listings.map((listing, listingIndex) =>
         enqueue(listing.url, async () => {
-          const currentPage = await context.newPage();
+          const currentPage = await activeContext.newPage();
           if (isCancelled?.()) {
             await currentPage.close();
             return;
@@ -847,7 +850,7 @@ async function deepSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser.close();
+    await context?.close();
   }
 }
 

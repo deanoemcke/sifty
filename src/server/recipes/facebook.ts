@@ -15,6 +15,7 @@ import type {
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { hashFingerprintParts } from '../alerts';
+import { getSharedBrowserAsync } from '../browserPool';
 import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
 import { getRegions, type RegionEntry } from '../services/regions';
 
@@ -131,15 +132,14 @@ function toPlaywrightCookies(
   }));
 }
 
-async function createContext(): Promise<{ browser: Browser; context: BrowserContext }> {
+async function createFbContext(browser: Browser): Promise<BrowserContext> {
   const cookies = parseFbCookies(process.env.FB_COOKIES);
 
-  const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
   await context.addCookies(toPlaywrightCookies(cookies));
   console.log(`[facebook] loaded ${cookies.length} cookies from FB_COOKIES`);
 
-  return { browser, context };
+  return context;
 }
 
 // tsx (used by the scheduler) transforms with esbuild's keepNames:true, which
@@ -484,9 +484,9 @@ async function runQuickSearchAsync(
 ): Promise<void> {
   let browser: Browser | undefined;
   try {
-    const browserSetup = await createContext();
-    browser = browserSetup.browser;
-    const page = await browserSetup.context.newPage();
+    browser = await chromium.launch({ headless: true });
+    const context = await createFbContext(browser);
+    const page = await context.newPage();
     await maskHeadless(page);
 
     const seen = new Set<string>();
@@ -867,13 +867,36 @@ export function buildFacebookPhotosFromUrls(urls: string[]): ListingPhoto[] | un
   return urls.map((url) => ({ thumbnailUrl: url, fullSizeUrl: url }));
 }
 
+const DETAILS_HEADING_SELECTOR = 'h2:has-text("Details")';
+// Cheaper proxy for detectLoginWallAsync's full domMatch check (which also
+// requires a paired password input) — good enough to end the race early; the
+// real evaluateLoginWallSignals call right after this still makes the
+// authoritative call.
+const LOGIN_WALL_PROBE_SELECTOR =
+  '#login_popup_cta_form, form[action*="/login/device-based/"], input[name="email"]';
+
+// Facebook's detail page has no "hydration complete" event to await, so this
+// races two real DOM signals instead of guessing a fixed delay: the "Details"
+// card heading (the strongest signal listing content has rendered) and the
+// login-wall markup (so a blocked page doesn't sit through the full timeout
+// before detectLoginWallAsync below notices it). Some listings genuinely have
+// no Details card at all — for those, both waits time out and the page is
+// still treated as settled, the same fallback classifyInitialSearchStateAsync
+// uses for the equivalent quick-search case.
+async function waitForListingDetailReadyAsync(page: Page): Promise<void> {
+  await Promise.any([
+    page.waitForSelector(DETAILS_HEADING_SELECTOR, { timeout: 8000 }),
+    page.waitForSelector(LOGIN_WALL_PROBE_SELECTOR, { timeout: 8000 }),
+  ]).catch(() => undefined);
+}
+
 export async function fetchFacebookListingDetailAsync(
   page: Page,
   url: string
 ): Promise<DeepSearchDetail> {
   console.log(`[facebook] fetching: ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(3000);
+  await waitForListingDetailReadyAsync(page);
 
   if (await detectLoginWallAsync(page)) {
     throw new Error(LOGIN_REQUIRED_MESSAGE);
@@ -883,7 +906,13 @@ export async function fetchFacebookListingDetailAsync(
   const seeMoreBtn = page.getByRole('button', { name: 'See more' }).first();
   if (await seeMoreBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await seeMoreBtn.click();
-    await page.waitForTimeout(500);
+    // Facebook flips the button's accessible name to "See less" once the
+    // expanded text has actually rendered — a real signal instead of a guess.
+    await page
+      .getByRole('button', { name: 'See less' })
+      .first()
+      .waitFor({ state: 'visible', timeout: 2000 })
+      .catch(() => undefined);
   }
 
   const cardData = await page.evaluate(extractFacebookDetailsCardData);
@@ -915,15 +944,16 @@ async function deepSearchAsync(
   onEvent: (event: DeepSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
   try {
-    const browserSetup = await createContext();
-    browser = browserSetup.browser;
+    const browser = await getSharedBrowserAsync('facebook');
+    const activeContext = await createFbContext(browser);
+    context = activeContext;
 
     await Promise.all(
       listings.map((listing, listingIndex) =>
         enqueue(listing.url, async () => {
-          const currentPage = await browserSetup.context.newPage();
+          const currentPage = await activeContext.newPage();
           if (isCancelled?.()) {
             await currentPage.close();
             return;
@@ -956,7 +986,7 @@ async function deepSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser?.close();
+    await context?.close();
   }
 }
 
