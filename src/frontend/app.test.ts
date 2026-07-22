@@ -515,6 +515,68 @@ describe('initApp() wiring', () => {
       expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(true);
     });
 
+    // On the mobile full-screen sheet, opening the panel pushes a history
+    // marker (pushModalHistoryEntry in modalOverlay.ts) so the sheet can be
+    // dismissed by consuming it via history.back() — but that marker was
+    // pushed *before* the checkbox toggle below updates the address bar's
+    // `show` param (syncUrlToState in app.ts's handleShowCategoryToggle).
+    // Going back from it lands on the pre-open URL, which still has the old
+    // `show` value. The window-level popstate listener in app.ts re-derives
+    // *all* state from whatever URL it lands on (applyUrlState) for every
+    // popstate — including this one — so without a fix, dismissing the sheet
+    // via its own footer button silently reverts the very toggle the user
+    // just made. Dropdowns are documented as "intentionally outside the URL
+    // schema" (modalOverlay.ts's header comment) specifically so their own
+    // history bookkeeping doesn't feed back into real app state like this.
+    it('closing the mobile Show sheet via the footer button does not revert the filter toggle made while it was open', async () => {
+      const originalMatchMedia = window.matchMedia;
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: () => ({
+          matches: true,
+          media: '',
+          onchange: null,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }),
+      });
+
+      await import('./app');
+      const state = await import('./state');
+
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      const usedCheckbox = document.getElementById('showUsed') as HTMLInputElement;
+      usedCheckbox.checked = false;
+      usedCheckbox.dispatchEvent(new Event('change'));
+      expect(state.visibleListingCategories.has('used')).toBe(false);
+
+      // history.back() is real navigation — asynchronous even in jsdom — so
+      // mock it and simulate its eventual effect ourselves, matching the
+      // existing "real back navigation" tests for the listing modal above.
+      const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+      document.getElementById('showDropdownFooterBtn')?.dispatchEvent(new Event('click'));
+      expect(backSpy).toHaveBeenCalledTimes(1);
+
+      // Simulate the browser having actually navigated back to the entry
+      // that predates the sheet opening (no `show` param) before its
+      // popstate event fires — this is what going back one step past
+      // syncUrlToState's replaceState update really lands on.
+      history.replaceState(null, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      expect(state.visibleListingCategories.has('used')).toBe(false);
+
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    });
+
     it('opening the Sort panel closes an open Show panel, and vice versa', async () => {
       await import('./app');
       document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
