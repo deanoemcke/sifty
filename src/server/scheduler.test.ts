@@ -1,5 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import Database from 'better-sqlite3';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore, QuickSearchEvent, Recipe } from '../lib/recipes/base';
 import { makeListing } from '../lib/testFixtures';
 
@@ -24,8 +27,10 @@ import { getRecipeForUrl } from './recipes/registry';
 import {
   AI_FILTER_TIMEOUT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
+  runImmediatePopulationRunAsync,
   runSchedulerAsync,
   SCRAPE_TIMEOUT_MS,
+  triggerImmediatePopulationRunAsync,
 } from './scheduler';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
@@ -892,5 +897,223 @@ describe('runSchedulerAsync', () => {
 
     expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith(undefined);
     expect(sendNotificationAsync.mock.calls[0][1]?.image).toBeUndefined();
+  });
+});
+
+function tempLockPath(): string {
+  return path.join(
+    os.tmpdir(),
+    `sifty-scheduler-immediate-test-${Date.now()}-${Math.random()}.lock`
+  );
+}
+
+describe('runImmediatePopulationRunAsync', () => {
+  let lockPath: string;
+
+  beforeEach(() => {
+    lockPath = tempLockPath();
+  });
+
+  afterEach(() => {
+    if (lockPath && fs.existsSync(lockPath)) fs.rmSync(lockPath);
+  });
+
+  it('redoes the population pass even when has_completed_population_run is already 1, without notifying', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    // First run establishes history the normal way (population run).
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const newListing = makeListing({ title: 'New chair', url: 'https://example.com/new' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
+    const sendNotificationAsync = vi.fn();
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    // Redone as a silent population pass: no notification, both listings
+    // recorded (the pre-existing one via INSERT OR IGNORE, left untouched;
+    // the new one added silently), flag still set.
+    expect(sendNotificationAsync).not.toHaveBeenCalled();
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
+  });
+
+  it('leaves pre-existing alerted_listings rows untouched', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    const beforeRow = db
+      .prepare('SELECT created_at FROM alerted_listings WHERE saved_search_id = ?')
+      .get(searchId) as { created_at: number };
+    stmtClearSearch(db).run();
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    const afterRow = db
+      .prepare('SELECT created_at FROM alerted_listings WHERE saved_search_id = ?')
+      .get(searchId) as { created_at: number };
+    expect(afterRow.created_at).toBe(beforeRow.created_at);
+  });
+
+  it('updates last_run_at', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).not.toBeNull();
+  });
+
+  it('resolves without touching the DB row when the lock is already held', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, String(process.pid));
+
+    await expect(
+      runImmediatePopulationRunAsync(
+        searchId,
+        { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+        lockPath
+      )
+    ).resolves.toBeUndefined();
+
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+  });
+
+  it('resolves without throwing when the saved search no longer exists', async () => {
+    const db = freshDb();
+
+    await expect(
+      runImmediatePopulationRunAsync(
+        'missing-id',
+        { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+        lockPath
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  it('releases the lock after finishing, so a subsequent call can acquire it', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+});
+
+describe('triggerImmediatePopulationRunAsync', () => {
+  let lockPath: string;
+
+  beforeEach(() => {
+    lockPath = tempLockPath();
+  });
+
+  afterEach(() => {
+    if (lockPath && fs.existsSync(lockPath)) fs.rmSync(lockPath);
+  });
+
+  it('never throws synchronously, even if the underlying run eventually rejects', async () => {
+    const db = freshDb();
+    // Corrupt urls column makes processSavedSearchAsync throw synchronously.
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      expect(() =>
+        triggerImmediatePopulationRunAsync(
+          'search-corrupt',
+          { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+          lockPath
+        )
+      ).not.toThrow();
+      // Give the fire-and-forget promise a tick to settle.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('is fire-and-forget: returns before the underlying population run completes', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    let resolveScrape: () => void = () => {};
+    const blockedRecipe: Recipe = {
+      name: 'blocked',
+      matches: () => true,
+      extractImplicitFilters: () => [],
+      quickSearchAsync: async (_url, onEvent) => {
+        await new Promise<void>((resolve) => {
+          resolveScrape = resolve;
+        });
+        onEvent({ type: 'complete' });
+      },
+      deepSearchAsync: async () => {},
+      computeAlertFingerprint: stubComputeAlertFingerprint,
+    };
+    vi.mocked(getRecipeForUrl).mockReturnValue(blockedRecipe);
+
+    const returnValue = triggerImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(returnValue).toBeUndefined();
+    // The scrape hasn't resolved yet, so last_run_at must still be unset.
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+    resolveScrape();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });

@@ -9,15 +9,21 @@ import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import {
   type SavedSearchRow,
   stmtGetOldestAlertEnabledSavedSearch,
+  stmtGetSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
-import type { SignalNotificationOptions } from './notify';
+import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
 import { logQuickSearchEvent } from './quickSearchLogging';
 import { getRecipeForUrl } from './recipes/registry';
+import {
+  acquireSchedulerLock,
+  DEFAULT_SCHEDULER_LOCK_PATH,
+  releaseSchedulerLock,
+} from './schedulerLock';
 import {
   type AiFilterListing,
   type FilterResultEntry,
@@ -303,4 +309,66 @@ export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerS
   }
   stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
   return { searches: [summary] };
+}
+
+export type ImmediatePopulationRunDeps = {
+  database: Database.Database;
+  cooldownStore: ProviderCooldownStore;
+};
+
+// Forces a fresh, silent population pass for one specific saved search,
+// regardless of whether has_completed_population_run is already set —
+// existing alerted_listings rows are left untouched (population inserts are
+// INSERT OR IGNORE). Reuses the same file lock as scripts/scheduler.ts so
+// this can never run concurrently with a real cron pass; if the lock is
+// already held, this defers gracefully (cron will pick the search up on its
+// own rotation) rather than retrying.
+export async function runImmediatePopulationRunAsync(
+  savedSearchId: string,
+  deps: ImmediatePopulationRunDeps,
+  lockPath: string = DEFAULT_SCHEDULER_LOCK_PATH
+): Promise<void> {
+  const lockResult = acquireSchedulerLock(lockPath);
+  if (!lockResult.acquired) {
+    console.log(
+      `[scheduler] immediate population run for ${savedSearchId} deferred — ${lockResult.reason}`
+    );
+    return;
+  }
+  try {
+    const row = stmtGetSavedSearch(deps.database).get(savedSearchId);
+    if (!row) return; // deleted/renamed away before this ran
+    const resolvedDeps: Required<SchedulerDeps> = {
+      database: deps.database,
+      cooldownStore: deps.cooldownStore,
+      sendNotificationAsync: sendSignalNotificationAsync,
+      now: () => Date.now(),
+    };
+    const summary = await processSavedSearchAsync(
+      { ...row, has_completed_population_run: 0 },
+      resolvedDeps
+    );
+    stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
+    console.log(
+      `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
+    );
+  } finally {
+    releaseSchedulerLock(lockPath);
+  }
+}
+
+// Fire-and-forget wrapper for route handlers — returns void (not a Promise)
+// so a call site can't accidentally await it and block the HTTP response.
+// Any rejection from the underlying run is caught and logged here so it can
+// never become an unhandled promise rejection.
+export function triggerImmediatePopulationRunAsync(
+  savedSearchId: string,
+  deps: ImmediatePopulationRunDeps,
+  lockPath: string = DEFAULT_SCHEDULER_LOCK_PATH
+): void {
+  runImmediatePopulationRunAsync(savedSearchId, deps, lockPath).catch((err) => {
+    console.error(
+      `[scheduler] immediate population run for ${savedSearchId} failed: ${(err as Error).message}`
+    );
+  });
 }

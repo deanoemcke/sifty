@@ -75,12 +75,12 @@ export default defineConfig({
           }
           if (urlPath.startsWith('/api/saved-searches/') && req.method === 'PATCH') {
             const id = urlPath.slice('/api/saved-searches/'.length);
-            await handlePatchSavedSearch(req, res, id);
+            await handlePatchSavedSearch(req, res, id, providerCooldownStore);
             return;
           }
           if (urlPath.startsWith('/api/saved-searches/') && req.method === 'PUT') {
             const id = urlPath.slice('/api/saved-searches/'.length);
-            await handleUpdateSavedSearch(req, res, id);
+            await handleUpdateSavedSearch(req, res, id, providerCooldownStore);
             return;
           }
           if (urlPath === '/api/regions' && req.method === 'GET') {
@@ -120,7 +120,7 @@ export default defineConfig({
             return;
           }
           if (urlPath === '/api/saved-searches') {
-            await handleCreateSavedSearch(req, res);
+            await handleCreateSavedSearch(req, res, providerCooldownStore);
             return;
           }
 
