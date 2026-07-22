@@ -59,7 +59,7 @@ export const NOTIFY_LOOP_TIMEOUT_MS = 5 * 60_000;
 // StartInterval in ai.openclaw.sifty-scheduler.plist, currently 1800s/30min)
 // stays well below it — nothing keeps that plist value and this constant in
 // sync automatically.
-export const TARGET_INTERVAL_MINUTES = 60;
+export const TARGET_INTERVAL_MINUTES = 240;
 
 // Cap on how many due searches to process in a single tick, so a large
 // backlog (e.g. many searches added at once) can't turn one tick into an
