@@ -108,9 +108,19 @@ beforeEach(() => {
     <div id="showDropdown"></div>
   `;
   populateShowControls();
+  // A streamed 'listing' event schedules resultsView.ts's
+  // scheduleClientFilterUpdate() (rafSchedule-coalesced, module-level
+  // pending-frame state) rather than applying it synchronously. Fake timers
+  // here, flushed in afterEach below, stop a frame left pending by one test
+  // (e.g. one that doesn't await it) from silently swallowing the next
+  // test's scheduling call — rafSchedule() no-ops while a frame is already
+  // pending, real or fake.
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -189,6 +199,13 @@ describe('searchUrlCardAsync — Show filter applied to in-flight listings', () 
   // the label read correctly while the card underneath stayed visible — most
   // visible on the mobile Show sheet, which hides the results grid while
   // this desync builds up and then reveals the stale state all at once.
+  //
+  // The per-listing call is scheduled behind rafSchedule (see
+  // scheduleClientFilterUpdate in resultsView.ts) rather than applied
+  // synchronously, so this test flushes the pending animation frame (via the
+  // fake timers already installed in the file-level beforeEach above) before
+  // asserting — otherwise it would only ever be proving the unrelated
+  // post-completion applyClientFilters() sync below.
   it('hides a listing that streams in after the "used" category was hidden mid-search, not just ones already on screen', async () => {
     const card = addSearchableCard();
     // Captured mid-stream, before the post-completion applyClientFilters()
@@ -209,8 +226,11 @@ describe('searchUrlCardAsync — Show filter applied to in-flight listings', () 
         if (callIndex === 1) setListingCategoryVisible('used', false);
         // By callIndex 2, "late" has already been read and processed (its
         // 'listing' event handler ran before this next read is requested),
-        // but the stream hasn't finished yet.
+        // but the stream hasn't finished yet. Flush the one animation frame
+        // the scheduled filter update lags by — still well before the
+        // stream (and its own completion sync) has finished.
         if (callIndex === 2) {
+          vi.advanceTimersByTime(20);
           midStreamLateDisplay = getCardByUrl('https://example.com/late')?.style.display;
         }
       }

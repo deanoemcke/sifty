@@ -202,6 +202,23 @@ export function applyClientFilters(): void {
   renderDerived();
 }
 
+// During an active SSE stream, a 'listing' event can fire once per streamed
+// result — often many times within a single animation frame for a fast
+// stream. applyClientFilters() walks every rendered card, so calling it
+// directly from that per-listing hot path is the same O(n)-per-event,
+// O(n^2)-per-stream shape that scheduleSortOrderUpdate() above already
+// solves for sorting. Reuse the same rafSchedule() coalescing here: a burst
+// of calls collapses into a single sweep on the next frame, using whichever
+// state is current when that frame fires. Only the per-listing streaming
+// call sites in quickSearch.ts should use this — a filter change made
+// directly by the user (e.g. the Show dropdown checkbox) should still call
+// applyClientFilters() synchronously for immediate feedback.
+const scheduleApplyClientFiltersOnNextFrame = rafSchedule(applyClientFilters);
+
+export function scheduleClientFilterUpdate(): void {
+  scheduleApplyClientFiltersOnNextFrame();
+}
+
 // Looks up a listing card by URL. Returns null if not yet rendered.
 export function getCardByUrl(url: string): HTMLElement | null {
   const id = cardIdByUrl.get(url);
