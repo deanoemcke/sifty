@@ -8,9 +8,16 @@ import {
   normalizeListingRelevance,
   searchUrlCardAsync,
 } from './quickSearch';
+import { getCardByUrl } from './resultsView';
 import { cardStatusText } from './searchStatusText';
 import { populateShowControls } from './showDropdown';
-import { listingsByUrl, listingUrlByDedupeKey, resetState, type UrlCardData } from './state';
+import {
+  listingsByUrl,
+  listingUrlByDedupeKey,
+  resetState,
+  setListingCategoryVisible,
+  type UrlCardData,
+} from './state';
 import { cancelSearch, cardStatusSnapshot, removeUrlCard } from './urlCardRow';
 import {
   addUrlCard,
@@ -94,15 +101,26 @@ beforeEach(() => {
   document.body.innerHTML = `
     <div id="resultsSection" class="hidden"></div>
     <div id="urlCardsContainer"></div>
+    <div id="listingsContainer"></div>
     <button id="deepBtn"></button>
     <textarea id="aiFilter"></textarea>
     <button id="aiFilterBtn"></button>
     <div id="showDropdown"></div>
   `;
   populateShowControls();
+  // A streamed 'listing' event schedules resultsView.ts's
+  // scheduleClientFilterUpdate() (rafSchedule-coalesced, module-level
+  // pending-frame state) rather than applying it synchronously. Fake timers
+  // here, flushed in afterEach below, stop a frame left pending by one test
+  // (e.g. one that doesn't await it) from silently swallowing the next
+  // test's scheduling call — rafSchedule() no-ops while a frame is already
+  // pending, real or fake.
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -169,6 +187,58 @@ describe('searchUrlCardAsync — post-stream cancellation disambiguation', () =>
     // never have been added in the first place.
     expect(listingsByUrl.has('https://example.com/late-item')).toBe(false);
     expect(listingsByUrl.size).toBe(0);
+  });
+});
+
+describe('searchUrlCardAsync — Show filter applied to in-flight listings', () => {
+  // renderDerived() (called for every streamed listing) only recomputes the
+  // Show dropdown's live count/label — applyClientFilters() is what actually
+  // sets a card's display:none, and it previously only ran on a checkbox
+  // change or once the whole card's stream finished. A listing that renders
+  // in between those two points ignored the just-toggled filter entirely, so
+  // the label read correctly while the card underneath stayed visible — most
+  // visible on the mobile Show sheet, which hides the results grid while
+  // this desync builds up and then reveals the stale state all at once.
+  //
+  // The per-listing call is scheduled behind rafSchedule (see
+  // scheduleClientFilterUpdate in resultsView.ts) rather than applied
+  // synchronously, so this test flushes the pending animation frame (via the
+  // fake timers already installed in the file-level beforeEach above) before
+  // asserting — otherwise it would only ever be proving the unrelated
+  // post-completion applyClientFilters() sync below.
+  it('hides a listing that streams in after the "used" category was hidden mid-search, not just ones already on screen', async () => {
+    const card = addSearchableCard();
+    // Captured mid-stream, before the post-completion applyClientFilters()
+    // call below would paper over the bug by re-syncing every card at the
+    // very end — expect() can't be called directly inside onBeforeRead since
+    // it runs inside the mocked reader.read(), which quickSearch.ts's own
+    // try/catch around the stream would silently swallow as a search error.
+    let midStreamLateDisplay: string | undefined;
+    stubQuickSearchStream(
+      [
+        'data: {"type":"listing","data":{"source":"trademe","title":"Early","price":10,"location":"","url":"https://example.com/early","isAuction":false,"relevance":0}}\n',
+        'data: {"type":"listing","data":{"source":"trademe","title":"Late","price":10,"location":"","url":"https://example.com/late","isAuction":false,"relevance":0}}\n',
+      ],
+      (callIndex) => {
+        // Simulates unchecking "Used" in the Show dropdown in the gap
+        // between two network reads — after "early" has already streamed in
+        // and rendered, but before "late" arrives.
+        if (callIndex === 1) setListingCategoryVisible('used', false);
+        // By callIndex 2, "late" has already been read and processed (its
+        // 'listing' event handler ran before this next read is requested),
+        // but the stream hasn't finished yet. Flush the one animation frame
+        // the scheduled filter update lags by — still well before the
+        // stream (and its own completion sync) has finished.
+        if (callIndex === 2) {
+          vi.advanceTimersByTime(20);
+          midStreamLateDisplay = getCardByUrl('https://example.com/late')?.style.display;
+        }
+      }
+    );
+
+    await searchUrlCardAsync(card);
+
+    expect(midStreamLateDisplay).toBe('none');
   });
 });
 

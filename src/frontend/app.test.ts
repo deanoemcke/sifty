@@ -303,6 +303,49 @@ describe('initApp() wiring', () => {
       await vi.waitFor(() => expect(aiFilterBtn.disabled).toBe(false));
       expect(aiFilterBtn.textContent).toBe('Filter');
     });
+
+    // On the mobile full-screen sheet, #aiFilterBtn is the only dismiss
+    // control (no outside-tap region, no close icon — see aiFilterDropdown.ts
+    // and the `≤640px` rules in styles.css). It must stay clickable even with
+    // a blank prompt, or the sheet becomes stuck open: a native `disabled`
+    // button never fires `click` in any browser, regardless of what the
+    // handler would have done.
+    it('closes the mobile sheet when tapped with a blank prompt', async () => {
+      const originalMatchMedia = window.matchMedia;
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: (query: string) => ({
+          matches: query === '(max-width: 640px)',
+          media: query,
+          onchange: null,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }),
+      });
+
+      const { toggleAiFilterDropdownPanel } = await import('./aiFilterDropdown');
+      await import('./app');
+
+      const aiFilterPanel = document.getElementById('aiFilterPanel') as HTMLElement;
+      const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+
+      toggleAiFilterDropdownPanel();
+      expect(aiFilterPanel.classList.contains('ai-filter-panel-collapsed')).toBe(false);
+
+      aiFilterBtn.click();
+
+      expect(aiFilterPanel.classList.contains('ai-filter-panel-collapsed')).toBe(true);
+
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    });
   });
 
   describe('Sort dropdown control', () => {
@@ -470,6 +513,76 @@ describe('initApp() wiring', () => {
       document.getElementById('showDropdownFooterBtn')?.dispatchEvent(new Event('click'));
 
       expect(document.getElementById('showDropdownPanel')?.classList.contains('hidden')).toBe(true);
+    });
+
+    // On the mobile full-screen sheet, opening the panel pushes a history
+    // marker (pushModalHistoryEntry in modalOverlay.ts) so the sheet can be
+    // dismissed by consuming it via history.back() — but that marker was
+    // pushed *before* the checkbox toggle below updates the address bar's
+    // `show` param (syncUrlToState in app.ts's handleShowCategoryToggle).
+    // Going back from it lands on the pre-open URL, which still has the old
+    // `show` value. The window-level popstate listener in app.ts re-derives
+    // *all* state from whatever URL it lands on (applyUrlState) for every
+    // popstate — including this one — so without a fix, dismissing the sheet
+    // via its own footer button silently reverts the very toggle the user
+    // just made. Dropdowns are documented as "intentionally outside the URL
+    // schema" (modalOverlay.ts's header comment) specifically so their own
+    // history bookkeeping doesn't feed back into real app state like this.
+    it('closing the mobile Show sheet via the footer button does not revert the filter toggle made while it was open', async () => {
+      const originalMatchMedia = window.matchMedia;
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: (query: string) => ({
+          matches: query === '(max-width: 640px)',
+          media: query,
+          onchange: null,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }),
+      });
+
+      await import('./app');
+      const state = await import('./state');
+
+      document.getElementById('showDropdownBtn')?.dispatchEvent(new Event('click'));
+      const usedCheckbox = document.getElementById('showUsed') as HTMLInputElement;
+      usedCheckbox.checked = false;
+      usedCheckbox.dispatchEvent(new Event('change'));
+      expect(state.visibleListingCategories.has('used')).toBe(false);
+
+      // history.back() is real navigation — asynchronous even in jsdom — so
+      // mock it and simulate its eventual effect ourselves, matching the
+      // existing "real back navigation" tests for the listing modal above.
+      const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+      document.getElementById('showDropdownFooterBtn')?.dispatchEvent(new Event('click'));
+      expect(backSpy).toHaveBeenCalledTimes(1);
+
+      // Simulate the browser having actually navigated back to the entry
+      // that predates the sheet opening (no `show` param) before its
+      // popstate event fires — this is what going back one step past
+      // syncUrlToState's replaceState update really lands on.
+      history.replaceState(null, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+
+      expect(state.visibleListingCategories.has('used')).toBe(false);
+
+      // In-memory state is preserved (asserted above), but the popstate
+      // landed the address bar back on '/' — the pre-open URL, which
+      // predates the checkbox toggle. Reloading, copying the link, or
+      // bookmarking right now must not silently lose that toggle: the
+      // address bar has to be re-synced to match the state it just
+      // protected, not just left wherever history.back() landed.
+      expect(new URLSearchParams(location.search).get('show')).toBe('sold,new');
+
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        configurable: true,
+        value: originalMatchMedia,
+      });
     });
 
     it('opening the Sort panel closes an open Show panel, and vice versa', async () => {
