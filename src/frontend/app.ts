@@ -179,7 +179,17 @@ function initApp(): void {
   // revert it the moment the sheet closes.
   window.addEventListener('popstate', () => {
     handleDropdownPopState();
-    if (consumeModalDismissalPopState()) return;
+    if (consumeModalDismissalPopState()) {
+      // In-memory state is preserved (we skipped applyUrlState above), but
+      // the address bar itself is now the stale pre-open URL landed on by
+      // history.back() — it never picked up any state change synced while
+      // the sheet was open, since that replaceState() targeted the marker
+      // entry, not the one underneath it. Re-derive the URL from current
+      // state so a reload/copy-link/bookmark taken right after this dismissal
+      // doesn't silently lose that change.
+      syncUrlToState({ push: false });
+      return;
+    }
     void applyUrlState(parseUrlState(currentLocationSearchParams()));
   });
 

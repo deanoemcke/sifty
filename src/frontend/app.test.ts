@@ -570,6 +570,14 @@ describe('initApp() wiring', () => {
 
       expect(state.visibleListingCategories.has('used')).toBe(false);
 
+      // In-memory state is preserved (asserted above), but the popstate
+      // landed the address bar back on '/' — the pre-open URL, which
+      // predates the checkbox toggle. Reloading, copying the link, or
+      // bookmarking right now must not silently lose that toggle: the
+      // address bar has to be re-synced to match the state it just
+      // protected, not just left wherever history.back() landed.
+      expect(new URLSearchParams(location.search).get('show')).toBe('sold,new');
+
       Object.defineProperty(window, 'matchMedia', {
         writable: true,
         configurable: true,
