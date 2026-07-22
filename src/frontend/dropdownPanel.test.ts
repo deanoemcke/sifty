@@ -441,6 +441,38 @@ describe('back-button history (mobile full-screen sheet)', () => {
   it('handleDropdownPopState does nothing when no dropdown is open', () => {
     expect(() => handleDropdownPopState()).not.toThrow();
   });
+
+  // Regression test for the race described in the PR #47 review: opening a
+  // second mobile sheet while a first is already open used to run the first
+  // panel's normal close path, which called the asynchronous history.back()
+  // immediately followed, in the same tick, by the second panel's synchronous
+  // history.pushState() — a known browser footgun that can desync
+  // dismissingViaHistoryBack from the popstate it's meant to consume. The
+  // auto-close branch must skip history.back() entirely (this is "one modal
+  // auto-closing another", not a user dismissal) and push exactly once, for
+  // the newly-opened panel.
+  it('switching directly between two mobile sheets does not call history.back()', () => {
+    const restore = stubMobileMatchMedia(true);
+    const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const a = buildDropdownFixture('a');
+    const b = buildDropdownFixture('b');
+    openDropdownPanel(a);
+    openDropdownPanel(b);
+    expect(backSpy).not.toHaveBeenCalled();
+    restore();
+  });
+
+  it('switching directly between two mobile sheets pushes exactly one history entry, for the newly-opened panel', () => {
+    const restore = stubMobileMatchMedia(true);
+    const pushStateSpy = vi.spyOn(history, 'pushState');
+    const a = buildDropdownFixture('a');
+    const b = buildDropdownFixture('b');
+    openDropdownPanel(a);
+    pushStateSpy.mockClear();
+    openDropdownPanel(b);
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
+    restore();
+  });
 });
 
 describe('handleDropdownTabKey (focus trap on the mobile sheet)', () => {
