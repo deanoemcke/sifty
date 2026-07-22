@@ -145,15 +145,23 @@ function aiFilterButtonLabel(listings: ListingItem[]): string {
 }
 
 // Sole writer of the ai-filter button's disabled/label state — disabled with
-// a spinner while a run is in flight, disabled with no criteria typed yet,
-// otherwise enabled and ready to submit. `listings` defaults to
-// getOrderedListings() for the standalone 'input' listener wired in app.ts;
-// renderDerived() passes its own already-computed list instead, so this
-// doesn't recompute it a second time on every streamed listing.
+// a spinner while a run is in flight, otherwise enabled and ready to submit.
+// With no criteria typed yet it's only *visually* disabled (aria-disabled,
+// not the native attribute): on the mobile full-screen sheet this button
+// doubles as the sheet's sole dismiss control (aiFilterDropdown.ts), and a
+// natively disabled button never fires `click` in any browser — that would
+// leave the sheet stuck open with no other way to close it. requestAiFilterRun
+// already no-ops on a blank prompt (aiFilter.ts), so staying clickable here is
+// safe. `listings` defaults to getOrderedListings() for the standalone
+// 'input' listener wired in app.ts; renderDerived() passes its own
+// already-computed list instead, so this doesn't recompute it a second time
+// on every streamed listing.
 export function renderAiFilterButton(listings: ListingItem[] = getOrderedListings()): void {
   const filterBtn = getElement<HTMLButtonElement>('aiFilterBtn');
   const promptIsEmpty = getElement<HTMLTextAreaElement>('aiFilter').value.trim() === '';
-  filterBtn.disabled = isAiFilterRunning || promptIsEmpty;
+  filterBtn.disabled = isAiFilterRunning;
+  if (promptIsEmpty) filterBtn.setAttribute('aria-disabled', 'true');
+  else filterBtn.removeAttribute('aria-disabled');
   // The wrapper markup below (spinner + label span) is fully determined by
   // isAiFilterRunning, so skip recreating it when that hasn't changed:
   // renderDerived() fires once per streamed listing, and recreating the
@@ -192,6 +200,23 @@ export function applyClientFilters(): void {
     }
   }
   renderDerived();
+}
+
+// During an active SSE stream, a 'listing' event can fire once per streamed
+// result — often many times within a single animation frame for a fast
+// stream. applyClientFilters() walks every rendered card, so calling it
+// directly from that per-listing hot path is the same O(n)-per-event,
+// O(n^2)-per-stream shape that scheduleSortOrderUpdate() above already
+// solves for sorting. Reuse the same rafSchedule() coalescing here: a burst
+// of calls collapses into a single sweep on the next frame, using whichever
+// state is current when that frame fires. Only the per-listing streaming
+// call sites in quickSearch.ts should use this — a filter change made
+// directly by the user (e.g. the Show dropdown checkbox) should still call
+// applyClientFilters() synchronously for immediate feedback.
+const scheduleApplyClientFiltersOnNextFrame = rafSchedule(applyClientFilters);
+
+export function scheduleClientFilterUpdate(): void {
+  scheduleApplyClientFiltersOnNextFrame();
 }
 
 // Looks up a listing card by URL. Returns null if not yet rendered.

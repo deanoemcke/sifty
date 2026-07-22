@@ -155,7 +155,19 @@ let openDropdownIds: DropdownElementIds | null = null;
 
 export function openDropdownPanel(elements: DropdownElements): void {
   if (openDropdownIds && openDropdownIds.panel !== elements.panel.id) {
-    closeDropdownPanel(getDropdownElements(openDropdownIds));
+    // "One modal auto-closing another" (see the header comment above), not a
+    // user dismissal — closeDropdownPanel must not pop/history.back() here.
+    // history.back() is asynchronous (its popstate lands on a later task),
+    // while the pushModalHistoryEntry() below for the panel now opening is a
+    // synchronous history.pushState() in the same tick; firing both back to
+    // back races an in-flight back-navigation against an immediate push on
+    // the same history stack, which can desync dismissingViaHistoryBack from
+    // the popstate it's meant to consume (see modalOverlay.ts) and silently
+    // reintroduce the state-reversion bug this file's history bookkeeping
+    // exists to prevent. Skipping the pop here still leaves this panel's own
+    // marker on the stack, so pressing back later closes whichever panel is
+    // actually open, one popstate at a time.
+    closeDropdownPanel(getDropdownElements(openDropdownIds), { isSwitchingToAnotherPanel: true });
   }
   elements.panel.classList.remove(elements.closedClass);
   elements.trigger.setAttribute('aria-expanded', 'true');
@@ -171,6 +183,14 @@ export interface CloseDropdownPanelOptions {
   // the browser back button), so we don't call history.back() again for an
   // entry the back button has already consumed.
   isPopStateTriggered?: boolean;
+  // Set when this close is openDropdownPanel's auto-close branch closing a
+  // different, already-open panel to make room for the one about to open —
+  // "one modal auto-closing another", not a user dismissal. The panel now
+  // opening pushes its own history entry synchronously right after this
+  // call, so popping this panel's marker via the asynchronous
+  // history.back() first would race that push on the same history stack —
+  // see the comment at the openDropdownPanel call site.
+  isSwitchingToAnotherPanel?: boolean;
 }
 
 export function closeDropdownPanel(
@@ -184,7 +204,9 @@ export function closeDropdownPanel(
   elements.panel.classList.add(elements.closedClass);
   elements.trigger.setAttribute('aria-expanded', 'false');
   unlockBodyScroll();
-  if (!options.isPopStateTriggered) popModalHistoryEntryIfPresent();
+  if (!options.isPopStateTriggered && !options.isSwitchingToAnotherPanel) {
+    popModalHistoryEntryIfPresent();
+  }
   if (isFocusInsidePanel) elements.trigger.focus();
   if (openDropdownIds?.panel === elements.panel.id) openDropdownIds = null;
 }

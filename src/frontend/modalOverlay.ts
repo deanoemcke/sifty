@@ -30,6 +30,30 @@ export function pushModalHistoryEntry(): void {
 // history.state itself rather than trusting the caller, so it's safe to call
 // even when no entry was pushed (e.g. a close triggered without a prior
 // open) — it simply no-ops instead of popping an unrelated entry.
+//
+// Set right before history.back() below, so the app-wide popstate listener
+// (app.ts) can tell "this popstate is just the dropdown consuming its own
+// marker" apart from a real back-navigation via consumeModalDismissalPopState.
+// Without this, that listener's applyUrlState() call re-derives *all* state
+// (tab/sort/show/modal) from wherever history.back() lands — which is the
+// entry from *before* the modal opened, predating any state change made
+// while it was open (e.g. a Show-filter toggle) — silently reverting it the
+// moment the sheet closes. Dropdowns are deliberately outside the URL schema
+// (see this file's header comment) precisely so their own bookkeeping must
+// never feed back into real app state like that.
+let dismissingViaHistoryBack = false;
+
 export function popModalHistoryEntryIfPresent(): void {
-  if ((history.state as { siftyModalOpen?: boolean } | null)?.siftyModalOpen) history.back();
+  if ((history.state as { siftyModalOpen?: boolean } | null)?.siftyModalOpen) {
+    dismissingViaHistoryBack = true;
+    history.back();
+  }
+}
+
+// Consumes the flag so it only ever suppresses the one popstate event it
+// caused, never a subsequent, genuine back/forward navigation.
+export function consumeModalDismissalPopState(): boolean {
+  const wasDismissal = dismissingViaHistoryBack;
+  dismissingViaHistoryBack = false;
+  return wasDismissal;
 }
