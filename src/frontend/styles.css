@@ -57,7 +57,7 @@ body.scroll-locked {
   top: 0;
   max-height: 100vh;
   overflow-y: auto;
-  padding: 0.5rem 0.25rem 0;
+  padding: 0.5rem 0.25rem;
 }
 .main-pane {
   flex: 1;
@@ -593,6 +593,7 @@ label {
    trigger only exists for the mobile full-screen sheet, revealed below. */
 #aiFilterDropdown {
   display: none;
+  flex-shrink: 0;
 }
 .dropdown-panel {
   position: absolute;
