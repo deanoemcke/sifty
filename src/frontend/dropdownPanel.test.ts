@@ -15,16 +15,24 @@ import {
   toggleDropdownPanel,
 } from './dropdownPanel';
 
+// Mirrors dropdownPanel.ts's MOBILE_SHEET_MEDIA_QUERY. Kept as a literal
+// rather than imported so this stub only matches the one query it's meant to
+// simulate, not whatever the production module happens to check.
+const MOBILE_SHEET_MEDIA_QUERY = '(max-width: 640px)';
+
 // Stubs window.matchMedia, which jsdom doesn't implement, so tests can
 // exercise the mobile full-screen-sheet branch of dropdownPanel.ts without a
-// real viewport. Returns a restore function to undo the stub.
+// real viewport. Only reports a match for the mobile breakpoint query itself
+// — any other query (e.g. prefers-reduced-motion) always reports no match,
+// so this stub can't silently affect unrelated code that checks a different
+// media query. Returns a restore function to undo the stub.
 function stubMobileMatchMedia(matches: boolean): () => void {
   const originalMatchMedia = window.matchMedia;
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
     value: (query: string) => ({
-      matches,
+      matches: query === MOBILE_SHEET_MEDIA_QUERY && matches,
       media: query,
       onchange: null,
       addListener: () => {},
@@ -61,6 +69,16 @@ function buildDropdownFixture(prefix: string): DropdownElements {
     footer: `${prefix}FooterBtn`,
   });
 }
+
+describe('stubMobileMatchMedia', () => {
+  it('only reports a match for the mobile breakpoint query, not unrelated media queries', () => {
+    const restore = stubMobileMatchMedia(true);
+    expect(window.matchMedia(MOBILE_SHEET_MEDIA_QUERY).matches).toBe(true);
+    expect(window.matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(false);
+    expect(window.matchMedia('(prefers-color-scheme: dark)').matches).toBe(false);
+    restore();
+  });
+});
 
 beforeEach(() => {
   document.body.innerHTML = '';

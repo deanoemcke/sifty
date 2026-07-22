@@ -316,7 +316,7 @@ describe('initApp() wiring', () => {
         writable: true,
         configurable: true,
         value: (query: string) => ({
-          matches: true,
+          matches: query === '(max-width: 640px)',
           media: query,
           onchange: null,
           addListener: () => {},
@@ -533,9 +533,9 @@ describe('initApp() wiring', () => {
       Object.defineProperty(window, 'matchMedia', {
         writable: true,
         configurable: true,
-        value: () => ({
-          matches: true,
-          media: '',
+        value: (query: string) => ({
+          matches: query === '(max-width: 640px)',
+          media: query,
           onchange: null,
           addListener: () => {},
           removeListener: () => {},
