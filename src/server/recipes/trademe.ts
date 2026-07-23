@@ -704,9 +704,15 @@ async function runQuickSearchAsync(
   isCancelled?: () => boolean
 ): Promise<void> {
   let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const browser = await getSharedBrowserAsync('trademe');
-    const activeContext = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const checkout = await getSharedBrowserAsync('trademe');
+    releaseCheckout = checkout.releaseCheckout;
+    const activeContext = await checkout.browser.newContext({
+      userAgent: USER_AGENT,
+      locale: 'en-NZ',
+    });
+    releaseCheckout();
     context = activeContext;
     const page = await activeContext.newPage();
 
@@ -802,6 +808,7 @@ async function runQuickSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
+    releaseCheckout?.();
     await context?.close();
   }
 }
@@ -812,9 +819,15 @@ async function deepSearchAsync(
   isCancelled?: () => boolean
 ): Promise<void> {
   let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const browser = await getSharedBrowserAsync('trademe');
-    const activeContext = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const checkout = await getSharedBrowserAsync('trademe');
+    releaseCheckout = checkout.releaseCheckout;
+    const activeContext = await checkout.browser.newContext({
+      userAgent: USER_AGENT,
+      locale: 'en-NZ',
+    });
+    releaseCheckout();
     context = activeContext;
 
     await Promise.all(
@@ -852,6 +865,7 @@ async function deepSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
+    releaseCheckout?.();
     await context?.close();
   }
 }

@@ -43,9 +43,9 @@ describe('getSharedBrowserAsync', () => {
   it('launches a browser on first use', async () => {
     nextBrowser = makeBrowser('a');
 
-    const browser = await getSharedBrowserAsync('facebook-test-1');
+    const checkout = await getSharedBrowserAsync('facebook-test-1');
 
-    expect(browser).toBe(nextBrowser);
+    expect(checkout.browser).toBe(nextBrowser);
     expect(launchCalls).toEqual(['a']);
   });
 
@@ -54,9 +54,10 @@ describe('getSharedBrowserAsync', () => {
     const key = 'facebook-test-2';
 
     const first = await getSharedBrowserAsync(key);
+    first.releaseCheckout();
     const second = await getSharedBrowserAsync(key);
 
-    expect(second).toBe(first);
+    expect(second.browser).toBe(first.browser);
     expect(launchCalls).toEqual(['b']);
   });
 
@@ -67,7 +68,7 @@ describe('getSharedBrowserAsync', () => {
     nextBrowser = makeBrowser('d');
     const second = await getSharedBrowserAsync('trademe-test-3');
 
-    expect(first).not.toBe(second);
+    expect(first.browser).not.toBe(second.browser);
     expect(launchCalls).toEqual(['c', 'd']);
   });
 
@@ -75,12 +76,13 @@ describe('getSharedBrowserAsync', () => {
     const key = 'facebook-test-4';
     nextBrowser = makeBrowser('e', { connected: false });
     const first = await getSharedBrowserAsync(key);
-    expect(first.isConnected()).toBe(false);
+    first.releaseCheckout();
+    expect(first.browser.isConnected()).toBe(false);
 
     nextBrowser = makeBrowser('f', { connected: true });
     const second = await getSharedBrowserAsync(key);
 
-    expect(second).toBe(nextBrowser);
+    expect(second.browser).toBe(nextBrowser);
     expect(launchCalls).toEqual(['e', 'f']);
   });
 
@@ -89,15 +91,16 @@ describe('getSharedBrowserAsync', () => {
     nextBrowser = makeBrowser('g');
 
     for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
-      const browser = await getSharedBrowserAsync(key);
-      expect(browser).toBe(nextBrowser);
+      const checkout = await getSharedBrowserAsync(key);
+      expect(checkout.browser).toBe(nextBrowser);
+      checkout.releaseCheckout();
     }
     expect(launchCalls).toEqual(['g']);
 
     nextBrowser = makeBrowser('h');
     const recycled = await getSharedBrowserAsync(key);
 
-    expect(recycled).toBe(nextBrowser);
+    expect(recycled.browser).toBe(nextBrowser);
     expect(launchCalls).toEqual(['g', 'h']);
   });
 
@@ -106,7 +109,8 @@ describe('getSharedBrowserAsync', () => {
     nextBrowser = makeBrowser('old');
 
     for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
-      await getSharedBrowserAsync(key);
+      const checkout = await getSharedBrowserAsync(key);
+      checkout.releaseCheckout();
     }
     expect(launchCalls).toEqual(['old']);
 
@@ -119,7 +123,7 @@ describe('getSharedBrowserAsync', () => {
       getSharedBrowserAsync(key),
     ]);
 
-    expect(first).toBe(second);
+    expect(first.browser).toBe(second.browser);
     expect(launchCalls).toEqual(['old', 'new']);
   });
 
@@ -132,7 +136,7 @@ describe('getSharedBrowserAsync', () => {
       getSharedBrowserAsync(key),
     ]);
 
-    expect(first).toBe(second);
+    expect(first.browser).toBe(second.browser);
     expect(launchCalls).toEqual(['first']);
   });
 
@@ -143,12 +147,14 @@ describe('getSharedBrowserAsync', () => {
     nextBrowser = makeBrowser('old', { contexts: openContexts });
 
     for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
-      await getSharedBrowserAsync(key);
+      const checkout = await getSharedBrowserAsync(key);
+      checkout.releaseCheckout();
     }
 
     nextBrowser = makeBrowser('new');
     const recycled = await getSharedBrowserAsync(key);
-    expect(recycled).toBe(nextBrowser);
+    recycled.releaseCheckout();
+    expect(recycled.browser).toBe(nextBrowser);
 
     // The old browser's context is still open — it must not be closed yet.
     await vi.advanceTimersByTimeAsync(2000);
@@ -167,16 +173,91 @@ describe('getSharedBrowserAsync', () => {
     nextBrowser = makeBrowser('stuck', { contexts: stuckContexts });
 
     for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
-      await getSharedBrowserAsync(key);
+      const checkout = await getSharedBrowserAsync(key);
+      checkout.releaseCheckout();
     }
 
     nextBrowser = makeBrowser('fresh');
-    await getSharedBrowserAsync(key);
+    const fresh = await getSharedBrowserAsync(key);
+    fresh.releaseCheckout();
 
     // Mirrors browserPool's RETIRE_DRAIN_TIMEOUT_MS (5 minutes) — the context
     // deliberately never closes, so this exercises the force-close fallback.
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 2000);
 
     expect(closeCalls).toContain('stuck');
+  });
+
+  it('does not close a retiring browser while a checkout is still opening its context, even with zero open contexts', async () => {
+    vi.useFakeTimers();
+    const key = 'facebook-test-pending-checkout';
+    nextBrowser = makeBrowser('old');
+
+    // Leave one checkout short of the recycle boundary, so the next call
+    // below is the one that pushes `uses` to MAX_USES_BEFORE_RECYCLE.
+    for (let i = 0; i < MAX_USES_BEFORE_RECYCLE - 1; i++) {
+      const checkout = await getSharedBrowserAsync(key);
+      checkout.releaseCheckout();
+    }
+
+    // This checkout pushes the recycle boundary but deliberately never
+    // releases its checkout, simulating a caller that is still in the
+    // (synchronous-looking but actually suspendable) gap between receiving
+    // the browser and finishing browser.newContext(...).
+    const staleCheckout = await getSharedBrowserAsync(key);
+    expect(staleCheckout.browser).toBe(nextBrowser);
+
+    nextBrowser = makeBrowser('new');
+    const recycled = await getSharedBrowserAsync(key);
+    recycled.releaseCheckout();
+    expect(recycled.browser).toBe(nextBrowser);
+
+    // The old browser has zero open contexts (browser.contexts() length is
+    // 0, since the caller hasn't created one yet) but still has a pending
+    // checkout — retireBrowserAsync must not close it on that basis alone.
+    expect(staleCheckout.browser.contexts()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(closeCalls).not.toContain('old');
+
+    // Once the caller finishes creating its context (or fails to) and
+    // releases the checkout, the browser is free to close on the next poll.
+    staleCheckout.releaseCheckout();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(closeCalls).toContain('old');
+  });
+
+  it('releaseCheckout is idempotent — a double-release does not cancel out a different pending checkout', async () => {
+    vi.useFakeTimers();
+    const key = 'facebook-test-double-release';
+    nextBrowser = makeBrowser('old');
+
+    // Leave two checkouts short of the boundary, so the next two calls below
+    // are the ones that reach uses === MAX_USES_BEFORE_RECYCLE.
+    for (let i = 0; i < MAX_USES_BEFORE_RECYCLE - 2; i++) {
+      const checkout = await getSharedBrowserAsync(key);
+      checkout.releaseCheckout();
+    }
+
+    const checkoutA = await getSharedBrowserAsync(key);
+    const checkoutB = await getSharedBrowserAsync(key);
+    expect(checkoutA.browser).toBe(nextBrowser);
+    expect(checkoutB.browser).toBe(nextBrowser);
+
+    // Without the idempotency guard, releasing A twice would decrement
+    // pendingCheckouts by 2 — wrongly cancelling out B's still-pending
+    // checkout and letting the browser close while B is mid-checkout.
+    checkoutA.releaseCheckout();
+    checkoutA.releaseCheckout();
+
+    nextBrowser = makeBrowser('new');
+    const recycled = await getSharedBrowserAsync(key);
+    recycled.releaseCheckout();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(closeCalls).not.toContain('old');
+
+    checkoutB.releaseCheckout();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(closeCalls).toContain('old');
   });
 });

@@ -483,9 +483,12 @@ async function runQuickSearchAsync(
   isCancelled?: () => boolean
 ): Promise<void> {
   let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const browser = await getSharedBrowserAsync('facebook');
-    context = await createFbContext(browser);
+    const checkout = await getSharedBrowserAsync('facebook');
+    releaseCheckout = checkout.releaseCheckout;
+    context = await createFbContext(checkout.browser);
+    releaseCheckout();
     const page = await context.newPage();
     await maskHeadless(page);
 
@@ -641,6 +644,7 @@ async function runQuickSearchAsync(
     console.log(`[facebook] error:`, error);
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
+    releaseCheckout?.();
     await context?.close();
   }
 }
@@ -954,9 +958,12 @@ async function deepSearchAsync(
   isCancelled?: () => boolean
 ): Promise<void> {
   let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const browser = await getSharedBrowserAsync('facebook');
-    const activeContext = await createFbContext(browser);
+    const checkout = await getSharedBrowserAsync('facebook');
+    releaseCheckout = checkout.releaseCheckout;
+    const activeContext = await createFbContext(checkout.browser);
+    releaseCheckout();
     context = activeContext;
 
     await Promise.all(
@@ -995,6 +1002,7 @@ async function deepSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
+    releaseCheckout?.();
     await context?.close();
   }
 }

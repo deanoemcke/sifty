@@ -15,6 +15,23 @@ const RETIRE_POLL_INTERVAL_MS = 1000;
 interface PoolEntry {
   browserPromise: Promise<Browser>;
   uses: number;
+  // Reserved the instant a browser is handed out by getSharedBrowserAsync,
+  // released once the caller has created its BrowserContext (or given up
+  // after a failed attempt). This covers the gap between "browser returned"
+  // and "context created", during which browser.contexts().length is still
+  // 0 even though the browser is very much in use — see retireBrowserAsync.
+  pendingCheckouts: number;
+}
+
+// Returned to callers of getSharedBrowserAsync instead of a bare Browser, so
+// the pool can be told when a checkout has finished being turned into a
+// BrowserContext (or failed to). Callers must call releaseCheckout exactly
+// once — on success right after context creation, or on failure via a
+// finally block — so a retiring browser knows this checkout is no longer
+// pending. releaseCheckout is idempotent, safe to call more than once.
+export interface BrowserCheckout {
+  browser: Browser;
+  releaseCheckout: () => void;
 }
 
 const pools = new Map<string, PoolEntry>();
@@ -29,16 +46,30 @@ const pools = new Map<string, PoolEntry>();
 // it never grows unbounded.
 const acquisitionQueues = new Map<string, Promise<unknown>>();
 
-async function retireBrowserAsync(browser: Browser): Promise<void> {
+function reserveCheckout(browser: Browser, entry: PoolEntry): BrowserCheckout {
+  entry.pendingCheckouts++;
+  let released = false;
+  return {
+    browser,
+    releaseCheckout: () => {
+      if (released) return;
+      released = true;
+      entry.pendingCheckouts--;
+    },
+  };
+}
+
+async function retireBrowserAsync(browser: Browser, entry: PoolEntry): Promise<void> {
   const deadline = Date.now() + RETIRE_DRAIN_TIMEOUT_MS;
-  while (browser.contexts().length > 0 && Date.now() < deadline) {
+  while ((entry.pendingCheckouts > 0 || browser.contexts().length > 0) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, RETIRE_POLL_INTERVAL_MS));
   }
-  const remaining = browser.contexts().length;
-  if (remaining > 0) {
+  const remainingContexts = browser.contexts().length;
+  const remainingCheckouts = entry.pendingCheckouts;
+  if (remainingContexts > 0 || remainingCheckouts > 0) {
     console.warn(
-      `[browserPool] retiring browser still had ${remaining} open context(s) after ` +
-        `${RETIRE_DRAIN_TIMEOUT_MS}ms — closing anyway`
+      `[browserPool] retiring browser still had ${remainingContexts} open context(s) and ` +
+        `${remainingCheckouts} pending checkout(s) after ${RETIRE_DRAIN_TIMEOUT_MS}ms — closing anyway`
     );
   }
   await browser.close().catch(() => undefined);
@@ -51,8 +82,12 @@ async function retireBrowserAsync(browser: Browser): Promise<void> {
 // or has served MAX_USES_BEFORE_RECYCLE contexts. Callers create their own
 // BrowserContext per call and are responsible for closing it — this pool never
 // closes an in-use browser itself, only a retired one, and only once its
-// contexts have all closed (see retireBrowserAsync above).
-export async function getSharedBrowserAsync(key: string): Promise<Browser> {
+// pending checkouts have all been released and its contexts have all closed
+// (see retireBrowserAsync above). Callers MUST call the returned
+// releaseCheckout() once their BrowserContext has been created — on success
+// right after creation, or in a finally block if creation throws — otherwise
+// a retiring browser waits needlessly for the drain timeout.
+export async function getSharedBrowserAsync(key: string): Promise<BrowserCheckout> {
   const previousAcquisition = acquisitionQueues.get(key) ?? Promise.resolve();
   const nextAcquisition = previousAcquisition
     .catch(() => undefined)
@@ -61,17 +96,19 @@ export async function getSharedBrowserAsync(key: string): Promise<Browser> {
   return nextAcquisition;
 }
 
-async function acquireBrowserForKeyAsync(key: string): Promise<Browser> {
+async function acquireBrowserForKeyAsync(key: string): Promise<BrowserCheckout> {
   const existing = pools.get(key);
   if (existing) {
     const browser = await existing.browserPromise;
     if (browser.isConnected() && existing.uses < MAX_USES_BEFORE_RECYCLE) {
       existing.uses++;
-      return browser;
+      return reserveCheckout(browser, existing);
     }
-    if (browser.isConnected()) void retireBrowserAsync(browser);
+    if (browser.isConnected()) void retireBrowserAsync(browser, existing);
   }
   const launched = chromium.launch({ headless: true });
-  pools.set(key, { browserPromise: launched, uses: 1 });
-  return launched;
+  const entry: PoolEntry = { browserPromise: launched, uses: 1, pendingCheckouts: 0 };
+  pools.set(key, entry);
+  const browser = await launched;
+  return reserveCheckout(browser, entry);
 }
