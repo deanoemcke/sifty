@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import { makeListing } from '../../lib/testFixtures';
 import { aiJSON } from '../ai';
+import { closeAllPooledBrowsersAsync } from '../browserPool';
 import {
   buildFacebookDeepSearchDetail,
   buildFacebookListing,
@@ -321,8 +322,16 @@ function aiJsonOk(value: unknown) {
   return { kind: 'ok' as const, value };
 }
 
-beforeEach(() => {
+// browserPool.ts's `pools` map is module-level state shared by every test in
+// this file (vitest isolates module state *between* files, not between `it()`
+// blocks within one file) — `getSharedBrowserAsync` is always called with the
+// fixed key 'facebook', so without this reset the first quickSearchAsync/
+// deepSearchAsync test to run would seed the pool and every later test in
+// this file would silently reuse that cached browser and its accumulating
+// use-count instead of getting a fresh one.
+beforeEach(async () => {
   vi.resetAllMocks();
+  await closeAllPooledBrowsersAsync();
 });
 
 describe('extractImplicitFilters', () => {

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore } from '../../lib/recipes/base';
 import { aiJSON } from '../ai';
+import { closeAllPooledBrowsersAsync } from '../browserPool';
 import { ROOT_SEARCH_COMBINED_RESULT_THRESHOLD, ROOT_SEARCH_RESULT_THRESHOLD } from '../constants';
 import {
   type CategoryLegacyPathRow,
@@ -290,6 +291,17 @@ vi.mock('../../lib/queue', async (importOriginal) => {
     return actual.enqueue(url, asyncTask);
   }
   return { ...actual, enqueue: trackingEnqueue };
+});
+
+// browserPool.ts's `pools` map is module-level state shared by every test in
+// this file (vitest isolates module state *between* files, not between `it()`
+// blocks within one file) — `getSharedBrowserAsync` is always called with the
+// fixed key 'trademe', so without this reset the first quickSearchAsync test
+// to run would seed the pool and every later test in this file would silently
+// reuse that cached browser and its accumulating use-count instead of getting
+// a fresh one.
+beforeEach(async () => {
+  await closeAllPooledBrowsersAsync();
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
