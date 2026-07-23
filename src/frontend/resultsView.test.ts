@@ -1,12 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requireChild } from './domUtils';
-import {
-  closeDropdownPanel,
-  type DropdownElements,
-  getDropdownElements,
-  openDropdownPanel,
-} from './dropdownPanel';
 import { djb2Hash } from './renderUtils';
 import {
   applyClientFilters,
@@ -26,7 +20,6 @@ import {
   resetState,
   setIsAiFilterRunning,
   setListingCategoryVisible,
-  setOpenModalListingUrl,
   setSortBy,
   type UrlCardData,
 } from './state';
@@ -620,92 +613,6 @@ describe('applyClientFilters', () => {
   });
 });
 
-// Regression coverage for the modal-flicker bug: document.startViewTransition
-// snapshots the whole page, and only listing cards (and, since the dropdown
-// panels were given their own view-transition-name in styles.css, the
-// dropdown panels) opt out via view-transition-name. The listing modal never
-// does, so it falls into the browser's implicit "root" capture group and can
-// flash a stale snapshot over itself whenever a grid sweep fires while it's
-// open. Skipping the transition entirely while it's open removes that
-// stale-snapshot window. Dropdown panels no longer need this guard — see the
-// 'starts a view transition ... when a dropdown is open' test below.
-describe('runWithViewTransition guard (overlay open)', () => {
-  function renderListing(url: string, overrides: Partial<ListingItem> = {}): void {
-    const item = makeListingItem({
-      data: makeListing({ url, title: url, price: null, location: '' }),
-      ...overrides,
-    });
-    listingsByUrl.set(url, item);
-    addCardWithListings([url]);
-    renderCard(item);
-  }
-
-  function buildDropdownFixture(): DropdownElements {
-    const root = document.createElement('div');
-    root.innerHTML = `
-      <button id="ddBtn" type="button" aria-expanded="false">
-        <span class="dropdown-trigger-label">dd</span>
-        <svg class="dropdown-caret"></svg>
-      </button>
-      <div id="ddPanel" class="hidden"></div>
-      <button id="ddFooterBtn" type="button">dd</button>
-    `;
-    document.body.appendChild(root);
-    return getDropdownElements({ trigger: 'ddBtn', panel: 'ddPanel', footer: 'ddFooterBtn' });
-  }
-
-  let startViewTransitionSpy: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    startViewTransitionSpy = vi.fn((fn: () => void) => {
-      fn();
-      return {
-        ready: Promise.resolve(),
-        finished: Promise.resolve(),
-        updateCallbackDone: Promise.resolve(),
-        skipTransition: () => {},
-      };
-    });
-    document.startViewTransition =
-      startViewTransitionSpy as unknown as typeof document.startViewTransition;
-  });
-
-  afterEach(() => {
-    // @ts-expect-error cleaning up the jsdom global stubbed above
-    delete document.startViewTransition;
-  });
-
-  it('starts a view transition for a grid update when no overlay is open', () => {
-    renderListing('https://l/1');
-    applyClientFilters();
-    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('skips the view transition when the listing modal is open', () => {
-    renderListing('https://l/1');
-    setOpenModalListingUrl('https://l/1');
-    applyClientFilters();
-    expect(startViewTransitionSpy).not.toHaveBeenCalled();
-  });
-
-  it('still starts a view transition when a dropdown is open', () => {
-    renderListing('https://l/1');
-    const dropdown = buildDropdownFixture();
-    openDropdownPanel(dropdown);
-    applyClientFilters();
-    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
-    closeDropdownPanel(dropdown);
-  });
-
-  it('still applies the DOM mutation when the transition is skipped for an open modal', () => {
-    renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
-    setOpenModalListingUrl('https://l/1');
-    setListingCategoryVisible('sold', false);
-    applyClientFilters();
-    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
-  });
-});
-
 // Regression coverage for the SSE hot-path cost of applyClientFilters(): a
 // 'listing' event fires once per streamed result, so calling
 // applyClientFilters() (a full-list DOM sweep) directly from that handler is
@@ -777,62 +684,45 @@ describe('scheduleClientFilterUpdate', () => {
 });
 
 // Regression coverage: a streamed 'listing' SSE event calls renderCard()
-// (which schedules the new card's entering->revealed transition) and
+// (which schedules the new card's entering->revealed fade) and
 // scheduleClientFilterUpdate() (which schedules a filter sweep) in the same
-// synchronous tick, so both land in the same animation frame. Each used to
-// start its own document.startViewTransition — the second call aborts the
-// first, so the earlier mutation gets flushed unanimated (cards "snap in"
-// instead of fading). All per-frame grid mutations must instead land inside
-// one shared transition.
-describe('frame mutation coalescing (single view transition per frame)', () => {
-  let startViewTransitionSpy: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    startViewTransitionSpy = vi.fn((fn: () => void) => {
-      fn();
-      return {
-        ready: Promise.resolve(),
-        finished: Promise.resolve(),
-        updateCallbackDone: Promise.resolve(),
-        skipTransition: () => {},
-      };
-    });
-    document.startViewTransition =
-      startViewTransitionSpy as unknown as typeof document.startViewTransition;
-  });
-
-  afterEach(() => {
-    // @ts-expect-error cleaning up the jsdom global stubbed above
-    delete document.startViewTransition;
-  });
-
-  it('coalesces a same-frame card reveal and filter sweep into a single view transition', () => {
+// synchronous tick, so both land in the same animation frame. They share one
+// rafSchedule-coalesced flush (pendingFrameMutations/flushFrameMutations in
+// resultsView.ts) rather than each independently scheduling its own frame,
+// so a fast burst never redoes the O(n) filter sweep more than once per
+// frame.
+describe('frame mutation coalescing (single flush per frame)', () => {
+  it('coalesces a same-frame card reveal and filter sweep into a single animation frame', () => {
     const item = makeListingItemAt('https://l/1');
     listingsByUrl.set('https://l/1', item);
     addCardWithListings(['https://l/1']);
+
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
 
     renderCard(item);
     setListingCategoryVisible('used', false);
     scheduleClientFilterUpdate();
 
+    expect(rafSpy).toHaveBeenCalledTimes(1);
+
     vi.advanceTimersByTime(20);
 
-    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
     const card = getCardByUrl('https://l/1') as HTMLElement;
     expect(card.classList.contains('entering')).toBe(false);
     expect(card.style.display).toBe('none');
   });
 
-  it('does not start an empty follow-up transition after a synchronous applyClientFilters call absorbs the pending frame', () => {
+  it('does not redo work when an already-scheduled frame fires after a synchronous applyClientFilters call absorbed it', () => {
     const item = makeListingItemAt('https://l/1');
     listingsByUrl.set('https://l/1', item);
     addCardWithListings(['https://l/1']);
 
-    renderCard(item);
-    applyClientFilters();
+    renderCard(item); // schedules a frame for the card reveal
+    applyClientFilters(); // absorbs it synchronously, clearing both pending flags
 
-    vi.advanceTimersByTime(20);
+    const staleFrameSpy = vi.spyOn(document, 'getElementById');
+    vi.advanceTimersByTime(20); // the now-stale scheduled frame fires and must no-op
 
-    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
+    expect(staleFrameSpy).not.toHaveBeenCalled();
   });
 });

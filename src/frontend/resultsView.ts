@@ -22,43 +22,11 @@ import {
   isDeepSearchRunning,
   type ListingItem,
   listingsByUrl,
-  openModalListingUrl,
   sortBy,
   urlCardDataById,
   visibleListingCategories,
 } from './state';
 import { updateUrlGroupHeaders } from './urlGroupsView';
-
-// Runs `fn`'s DOM mutation inside a View Transition so cards that pop in/out
-// or change position (grid reflow) animate instead of snapping. Falls back
-// to a plain synchronous call when the API isn't available (older browsers,
-// and jsdom in tests) — no polyfill, the mutation still happens either way.
-//
-// Also falls back to a plain call while the listing modal is open: only
-// cards opt out of the transition's implicit "root" capture (via
-// view-transition-name on the card element), and the modal never sets one,
-// so it gets swept into that root snapshot on every grid update. The browser
-// paints that snapshot in the top layer, above the whole normal stacking
-// context regardless of z-index, so an unrelated grid sweep could flash a
-// stale frame of the modal over the live one. Skipping the transition while
-// it's open removes the snapshot entirely rather than trying to out-rank it
-// with stacking-context tricks. The Show/Sort/AI-filter dropdown panels have
-// their own view-transition-name (styles.css) instead, so they don't need
-// this treatment — each gets its own capture group and animates seamlessly.
-function runWithViewTransition(fn: () => void): void {
-  if (!document.startViewTransition || openModalListingUrl !== null) {
-    fn();
-    return;
-  }
-  // A transition started while another is still in flight (e.g. a fast SSE
-  // burst calling this repeatedly) supersedes the prior one, whose promises
-  // then reject with an AbortError. That's expected/harmless here — there's
-  // nothing awaiting the result — but left unhandled it surfaces as an
-  // uncaught console error on every skip, so swallow it explicitly.
-  const transition = document.startViewTransition(fn);
-  transition.ready.catch(() => {});
-  transition.finished.catch(() => {});
-}
 
 export function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
@@ -125,12 +93,10 @@ function sortedIfReorderNeeded(listings: ListingItem[]): ListingItem[] | null {
 export function applySortOrder(listings: ListingItem[]): void {
   const sorted = sortedIfReorderNeeded(listings);
   if (!sorted) return;
-  runWithViewTransition(() => {
-    const container = getElement('listingsContainer');
-    sorted.forEach((item) => {
-      const card = getCardByUrl(item.data.url);
-      if (card) container.appendChild(card);
-    });
+  const container = getElement('listingsContainer');
+  sorted.forEach((item) => {
+    const card = getCardByUrl(item.data.url);
+    if (card) container.appendChild(card);
   });
 }
 
@@ -233,29 +199,29 @@ function applyClientFiltersDom(aiFilterPromptHash: number | null): void {
   for (const item of getOrderedListings()) {
     const category = getListingCategory(item);
     const card = getCardByUrl(item.data.url);
-    if (card) {
-      const banner = requireChild<HTMLElement>(card, '.filter-banner');
-      if (category !== 'filtered') {
-        card.classList.remove('filtered-out');
-        banner.textContent = '';
-        banner.classList.add('hidden');
-      } else {
-        card.classList.add('filtered-out');
-        banner.textContent = filterBannerText(item);
-        banner.classList.remove('hidden');
-      }
-      card.style.display = visibleListingCategories.has(category) ? '' : 'none';
-      card.classList.toggle(
-        'ai-scanning',
-        aiFilterPromptHash !== null && item.aiCheckedHash !== aiFilterPromptHash
-      );
+    if (!card) continue;
+
+    const banner = requireChild<HTMLElement>(card, '.filter-banner');
+    const isFiltered = category === 'filtered';
+    if (card.classList.contains('filtered-out') !== isFiltered) {
+      card.classList.toggle('filtered-out', isFiltered);
+      banner.textContent = isFiltered ? filterBannerText(item) : '';
+      banner.classList.toggle('hidden', !isFiltered);
     }
+
+    const isScanning = aiFilterPromptHash !== null && item.aiCheckedHash !== aiFilterPromptHash;
+    if (card.classList.contains('ai-scanning') !== isScanning) {
+      card.classList.toggle('ai-scanning', isScanning);
+    }
+
+    const desiredDisplay = visibleListingCategories.has(category) ? '' : 'none';
+    if (card.style.display !== desiredDisplay) card.style.display = desiredDisplay;
   }
 }
 
 // Initial state for a card appended by renderCard() is the hidden 'entering'
-// class (see below) — this strips it so there's something for the view
-// transition to animate from.
+// class (see below) — this strips it so there's a previous frame for the
+// CSS opacity transition (.listing-card, styles.css) to fade in from.
 function revealEnteringCards(): void {
   for (const card of document.querySelectorAll<HTMLElement>('.listing-card.entering')) {
     card.classList.remove('entering');
@@ -265,12 +231,10 @@ function revealEnteringCards(): void {
 // Card reveal (renderCard, below) and the client-filter sweep
 // (applyClientFilters) both mutate the grid, and during an active SSE
 // stream both can be triggered from the same 'listing' event handler
-// (quickSearch.ts) within the same animation frame. Each used to run
-// through its own independent rafSchedule instance, so both started their
-// own document.startViewTransition — the second call aborts the first,
-// flushing its mutation unanimated (cards "snap in" instead of fading).
-// This shared pending-flags-plus-single-flush replaces that: whichever of
-// the two mutations are due land inside one shared transition instead.
+// (quickSearch.ts) within the same animation frame. Coalescing both into one
+// flush avoids running the O(n) client-filter sweep twice in the same frame
+// when both are pending — same motivation as scheduleSortOrderUpdate's
+// rafSchedule use above, just shared across two call sites instead of one.
 const pendingFrameMutations = {
   shouldRevealCards: false,
   shouldApplyClientFilters: false,
@@ -283,10 +247,8 @@ function flushFrameMutations(): void {
   pendingFrameMutations.shouldApplyClientFilters = false;
 
   const aiFilterPromptHash = shouldApplyClientFilters ? currentAiFilterPromptHash() : null;
-  runWithViewTransition(() => {
-    if (shouldRevealCards) revealEnteringCards();
-    if (shouldApplyClientFilters) applyClientFiltersDom(aiFilterPromptHash);
-  });
+  if (shouldRevealCards) revealEnteringCards();
+  if (shouldApplyClientFilters) applyClientFiltersDom(aiFilterPromptHash);
   if (shouldApplyClientFilters) renderDerived();
 }
 
@@ -301,10 +263,9 @@ export function applyClientFilters(): void {
   pendingFrameMutations.shouldApplyClientFilters = true;
   // Called directly (not scheduled): a single user action (e.g. the Show
   // dropdown checkbox) needs immediate feedback. This also absorbs a still-
-  // pending scheduled reveal into the same transition, and clears both
-  // flags — flushFrameMutations()'s already-scheduled frame then finds
-  // nothing left to do and no-ops instead of starting an empty follow-up
-  // transition.
+  // pending scheduled reveal into the same flush, and clears both flags —
+  // flushFrameMutations()'s already-scheduled frame then finds nothing left
+  // to do and no-ops instead of redoing the same work a second time.
   flushFrameMutations();
 }
 
@@ -347,10 +308,6 @@ export function renderCard(item: ListingItem): void {
   card.className = listing.isSold ? 'listing-card sold' : 'listing-card';
   card.id = cardId;
   card.dataset.url = listing.url;
-  // Stable per-card name so the View Transitions API (see
-  // runWithViewTransition above) can track this card's identity across a
-  // reflow and animate its position, instead of just cross-fading everything.
-  card.style.viewTransitionName = cardId;
 
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`

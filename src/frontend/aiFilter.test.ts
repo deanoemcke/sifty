@@ -118,14 +118,14 @@ describe('runAiFilterAsync', () => {
     vi.unstubAllGlobals();
   });
 
-  it('coalesces multiple streamed result batches into a single animation-frame sweep instead of one view transition per batch', async () => {
+  it('coalesces multiple streamed result batches into a single animation-frame sweep instead of one per batch', async () => {
     // Regression test: a fast SSE burst of 'result' batches (the backend
     // runs up to 3 batches of 50 listings concurrently) used to call
-    // applyClientFilters() directly once per batch, each starting its own
-    // document.startViewTransition and aborting the previous one — cards
-    // would jump into place instead of sliding. The fix routes the per-batch
-    // handler through scheduleClientFilterUpdate(), which coalesces a burst
-    // into a single sweep on the next animation frame.
+    // applyClientFilters() directly once per batch — an O(n) full-grid sweep
+    // each time, so a stream of many batches was O(n) per batch instead of
+    // once overall. The fix routes the per-batch handler through
+    // scheduleClientFilterUpdate(), which coalesces a burst into a single
+    // sweep on the next animation frame.
     const urlA = 'https://example.com/a';
     const urlB = 'https://example.com/b';
     for (const url of [urlA, urlB]) {
@@ -163,11 +163,9 @@ describe('runAiFilterAsync', () => {
     // Regression test for the actual reported bug: with only one batch (the
     // common case — BATCH_SIZE is 50, so most runs never hit the multi-batch
     // burst above), the run-start and finally-block calls used to call
-    // applyClientFilters() directly while the batch handler scheduled —
-    // mixing the two on the same abort-on-restart runWithViewTransition
-    // meant whichever ran second silently killed the other's in-flight
-    // animation within a frame or two, so filtered-out cards snapped away
-    // instead of sliding. If any of the three call sites regress back to a
+    // applyClientFilters() directly while the batch handler scheduled — an
+    // unnecessary extra full-grid sweep on top of the one the scheduled call
+    // already covers. If any of the three call sites regress back to a
     // direct call, this card's filtered-out state would already be applied
     // synchronously here, before any frame has been flushed — an await'd
     // async function's promise always resolves via the microtask queue,

@@ -774,37 +774,6 @@ label {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 0.875rem;
 }
-/* Cards carry a per-card view-transition-name (resultsView.ts) so the View
-   Transitions API tracks each one's identity across a mutation and slides it
-   to its new grid position, instead of the browser's default whole-page
-   cross-fade. The root snapshot (the fallback for everything else on the
-   page) is explicitly reset back to no animation so an unrelated mutation
-   elsewhere never causes a stray flash. Entering/exiting cards themselves
-   just use the browser's default cross-fade — no custom pop/scale. */
-::view-transition-group(*) {
-  animation-duration: 0.22s;
-  animation-timing-function: ease;
-}
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-}
-/* The Show/Sort/AI-filter dropdown panels also opt out of the root capture
-   group, each via its own name (view-transition-name values must be unique
-   per rendered element — the AI filter panel stays visible on desktop
-   alongside an open Show or Sort panel, so a shared name would collide).
-   Without this, an unrelated grid sweep firing while a panel is open would
-   flash a stale snapshot of it in the browser's top layer — see
-   runWithViewTransition's comment in resultsView.ts. */
-#showDropdownPanel {
-  view-transition-name: show-dropdown-panel;
-}
-#sortDropdownPanel {
-  view-transition-name: sort-dropdown-panel;
-}
-#aiFilterPanel {
-  view-transition-name: ai-filter-panel;
-}
 .listing-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -813,7 +782,8 @@ label {
   box-shadow: var(--shadow);
   transition:
     border-color 0.15s,
-    box-shadow 0.15s;
+    box-shadow 0.15s,
+    opacity 0.2s ease;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -824,10 +794,24 @@ label {
   box-shadow: var(--shadow-md);
 }
 /* Initial state for a card appended by renderCard(); removed on the next
-   coalesced frame (resultsView.ts) once the View Transitions API is ready to
-   fade it in. No scale/pop — just a plain fade. */
+   coalesced frame (resultsView.ts) once there's a previous frame for this
+   rule's opacity transition to fade in from. No scale/pop — just a plain
+   fade. Filtered/hidden cards, by contrast, are removed instantly
+   (display: none, resultsView.ts) rather than fading out — an earlier
+   attempt at a symmetric fade-out (a .leaving class deferring display:none
+   until a transitionend) caused cards to occasionally get stuck invisible
+   mid-transition, so it was reverted in favour of this simpler, reliable
+   instant hide. */
 .listing-card.entering {
   opacity: 0;
+}
+/* document.startViewTransition() used to respect prefers-reduced-motion for
+   the .entering fade-in automatically; a plain CSS transition needs it
+   handled explicitly. */
+@media (prefers-reduced-motion: reduce) {
+  .listing-card {
+    transition: none;
+  }
 }
 /* Shown while a card is in aiFilterPendingUrls during an active AI-filter
    run (applyClientFilters in resultsView.ts) — a diagonal shimmer sweeping
