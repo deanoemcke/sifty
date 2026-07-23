@@ -833,9 +833,9 @@ label {
   background: linear-gradient(
     115deg,
     transparent 20%,
-    rgba(37, 99, 235, 0.22) 45%,
-    rgba(37, 99, 235, 0.32) 50%,
-    rgba(37, 99, 235, 0.22) 55%,
+    rgba(255, 255, 255, 0.22) 45%,
+    rgba(255, 255, 255, 0.32) 50%,
+    rgba(255, 255, 255, 0.22) 55%,
     transparent 80%
   );
   transform: translateX(-100%);
@@ -854,7 +854,7 @@ label {
   .listing-card.ai-scanning::after {
     animation: none;
     transform: none;
-    background: rgba(37, 99, 235, 0.14);
+    background: rgba(255, 255, 255, 0.14);
   }
 }
 .listing-open-area {
@@ -932,7 +932,11 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--border);
+}
+.listing-thumb-placeholder-icon {
+  width: 40%;
+  height: 40%;
+  color: #afbccc;
 }
 /* Brand-coloured tile in the thumbnail corner; background set inline per recipe */
 .listing-source-badge {
