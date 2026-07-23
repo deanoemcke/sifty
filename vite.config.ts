@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { defineConfig } from 'vite';
 import { createProviderCooldownStore } from './src/server/ai';
+import { closeAllPooledBrowsersAsync } from './src/server/browserPool';
 import { getDb } from './src/server/db';
 import { loadServerEnv } from './src/server/env';
 import { parseFbCookies } from './src/server/recipes/facebook';
@@ -54,6 +55,35 @@ export default defineConfig({
           assertCategoryEmbeddingCoverage(getDb());
         }
 
+        // browserPool.ts keeps one warm Chromium instance per recipe alive across
+        // requests (see browserPool.ts), so unlike the old per-request launch/close
+        // model, something has to close those pooled browsers on process shutdown or
+        // they outlive the dev/prod server as zombie Chromium processes across every
+        // restart/redeploy. server.httpServer only fires 'close' when Vite actually
+        // closes it, doesn't cover middlewareMode (httpServer is null there), and
+        // isn't guaranteed to run on an OS signal — so SIGTERM/SIGINT handlers are
+        // registered as a fallback. Guarded so whichever fires first is the only one
+        // that runs the teardown.
+        if (!process.env.VITEST) {
+          let hasShutDown = false;
+          const shutDownAsync = async (): Promise<void> => {
+            if (hasShutDown) return;
+            hasShutDown = true;
+            await closeAllPooledBrowsersAsync().catch((err) => {
+              console.error('[shutdown] failed to close pooled browsers:', err);
+            });
+          };
+          server.httpServer?.once('close', () => {
+            void shutDownAsync();
+          });
+          process.on('SIGTERM', () => {
+            void shutDownAsync().finally(() => process.exit(0));
+          });
+          process.on('SIGINT', () => {
+            void shutDownAsync().finally(() => process.exit(0));
+          });
+        }
+
         server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Next) => {
           const urlPath = req.url?.split('?')[0] ?? '';
 
@@ -75,12 +105,12 @@ export default defineConfig({
           }
           if (urlPath.startsWith('/api/saved-searches/') && req.method === 'PATCH') {
             const id = urlPath.slice('/api/saved-searches/'.length);
-            await handlePatchSavedSearch(req, res, id);
+            await handlePatchSavedSearch(req, res, id, providerCooldownStore);
             return;
           }
           if (urlPath.startsWith('/api/saved-searches/') && req.method === 'PUT') {
             const id = urlPath.slice('/api/saved-searches/'.length);
-            await handleUpdateSavedSearch(req, res, id);
+            await handleUpdateSavedSearch(req, res, id, providerCooldownStore);
             return;
           }
           if (urlPath === '/api/regions' && req.method === 'GET') {
@@ -120,7 +150,7 @@ export default defineConfig({
             return;
           }
           if (urlPath === '/api/saved-searches') {
-            await handleCreateSavedSearch(req, res);
+            await handleCreateSavedSearch(req, res, providerCooldownStore);
             return;
           }
 

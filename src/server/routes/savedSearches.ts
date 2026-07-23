@@ -1,6 +1,7 @@
 // Server-side only — /api/saved-searches route handlers (GET list, GET one, POST, DELETE).
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import {
   parseDiscoverInputs,
   requireArray,
@@ -19,6 +20,7 @@ import {
   stmtUpdateSavedSearchAlert,
 } from '../db';
 import { readBody, sendJSON } from '../helpers';
+import { triggerImmediatePopulationRunAsync } from '../scheduler';
 
 export function handleListSavedSearches(_req: unknown, response: ServerResponse): void {
   const database = getDb();
@@ -76,7 +78,8 @@ export function handleDeleteSavedSearch(_req: unknown, response: ServerResponse,
 
 export async function handleCreateSavedSearch(
   request: IncomingMessage,
-  response: ServerResponse
+  response: ServerResponse,
+  cooldownStore: ProviderCooldownStore
 ): Promise<void> {
   const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
@@ -135,6 +138,9 @@ export async function handleCreateSavedSearch(
       }
       throw insertErr;
     }
+    if (shouldAlertOnNewListings) {
+      triggerImmediatePopulationRunAsync(id, { database, cooldownStore });
+    }
     sendJSON(response, 200, { ok: true, id });
   } catch (err) {
     sendJSON(response, 500, { error: (err as Error).message });
@@ -144,7 +150,8 @@ export async function handleCreateSavedSearch(
 export async function handlePatchSavedSearch(
   request: IncomingMessage,
   response: ServerResponse,
-  id: string
+  id: string,
+  cooldownStore: ProviderCooldownStore
 ): Promise<void> {
   const database = getDb();
   const row = stmtGetSavedSearch(database).get(id);
@@ -168,13 +175,17 @@ export async function handlePatchSavedSearch(
   }
 
   stmtUpdateSavedSearchAlert(database).run(shouldAlertOnNewListings ? 1 : 0, id);
+  if (shouldAlertOnNewListings) {
+    triggerImmediatePopulationRunAsync(id, { database, cooldownStore });
+  }
   sendJSON(response, 200, { ok: true });
 }
 
 export async function handleUpdateSavedSearch(
   request: IncomingMessage,
   response: ServerResponse,
-  id: string
+  id: string,
+  cooldownStore: ProviderCooldownStore
 ): Promise<void> {
   const database = getDb();
   const row = stmtGetSavedSearch(database).get(id);
@@ -207,6 +218,13 @@ export async function handleUpdateSavedSearch(
       typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null,
       id
     );
+    // PUT never changes should_alert_on_new_listings itself (only PATCH
+    // does) — this re-checks the value already fetched above, so overwriting
+    // a search that already has alerts on redoes its baseline for the
+    // (possibly changed) urls/aiFilter.
+    if (row.should_alert_on_new_listings) {
+      triggerImmediatePopulationRunAsync(id, { database, cooldownStore });
+    }
     sendJSON(response, 200, { ok: true });
   } catch (err) {
     // Unlike create, this handler has no check-then-act step at all — the

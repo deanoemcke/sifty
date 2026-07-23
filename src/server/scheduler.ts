@@ -1,23 +1,31 @@
 // Server-side only — headless scheduler core, invoked by scripts/scheduler.ts.
-// Each run processes the single alert-enabled saved search that was run
-// longest ago (or never run): its already-known URLs (no discovery, no deep
-// search), applying its AI filter if set, and notifying on any new, non-sold
-// listing it hasn't alerted on before.
+// Each run processes every alert-enabled saved search that is "due" — never
+// run, or last run at or before TARGET_INTERVAL_MINUTES ago — oldest first,
+// capped at MAX_SEARCHES_PER_TICK. For each: its already-known URLs (no
+// discovery, no deep search), applying its AI filter if set, and notifying
+// on any new, non-sold listing it hasn't alerted on before.
 
 import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import {
   type SavedSearchRow,
-  stmtGetOldestAlertEnabledSavedSearch,
+  stmtCountDueAlertEnabledSavedSearches,
+  stmtGetDueAlertEnabledSavedSearches,
+  stmtGetSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
-import type { SignalNotificationOptions } from './notify';
+import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
 import { logQuickSearchEvent } from './quickSearchLogging';
 import { getRecipeForUrl } from './recipes/registry';
+import {
+  acquireSchedulerLock,
+  DEFAULT_SCHEDULER_LOCK_PATH,
+  releaseSchedulerLock,
+} from './schedulerLock';
 import {
   type AiFilterListing,
   type FilterResultEntry,
@@ -45,6 +53,20 @@ export const AI_FILTER_TIMEOUT_MS = 120_000;
 // accumulate an unbounded total duration — this is a generous outer bound,
 // mirroring SCRAPE_TIMEOUT_MS/AI_FILTER_TIMEOUT_MS above.
 export const NOTIFY_LOOP_TIMEOUT_MS = 5 * 60_000;
+
+// The guarantee: no alert-enabled saved search should go longer than this
+// between runs. Only holds if the external tick interval (launchd's
+// StartInterval in ai.openclaw.sifty-scheduler.plist, currently 1800s/30min)
+// stays well below it — nothing keeps that plist value and this constant in
+// sync automatically.
+export const TARGET_INTERVAL_MINUTES = 240;
+
+// Cap on how many due searches to process in a single tick, so a large
+// backlog (e.g. many searches added at once) can't turn one tick into an
+// unbounded scraping burst. A backlog beyond this cap is processed over
+// subsequent ticks — oldest (most overdue) searches sort first, so it
+// self-heals rather than starving anything indefinitely.
+export const MAX_SEARCHES_PER_TICK = 5;
 
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
@@ -75,6 +97,8 @@ export type SchedulerDeps = {
   cooldownStore: ProviderCooldownStore;
   sendNotificationAsync: SchedulerNotifier;
   now?: () => number;
+  targetIntervalMs?: number;
+  maxSearchesPerTick?: number;
 };
 
 export type SavedSearchRunSummary = {
@@ -275,19 +299,18 @@ async function processSavedSearchAsync(
   return summary;
 }
 
-export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerSummary> {
-  const resolvedDeps: Required<SchedulerDeps> = { now: () => Date.now(), ...deps };
-  const row = stmtGetOldestAlertEnabledSavedSearch(resolvedDeps.database).get();
-  if (!row) return { searches: [] };
-
+async function runOneSavedSearchAsync(
+  row: SavedSearchRow,
+  deps: Required<SchedulerDeps>
+): Promise<SavedSearchRunSummary> {
   let summary: SavedSearchRunSummary;
   try {
-    summary = await processSavedSearchAsync(row, resolvedDeps);
+    summary = await processSavedSearchAsync(row, deps);
   } catch (err) {
     // A synchronous throw (e.g. malformed row.urls JSON, SQLITE_BUSY) still
     // needs a result, and last_run_at below still needs to advance — otherwise
-    // a permanently broken saved search would be picked as "oldest" forever
-    // and starve every other alert-enabled saved search out of rotation.
+    // a permanently broken saved search would be picked as "due" forever and
+    // starve every other alert-enabled saved search out of rotation.
     summary = {
       savedSearchId: row.id,
       savedSearchName: row.name,
@@ -301,6 +324,113 @@ export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerS
       errors: [`Unhandled error: ${(err as Error).message}`],
     };
   }
-  stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
-  return { searches: [summary] };
+  stmtUpdateSavedSearchLastRunAt(deps.database).run(deps.now(), row.id);
+  return summary;
+}
+
+export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerSummary> {
+  const resolvedDeps: Required<SchedulerDeps> = {
+    now: () => Date.now(),
+    targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
+    maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
+    ...deps,
+  };
+  const cutoff = resolvedDeps.now() - resolvedDeps.targetIntervalMs;
+  // Counted before processing: once a row's last_run_at is updated below it
+  // no longer counts as due, so this needs to capture the full backlog size
+  // up front rather than what's left afterward.
+  const dueCount = stmtCountDueAlertEnabledSavedSearches(resolvedDeps.database).get(cutoff)?.count;
+  const rows = stmtGetDueAlertEnabledSavedSearches(resolvedDeps.database).all(
+    cutoff,
+    resolvedDeps.maxSearchesPerTick
+  );
+  if (rows.length === 0) return { searches: [] };
+
+  const searches: SavedSearchRunSummary[] = [];
+  for (const row of rows) searches.push(await runOneSavedSearchAsync(row, resolvedDeps));
+
+  if (dueCount !== undefined && dueCount > rows.length) {
+    console.warn(
+      `[scheduler] capacity exceeded: ${dueCount} saved search(es) are due but only ` +
+        `${rows.length} were processed this tick (maxSearchesPerTick=${resolvedDeps.maxSearchesPerTick}) — ` +
+        'the remaining backlog will be picked up on later ticks, oldest first.'
+    );
+  }
+
+  return { searches };
+}
+
+export type ImmediatePopulationRunDeps = {
+  database: Database.Database;
+  cooldownStore: ProviderCooldownStore;
+};
+
+// Forces a fresh, silent population pass for one specific saved search,
+// regardless of whether has_completed_population_run is already set —
+// existing alerted_listings rows are left untouched (population inserts are
+// INSERT OR IGNORE). Reuses the same file lock as scripts/scheduler.ts so
+// this can never run concurrently with a real cron pass; if the lock is
+// already held, this defers gracefully (cron will pick the search up on its
+// own rotation) rather than retrying.
+export async function runImmediatePopulationRunAsync(
+  savedSearchId: string,
+  deps: ImmediatePopulationRunDeps,
+  lockPath: string = DEFAULT_SCHEDULER_LOCK_PATH
+): Promise<void> {
+  const lockResult = acquireSchedulerLock(lockPath);
+  if (!lockResult.acquired) {
+    console.log(
+      `[scheduler] immediate population run for ${savedSearchId} deferred — ${lockResult.reason}`
+    );
+    return;
+  }
+  try {
+    const row = stmtGetSavedSearch(deps.database).get(savedSearchId);
+    if (!row) return; // deleted/renamed away before this ran
+    const resolvedDeps: Required<SchedulerDeps> = {
+      database: deps.database,
+      cooldownStore: deps.cooldownStore,
+      sendNotificationAsync: sendSignalNotificationAsync,
+      now: () => Date.now(),
+      targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
+      maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
+    };
+    try {
+      const summary = await processSavedSearchAsync(
+        { ...row, has_completed_population_run: 0 },
+        resolvedDeps
+      );
+      console.log(
+        `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
+      );
+    } catch (err) {
+      // Mirrors runOneSavedSearchAsync's batch-path handling: last_run_at
+      // below still needs to advance even on a synchronous throw (e.g.
+      // malformed row.urls JSON), otherwise this saved search would be
+      // retried on every future edit/create without ever recording an
+      // attempt was made.
+      console.error(
+        `[scheduler] "${row.name}": immediate population run failed: ${(err as Error).message}`
+      );
+    }
+    stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
+  } finally {
+    releaseSchedulerLock(lockPath);
+  }
+}
+
+// Fire-and-forget wrapper for route handlers — returns void (not a Promise)
+// so a call site can't accidentally await it and block the HTTP response.
+// Any rejection from the underlying run is caught and logged here so it can
+// never become an unhandled promise rejection.
+export function triggerImmediatePopulationRunAsync(
+  savedSearchId: string,
+  deps: ImmediatePopulationRunDeps,
+  lockPath: string = DEFAULT_SCHEDULER_LOCK_PATH
+): void {
+  runImmediatePopulationRunAsync(savedSearchId, deps, lockPath).catch((err) => {
+    console.error(
+      `[scheduler] immediate population run for ${savedSearchId} failed: ${(err as Error).message}`
+    );
+  });
 }

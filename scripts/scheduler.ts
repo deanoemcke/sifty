@@ -9,6 +9,7 @@
  */
 
 import { createProviderCooldownStore } from '../src/server/ai';
+import { closeAllPooledBrowsersAsync } from '../src/server/browserPool';
 import { getDb } from '../src/server/db';
 import { loadServerEnv } from '../src/server/env';
 import { sendSignalNotificationAsync } from '../src/server/notify';
@@ -62,6 +63,14 @@ async function main(): Promise<number> {
 
     return hadErrors ? 1 : 0;
   } finally {
+    // runSchedulerAsync funnels through the facebook/trademe recipes, which check
+    // out browsers from the shared pool in src/server/browserPool.ts — that pool
+    // keeps a Chromium instance alive across calls rather than closing it per
+    // request, so this one-shot script must close it explicitly before exiting
+    // or it leaves an orphaned Chromium process behind every run.
+    await closeAllPooledBrowsersAsync().catch((err) => {
+      console.error('[scheduler] failed to close pooled browsers:', err);
+    });
     releaseSchedulerLock(DEFAULT_SCHEDULER_LOCK_PATH);
   }
 }

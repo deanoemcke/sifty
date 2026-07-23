@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import { makeListing } from '../../lib/testFixtures';
 import { aiJSON } from '../ai';
+import { closeAllPooledBrowsersAsync } from '../browserPool';
 import {
   buildFacebookDeepSearchDetail,
   buildFacebookListing,
@@ -125,127 +126,151 @@ type FacebookPageOptions = {
   photoUrls?: string[];
 };
 
-const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker } = vi.hoisted(() => {
-  const queue: unknown[] = [];
+const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, launchTracker } =
+  vi.hoisted(() => {
+    const queue: unknown[] = [];
 
-  // Tracks how many mocked Chromium instances are live at once, so tests can
-  // assert that concurrent searches do (or don't) stack browser sessions.
-  const browserSessionTracker = {
-    activeCount: 0,
-    maxActiveCount: 0,
-    reset() {
-      this.activeCount = 0;
-      this.maxActiveCount = 0;
-    },
-  };
+    // Tracks how many browser contexts are live at once, so tests can assert
+    // that concurrent searches do (or don't) stack overlapping sessions. Counted
+    // at the context level rather than chromium.launch() — deep search and quick
+    // search now share one pooled browser (see browserPool.ts), so a fresh
+    // context per call is the real per-session resource, not a fresh browser.
+    const browserSessionTracker = {
+      activeCount: 0,
+      maxActiveCount: 0,
+      reset() {
+        this.activeCount = 0;
+        this.maxActiveCount = 0;
+      },
+    };
 
-  function makeFacebookPage(options: FacebookPageOptions = {}) {
-    const {
-      url = 'https://www.facebook.com/marketplace/search?query=lamp',
-      domLoginWall = false,
-      textSnippet = '',
-      listingsSelectorTimesOut = false,
-      listingsAppearOnRetry = false,
-      emptyStateAppears = false,
-      shellRendered = false,
-      cookieBannerVisible = false,
-      bodyText = '',
-      detailsCardData = null,
-      photoUrls = [],
-    } = options;
+    // Counts calls to chromium.launch() — i.e. the shared browser pool actually
+    // acquiring/launching a browser. Used to assert that a fail-fast validation
+    // (e.g. FB_COOKIES) short-circuits before any browser is ever touched.
+    const launchTracker = {
+      count: 0,
+      reset() {
+        this.count = 0;
+      },
+    };
 
-    const waitForSelectorCalls: string[] = [];
-    const wheelCalls = { count: 0 };
-    const listingsSelectorAttemptCounts = { count: 0 };
+    function makeFacebookPage(options: FacebookPageOptions = {}) {
+      const {
+        url = 'https://www.facebook.com/marketplace/search?query=lamp',
+        domLoginWall = false,
+        textSnippet = '',
+        listingsSelectorTimesOut = false,
+        listingsAppearOnRetry = false,
+        emptyStateAppears = false,
+        shellRendered = false,
+        cookieBannerVisible = false,
+        bodyText = '',
+        detailsCardData = null,
+        photoUrls = [],
+      } = options;
+
+      const waitForSelectorCalls: string[] = [];
+      const wheelCalls = { count: 0 };
+      const listingsSelectorAttemptCounts = { count: 0 };
+      const waitForTimeoutCalls: number[] = [];
+
+      return {
+        goto: async () => {},
+        url: () => url,
+        addInitScript: async () => {},
+        exposeFunction: async () => {},
+        locator: () => ({
+          first: () => ({
+            isVisible: async () => cookieBannerVisible,
+            click: async () => {},
+          }),
+        }),
+        getByRole: () => ({
+          first: () => ({
+            isVisible: async () => false,
+            click: async () => {},
+          }),
+        }),
+        waitForTimeout: async (ms: number) => {
+          waitForTimeoutCalls.push(ms);
+        },
+        waitForSelector: async (selector: string) => {
+          waitForSelectorCalls.push(selector);
+          // Model page state ("listings selector starts matching after N asks"),
+          // keyed on the selector actually requested — not on the position of this
+          // call among all waitForSelector calls of any kind. A future unrelated
+          // waitForSelector (e.g. for the Marketplace shell) must not shift which
+          // call this mock treats as the listings grace re-check.
+          if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
+          listingsSelectorAttemptCounts.count++;
+          const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
+          if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
+            throw new Error('timeout');
+        },
+        // Stands in for the empty-state marker wait: resolves when the mocked page
+        // "renders" the empty-state, rejects (as a Playwright timeout would) otherwise.
+        waitForFunction: async () => {
+          if (!emptyStateAppears) throw new Error('timeout');
+        },
+        evaluate: async (fn: (...args: unknown[]) => unknown) => {
+          if (fn.toString().includes('login_popup_cta_form')) {
+            return { domMatch: domLoginWall, textSnippet };
+          }
+          if (fn.toString().includes('shellRendered')) {
+            return { shellRendered, bodyText };
+          }
+          if (fn.name === 'extractFacebookDetailsCardData') {
+            return detailsCardData;
+          }
+          if (fn.name === 'extractFacebookPhotoUrls') {
+            return photoUrls;
+          }
+          return bodyText;
+        },
+        mouse: {
+          wheel: async () => {
+            wheelCalls.count++;
+          },
+        },
+        keyboard: { press: async () => {} },
+        close: async () => {},
+        waitForSelectorCalls,
+        wheelCalls,
+        waitForTimeoutCalls,
+      };
+    }
 
     return {
-      goto: async () => {},
-      url: () => url,
-      addInitScript: async () => {},
-      exposeFunction: async () => {},
-      locator: () => ({
-        first: () => ({
-          isVisible: async () => cookieBannerVisible,
-          click: async () => {},
-        }),
-      }),
-      getByRole: () => ({
-        first: () => ({
-          isVisible: async () => false,
-          click: async () => {},
-        }),
-      }),
-      waitForTimeout: async () => {},
-      waitForSelector: async (selector: string) => {
-        waitForSelectorCalls.push(selector);
-        // Model page state ("listings selector starts matching after N asks"),
-        // keyed on the selector actually requested — not on the position of this
-        // call among all waitForSelector calls of any kind. A future unrelated
-        // waitForSelector (e.g. for the Marketplace shell) must not shift which
-        // call this mock treats as the listings grace re-check.
-        if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
-        listingsSelectorAttemptCounts.count++;
-        const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
-        if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
-          throw new Error('timeout');
-      },
-      // Stands in for the empty-state marker wait: resolves when the mocked page
-      // "renders" the empty-state, rejects (as a Playwright timeout would) otherwise.
-      waitForFunction: async () => {
-        if (!emptyStateAppears) throw new Error('timeout');
-      },
-      evaluate: async (fn: (...args: unknown[]) => unknown) => {
-        if (fn.toString().includes('login_popup_cta_form')) {
-          return { domMatch: domLoginWall, textSnippet };
-        }
-        if (fn.toString().includes('shellRendered')) {
-          return { shellRendered, bodyText };
-        }
-        if (fn.name === 'extractFacebookDetailsCardData') {
-          return detailsCardData;
-        }
-        if (fn.name === 'extractFacebookPhotoUrls') {
-          return photoUrls;
-        }
-        return bodyText;
-      },
-      mouse: {
-        wheel: async () => {
-          wheelCalls.count++;
-        },
-      },
-      keyboard: { press: async () => {} },
-      close: async () => {},
-      waitForSelectorCalls,
-      wheelCalls,
+      getNextPage: (): ReturnType<typeof makeFacebookPage> =>
+        (queue.shift() as ReturnType<typeof makeFacebookPage>) ?? makeFacebookPage(),
+      resetPageQueue: (...items: unknown[]) => queue.splice(0, queue.length, ...items),
+      makeFacebookPage,
+      browserSessionTracker,
+      launchTracker,
     };
-  }
-
-  return {
-    getNextPage: (): ReturnType<typeof makeFacebookPage> =>
-      (queue.shift() as ReturnType<typeof makeFacebookPage>) ?? makeFacebookPage(),
-    resetPageQueue: (...items: unknown[]) => queue.splice(0, queue.length, ...items),
-    makeFacebookPage,
-    browserSessionTracker,
-  };
-});
+  });
 
 vi.mock('playwright', () => ({
   chromium: {
     launch: async () => {
-      browserSessionTracker.activeCount++;
-      browserSessionTracker.maxActiveCount = Math.max(
-        browserSessionTracker.maxActiveCount,
-        browserSessionTracker.activeCount
-      );
+      launchTracker.count++;
       return {
-        newContext: async () => ({
-          newPage: async () => getNextPage(),
-          addCookies: async () => {},
-        }),
-        close: async () => {
-          browserSessionTracker.activeCount--;
+        newContext: async () => {
+          browserSessionTracker.activeCount++;
+          browserSessionTracker.maxActiveCount = Math.max(
+            browserSessionTracker.maxActiveCount,
+            browserSessionTracker.activeCount
+          );
+          return {
+            newPage: async () => getNextPage(),
+            addCookies: async () => {},
+            close: async () => {
+              browserSessionTracker.activeCount--;
+            },
+          };
         },
+        close: async () => {},
+        isConnected: () => true,
       };
     },
   },
@@ -297,8 +322,16 @@ function aiJsonOk(value: unknown) {
   return { kind: 'ok' as const, value };
 }
 
-beforeEach(() => {
+// browserPool.ts's `pools` map is module-level state shared by every test in
+// this file (vitest isolates module state *between* files, not between `it()`
+// blocks within one file) — `getSharedBrowserAsync` is always called with the
+// fixed key 'facebook', so without this reset the first quickSearchAsync/
+// deepSearchAsync test to run would seed the pool and every later test in
+// this file would silently reuse that cached browser and its accumulating
+// use-count instead of getting a fresh one.
+beforeEach(async () => {
   vi.resetAllMocks();
+  await closeAllPooledBrowsersAsync();
 });
 
 describe('extractImplicitFilters', () => {
@@ -1837,11 +1870,28 @@ describe('classifyInitialSearchStateAsync', () => {
 describe('facebookRecipe.quickSearchAsync', () => {
   beforeEach(() => {
     resetPageQueue();
+    launchTracker.reset();
     vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it('fails fast on invalid FB_COOKIES without ever acquiring a shared browser', async () => {
+    vi.stubEnv('FB_COOKIES', undefined);
+
+    const events: unknown[] = [];
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=lamp',
+      (event) => events.push(event)
+    );
+
+    expect(events).toContainEqual({
+      type: 'error',
+      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+    });
+    expect(launchTracker.count).toBe(0);
   });
 
   it('emits the login-required error immediately and never waits on the listings selector', async () => {
@@ -2041,11 +2091,33 @@ describe('facebookRecipe.quickSearchAsync — domain concurrency limiting', () =
 describe('facebookRecipe.deepSearchAsync', () => {
   beforeEach(() => {
     resetPageQueue();
+    launchTracker.reset();
     vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it('fails fast on invalid FB_COOKIES without ever acquiring a shared browser', async () => {
+    vi.stubEnv('FB_COOKIES', undefined);
+
+    const listing = buildFacebookListing(
+      'https://www.facebook.com/marketplace/item/1/',
+      undefined,
+      'Chair',
+      50,
+      'Auckland'
+    );
+
+    const events: Array<{ type: string; message?: string }> = [];
+    await facebookRecipe.deepSearchAsync([listing], (event) => events.push(event));
+
+    expect(events).toContainEqual({
+      type: 'error',
+      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+    });
+    expect(launchTracker.count).toBe(0);
   });
 
   it('reports a detail-error for a login-walled listing without aborting the rest of the batch', async () => {
@@ -2082,5 +2154,24 @@ describe('facebookRecipe.deepSearchAsync', () => {
     expect(detailErrorEvent).toBeDefined();
     expect(detailErrorEvent?.message).toMatch(/Facebook requires login/);
     expect(events).toContainEqual({ type: 'complete' });
+  });
+
+  it('waits on real DOM signals instead of a fixed sleep before reading the page', async () => {
+    const okBodyText = 'Item\nDetails\nCondition\nUsed\nA great chair.\nSee more\n';
+    const okPage = makeFacebookPage({ domLoginWall: false, bodyText: okBodyText });
+    resetPageQueue(okPage);
+
+    const listingOk = buildFacebookListing(
+      'https://www.facebook.com/marketplace/item/1/',
+      undefined,
+      'Chair',
+      50,
+      'Auckland'
+    );
+
+    await facebookRecipe.deepSearchAsync([listingOk], () => {});
+
+    expect(okPage.waitForSelectorCalls).toContain('h2:has-text("Details")');
+    expect(okPage.waitForTimeoutCalls).toEqual([]);
   });
 });

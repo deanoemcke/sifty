@@ -10,9 +10,10 @@ import {
   stmtClearDetailsForUrl,
   stmtClearSearchForUrl,
   stmtCountAlertsForSavedSearch,
+  stmtCountDueAlertEnabledSavedSearches,
   stmtGetCategoryEmbeddingCoverage,
   stmtGetDetail,
-  stmtGetOldestAlertEnabledSavedSearch,
+  stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearchByName,
   stmtGetSearch,
   stmtHasAlertedListing,
@@ -414,26 +415,58 @@ describe('scoped cache-clear statements', () => {
   });
 });
 
-describe('stmtGetOldestAlertEnabledSavedSearch', () => {
+describe('stmtGetDueAlertEnabledSavedSearches / stmtCountDueAlertEnabledSavedSearches', () => {
   function freshDb(): Database.Database {
     const db = new Database(':memory:');
     initSchema(db);
     return db;
   }
 
+  // A cutoff far in the future so every last_run_at value used in these
+  // fixtures counts as "due" — tests that aren't specifically exercising the
+  // cutoff boundary just want everything eligible.
+  const FAR_FUTURE_CUTOFF = 10_000_000_000_000;
+
   it('ignores saved searches with should_alert_on_new_listings unset', () => {
     const db = freshDb();
     stmtInsertSavedSearch(db).run('s1', 'Alert search', '[]', null, null, 1000, 1);
     stmtInsertSavedSearch(db).run('s2', 'Silent search', '[]', null, null, 2000, 0);
 
-    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s1');
+    expect(
+      stmtGetDueAlertEnabledSavedSearches(db)
+        .all(FAR_FUTURE_CUTOFF, 10)
+        .map((row) => row.id)
+    ).toEqual(['s1']);
+    expect(stmtCountDueAlertEnabledSavedSearches(db).get(FAR_FUTURE_CUTOFF)?.count).toBe(1);
   });
 
-  it('returns undefined when no saved search has alerts enabled', () => {
+  it('returns nothing when no saved search has alerts enabled', () => {
     const db = freshDb();
     stmtInsertSavedSearch(db).run('s1', 'Silent search', '[]', null, null, 1000, 0);
 
-    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()).toBeUndefined();
+    expect(stmtGetDueAlertEnabledSavedSearches(db).all(FAR_FUTURE_CUTOFF, 10)).toHaveLength(0);
+    expect(stmtCountDueAlertEnabledSavedSearches(db).get(FAR_FUTURE_CUTOFF)?.count).toBe(0);
+  });
+
+  it('excludes a saved search whose last_run_at is after the cutoff', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Ran recently', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(2000, 's1');
+
+    expect(stmtGetDueAlertEnabledSavedSearches(db).all(1500, 10)).toHaveLength(0);
+    expect(stmtCountDueAlertEnabledSavedSearches(db).get(1500)?.count).toBe(0);
+  });
+
+  it('includes a saved search whose last_run_at is exactly at the cutoff', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Ran at cutoff', '[]', null, null, 1000, 1);
+    stmtUpdateSavedSearchLastRunAt(db).run(1500, 's1');
+
+    expect(
+      stmtGetDueAlertEnabledSavedSearches(db)
+        .all(1500, 10)
+        .map((row) => row.id)
+    ).toEqual(['s1']);
   });
 
   it('prefers a saved search that has never run over one with any last_run_at', () => {
@@ -442,17 +475,25 @@ describe('stmtGetOldestAlertEnabledSavedSearch', () => {
     stmtUpdateSavedSearchLastRunAt(db).run(500, 's1');
     stmtInsertSavedSearch(db).run('s2', 'Never run', '[]', null, null, 2000, 1);
 
-    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s2');
+    expect(
+      stmtGetDueAlertEnabledSavedSearches(db)
+        .all(FAR_FUTURE_CUTOFF, 10)
+        .map((row) => row.id)
+    ).toEqual(['s2', 's1']);
   });
 
-  it('prefers the saved search with the older last_run_at', () => {
+  it('orders by the oldest last_run_at first', () => {
     const db = freshDb();
     stmtInsertSavedSearch(db).run('s1', 'Ran recently', '[]', null, null, 1000, 1);
     stmtUpdateSavedSearchLastRunAt(db).run(2000, 's1');
     stmtInsertSavedSearch(db).run('s2', 'Ran long ago', '[]', null, null, 1000, 1);
     stmtUpdateSavedSearchLastRunAt(db).run(500, 's2');
 
-    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s2');
+    expect(
+      stmtGetDueAlertEnabledSavedSearches(db)
+        .all(FAR_FUTURE_CUTOFF, 10)
+        .map((row) => row.id)
+    ).toEqual(['s2', 's1']);
   });
 
   it('breaks a tied last_run_at by insertion order', () => {
@@ -460,7 +501,25 @@ describe('stmtGetOldestAlertEnabledSavedSearch', () => {
     stmtInsertSavedSearch(db).run('s1', 'Inserted first', '[]', null, null, 1000, 1);
     stmtInsertSavedSearch(db).run('s2', 'Inserted second', '[]', null, null, 1000, 1);
 
-    expect(stmtGetOldestAlertEnabledSavedSearch(db).get()?.id).toBe('s1');
+    expect(
+      stmtGetDueAlertEnabledSavedSearches(db)
+        .all(FAR_FUTURE_CUTOFF, 10)
+        .map((row) => row.id)
+    ).toEqual(['s1', 's2']);
+  });
+
+  it('caps the number of rows returned at the given limit, without affecting the count', () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run('s1', 'Inserted first', '[]', null, null, 1000, 1);
+    stmtInsertSavedSearch(db).run('s2', 'Inserted second', '[]', null, null, 1000, 1);
+    stmtInsertSavedSearch(db).run('s3', 'Inserted third', '[]', null, null, 1000, 1);
+
+    expect(
+      stmtGetDueAlertEnabledSavedSearches(db)
+        .all(FAR_FUTURE_CUTOFF, 2)
+        .map((row) => row.id)
+    ).toEqual(['s1', 's2']);
+    expect(stmtCountDueAlertEnabledSavedSearches(db).get(FAR_FUTURE_CUTOFF)?.count).toBe(3);
   });
 });
 
