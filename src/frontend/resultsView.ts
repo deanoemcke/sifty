@@ -216,42 +216,96 @@ export function renderAiFilterButton(listings: ListingItem[] = getOrderedListing
     aiFilterButtonLabel(listings);
 }
 
-export function applyClientFilters(): void {
-  // "Pending" is derived straight from aiCheckedHash vs. the current
-  // prompt's hash, not from tracking which run's toCheck list a listing
-  // happened to be part of — quickSearch.ts triggers a separate
-  // runAiFilterAsync() call per URL card as its own search completes, so a
-  // saved search with multiple source URLs runs the AI filter several times
-  // over. A listing that streams in from a later URL card's search must
-  // still show as not-yet-checked even between runs, not just while the run
-  // that happened to cover it is in flight.
+// "Pending" is derived straight from aiCheckedHash vs. the current prompt's
+// hash, not from tracking which run's toCheck list a listing happened to be
+// part of — quickSearch.ts triggers a separate runAiFilterAsync() call per
+// URL card as its own search completes, so a saved search with multiple
+// source URLs runs the AI filter several times over. A listing that streams
+// in from a later URL card's search must still show as not-yet-checked even
+// between runs, not just while the run that happened to cover it is in
+// flight.
+function currentAiFilterPromptHash(): number | null {
   const aiFilterPrompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
-  const aiFilterPromptHash = aiFilterPrompt ? djb2Hash(aiFilterPrompt) : null;
+  return aiFilterPrompt ? djb2Hash(aiFilterPrompt) : null;
+}
 
-  runWithViewTransition(() => {
-    for (const item of getOrderedListings()) {
-      const category = getListingCategory(item);
-      const card = getCardByUrl(item.data.url);
-      if (card) {
-        const banner = requireChild<HTMLElement>(card, '.filter-banner');
-        if (category !== 'filtered') {
-          card.classList.remove('filtered-out');
-          banner.textContent = '';
-          banner.classList.add('hidden');
-        } else {
-          card.classList.add('filtered-out');
-          banner.textContent = filterBannerText(item);
-          banner.classList.remove('hidden');
-        }
-        card.style.display = visibleListingCategories.has(category) ? '' : 'none';
-        card.classList.toggle(
-          'ai-scanning',
-          aiFilterPromptHash !== null && item.aiCheckedHash !== aiFilterPromptHash
-        );
+function applyClientFiltersDom(aiFilterPromptHash: number | null): void {
+  for (const item of getOrderedListings()) {
+    const category = getListingCategory(item);
+    const card = getCardByUrl(item.data.url);
+    if (card) {
+      const banner = requireChild<HTMLElement>(card, '.filter-banner');
+      if (category !== 'filtered') {
+        card.classList.remove('filtered-out');
+        banner.textContent = '';
+        banner.classList.add('hidden');
+      } else {
+        card.classList.add('filtered-out');
+        banner.textContent = filterBannerText(item);
+        banner.classList.remove('hidden');
       }
+      card.style.display = visibleListingCategories.has(category) ? '' : 'none';
+      card.classList.toggle(
+        'ai-scanning',
+        aiFilterPromptHash !== null && item.aiCheckedHash !== aiFilterPromptHash
+      );
     }
+  }
+}
+
+// Initial state for a card appended by renderCard() is the hidden 'entering'
+// class (see below) — this strips it so there's something for the view
+// transition to animate from.
+function revealEnteringCards(): void {
+  for (const card of document.querySelectorAll<HTMLElement>('.listing-card.entering')) {
+    card.classList.remove('entering');
+  }
+}
+
+// Card reveal (renderCard, below) and the client-filter sweep
+// (applyClientFilters) both mutate the grid, and during an active SSE
+// stream both can be triggered from the same 'listing' event handler
+// (quickSearch.ts) within the same animation frame. Each used to run
+// through its own independent rafSchedule instance, so both started their
+// own document.startViewTransition — the second call aborts the first,
+// flushing its mutation unanimated (cards "snap in" instead of fading).
+// This shared pending-flags-plus-single-flush replaces that: whichever of
+// the two mutations are due land inside one shared transition instead.
+const pendingFrameMutations = {
+  shouldRevealCards: false,
+  shouldApplyClientFilters: false,
+};
+
+function flushFrameMutations(): void {
+  const { shouldRevealCards, shouldApplyClientFilters } = pendingFrameMutations;
+  if (!shouldRevealCards && !shouldApplyClientFilters) return;
+  pendingFrameMutations.shouldRevealCards = false;
+  pendingFrameMutations.shouldApplyClientFilters = false;
+
+  const aiFilterPromptHash = shouldApplyClientFilters ? currentAiFilterPromptHash() : null;
+  runWithViewTransition(() => {
+    if (shouldRevealCards) revealEnteringCards();
+    if (shouldApplyClientFilters) applyClientFiltersDom(aiFilterPromptHash);
   });
-  renderDerived();
+  if (shouldApplyClientFilters) renderDerived();
+}
+
+// A burst of same-frame calls (e.g. a fast SSE stream) coalesces into a
+// single flush on the next frame, same pattern as scheduleSortOrderUpdate
+// above — the difference here is the flush itself is shared between two
+// call sites (see the comment on pendingFrameMutations) rather than
+// dedicated to one.
+const scheduleFrameMutationFlush = rafSchedule(flushFrameMutations);
+
+export function applyClientFilters(): void {
+  pendingFrameMutations.shouldApplyClientFilters = true;
+  // Called directly (not scheduled): a single user action (e.g. the Show
+  // dropdown checkbox) needs immediate feedback. This also absorbs a still-
+  // pending scheduled reveal into the same transition, and clears both
+  // flags — flushFrameMutations()'s already-scheduled frame then finds
+  // nothing left to do and no-ops instead of starting an empty follow-up
+  // transition.
+  flushFrameMutations();
 }
 
 // During an active SSE stream — a 'listing' event in quickSearch.ts, or a
@@ -259,34 +313,18 @@ export function applyClientFilters(): void {
 // animation frame. applyClientFilters() walks every rendered card, so
 // calling it directly from a hot streaming path is the same O(n)-per-event,
 // O(n^2)-per-stream shape that scheduleSortOrderUpdate() above already
-// solves for sorting, and each direct call starts its own view transition
-// that aborts the previous one mid-animation. Reuse the same rafSchedule()
-// coalescing here: a burst of calls collapses into a single sweep on the
-// next frame, using whichever state is current when that frame fires.
-// Streaming/multi-call sources should schedule; a single direct user action
-// (e.g. the Show dropdown checkbox) should still call applyClientFilters()
-// synchronously for immediate feedback.
-const scheduleApplyClientFiltersOnNextFrame = rafSchedule(applyClientFilters);
-
+// solves for sorting. Streaming/multi-call sources should schedule; a single
+// direct user action (e.g. the Show dropdown checkbox) should still call
+// applyClientFilters() synchronously for immediate feedback.
 export function scheduleClientFilterUpdate(): void {
-  scheduleApplyClientFiltersOnNextFrame();
+  pendingFrameMutations.shouldApplyClientFilters = true;
+  scheduleFrameMutationFlush();
 }
 
-// New cards are appended in a hidden 'entering' state (see renderCard) so
-// there's something for the view transition below to animate from. During a
-// fast SSE burst, renderCard() runs once per streamed listing — reverting
-// 'entering' immediately, inside its own view transition, would fire one
-// transition per listing and abort/skip the previous one's animation each
-// time. rafSchedule coalesces a burst into a single reveal (and therefore a
-// single view transition) on the next frame, same pattern as the filter/sort
-// scheduling above.
-const scheduleCardRevealOnNextFrame = rafSchedule((): void => {
-  runWithViewTransition(() => {
-    for (const card of document.querySelectorAll<HTMLElement>('.listing-card.entering')) {
-      card.classList.remove('entering');
-    }
-  });
-});
+function scheduleCardRevealOnNextFrame(): void {
+  pendingFrameMutations.shouldRevealCards = true;
+  scheduleFrameMutationFlush();
+}
 
 // Looks up a listing card by URL. Returns null if not yet rendered.
 export function getCardByUrl(url: string): HTMLElement | null {

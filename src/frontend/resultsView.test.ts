@@ -98,9 +98,19 @@ beforeEach(() => {
     <div id="showDropdown"></div>
   `;
   populateShowControls();
+  // renderCard() and scheduleClientFilterUpdate() share one rafSchedule
+  // instance (resultsView.ts's scheduleFrameMutationFlush), so a frame left
+  // pending by one test — real or fake — silently no-ops every later test's
+  // scheduling call, real or fake, for the rest of the file (rafSchedule.ts's
+  // frameId guard). Fake timers file-wide, always flushed below before
+  // switching back to real, closes that off — mirrors quickSearch.test.ts's
+  // file-level setup, which exists for the same reason.
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -312,22 +322,17 @@ describe('applySortOrder', () => {
   });
 
   it('re-applies sort order as part of renderDerived, once the scheduled frame fires', () => {
-    vi.useFakeTimers();
-    try {
-      addCardWithListings(urls);
-      renderAllCards();
-      (listingsByUrl.get('https://l/1') as ListingItem).data.price = 30;
-      (listingsByUrl.get('https://l/2') as ListingItem).data.price = 10;
-      (listingsByUrl.get('https://l/3') as ListingItem).data.price = 20;
-      setSortBy('lowest-price');
-      renderDerived();
-      // Not applied synchronously — it's scheduled for the next frame.
-      expect(containerCardUrls()).toEqual(urls);
-      vi.advanceTimersByTime(20);
-      expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
-    } finally {
-      vi.useRealTimers();
-    }
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.price = 30;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.price = 10;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.price = 20;
+    setSortBy('lowest-price');
+    renderDerived();
+    // Not applied synchronously — it's scheduled for the next frame.
+    expect(containerCardUrls()).toEqual(urls);
+    vi.advanceTimersByTime(20);
+    expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
   });
 });
 
@@ -395,14 +400,6 @@ describe('scheduleSortOrderUpdate', () => {
     const container = document.getElementById('listingsContainer') as HTMLElement;
     return [...container.children].map((child) => (child as HTMLElement).dataset.url);
   }
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
 
   it('does not schedule an animation frame for the default source-url sort', () => {
     addCardWithListings(urls);
@@ -726,14 +723,6 @@ describe('scheduleClientFilterUpdate', () => {
     renderCard(item);
   }
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it('does not apply the filter synchronously — only once the next frame fires', () => {
     renderListing('https://l/1');
     setListingCategoryVisible('used', false);
@@ -768,11 +757,14 @@ describe('scheduleClientFilterUpdate', () => {
     expect(burstSpy).toHaveBeenCalledTimes(singleSweepCost);
   });
 
-  // Placed last: unlike the tests above, this deliberately never flushes the
-  // scheduled frame, so it must not leave a pending frame behind for a test
-  // that runs afterward — see rafSchedule.ts's frameId guard.
   it('only requests a single animation frame for a burst of calls', () => {
+    // renderListing() itself schedules a frame (renderCard()'s card-reveal
+    // scheduling shares scheduleClientFilterUpdate()'s flush — see
+    // resultsView.ts's scheduleFrameMutationFlush). Flush that one first so
+    // the spy below only observes the calls this test is actually about.
     renderListing('https://l/1');
+    vi.advanceTimersByTime(20);
+
     const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
 
     scheduleClientFilterUpdate();
@@ -780,5 +772,67 @@ describe('scheduleClientFilterUpdate', () => {
     scheduleClientFilterUpdate();
 
     expect(rafSpy).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(20);
+  });
+});
+
+// Regression coverage: a streamed 'listing' SSE event calls renderCard()
+// (which schedules the new card's entering->revealed transition) and
+// scheduleClientFilterUpdate() (which schedules a filter sweep) in the same
+// synchronous tick, so both land in the same animation frame. Each used to
+// start its own document.startViewTransition — the second call aborts the
+// first, so the earlier mutation gets flushed unanimated (cards "snap in"
+// instead of fading). All per-frame grid mutations must instead land inside
+// one shared transition.
+describe('frame mutation coalescing (single view transition per frame)', () => {
+  let startViewTransitionSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    startViewTransitionSpy = vi.fn((fn: () => void) => {
+      fn();
+      return {
+        ready: Promise.resolve(),
+        finished: Promise.resolve(),
+        updateCallbackDone: Promise.resolve(),
+        skipTransition: () => {},
+      };
+    });
+    document.startViewTransition =
+      startViewTransitionSpy as unknown as typeof document.startViewTransition;
+  });
+
+  afterEach(() => {
+    // @ts-expect-error cleaning up the jsdom global stubbed above
+    delete document.startViewTransition;
+  });
+
+  it('coalesces a same-frame card reveal and filter sweep into a single view transition', () => {
+    const item = makeListingItemAt('https://l/1');
+    listingsByUrl.set('https://l/1', item);
+    addCardWithListings(['https://l/1']);
+
+    renderCard(item);
+    setListingCategoryVisible('used', false);
+    scheduleClientFilterUpdate();
+
+    vi.advanceTimersByTime(20);
+
+    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
+    const card = getCardByUrl('https://l/1') as HTMLElement;
+    expect(card.classList.contains('entering')).toBe(false);
+    expect(card.style.display).toBe('none');
+  });
+
+  it('does not start an empty follow-up transition after a synchronous applyClientFilters call absorbs the pending frame', () => {
+    const item = makeListingItemAt('https://l/1');
+    listingsByUrl.set('https://l/1', item);
+    addCardWithListings(['https://l/1']);
+
+    renderCard(item);
+    applyClientFilters();
+
+    vi.advanceTimersByTime(20);
+
+    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
   });
 });
