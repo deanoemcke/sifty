@@ -109,7 +109,12 @@ export async function runAiFilterAsync(): Promise<void> {
   if (toCheck.length === 0) return;
 
   setIsAiFilterRunning(true);
-  applyClientFilters();
+  // Scheduled, not direct: the per-batch handler below also schedules, and
+  // mixing a direct call with a scheduled one on the same
+  // runWithViewTransition-wrapped mutator means whichever fires second
+  // aborts the other's animation mid-flight — see the finally block below
+  // for the matching call and its longer explanation.
+  scheduleClientFilterUpdate();
 
   let streamError: string | null = null;
 
@@ -158,7 +163,16 @@ export async function runAiFilterAsync(): Promise<void> {
     setStatus((error as Error).message, 'error');
   } finally {
     setIsAiFilterRunning(false);
-    applyClientFilters();
+    // Scheduled, not direct — see the run-start comment above. A single-batch
+    // run (the common case, since BATCH_SIZE is 50) reaches this call within
+    // a few milliseconds of the batch handler's own scheduleClientFilterUpdate()
+    // call above: if this one called applyClientFilters() directly, it would
+    // start its own view transition immediately, aborting the still-animating
+    // one the scheduled call had just started a frame earlier — snapping
+    // cards into place instead of letting them slide. Scheduling both means
+    // they coalesce into whichever single frame is still pending, so only
+    // one transition ever actually plays.
+    scheduleClientFilterUpdate();
     if (aiFilterPendingRun) {
       setAiFilterPendingRun(false);
       void runAiFilterAsync();

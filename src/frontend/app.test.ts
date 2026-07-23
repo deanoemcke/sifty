@@ -294,7 +294,11 @@ describe('initApp() wiring', () => {
       aiFilterInput.dispatchEvent(new Event('input'));
 
       aiFilterBtn.click();
-      await Promise.resolve();
+      // The run-start DOM sweep is scheduled onto the next animation frame
+      // (not called directly), so a single flush is needed here — see the
+      // comments in aiFilter.ts on why that call is scheduled. This describe
+      // block's beforeEach already put fake timers in place.
+      vi.advanceTimersByTime(20);
 
       expect(aiFilterBtn.disabled).toBe(true);
       expect(aiFilterBtn.querySelector('.spinner')).not.toBeNull();

@@ -72,6 +72,18 @@ function stubAiFilterStream(chunks: string[]): void {
   );
 }
 
+// Waits for one real animation frame — used instead of fake timers to flush
+// scheduleClientFilterUpdate()'s pending rAF-coalesced sweep. Real timers
+// give a reliable ordering guarantee that fake timers didn't in this file:
+// an awaited async function's promise always resolves via the microtask
+// queue, which fully drains before any macrotask/rAF callback gets a chance
+// to run — so checking state immediately after `await runAiFilterAsync()`
+// is guaranteed to observe the pre-flush state, no explicit "don't fire yet"
+// needed.
+function flushAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 function makeCardDom(): UrlCardDom {
   const criteriaElement = document.createElement('div');
   criteriaElement.innerHTML = '<div class="criteria-grid"></div>';
@@ -104,7 +116,6 @@ describe('runAiFilterAsync', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
 
   it('coalesces multiple streamed result batches into a single animation-frame sweep instead of one view transition per batch', async () => {
@@ -115,7 +126,6 @@ describe('runAiFilterAsync', () => {
     // would jump into place instead of sliding. The fix routes the per-batch
     // handler through scheduleClientFilterUpdate(), which coalesces a burst
     // into a single sweep on the next animation frame.
-    vi.useFakeTimers();
     const urlA = 'https://example.com/a';
     const urlB = 'https://example.com/b';
     for (const url of [urlA, urlB]) {
@@ -145,6 +155,51 @@ describe('runAiFilterAsync', () => {
     await runAiFilterAsync();
 
     expect(rafSpy).toHaveBeenCalledTimes(1);
+    rafSpy.mockRestore();
+    await flushAnimationFrame(); // don't leave a pending real rAF callback for a later test to race
+  });
+
+  it('does not apply a filtered-out result until the scheduled frame flushes, even for a single-batch run', async () => {
+    // Regression test for the actual reported bug: with only one batch (the
+    // common case — BATCH_SIZE is 50, so most runs never hit the multi-batch
+    // burst above), the run-start and finally-block calls used to call
+    // applyClientFilters() directly while the batch handler scheduled —
+    // mixing the two on the same abort-on-restart runWithViewTransition
+    // meant whichever ran second silently killed the other's in-flight
+    // animation within a frame or two, so filtered-out cards snapped away
+    // instead of sliding. If any of the three call sites regress back to a
+    // direct call, this card's filtered-out state would already be applied
+    // synchronously here, before any frame has been flushed — an await'd
+    // async function's promise always resolves via the microtask queue,
+    // which fully drains before a real rAF callback gets a chance to run.
+    const url = 'https://example.com/1';
+    const item: ListingItem = makeListingItem({
+      data: makeListing({ url, title: url, location: 'Auckland' }),
+    });
+    listingsByUrl.set(url, item);
+    addUrlCard(makeCardDom(), {
+      searchStatus: 'done',
+      searchedUrl: url,
+      searchId: null,
+      listingUrls: [url],
+      lastProgress: null,
+      errorMessage: null,
+      wasCancelled: false,
+      isEditing: false,
+    });
+    renderCard(item);
+    stubAiFilterStream([
+      `data: {"type":"result","results":[{"url":"${url}","pass":false,"reason":"too expensive","relevance":1}]}\n`,
+    ]);
+
+    await runAiFilterAsync();
+
+    expect(item.aiFilterReason).toBe('too expensive'); // state itself updates synchronously in the SSE handler
+    expect(getCardByUrl(url)?.style.display).not.toBe('none'); // but the DOM sweep is still pending a frame
+
+    await flushAnimationFrame();
+
+    expect(getCardByUrl(url)?.style.display).toBe('none');
   });
 
   it('writes the AI-assigned relevance score onto the listing when a result event arrives', async () => {
@@ -169,6 +224,7 @@ describe('runAiFilterAsync', () => {
     ]);
 
     await runAiFilterAsync();
+    await flushAnimationFrame(); // don't leave a pending real rAF callback for a later test to race
 
     expect(item.data.relevance).toBe(7);
   });
@@ -192,6 +248,7 @@ describe('ai-scanning overlay', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   function renderCardAt(url: string): ListingItem {
@@ -211,20 +268,28 @@ describe('ai-scanning overlay', () => {
     return item;
   }
 
-  it('marks a not-yet-checked card as ai-scanning as soon as the run starts, before any result arrives', async () => {
+  it('marks a not-yet-checked card as ai-scanning once the run-start sweep flushes', async () => {
+    // Regression test: applyClientFilters() at run-start is scheduled (not
+    // called directly) so it coalesces onto the same rAF-scheduled call the
+    // per-batch result handler uses — see the comments in aiFilter.ts. So
+    // this now takes effect once the next animation frame flushes, not
+    // synchronously. Stubs a fetch that never resolves so the run stays
+    // parked right after its run-start sweep — with a real batch result in
+    // the mix, the whole run (batch handler included) can settle before a
+    // single real animation frame even fires, since a mocked stream resolves
+    // over microtasks orders of magnitude faster than a ~16ms frame, making
+    // "before any result" unobservable rather than testing anything.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {}))
+    );
     const url = 'https://example.com/1';
     renderCardAt(url);
-    stubAiFilterStream([
-      `data: {"type":"result","results":[{"url":"${url}","pass":true,"reason":null,"relevance":7}]}\n`,
-    ]);
 
-    const runPromise = runAiFilterAsync();
-    // The first applyClientFilters() sweep runs synchronously before the
-    // first await inside runAiFilterAsync — so this is already true before
-    // the stream has produced anything.
+    void runAiFilterAsync(); // never resolves — the run is deliberately left pending
+    await flushAnimationFrame();
+
     expect(getCardByUrl(url)?.classList.contains('ai-scanning')).toBe(true);
-
-    await runPromise;
   });
 
   it('clears ai-scanning once the run completes normally', async () => {
@@ -235,6 +300,7 @@ describe('ai-scanning overlay', () => {
     ]);
 
     await runAiFilterAsync();
+    await flushAnimationFrame();
 
     expect(getCardByUrl(url)?.classList.contains('ai-scanning')).toBe(false);
   });
@@ -250,6 +316,7 @@ describe('ai-scanning overlay', () => {
     stubAiFilterStream(['data: {"type":"error","message":"boom"}\n']);
 
     await runAiFilterAsync();
+    await flushAnimationFrame();
 
     expect(getCardByUrl(url)?.classList.contains('ai-scanning')).toBe(true);
   });
@@ -268,6 +335,7 @@ describe('ai-scanning overlay', () => {
       `data: {"type":"result","results":[{"url":"${checkedUrl}","pass":true,"reason":null,"relevance":7}]}\n`,
     ]);
     await runAiFilterAsync();
+    await flushAnimationFrame();
     expect(getCardByUrl(checkedUrl)?.classList.contains('ai-scanning')).toBe(false);
 
     // A second URL card's search finishes later, streaming in a listing that
