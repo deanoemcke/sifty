@@ -35,20 +35,19 @@ describe('fireAllCardSearches', () => {
 // name, a debounce that was never applied) would pass every helper-level
 // unit test while being broken in production.
 //
-// `requestAiFilterRunIfPromptLongEnough` is wrapped with `vi.fn(actual)` (not
-// stubbed) so it still runs its real gating/scheduling logic, letting the
-// debounce test observe the wiring *and* confirm it reaches all the way down
-// to a real `streamPostAsync` call. `openListingCardModal` is stubbed outright
-// since exercising real modal rendering is out of scope for a routing test.
-vi.mock('./aiFilter', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./aiFilter')>();
-  return {
-    ...actual,
-    requestAiFilterRunIfPromptLongEnough: vi.fn(actual.requestAiFilterRunIfPromptLongEnough),
-    requestAiFilterRun: vi.fn(actual.requestAiFilterRun),
-  };
-});
-
+// `./aiFilter` is intentionally left unmocked (real gating/debounce/scheduling
+// logic runs) so these tests observe the wiring all the way down to a real
+// `streamPostAsync` call — that's the leaf module stubbed below, and unlike
+// `./aiFilter` it's mocked without an `importOriginal()` capture, so its
+// single `vi.fn()` stays coherent across every test's `vi.resetModules()`
+// cycle. (A prior version of this file wrapped `./aiFilter`'s exports with
+// `vi.fn(actual)` via a captured `importOriginal()` — but that capture is
+// frozen at the first test's module-registry epoch, while every test's own
+// `await import(...)` calls get a *fresh* epoch from `resetModules()`. The
+// button's click handler and each test's state ended up in different
+// universes, which is why this file used to depend on test execution order.)
+// `openListingCardModal` is stubbed outright since exercising real modal
+// rendering is out of scope for a routing test.
 vi.mock('./listingDetail', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./listingDetail')>();
   return { ...actual, openListingCardModal: vi.fn() };
@@ -123,9 +122,7 @@ describe('initApp() wiring', () => {
   describe('AI filter auto-run', () => {
     it('does not run immediately, but reaches a real streamPostAsync call once the debounce interval elapses', async () => {
       vi.useFakeTimers();
-      const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } = await import(
-        './aiFilter'
-      );
+      const { AI_FILTER_DEBOUNCE_MS } = await import('./aiFilter');
       const { streamPostAsync } = await import('./streamPost');
       const { listingsByUrl } = await import('./state');
       const { urlCards, urlCardData } = await import('./urlCardStore');
@@ -145,12 +142,10 @@ describe('initApp() wiring', () => {
       aiFilterInput.value = 'good condition only please';
       aiFilterInput.dispatchEvent(new Event('input'));
 
-      expect(vi.mocked(requestAiFilterRunIfPromptLongEnough)).not.toHaveBeenCalled();
       expect(vi.mocked(streamPostAsync)).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(AI_FILTER_DEBOUNCE_MS);
 
-      expect(vi.mocked(requestAiFilterRunIfPromptLongEnough)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(streamPostAsync)).toHaveBeenCalledTimes(1);
       const [endpoint, body] = vi.mocked(streamPostAsync).mock.calls[0];
       expect(endpoint).toBe('/api/ai-filter');
@@ -159,10 +154,15 @@ describe('initApp() wiring', () => {
 
     it('collapses rapid typing within the debounce window into a single call', async () => {
       vi.useFakeTimers();
-      const { AI_FILTER_DEBOUNCE_MS, requestAiFilterRunIfPromptLongEnough } = await import(
-        './aiFilter'
-      );
+      const { AI_FILTER_DEBOUNCE_MS } = await import('./aiFilter');
+      const { streamPostAsync } = await import('./streamPost');
+      const { listingsByUrl } = await import('./state');
+      const { urlCards, urlCardData } = await import('./urlCardStore');
       await import('./app');
+
+      const url = 'https://example.com/listing/1';
+      listingsByUrl.set(url, makeListingItemAt(url));
+      urlCardData(urlCards[0]).listingUrls = [url];
 
       const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
 
@@ -176,11 +176,11 @@ describe('initApp() wiring', () => {
 
       // The first keystroke's timer should have been cancelled by the second,
       // so at 1x the debounce interval nothing has fired yet.
-      expect(vi.mocked(requestAiFilterRunIfPromptLongEnough)).not.toHaveBeenCalled();
+      expect(vi.mocked(streamPostAsync)).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(AI_FILTER_DEBOUNCE_MS / 2);
 
-      expect(vi.mocked(requestAiFilterRunIfPromptLongEnough)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(streamPostAsync)).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -263,8 +263,14 @@ describe('initApp() wiring', () => {
     });
 
     it('runs the ai filter immediately on click, bypassing the debounce/min-length guard', async () => {
-      const { requestAiFilterRun } = await import('./aiFilter');
+      const { streamPostAsync } = await import('./streamPost');
+      const { listingsByUrl } = await import('./state');
+      const { urlCards, urlCardData } = await import('./urlCardStore');
       await import('./app');
+
+      const url = 'https://example.com/listing/1';
+      listingsByUrl.set(url, makeListingItemAt(url));
+      urlCardData(urlCards[0]).listingUrls = [url];
 
       const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
       const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
@@ -275,11 +281,13 @@ describe('initApp() wiring', () => {
 
       aiFilterBtn.click();
 
-      expect(vi.mocked(requestAiFilterRun)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(streamPostAsync)).toHaveBeenCalledTimes(1);
     });
 
     it('disables the button while a run is in flight and re-enables it once done', async () => {
       const { streamPostAsync } = await import('./streamPost');
+      const { listingsByUrl } = await import('./state');
+      const { urlCards, urlCardData } = await import('./urlCardStore');
       let resolveStream: () => void = () => {};
       vi.mocked(streamPostAsync).mockReturnValue(
         new Promise((resolve) => {
@@ -287,6 +295,10 @@ describe('initApp() wiring', () => {
         })
       );
       await import('./app');
+
+      const url = 'https://example.com/listing/1';
+      listingsByUrl.set(url, makeListingItemAt(url));
+      urlCardData(urlCards[0]).listingUrls = [url];
 
       const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
       const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
