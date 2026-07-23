@@ -1,4 +1,4 @@
-import { type Browser, type BrowserContext, chromium, type Page } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import { enqueue } from '../../lib/queue';
 import type {
   AiConfig,
@@ -15,6 +15,7 @@ import type {
 import { requirePattern } from '../../lib/recipes/metadata';
 import { aiJSON, applyAiJsonResult } from '../ai';
 import { hashFingerprintParts } from '../alerts';
+import { getSharedBrowserAsync } from '../browserPool';
 import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
 import { getRegions, type RegionEntry } from '../services/regions';
 
@@ -131,15 +132,15 @@ function toPlaywrightCookies(
   }));
 }
 
-async function createContext(): Promise<{ browser: Browser; context: BrowserContext }> {
-  const cookies = parseFbCookies(process.env.FB_COOKIES);
-
-  const browser = await chromium.launch({ headless: true });
+async function createFbContext(
+  browser: Browser,
+  cookies: RawFacebookCookie[]
+): Promise<BrowserContext> {
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
   await context.addCookies(toPlaywrightCookies(cookies));
   console.log(`[facebook] loaded ${cookies.length} cookies from FB_COOKIES`);
 
-  return { browser, context };
+  return context;
 }
 
 // tsx (used by the scheduler) transforms with esbuild's keepNames:true, which
@@ -482,11 +483,18 @@ async function runQuickSearchAsync(
   onEvent: (event: QuickSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const browserSetup = await createContext();
-    browser = browserSetup.browser;
-    const page = await browserSetup.context.newPage();
+    // Validate FB_COOKIES before touching the shared browser pool — a missing/
+    // expired/malformed cookie config should fail fast without paying for a
+    // browser acquisition (which may include launching a fresh Chromium).
+    const cookies = parseFbCookies(process.env.FB_COOKIES);
+    const checkout = await getSharedBrowserAsync('facebook');
+    releaseCheckout = checkout.releaseCheckout;
+    context = await createFbContext(checkout.browser, cookies);
+    releaseCheckout();
+    const page = await context.newPage();
     await maskHeadless(page);
 
     const seen = new Set<string>();
@@ -641,7 +649,8 @@ async function runQuickSearchAsync(
     console.log(`[facebook] error:`, error);
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser?.close();
+    releaseCheckout?.();
+    await context?.close();
   }
 }
 
@@ -867,13 +876,45 @@ export function buildFacebookPhotosFromUrls(urls: string[]): ListingPhoto[] | un
   return urls.map((url) => ({ thumbnailUrl: url, fullSizeUrl: url }));
 }
 
+const DETAILS_HEADING_SELECTOR = 'h2:has-text("Details")';
+// Cheaper proxy for detectLoginWallAsync's full domMatch check (which also
+// requires a paired password input) — good enough to end the race early; the
+// real evaluateLoginWallSignals call right after this still makes the
+// authoritative call.
+const LOGIN_WALL_PROBE_SELECTOR =
+  '#login_popup_cta_form, form[action*="/login/device-based/"], input[name="email"]';
+
+// Timeout for waiting on listing details to render. Capped near the pre-pooling
+// fixed-sleep baseline (3000ms) rather than the login-wall race's unrelated
+// 8000ms figure — for listings with no Details card at all (an expected case,
+// noted below), waiting longer than ~4s is regression, not a necessary wait.
+// Trade-off: a genuinely slow (but real) Details card rendering between 4s–8s
+// will now be missed. This timeout should ideally be tuned to real observed
+// listing-load latencies rather than an inherited default.
+const DETAIL_WAIT_TIMEOUT_MS = 4000;
+
+// Facebook's detail page has no "hydration complete" event to await, so this
+// races two real DOM signals instead of guessing a fixed delay: the "Details"
+// card heading (the strongest signal listing content has rendered) and the
+// login-wall markup (so a blocked page doesn't sit through the full timeout
+// before detectLoginWallAsync below notices it). Some listings genuinely have
+// no Details card at all — for those, both waits time out and the page is
+// still treated as settled, the same fallback classifyInitialSearchStateAsync
+// uses for the equivalent quick-search case.
+async function waitForListingDetailReadyAsync(page: Page): Promise<void> {
+  await Promise.any([
+    page.waitForSelector(DETAILS_HEADING_SELECTOR, { timeout: DETAIL_WAIT_TIMEOUT_MS }),
+    page.waitForSelector(LOGIN_WALL_PROBE_SELECTOR, { timeout: DETAIL_WAIT_TIMEOUT_MS }),
+  ]).catch(() => undefined);
+}
+
 export async function fetchFacebookListingDetailAsync(
   page: Page,
   url: string
 ): Promise<DeepSearchDetail> {
   console.log(`[facebook] fetching: ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(3000);
+  await waitForListingDetailReadyAsync(page);
 
   if (await detectLoginWallAsync(page)) {
     throw new Error(LOGIN_REQUIRED_MESSAGE);
@@ -883,7 +924,13 @@ export async function fetchFacebookListingDetailAsync(
   const seeMoreBtn = page.getByRole('button', { name: 'See more' }).first();
   if (await seeMoreBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await seeMoreBtn.click();
-    await page.waitForTimeout(500);
+    // Facebook flips the button's accessible name to "See less" once the
+    // expanded text has actually rendered — a real signal instead of a guess.
+    await page
+      .getByRole('button', { name: 'See less' })
+      .first()
+      .waitFor({ state: 'visible', timeout: 2000 })
+      .catch(() => undefined);
   }
 
   const cardData = await page.evaluate(extractFacebookDetailsCardData);
@@ -915,15 +962,23 @@ async function deepSearchAsync(
   onEvent: (event: DeepSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const browserSetup = await createContext();
-    browser = browserSetup.browser;
+    // Validate FB_COOKIES before touching the shared browser pool — a missing/
+    // expired/malformed cookie config should fail fast without paying for a
+    // browser acquisition (which may include launching a fresh Chromium).
+    const cookies = parseFbCookies(process.env.FB_COOKIES);
+    const checkout = await getSharedBrowserAsync('facebook');
+    releaseCheckout = checkout.releaseCheckout;
+    const activeContext = await createFbContext(checkout.browser, cookies);
+    releaseCheckout();
+    context = activeContext;
 
     await Promise.all(
       listings.map((listing, listingIndex) =>
         enqueue(listing.url, async () => {
-          const currentPage = await browserSetup.context.newPage();
+          const currentPage = await activeContext.newPage();
           if (isCancelled?.()) {
             await currentPage.close();
             return;
@@ -956,7 +1011,8 @@ async function deepSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser?.close();
+    releaseCheckout?.();
+    await context?.close();
   }
 }
 

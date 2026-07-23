@@ -1,4 +1,4 @@
-import { chromium, type Page, type Response } from 'playwright';
+import { type BrowserContext, chromium, type Page, type Response } from 'playwright';
 import { enqueue } from '../../lib/queue';
 import type {
   DeepSearchDetail,
@@ -15,6 +15,7 @@ import type {
 } from '../../lib/recipes/base';
 import { requirePattern } from '../../lib/recipes/metadata';
 import { hashFingerprintParts } from '../alerts';
+import { getSharedBrowserAsync } from '../browserPool';
 import {
   MAX_PAGES_PER_SEARCH,
   MAX_RESULTS_PER_URL,
@@ -702,10 +703,18 @@ async function runQuickSearchAsync(
   onEvent: (event: QuickSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  const browser = await chromium.launch({ headless: true });
+  let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
-    const page = await context.newPage();
+    const checkout = await getSharedBrowserAsync('trademe');
+    releaseCheckout = checkout.releaseCheckout;
+    const activeContext = await checkout.browser.newContext({
+      userAgent: USER_AGENT,
+      locale: 'en-NZ',
+    });
+    releaseCheckout();
+    context = activeContext;
+    const page = await activeContext.newPage();
 
     onEvent({ type: 'progress', phase: 'paging', page: 1 });
     const { promise: p1Promise } = waitForSearchApiResponseAsync(page);
@@ -799,7 +808,8 @@ async function runQuickSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser.close();
+    releaseCheckout?.();
+    await context?.close();
   }
 }
 
@@ -808,14 +818,22 @@ async function deepSearchAsync(
   onEvent: (event: DeepSearchEvent) => void,
   isCancelled?: () => boolean
 ): Promise<void> {
-  const browser = await chromium.launch({ headless: true });
+  let context: BrowserContext | undefined;
+  let releaseCheckout: (() => void) | undefined;
   try {
-    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const checkout = await getSharedBrowserAsync('trademe');
+    releaseCheckout = checkout.releaseCheckout;
+    const activeContext = await checkout.browser.newContext({
+      userAgent: USER_AGENT,
+      locale: 'en-NZ',
+    });
+    releaseCheckout();
+    context = activeContext;
 
     await Promise.all(
       listings.map((listing, listingIndex) =>
         enqueue(listing.url, async () => {
-          const currentPage = await context.newPage();
+          const currentPage = await activeContext.newPage();
           if (isCancelled?.()) {
             await currentPage.close();
             return;
@@ -847,7 +865,8 @@ async function deepSearchAsync(
   } catch (error) {
     onEvent({ type: 'error', message: (error as Error).message });
   } finally {
-    await browser.close();
+    releaseCheckout?.();
+    await context?.close();
   }
 }
 
