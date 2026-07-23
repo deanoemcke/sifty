@@ -1178,6 +1178,50 @@ describe('runImmediatePopulationRunAsync', () => {
 
     expect(fs.existsSync(lockPath)).toBe(false);
   });
+
+  it('advances last_run_at even when processing throws, so a corrupted saved search does not get stuck retrying forever', async () => {
+    const db = freshDb();
+    // Corrupt urls column — JSON.parse(row.urls) throws synchronously inside processSavedSearchAsync,
+    // mirroring the batch-path scenario in the 'a saved search whose row causes a synchronous throw...' test above.
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+
+    await runImmediatePopulationRunAsync(
+      'search-corrupt',
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(stmtGetSavedSearch(db).get('search-corrupt')?.last_run_at).not.toBeNull();
+  });
+
+  it('releases the lock even when processing throws', async () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+
+    await runImmediatePopulationRunAsync(
+      'search-corrupt',
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
 });
 
 describe('triggerImmediatePopulationRunAsync', () => {

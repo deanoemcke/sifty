@@ -395,14 +395,25 @@ export async function runImmediatePopulationRunAsync(
       targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
       maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
     };
-    const summary = await processSavedSearchAsync(
-      { ...row, has_completed_population_run: 0 },
-      resolvedDeps
-    );
+    try {
+      const summary = await processSavedSearchAsync(
+        { ...row, has_completed_population_run: 0 },
+        resolvedDeps
+      );
+      console.log(
+        `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
+      );
+    } catch (err) {
+      // Mirrors runOneSavedSearchAsync's batch-path handling: last_run_at
+      // below still needs to advance even on a synchronous throw (e.g.
+      // malformed row.urls JSON), otherwise this saved search would be
+      // retried on every future edit/create without ever recording an
+      // attempt was made.
+      console.error(
+        `[scheduler] "${row.name}": immediate population run failed: ${(err as Error).message}`
+      );
+    }
     stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
-    console.log(
-      `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
-    );
   } finally {
     releaseSchedulerLock(lockPath);
   }
