@@ -623,12 +623,15 @@ describe('applyClientFilters', () => {
   });
 });
 
-// Regression coverage for the modal/dropdown flicker bug: document.startViewTransition
-// snapshots the whole page, and only listing cards opt out via view-transition-name —
-// the listing modal and dropdown panels don't, so they fall into the browser's
-// implicit "root" capture group and can flash a stale snapshot over themselves
-// whenever a grid sweep fires while they're open. Skipping the transition entirely
-// while either overlay is open removes that stale-snapshot window.
+// Regression coverage for the modal-flicker bug: document.startViewTransition
+// snapshots the whole page, and only listing cards (and, since the dropdown
+// panels were given their own view-transition-name in styles.css, the
+// dropdown panels) opt out via view-transition-name. The listing modal never
+// does, so it falls into the browser's implicit "root" capture group and can
+// flash a stale snapshot over itself whenever a grid sweep fires while it's
+// open. Skipping the transition entirely while it's open removes that
+// stale-snapshot window. Dropdown panels no longer need this guard — see the
+// 'starts a view transition ... when a dropdown is open' test below.
 describe('runWithViewTransition guard (overlay open)', () => {
   function renderListing(url: string, overrides: Partial<ListingItem> = {}): void {
     const item = makeListingItem({
@@ -688,12 +691,12 @@ describe('runWithViewTransition guard (overlay open)', () => {
     expect(startViewTransitionSpy).not.toHaveBeenCalled();
   });
 
-  it('skips the view transition when a dropdown is open', () => {
+  it('still starts a view transition when a dropdown is open', () => {
     renderListing('https://l/1');
     const dropdown = buildDropdownFixture();
     openDropdownPanel(dropdown);
     applyClientFilters();
-    expect(startViewTransitionSpy).not.toHaveBeenCalled();
+    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
     closeDropdownPanel(dropdown);
   });
 

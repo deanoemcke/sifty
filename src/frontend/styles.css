@@ -789,6 +789,22 @@ label {
 ::view-transition-new(root) {
   animation: none;
 }
+/* The Show/Sort/AI-filter dropdown panels also opt out of the root capture
+   group, each via its own name (view-transition-name values must be unique
+   per rendered element — the AI filter panel stays visible on desktop
+   alongside an open Show or Sort panel, so a shared name would collide).
+   Without this, an unrelated grid sweep firing while a panel is open would
+   flash a stale snapshot of it in the browser's top layer — see
+   runWithViewTransition's comment in resultsView.ts. */
+#showDropdownPanel {
+  view-transition-name: show-dropdown-panel;
+}
+#sortDropdownPanel {
+  view-transition-name: sort-dropdown-panel;
+}
+#aiFilterPanel {
+  view-transition-name: ai-filter-panel;
+}
 .listing-card {
   background: var(--surface);
   border: 1px solid var(--border);

@@ -5,7 +5,7 @@
 
 import { requirePattern } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
-import { isAnyDropdownOpen, isMobileSheetActive } from './dropdownPanel';
+import { isMobileSheetActive } from './dropdownPanel';
 import { esc } from './html';
 import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
@@ -34,17 +34,19 @@ import { updateUrlGroupHeaders } from './urlGroupsView';
 // to a plain synchronous call when the API isn't available (older browsers,
 // and jsdom in tests) — no polyfill, the mutation still happens either way.
 //
-// Also falls back to a plain call while the listing modal or a dropdown is
-// open: only cards opt out of the transition's implicit "root" capture (via
-// view-transition-name on the card element), so the modal/dropdown — which
-// never set one — get swept into that root snapshot on every grid update.
-// The browser paints that snapshot in the top layer, above the whole normal
-// stacking context regardless of z-index, so an unrelated grid sweep could
-// flash a stale frame of the modal/dropdown over the live one. Skipping the
-// transition while either is open removes the snapshot entirely rather than
-// trying to out-rank it with stacking-context tricks.
+// Also falls back to a plain call while the listing modal is open: only
+// cards opt out of the transition's implicit "root" capture (via
+// view-transition-name on the card element), and the modal never sets one,
+// so it gets swept into that root snapshot on every grid update. The browser
+// paints that snapshot in the top layer, above the whole normal stacking
+// context regardless of z-index, so an unrelated grid sweep could flash a
+// stale frame of the modal over the live one. Skipping the transition while
+// it's open removes the snapshot entirely rather than trying to out-rank it
+// with stacking-context tricks. The Show/Sort/AI-filter dropdown panels have
+// their own view-transition-name (styles.css) instead, so they don't need
+// this treatment — each gets its own capture group and animates seamlessly.
 function runWithViewTransition(fn: () => void): void {
-  if (!document.startViewTransition || openModalListingUrl !== null || isAnyDropdownOpen()) {
+  if (!document.startViewTransition || openModalListingUrl !== null) {
     fn();
     return;
   }
