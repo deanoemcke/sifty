@@ -776,9 +776,10 @@ label {
 /* Cards carry a per-card view-transition-name (resultsView.ts) so the View
    Transitions API tracks each one's identity across a mutation and slides it
    to its new grid position, instead of the browser's default whole-page
-   cross-fade. These rules style that per-card group; the root snapshot (the
-   fallback for everything else on the page) is explicitly reset back to no
-   animation so an unrelated mutation elsewhere never causes a stray flash. */
+   cross-fade. The root snapshot (the fallback for everything else on the
+   page) is explicitly reset back to no animation so an unrelated mutation
+   elsewhere never causes a stray flash. Entering/exiting cards themselves
+   just use the browser's default cross-fade — no custom pop/scale. */
 ::view-transition-group(*) {
   animation-duration: 0.22s;
   animation-timing-function: ease;
@@ -786,24 +787,6 @@ label {
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
-}
-@keyframes card-pop-in {
-  from {
-    transform: scale(0.92);
-    opacity: 0;
-  }
-}
-@keyframes card-pop-out {
-  to {
-    transform: scale(0.92);
-    opacity: 0;
-  }
-}
-::view-transition-new(*) {
-  animation: card-pop-in 0.22s ease both;
-}
-::view-transition-old(*) {
-  animation: card-pop-out 0.22s ease both;
 }
 .listing-card {
   background: var(--surface);
@@ -825,10 +808,9 @@ label {
 }
 /* Initial state for a card appended by renderCard(); removed on the next
    coalesced frame (resultsView.ts) once the View Transitions API is ready to
-   animate it from here up to full opacity/scale. */
+   fade it in. No scale/pop — just a plain fade. */
 .listing-card.entering {
   opacity: 0;
-  transform: scale(0.92);
 }
 .listing-open-area {
   display: flex;
