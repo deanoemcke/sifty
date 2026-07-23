@@ -812,6 +812,51 @@ label {
 .listing-card.entering {
   opacity: 0;
 }
+/* Shown while a card is in aiFilterPendingUrls during an active AI-filter
+   run (applyClientFilters in resultsView.ts) — a diagonal shimmer sweeping
+   across the card to signal "still being checked". z-index sits above
+   .filter-banner/.sold-banner (z-index: 1) so re-checking an
+   already-filtered/sold card still shows the sheen on top.
+   Animates `transform`, not `background-position`: a search can have
+   hundreds of cards pending at once (an AI-filter run marks every
+   not-yet-checked card up front, not just the batch currently being sent to
+   the LLM), and background-position requires a full repaint of the element
+   every frame — with hundreds running at once the browser can't keep up and
+   most appear frozen. transform is compositor-only, so it stays smooth
+   regardless of how many cards are animating simultaneously. */
+.listing-card.ai-scanning::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(37, 99, 235, 0.22) 45%,
+    rgba(37, 99, 235, 0.32) 50%,
+    rgba(37, 99, 235, 0.22) 55%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: ai-scan-sheen 1.6s ease-in-out infinite;
+  will-change: transform;
+}
+@keyframes ai-scan-sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .listing-card.ai-scanning::after {
+    animation: none;
+    transform: none;
+    background: rgba(37, 99, 235, 0.14);
+  }
+}
 .listing-open-area {
   display: flex;
   flex-direction: column;

@@ -1,7 +1,7 @@
 import { formatListingPrice } from '../lib/priceFormat';
 import { getElement } from './domUtils';
 import { djb2Hash } from './renderUtils';
-import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
+import { applyClientFilters, getOrderedListings } from './resultsView';
 import {
   aiFilterPendingRun,
   isAiFilterRunning,
@@ -109,7 +109,7 @@ export async function runAiFilterAsync(): Promise<void> {
   if (toCheck.length === 0) return;
 
   setIsAiFilterRunning(true);
-  renderDerived();
+  applyClientFilters();
 
   let streamError: string | null = null;
 
@@ -152,7 +152,7 @@ export async function runAiFilterAsync(): Promise<void> {
     setStatus((error as Error).message, 'error');
   } finally {
     setIsAiFilterRunning(false);
-    renderDerived();
+    applyClientFilters();
     if (aiFilterPendingRun) {
       setAiFilterPendingRun(false);
       void runAiFilterAsync();

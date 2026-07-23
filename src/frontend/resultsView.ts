@@ -11,6 +11,7 @@ import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
 import { rafSchedule } from './rafSchedule';
 import { sourceBadgeHtml } from './recipeDisplay';
+import { djb2Hash } from './renderUtils';
 import { renderShowOptions } from './showDropdown';
 import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
 import {
@@ -203,6 +204,17 @@ export function renderAiFilterButton(listings: ListingItem[] = getOrderedListing
 }
 
 export function applyClientFilters(): void {
+  // "Pending" is derived straight from aiCheckedHash vs. the current
+  // prompt's hash, not from tracking which run's toCheck list a listing
+  // happened to be part of — quickSearch.ts triggers a separate
+  // runAiFilterAsync() call per URL card as its own search completes, so a
+  // saved search with multiple source URLs runs the AI filter several times
+  // over. A listing that streams in from a later URL card's search must
+  // still show as not-yet-checked even between runs, not just while the run
+  // that happened to cover it is in flight.
+  const aiFilterPrompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
+  const aiFilterPromptHash = aiFilterPrompt ? djb2Hash(aiFilterPrompt) : null;
+
   runWithViewTransition(() => {
     for (const item of getOrderedListings()) {
       const category = getListingCategory(item);
@@ -219,6 +231,10 @@ export function applyClientFilters(): void {
           banner.classList.remove('hidden');
         }
         card.style.display = visibleListingCategories.has(category) ? '' : 'none';
+        card.classList.toggle(
+          'ai-scanning',
+          aiFilterPromptHash !== null && item.aiCheckedHash !== aiFilterPromptHash
+        );
       }
     }
   });

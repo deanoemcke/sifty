@@ -9,6 +9,7 @@ import {
   scheduleAiFilterRun,
   shouldAutoRunAiFilter,
 } from './aiFilter';
+import { applyClientFilters, getCardByUrl, renderCard } from './resultsView';
 import { populateShowControls } from './showDropdown';
 import { isAiFilterRunning, type ListingItem, listingsByUrl, resetState } from './state';
 import { makeListing, makeListingItem } from './testFixtures';
@@ -129,6 +130,111 @@ describe('runAiFilterAsync', () => {
     await runAiFilterAsync();
 
     expect(item.data.relevance).toBe(7);
+  });
+});
+
+describe('ai-scanning overlay', () => {
+  beforeEach(() => {
+    resetState();
+    resetUrlCardStore();
+    document.body.innerHTML = `
+      <div id="resultsSection" class="hidden"></div>
+      <div id="listingsContainer"></div>
+      <button id="deepBtn"></button>
+      <textarea id="aiFilter">laptop</textarea>
+      <button id="aiFilterBtn"></button>
+      <div id="showDropdown"></div>
+      <div id="statusBar" class="hidden"></div>
+    `;
+    populateShowControls();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderCardAt(url: string): ListingItem {
+    const item = makeListingItemAt(url);
+    listingsByUrl.set(url, item);
+    addUrlCard(makeCardDom(), {
+      searchStatus: 'done',
+      searchedUrl: url,
+      searchId: null,
+      listingUrls: [url],
+      lastProgress: null,
+      errorMessage: null,
+      wasCancelled: false,
+      isEditing: false,
+    });
+    renderCard(item);
+    return item;
+  }
+
+  it('marks a not-yet-checked card as ai-scanning as soon as the run starts, before any result arrives', async () => {
+    const url = 'https://example.com/1';
+    renderCardAt(url);
+    stubAiFilterStream([
+      `data: {"type":"result","results":[{"url":"${url}","pass":true,"reason":null,"relevance":7}]}\n`,
+    ]);
+
+    const runPromise = runAiFilterAsync();
+    // The first applyClientFilters() sweep runs synchronously before the
+    // first await inside runAiFilterAsync — so this is already true before
+    // the stream has produced anything.
+    expect(getCardByUrl(url)?.classList.contains('ai-scanning')).toBe(true);
+
+    await runPromise;
+  });
+
+  it('clears ai-scanning once the run completes normally', async () => {
+    const url = 'https://example.com/1';
+    renderCardAt(url);
+    stubAiFilterStream([
+      `data: {"type":"result","results":[{"url":"${url}","pass":true,"reason":null,"relevance":7}]}\n`,
+    ]);
+
+    await runAiFilterAsync();
+
+    expect(getCardByUrl(url)?.classList.contains('ai-scanning')).toBe(false);
+  });
+
+  it('leaves ai-scanning on a card whose result never arrived because the stream errored out', async () => {
+    // Unlike a Set the run pre-populates and then unconditionally clears at
+    // the end, "pending" is derived from aiCheckedHash vs. the current
+    // prompt's hash — so a card an error prevented from actually being
+    // checked honestly keeps showing as pending, instead of the run's
+    // cleanup silently hiding that it was never verified.
+    const url = 'https://example.com/1';
+    renderCardAt(url);
+    stubAiFilterStream(['data: {"type":"error","message":"boom"}\n']);
+
+    await runAiFilterAsync();
+
+    expect(getCardByUrl(url)?.classList.contains('ai-scanning')).toBe(true);
+  });
+
+  it('marks a card as ai-scanning even when it was never part of any run’s toCheck list', async () => {
+    // Regression test: quickSearch.ts calls requestAiFilterRun() once per
+    // URL card as its own search completes, so a saved search with multiple
+    // source URLs triggers several separate runAiFilterAsync() calls over
+    // time. A listing that streams in from a URL card finishing *after* an
+    // earlier run already started must still show as pending — it must not
+    // require being part of that specific run's snapshot.
+    const checkedUrl = 'https://example.com/checked';
+    const lateArrivalUrl = 'https://example.com/late';
+    renderCardAt(checkedUrl);
+    stubAiFilterStream([
+      `data: {"type":"result","results":[{"url":"${checkedUrl}","pass":true,"reason":null,"relevance":7}]}\n`,
+    ]);
+    await runAiFilterAsync();
+    expect(getCardByUrl(checkedUrl)?.classList.contains('ai-scanning')).toBe(false);
+
+    // A second URL card's search finishes later, streaming in a listing that
+    // was never sent to this (already-completed) run.
+    renderCardAt(lateArrivalUrl);
+    applyClientFilters();
+
+    expect(getCardByUrl(lateArrivalUrl)?.classList.contains('ai-scanning')).toBe(true);
   });
 });
 

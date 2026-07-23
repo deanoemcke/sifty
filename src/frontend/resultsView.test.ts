@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requireChild } from './domUtils';
+import { djb2Hash } from './renderUtils';
 import {
   applyClientFilters,
   applySortOrder,
@@ -535,6 +536,68 @@ describe('applyClientFilters', () => {
     setListingCategoryVisible('filtered', false);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
+  });
+
+  function setAiFilterPrompt(value: string): void {
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = value;
+  }
+
+  it('marks a card as ai-scanning when the AI filter prompt does not match its aiCheckedHash', () => {
+    renderListing('https://l/1');
+    setAiFilterPrompt('bikes');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      true
+    );
+  });
+
+  it('does not mark a card as ai-scanning when the AI filter prompt is empty', () => {
+    renderListing('https://l/1');
+    setAiFilterPrompt('');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      false
+    );
+  });
+
+  it('does not mark a card as ai-scanning once its aiCheckedHash matches the current prompt', () => {
+    renderListing('https://l/1', { aiCheckedHash: djb2Hash('bikes') });
+    setAiFilterPrompt('bikes');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      false
+    );
+  });
+
+  // Regression coverage: the sheen used to be driven by a Set the currently
+  // in-flight run's toCheck list populated, so a card that streamed in
+  // outside of any run (e.g. from a second URL card's search finishing after
+  // the AI filter already started once) never got marked pending at all.
+  // Deriving straight from aiCheckedHash vs. the prompt's hash means no run
+  // needs to be active — "not yet checked against the current criteria" is
+  // true or false independent of whether a request happens to be in flight.
+  it('marks a card as ai-scanning even when no AI filter run is currently active', () => {
+    renderListing('https://l/1');
+    setAiFilterPrompt('bikes');
+    setIsAiFilterRunning(false);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      true
+    );
+  });
+
+  it('shows ai-scanning only on the not-yet-checked sibling when one card already matches the prompt', () => {
+    renderListing('https://l/1', { aiCheckedHash: djb2Hash('bikes') });
+    renderListing('https://l/2');
+    setAiFilterPrompt('bikes');
+    applyClientFilters();
+
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      false
+    );
+    expect((getCardByUrl('https://l/2') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      true
+    );
   });
 });
 
