@@ -96,6 +96,26 @@ export async function getSharedBrowserAsync(key: string): Promise<BrowserCheckou
   return nextAcquisition;
 }
 
+// Shutdown path (process exit, SIGTERM/SIGINT, dev-server restart) — closes
+// every currently-pooled browser so a process restart/redeploy doesn't leave
+// Chromium child processes running as zombies. Unlike retireBrowserAsync,
+// this makes no attempt to wait for in-flight checkouts or open contexts to
+// drain gracefully; the process is going down regardless, so a bounded-effort
+// close is all that's useful. One entry's browserPromise rejecting (e.g. a
+// launch that never resolved) must not stop the other pooled browsers from
+// being closed, hence Promise.allSettled.
+export async function closeAllPooledBrowsersAsync(): Promise<void> {
+  const entries = [...pools.values()];
+  pools.clear();
+  acquisitionQueues.clear();
+  await Promise.allSettled(
+    entries.map(async (entry) => {
+      const browser = await entry.browserPromise;
+      await browser.close();
+    })
+  );
+}
+
 async function acquireBrowserForKeyAsync(key: string): Promise<BrowserCheckout> {
   const existing = pools.get(key);
   if (existing) {

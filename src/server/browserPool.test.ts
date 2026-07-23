@@ -35,7 +35,11 @@ vi.mock('playwright', () => ({
   },
 }));
 
-import { getSharedBrowserAsync, MAX_USES_BEFORE_RECYCLE } from './browserPool';
+import {
+  closeAllPooledBrowsersAsync,
+  getSharedBrowserAsync,
+  MAX_USES_BEFORE_RECYCLE,
+} from './browserPool';
 
 describe('getSharedBrowserAsync', () => {
   beforeEach(() => {
@@ -296,5 +300,67 @@ describe('getSharedBrowserAsync', () => {
 
     expect(recovered.browser).toBe(nextBrowser);
     expect(launchCalls).toEqual(['error:first failure', 'error:second failure', 'finally-up']);
+  });
+});
+
+describe('closeAllPooledBrowsersAsync', () => {
+  beforeEach(() => {
+    launchCalls.length = 0;
+    closeCalls.length = 0;
+    nextLaunchError = undefined;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('closes every pooled browser and clears the pool', async () => {
+    nextBrowser = makeBrowser('shutdown-facebook');
+    const fb = await getSharedBrowserAsync('facebook-test-shutdown-1');
+    fb.releaseCheckout();
+
+    nextBrowser = makeBrowser('shutdown-trademe');
+    const tm = await getSharedBrowserAsync('trademe-test-shutdown-1');
+    tm.releaseCheckout();
+
+    await closeAllPooledBrowsersAsync();
+
+    expect(closeCalls).toContain('shutdown-facebook');
+    expect(closeCalls).toContain('shutdown-trademe');
+
+    // The pool was cleared, so the next call for either key launches fresh
+    // rather than reusing the (now closed) browser.
+    nextBrowser = makeBrowser('relaunched-after-shutdown');
+    const relaunched = await getSharedBrowserAsync('facebook-test-shutdown-1');
+    expect(relaunched.browser).toBe(nextBrowser);
+  });
+
+  it('closes the remaining pooled browsers even if one entry fails to close', async () => {
+    const failingBrowser = {
+      id: 'failing',
+      isConnected: () => true,
+      contexts: () => [],
+      close: async () => {
+        closeCalls.push('failing-attempted');
+        throw new Error('close failed');
+      },
+    };
+    nextBrowser = failingBrowser as unknown as ReturnType<typeof makeBrowser>;
+    const failingCheckout = await getSharedBrowserAsync('facebook-test-shutdown-fail');
+    failingCheckout.releaseCheckout();
+
+    nextBrowser = makeBrowser('shutdown-healthy');
+    const healthyCheckout = await getSharedBrowserAsync('trademe-test-shutdown-fail');
+    healthyCheckout.releaseCheckout();
+
+    await expect(closeAllPooledBrowsersAsync()).resolves.toBeUndefined();
+
+    expect(closeCalls).toContain('failing-attempted');
+    expect(closeCalls).toContain('shutdown-healthy');
+  });
+
+  it('is a no-op when nothing is pooled', async () => {
+    await expect(closeAllPooledBrowsersAsync()).resolves.toBeUndefined();
+    expect(closeCalls).toEqual([]);
   });
 });
