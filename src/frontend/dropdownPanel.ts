@@ -316,3 +316,9 @@ export function setDropdownLabel(
 export function resetOpenDropdown(): void {
   openDropdownIds = null;
 }
+
+// Lets callers outside this module (resultsView.ts's view-transition guard)
+// check overlay state without reaching into openDropdownIds directly.
+export function isAnyDropdownOpen(): boolean {
+  return openDropdownIds !== null;
+}

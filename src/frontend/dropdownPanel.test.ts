@@ -9,6 +9,7 @@ import {
   handleDropdownTabKey,
   handleEscapeKey,
   handleOutsideClick,
+  isAnyDropdownOpen,
   openDropdownPanel,
   resetOpenDropdown,
   setDropdownLabel,
@@ -123,6 +124,25 @@ describe('openDropdownPanel / closeDropdownPanel / toggleDropdownPanel', () => {
     expect(a.panel.classList.contains('hidden')).toBe(true);
     expect(a.trigger.getAttribute('aria-expanded')).toBe('false');
     expect(b.panel.classList.contains('hidden')).toBe(false);
+  });
+});
+
+describe('isAnyDropdownOpen', () => {
+  it('is false when no dropdown has been opened', () => {
+    expect(isAnyDropdownOpen()).toBe(false);
+  });
+
+  it('is true once a dropdown is open', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    expect(isAnyDropdownOpen()).toBe(true);
+  });
+
+  it('is false again once the open dropdown is closed', () => {
+    const a = buildDropdownFixture('a');
+    openDropdownPanel(a);
+    closeDropdownPanel(a);
+    expect(isAnyDropdownOpen()).toBe(false);
   });
 });
 

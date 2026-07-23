@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requireChild } from './domUtils';
+import {
+  closeDropdownPanel,
+  type DropdownElements,
+  getDropdownElements,
+  openDropdownPanel,
+} from './dropdownPanel';
 import { djb2Hash } from './renderUtils';
 import {
   applyClientFilters,
@@ -20,6 +26,7 @@ import {
   resetState,
   setIsAiFilterRunning,
   setListingCategoryVisible,
+  setOpenModalListingUrl,
   setSortBy,
   type UrlCardData,
 } from './state';
@@ -488,6 +495,21 @@ describe('renderCard', () => {
     const banner = requireChild<HTMLElement>(card, '.sold-banner');
     expect(banner.classList.contains('hidden')).toBe(true);
   });
+
+  // Regression coverage: the placeholder icon must be sized by CSS
+  // (percentage of its container), not by hardcoded SVG width/height
+  // attributes — otherwise it stays a fixed pixel size regardless of how
+  // large the card's thumbnail area actually is.
+  it('renders a scalable placeholder icon for a listing with no thumbnail', () => {
+    renderCard(makeListingItemAt('https://l/1'));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.querySelector('.listing-thumb')).toBeNull();
+    const placeholder = requireChild<HTMLElement>(card, '.listing-thumb-placeholder');
+    const icon = requireChild<SVGElement>(placeholder, 'svg');
+    expect(icon.hasAttribute('width')).toBe(false);
+    expect(icon.hasAttribute('height')).toBe(false);
+    expect(icon.classList.contains('listing-thumb-placeholder-icon')).toBe(true);
+  });
 });
 
 describe('applyClientFilters', () => {
@@ -598,6 +620,89 @@ describe('applyClientFilters', () => {
     expect((getCardByUrl('https://l/2') as HTMLElement).classList.contains('ai-scanning')).toBe(
       true
     );
+  });
+});
+
+// Regression coverage for the modal/dropdown flicker bug: document.startViewTransition
+// snapshots the whole page, and only listing cards opt out via view-transition-name —
+// the listing modal and dropdown panels don't, so they fall into the browser's
+// implicit "root" capture group and can flash a stale snapshot over themselves
+// whenever a grid sweep fires while they're open. Skipping the transition entirely
+// while either overlay is open removes that stale-snapshot window.
+describe('runWithViewTransition guard (overlay open)', () => {
+  function renderListing(url: string, overrides: Partial<ListingItem> = {}): void {
+    const item = makeListingItem({
+      data: makeListing({ url, title: url, price: null, location: '' }),
+      ...overrides,
+    });
+    listingsByUrl.set(url, item);
+    addCardWithListings([url]);
+    renderCard(item);
+  }
+
+  function buildDropdownFixture(): DropdownElements {
+    const root = document.createElement('div');
+    root.innerHTML = `
+      <button id="ddBtn" type="button" aria-expanded="false">
+        <span class="dropdown-trigger-label">dd</span>
+        <svg class="dropdown-caret"></svg>
+      </button>
+      <div id="ddPanel" class="hidden"></div>
+      <button id="ddFooterBtn" type="button">dd</button>
+    `;
+    document.body.appendChild(root);
+    return getDropdownElements({ trigger: 'ddBtn', panel: 'ddPanel', footer: 'ddFooterBtn' });
+  }
+
+  let startViewTransitionSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    startViewTransitionSpy = vi.fn((fn: () => void) => {
+      fn();
+      return {
+        ready: Promise.resolve(),
+        finished: Promise.resolve(),
+        updateCallbackDone: Promise.resolve(),
+        skipTransition: () => {},
+      };
+    });
+    document.startViewTransition =
+      startViewTransitionSpy as unknown as typeof document.startViewTransition;
+  });
+
+  afterEach(() => {
+    // @ts-expect-error cleaning up the jsdom global stubbed above
+    delete document.startViewTransition;
+  });
+
+  it('starts a view transition for a grid update when no overlay is open', () => {
+    renderListing('https://l/1');
+    applyClientFilters();
+    expect(startViewTransitionSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the view transition when the listing modal is open', () => {
+    renderListing('https://l/1');
+    setOpenModalListingUrl('https://l/1');
+    applyClientFilters();
+    expect(startViewTransitionSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips the view transition when a dropdown is open', () => {
+    renderListing('https://l/1');
+    const dropdown = buildDropdownFixture();
+    openDropdownPanel(dropdown);
+    applyClientFilters();
+    expect(startViewTransitionSpy).not.toHaveBeenCalled();
+    closeDropdownPanel(dropdown);
+  });
+
+  it('still applies the DOM mutation when the transition is skipped for an open modal', () => {
+    renderListing('https://l/1', { data: makeListing({ url: 'https://l/1', isSold: true }) });
+    setOpenModalListingUrl('https://l/1');
+    setListingCategoryVisible('sold', false);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
   });
 });
 

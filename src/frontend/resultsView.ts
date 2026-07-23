@@ -5,7 +5,7 @@
 
 import { requirePattern } from '../lib/recipes/metadata';
 import { getElement, requireChild } from './domUtils';
-import { isMobileSheetActive } from './dropdownPanel';
+import { isAnyDropdownOpen, isMobileSheetActive } from './dropdownPanel';
 import { esc } from './html';
 import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
@@ -22,6 +22,7 @@ import {
   isDeepSearchRunning,
   type ListingItem,
   listingsByUrl,
+  openModalListingUrl,
   sortBy,
   urlCardDataById,
   visibleListingCategories,
@@ -32,8 +33,18 @@ import { updateUrlGroupHeaders } from './urlGroupsView';
 // or change position (grid reflow) animate instead of snapping. Falls back
 // to a plain synchronous call when the API isn't available (older browsers,
 // and jsdom in tests) — no polyfill, the mutation still happens either way.
+//
+// Also falls back to a plain call while the listing modal or a dropdown is
+// open: only cards opt out of the transition's implicit "root" capture (via
+// view-transition-name on the card element), so the modal/dropdown — which
+// never set one — get swept into that root snapshot on every grid update.
+// The browser paints that snapshot in the top layer, above the whole normal
+// stacking context regardless of z-index, so an unrelated grid sweep could
+// flash a stale frame of the modal/dropdown over the live one. Skipping the
+// transition while either is open removes the snapshot entirely rather than
+// trying to out-rank it with stacking-context tricks.
 function runWithViewTransition(fn: () => void): void {
-  if (!document.startViewTransition) {
+  if (!document.startViewTransition || openModalListingUrl !== null || isAnyDropdownOpen()) {
     fn();
     return;
   }
@@ -304,7 +315,7 @@ export function renderCard(item: ListingItem): void {
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
     : `<div class="listing-thumb-placeholder">
-         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+         <svg class="listing-thumb-placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
        </div>`;
 
   // The card never re-renders once a deep search populates item.data's
