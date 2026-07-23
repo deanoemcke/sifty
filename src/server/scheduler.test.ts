@@ -1302,4 +1302,71 @@ describe('triggerImmediatePopulationRunAsync', () => {
     resolveScrape();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+
+  it('defers a second immediate-run request for a different saved search while the first still holds the lock, then leaves it to a later cron tick rather than retrying it automatically', async () => {
+    const db = freshDb();
+    const searchAId = insertAlertSearch(db, {
+      id: 'search-a',
+      name: 'Search A',
+      urls: ['https://example.com/a'],
+    });
+    const searchBId = insertAlertSearch(db, {
+      id: 'search-b',
+      name: 'Search B',
+      urls: ['https://example.com/b'],
+    });
+    let resolveScrapeA: () => void = () => {};
+    const blockedRecipeA: Recipe = {
+      name: 'blocked-a',
+      matches: () => true,
+      extractImplicitFilters: () => [],
+      quickSearchAsync: async (_url, onEvent) => {
+        await new Promise<void>((resolve) => {
+          resolveScrapeA = resolve;
+        });
+        onEvent({ type: 'complete' });
+      },
+      deepSearchAsync: async () => {},
+      computeAlertFingerprint: stubComputeAlertFingerprint,
+    };
+    const recipeB = makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })]);
+    vi.mocked(getRecipeForUrl).mockImplementation((url: string) =>
+      url === 'https://example.com/a' ? blockedRecipeA : recipeB
+    );
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Fired back-to-back with no await in between: search-a's synchronous
+    // lock acquisition happens before search-b's call even starts, since
+    // acquireSchedulerLock uses sync fs calls (schedulerLock.ts).
+    triggerImmediatePopulationRunAsync(
+      searchAId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+    triggerImmediatePopulationRunAsync(
+      searchBId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+    // Let both fire-and-forget runs progress to their next suspension point.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // search-b found the lock held by search-a and deferred rather than
+    // waiting for it — no run recorded, a deferral message logged.
+    expect(stmtGetSavedSearch(db).get(searchBId)?.last_run_at).toBeNull();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(`${searchBId} deferred`));
+
+    resolveScrapeA();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // search-a, which held the lock, completes normally.
+    expect(stmtGetSavedSearch(db).get(searchAId)?.last_run_at).not.toBeNull();
+    // search-b is not automatically retried by the deferred call itself —
+    // it's left for the next real cron tick to pick up, per the documented
+    // "defers gracefully" behaviour in runImmediatePopulationRunAsync.
+    expect(stmtGetSavedSearch(db).get(searchBId)?.last_run_at).toBeNull();
+
+    logSpy.mockRestore();
+  });
 });
