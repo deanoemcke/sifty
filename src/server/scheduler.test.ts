@@ -705,8 +705,15 @@ describe('runSchedulerAsync', () => {
       maxSearchesPerTick: 2,
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('3'));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('2'));
+    // Pins each number to its label rather than just checking that '3' and
+    // '2' appear somewhere in the message — a transposed/off-by-one bug
+    // (e.g. logging maxSearchesPerTick where rows.length belongs) would
+    // still contain both digits and pass a looser stringContaining check.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /3 saved search\(es\) are due but only 2 were processed this tick \(maxSearchesPerTick=2\)/
+      )
+    );
     warnSpy.mockRestore();
   });
 
