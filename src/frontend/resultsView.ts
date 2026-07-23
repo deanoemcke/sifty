@@ -247,7 +247,13 @@ function flushFrameMutations(): void {
   pendingFrameMutations.shouldApplyClientFilters = false;
 
   const aiFilterPromptHash = shouldApplyClientFilters ? currentAiFilterPromptHash() : null;
-  if (shouldRevealCards) revealEnteringCards();
+  // A rAF callback runs before its frame's paint, and the entering card was
+  // only just appended this same tick — so the browser has never painted its
+  // opacity:0 state yet. Removing 'entering' here would jump straight to
+  // opacity:1 with nothing to visibly transition from. Deferring the reveal
+  // one more frame lets that first paint of the hidden state land before the
+  // reveal fires and the transition actually animates.
+  if (shouldRevealCards) requestAnimationFrame(revealEnteringCards);
   if (shouldApplyClientFilters) applyClientFiltersDom(aiFilterPromptHash);
   if (shouldApplyClientFilters) renderDerived();
 }

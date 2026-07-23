@@ -500,6 +500,25 @@ describe('renderCard', () => {
     expect(icon.hasAttribute('height')).toBe(false);
     expect(icon.classList.contains('listing-thumb-placeholder-icon')).toBe(true);
   });
+
+  // Regression coverage: a single requestAnimationFrame fires before the
+  // browser has ever painted the just-appended card's opacity:0 'entering'
+  // state (nothing has been painted since it was inserted this same tick).
+  // Removing 'entering' inside that first frame skips straight to opacity:1
+  // with no visible fade — the CSS transition never gets a starting frame to
+  // animate from. A second, nested frame gives the browser one paint of the
+  // hidden state first.
+  it('keeps the entering class through the first animation frame, only revealing on the second', () => {
+    renderCard(makeListingItemAt('https://l/1'));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20);
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20);
+    expect(card.classList.contains('entering')).toBe(false);
+  });
 });
 
 describe('applyClientFilters', () => {
@@ -708,8 +727,14 @@ describe('frame mutation coalescing (single flush per frame)', () => {
     vi.advanceTimersByTime(20);
 
     const card = getCardByUrl('https://l/1') as HTMLElement;
-    expect(card.classList.contains('entering')).toBe(false);
+    // The filter sweep applies within this first frame...
     expect(card.style.display).toBe('none');
+    // ...but the reveal itself waits one more frame (see renderCard's
+    // describe block above) so the browser paints the entering state first.
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20);
+    expect(card.classList.contains('entering')).toBe(false);
   });
 
   it('does not redo work when an already-scheduled frame fires after a synchronous applyClientFilters call absorbed it', () => {
