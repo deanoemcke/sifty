@@ -132,9 +132,10 @@ function toPlaywrightCookies(
   }));
 }
 
-async function createFbContext(browser: Browser): Promise<BrowserContext> {
-  const cookies = parseFbCookies(process.env.FB_COOKIES);
-
+async function createFbContext(
+  browser: Browser,
+  cookies: RawFacebookCookie[]
+): Promise<BrowserContext> {
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
   await context.addCookies(toPlaywrightCookies(cookies));
   console.log(`[facebook] loaded ${cookies.length} cookies from FB_COOKIES`);
@@ -485,9 +486,13 @@ async function runQuickSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
+    // Validate FB_COOKIES before touching the shared browser pool — a missing/
+    // expired/malformed cookie config should fail fast without paying for a
+    // browser acquisition (which may include launching a fresh Chromium).
+    const cookies = parseFbCookies(process.env.FB_COOKIES);
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
-    context = await createFbContext(checkout.browser);
+    context = await createFbContext(checkout.browser, cookies);
     releaseCheckout();
     const page = await context.newPage();
     await maskHeadless(page);
@@ -960,9 +965,13 @@ async function deepSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
+    // Validate FB_COOKIES before touching the shared browser pool — a missing/
+    // expired/malformed cookie config should fail fast without paying for a
+    // browser acquisition (which may include launching a fresh Chromium).
+    const cookies = parseFbCookies(process.env.FB_COOKIES);
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
-    const activeContext = await createFbContext(checkout.browser);
+    const activeContext = await createFbContext(checkout.browser, cookies);
     releaseCheckout();
     context = activeContext;
 
