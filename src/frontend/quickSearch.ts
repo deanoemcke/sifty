@@ -7,7 +7,12 @@ import { isValidRecipeUrl } from '../lib/recipes/matcher';
 import { requestAiFilterRun } from './aiFilter';
 import { getElement, requireChild } from './domUtils';
 import { esc } from './html';
-import { applyClientFilters, renderCard, renderDerived } from './resultsView';
+import {
+  applyClientFilters,
+  renderCard,
+  renderDerived,
+  scheduleClientFilterUpdate,
+} from './resultsView';
 import { parseQuickSearchProgress } from './searchStatusText';
 import {
   addListingItem,
@@ -105,7 +110,18 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           };
           addListingItem(item);
           renderCard(item);
-          renderDerived();
+          // Not just renderDerived(): a category may already be hidden by
+          // the Show dropdown (e.g. the user unchecked "Used" while this
+          // search was still streaming), and applyClientFilters() is the
+          // only thing that sets a newly-rendered card's display:none to
+          // match it — renderDerived() alone only refreshes the dropdown's
+          // count/label, leaving the card itself visible until the next
+          // filter change or this card's search finishes. Scheduled (not
+          // called directly) so a fast-streaming burst of 'listing' events
+          // coalesces into one full-list sweep per animation frame instead
+          // of one per listing — see scheduleClientFilterUpdate's comment
+          // in resultsView.ts.
+          scheduleClientFilterUpdate();
         } else {
           // Listing already known — either the exact URL, or the same
           // underlying listing under a different URL from another card
@@ -119,7 +135,11 @@ export async function searchUrlCardAsync(card: UrlCard): Promise<void> {
           if (existingItem && isNewFromThisSearch && !existingItem.isNewFromSearch) {
             existingItem.isNewFromSearch = true;
             renderCard(existingItem);
-            renderDerived();
+            // This flips the item's category (used → new), which can flip
+            // its Show-dropdown visibility too — applyClientFilters(), not
+            // just renderDerived(), keeps the card in sync (see the comment
+            // on the sibling call above). Scheduled for the same reason.
+            scheduleClientFilterUpdate();
           }
           // The group count may still change, since it dedupes per group
           // rather than globally.

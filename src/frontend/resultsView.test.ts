@@ -8,6 +8,7 @@ import {
   getOrderedListings,
   renderCard,
   renderDerived,
+  scheduleClientFilterUpdate,
   scheduleSortOrderUpdate,
 } from './resultsView';
 import { populateShowControls } from './showDropdown';
@@ -135,11 +136,15 @@ describe('renderDerived', () => {
     expect(document.getElementById('showFilteredCount')?.textContent).toBe('(1)');
   });
 
-  it('disables the ai-filter button and shows the empty state when the prompt is blank', () => {
+  it('visually disables (but keeps clickable) the ai-filter button when the prompt is blank', () => {
     addCardWithListings(['https://l/1', 'https://l/2']);
     renderDerived();
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
-    expect(filterBtn.disabled).toBe(true);
+    // Not the native `disabled` attribute: on the mobile full-screen sheet
+    // this button is also the sheet's sole dismiss control, so it must stay
+    // clickable even with a blank prompt — see renderAiFilterButton.
+    expect(filterBtn.disabled).toBe(false);
+    expect(filterBtn.getAttribute('aria-disabled')).toBe('true');
     expect(filterBtn.textContent).toBe('Filter');
   });
 
@@ -149,6 +154,7 @@ describe('renderDerived', () => {
     renderDerived();
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
     expect(filterBtn.disabled).toBe(false);
+    expect(filterBtn.hasAttribute('aria-disabled')).toBe(false);
   });
 
   it('shows a spinner and disables the ai-filter button while the ai filter is running', () => {
@@ -529,5 +535,79 @@ describe('applyClientFilters', () => {
     setListingCategoryVisible('filtered', false);
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
+  });
+});
+
+// Regression coverage for the SSE hot-path cost of applyClientFilters(): a
+// 'listing' event fires once per streamed result, so calling
+// applyClientFilters() (a full-list DOM sweep) directly from that handler is
+// O(n) work per event, O(n^2) over a stream of n listings. scheduleClientFilterUpdate()
+// coalesces a burst of calls into a single sweep per animation frame, mirroring
+// scheduleSortOrderUpdate's existing pattern above.
+describe('scheduleClientFilterUpdate', () => {
+  function renderListing(url: string, overrides: Partial<ListingItem> = {}): void {
+    const item = makeListingItem({
+      data: makeListing({ url, title: url, price: null, location: '' }),
+      ...overrides,
+    });
+    listingsByUrl.set(url, item);
+    addCardWithListings([url]);
+    renderCard(item);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not apply the filter synchronously — only once the next frame fires', () => {
+    renderListing('https://l/1');
+    setListingCategoryVisible('used', false);
+
+    scheduleClientFilterUpdate();
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
+
+    vi.advanceTimersByTime(20);
+    expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('none');
+  });
+
+  it('costs the same DOM work whether triggered once or by a burst of calls before the frame fires', () => {
+    renderListing('https://l/1');
+    renderListing('https://l/2');
+    renderListing('https://l/3');
+
+    // Baseline: the DOM cost of a single direct sweep.
+    const baselineSpy = vi.spyOn(document, 'getElementById');
+    applyClientFilters();
+    const singleSweepCost = baselineSpy.mock.calls.length;
+    baselineSpy.mockRestore();
+
+    // A burst of scheduled calls — simulating several listings streaming in
+    // within the same animation frame — must cost the same as a single
+    // sweep, not once per call (which would be the O(n^2) regression).
+    const burstSpy = vi.spyOn(document, 'getElementById');
+    scheduleClientFilterUpdate();
+    scheduleClientFilterUpdate();
+    scheduleClientFilterUpdate();
+    vi.advanceTimersByTime(20);
+
+    expect(burstSpy).toHaveBeenCalledTimes(singleSweepCost);
+  });
+
+  // Placed last: unlike the tests above, this deliberately never flushes the
+  // scheduled frame, so it must not leave a pending frame behind for a test
+  // that runs afterward — see rafSchedule.ts's frameId guard.
+  it('only requests a single animation frame for a burst of calls', () => {
+    renderListing('https://l/1');
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
+
+    scheduleClientFilterUpdate();
+    scheduleClientFilterUpdate();
+    scheduleClientFilterUpdate();
+
+    expect(rafSpy).toHaveBeenCalledTimes(1);
   });
 });
