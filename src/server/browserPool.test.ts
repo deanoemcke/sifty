@@ -18,10 +18,17 @@ const { launchCalls, closeCalls, makeBrowser } = vi.hoisted(() => {
 });
 
 let nextBrowser: ReturnType<typeof makeBrowser>;
+let nextLaunchError: Error | undefined;
 
 vi.mock('playwright', () => ({
   chromium: {
     launch: async () => {
+      if (nextLaunchError) {
+        const err = nextLaunchError;
+        nextLaunchError = undefined;
+        launchCalls.push(`error:${err.message}`);
+        throw err;
+      }
       launchCalls.push(nextBrowser.id);
       return nextBrowser;
     },
@@ -34,6 +41,7 @@ describe('getSharedBrowserAsync', () => {
   beforeEach(() => {
     launchCalls.length = 0;
     closeCalls.length = 0;
+    nextLaunchError = undefined;
   });
 
   afterEach(() => {
@@ -259,5 +267,34 @@ describe('getSharedBrowserAsync', () => {
     checkoutB.releaseCheckout();
     await vi.advanceTimersByTimeAsync(1000);
     expect(closeCalls).toContain('old');
+  });
+
+  it('does not permanently wedge a key after a launch failure — the next call retries', async () => {
+    const key = 'facebook-test-launch-failure';
+    nextLaunchError = new Error('transient resource shortage');
+
+    await expect(getSharedBrowserAsync(key)).rejects.toThrow('transient resource shortage');
+
+    nextBrowser = makeBrowser('recovered');
+    const recovered = await getSharedBrowserAsync(key);
+
+    expect(recovered.browser).toBe(nextBrowser);
+    expect(launchCalls).toEqual(['error:transient resource shortage', 'recovered']);
+  });
+
+  it('retries on every failed launch attempt, not just once, until one succeeds', async () => {
+    const key = 'facebook-test-launch-failure-repeated';
+
+    nextLaunchError = new Error('first failure');
+    await expect(getSharedBrowserAsync(key)).rejects.toThrow('first failure');
+
+    nextLaunchError = new Error('second failure');
+    await expect(getSharedBrowserAsync(key)).rejects.toThrow('second failure');
+
+    nextBrowser = makeBrowser('finally-up');
+    const recovered = await getSharedBrowserAsync(key);
+
+    expect(recovered.browser).toBe(nextBrowser);
+    expect(launchCalls).toEqual(['error:first failure', 'error:second failure', 'finally-up']);
   });
 });

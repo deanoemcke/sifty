@@ -109,6 +109,16 @@ async function acquireBrowserForKeyAsync(key: string): Promise<BrowserCheckout> 
   const launched = chromium.launch({ headless: true });
   const entry: PoolEntry = { browserPromise: launched, uses: 1, pendingCheckouts: 0 };
   pools.set(key, entry);
-  const browser = await launched;
+  const browser = await launched.catch((err) => {
+    // Don't let a failed launch wedge this key forever — the pool caches the
+    // *pending promise*, not its resolved value, so a rejected launch would
+    // otherwise stay rejected in `pools` forever and every subsequent call
+    // for this key would re-await (and immediately re-throw from) the same
+    // dead promise. Clear the entry so the next call gets a fresh launch
+    // attempt instead. Guarded on identity in case this entry was already
+    // replaced by the time the rejection is observed.
+    if (pools.get(key) === entry) pools.delete(key);
+    throw err;
+  });
   return reserveCheckout(browser, entry);
 }
