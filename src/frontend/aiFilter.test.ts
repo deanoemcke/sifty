@@ -104,6 +104,47 @@ describe('runAiFilterAsync', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('coalesces multiple streamed result batches into a single animation-frame sweep instead of one view transition per batch', async () => {
+    // Regression test: a fast SSE burst of 'result' batches (the backend
+    // runs up to 3 batches of 50 listings concurrently) used to call
+    // applyClientFilters() directly once per batch, each starting its own
+    // document.startViewTransition and aborting the previous one — cards
+    // would jump into place instead of sliding. The fix routes the per-batch
+    // handler through scheduleClientFilterUpdate(), which coalesces a burst
+    // into a single sweep on the next animation frame.
+    vi.useFakeTimers();
+    const urlA = 'https://example.com/a';
+    const urlB = 'https://example.com/b';
+    for (const url of [urlA, urlB]) {
+      const item: ListingItem = makeListingItem({
+        data: makeListing({ url, title: url, location: 'Auckland' }),
+      });
+      listingsByUrl.set(url, item);
+      addUrlCard(makeCardDom(), {
+        searchStatus: 'done',
+        searchedUrl: url,
+        searchId: null,
+        listingUrls: [url],
+        lastProgress: null,
+        errorMessage: null,
+        wasCancelled: false,
+        isEditing: false,
+      });
+    }
+
+    stubAiFilterStream([
+      `data: {"type":"result","results":[{"url":"${urlA}","pass":true,"reason":null,"relevance":7}]}\n`,
+      `data: {"type":"result","results":[{"url":"${urlB}","pass":true,"reason":null,"relevance":7}]}\n`,
+    ]);
+
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
+
+    await runAiFilterAsync();
+
+    expect(rafSpy).toHaveBeenCalledTimes(1);
   });
 
   it('writes the AI-assigned relevance score onto the listing when a result event arrives', async () => {

@@ -1,7 +1,7 @@
 import { formatListingPrice } from '../lib/priceFormat';
 import { getElement } from './domUtils';
 import { djb2Hash } from './renderUtils';
-import { applyClientFilters, getOrderedListings } from './resultsView';
+import { applyClientFilters, getOrderedListings, scheduleClientFilterUpdate } from './resultsView';
 import {
   aiFilterPendingRun,
   isAiFilterRunning,
@@ -141,7 +141,13 @@ export async function runAiFilterAsync(): Promise<void> {
               item.data.relevance = result.relevance;
             }
           }
-          applyClientFilters();
+          // Batches stream in from up to 3 concurrent backend requests, so a
+          // burst of 'result' events can land within the same animation
+          // frame — schedule (not call directly) so they coalesce into one
+          // view transition instead of each aborting the last, same as
+          // quickSearch.ts's per-listing stream (see
+          // scheduleClientFilterUpdate's comment in resultsView.ts).
+          scheduleClientFilterUpdate();
         } else if (event.type === 'error') {
           streamError = event.message as string;
         }
