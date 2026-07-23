@@ -101,6 +101,41 @@ describe('getSharedBrowserAsync', () => {
     expect(launchCalls).toEqual(['g', 'h']);
   });
 
+  it('does not double-launch when two callers race at the recycle boundary', async () => {
+    const key = 'facebook-test-concurrent-recycle';
+    nextBrowser = makeBrowser('old');
+
+    for (let i = 0; i < MAX_USES_BEFORE_RECYCLE; i++) {
+      await getSharedBrowserAsync(key);
+    }
+    expect(launchCalls).toEqual(['old']);
+
+    // Both callers observe uses === MAX_USES_BEFORE_RECYCLE and race to
+    // recycle at once. Without per-key serialization, both would launch a
+    // fresh browser and only one survives in the pool — orphaning the other.
+    nextBrowser = makeBrowser('new');
+    const [first, second] = await Promise.all([
+      getSharedBrowserAsync(key),
+      getSharedBrowserAsync(key),
+    ]);
+
+    expect(first).toBe(second);
+    expect(launchCalls).toEqual(['old', 'new']);
+  });
+
+  it('serializes concurrent first-use calls for a brand-new key to a single launch', async () => {
+    const key = 'facebook-test-concurrent-first-use';
+    nextBrowser = makeBrowser('first');
+
+    const [first, second] = await Promise.all([
+      getSharedBrowserAsync(key),
+      getSharedBrowserAsync(key),
+    ]);
+
+    expect(first).toBe(second);
+    expect(launchCalls).toEqual(['first']);
+  });
+
   it('waits for a retiring browser’s open contexts to close before closing it', async () => {
     vi.useFakeTimers();
     const key = 'facebook-test-drain';
