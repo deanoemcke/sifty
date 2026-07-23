@@ -249,14 +249,24 @@ export function stmtInsertSavedSearch(database: Database.Database) {
     'INSERT INTO saved_searches (id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
 }
-// NULL last_run_at sorts before any timestamp in SQLite's ASC ordering, so a
-// never-run saved search is always picked over one that has run before; rowid
-// (insertion order) breaks ties between rows with equal last_run_at.
-export function stmtGetOldestAlertEnabledSavedSearch(database: Database.Database) {
-  return database.prepare<[], SavedSearchRow>(
+// A saved search is "due" when it has never run (NULL last_run_at, which
+// sorts before any timestamp in SQLite's ASC ordering) or last ran at or
+// before the cutoff; rowid (insertion order) breaks ties between rows with
+// equal last_run_at.
+const DUE_ALERT_ENABLED_SAVED_SEARCH_WHERE =
+  'WHERE should_alert_on_new_listings = 1 AND (last_run_at IS NULL OR last_run_at <= ?)';
+
+export function stmtGetDueAlertEnabledSavedSearches(database: Database.Database) {
+  return database.prepare<[number, number], SavedSearchRow>(
     'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run ' +
-      'FROM saved_searches WHERE should_alert_on_new_listings = 1 ' +
-      'ORDER BY last_run_at ASC, rowid ASC LIMIT 1'
+      `FROM saved_searches ${DUE_ALERT_ENABLED_SAVED_SEARCH_WHERE} ` +
+      'ORDER BY last_run_at ASC, rowid ASC LIMIT ?'
+  );
+}
+
+export function stmtCountDueAlertEnabledSavedSearches(database: Database.Database) {
+  return database.prepare<[number], { count: number }>(
+    `SELECT COUNT(*) AS count FROM saved_searches ${DUE_ALERT_ENABLED_SAVED_SEARCH_WHERE}`
   );
 }
 export function stmtDeleteSavedSearch(database: Database.Database) {

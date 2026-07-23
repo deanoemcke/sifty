@@ -1,5 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import Database from 'better-sqlite3';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore, QuickSearchEvent, Recipe } from '../lib/recipes/base';
 import { makeListing } from '../lib/testFixtures';
 
@@ -18,20 +21,34 @@ import {
   stmtCountAlertsForSavedSearch,
   stmtGetSavedSearch,
   stmtInsertSavedSearch,
+  stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   AI_FILTER_TIMEOUT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
-  runSchedulerAsync,
+  runImmediatePopulationRunAsync,
+  runSchedulerAsync as runSchedulerAsyncUngated,
   SCRAPE_TIMEOUT_MS,
+  type SchedulerDeps,
+  triggerImmediatePopulationRunAsync,
 } from './scheduler';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
   getCooldownUntil: () => undefined,
 };
+
+// Most tests below simulate successive scheduler ticks with back-to-back
+// calls on the same (usually real) clock, expecting each call to immediately
+// pick up whatever it just processed a moment ago — that's the pre-due-based
+// "always pick the oldest" behaviour. Defaulting targetIntervalMs to 0 here
+// keeps that intent intact; tests that specifically exercise the due-interval
+// gate pass their own targetIntervalMs, which overrides this default.
+function runSchedulerAsync(deps: SchedulerDeps) {
+  return runSchedulerAsyncUngated({ targetIntervalMs: 0, ...deps });
+}
 
 const SEARCH_URL = 'https://example.com/marketplace/search';
 
@@ -544,11 +561,14 @@ describe('runSchedulerAsync', () => {
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
     );
 
+    // maxSearchesPerTick: 1 keeps this test's cross-tick scenario meaningful —
+    // otherwise both due (never-run) searches would be processed in one tick.
     // First call picks the corrupt row (inserted first, both last_run_at are NULL).
     const firstSummary = await runSchedulerAsync({
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 1,
     });
     expect(firstSummary.searches).toHaveLength(1);
     expect(firstSummary.searches[0].savedSearchId).toBe('search-corrupt');
@@ -562,6 +582,7 @@ describe('runSchedulerAsync', () => {
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 1,
     });
     expect(secondSummary.searches).toHaveLength(1);
     expect(secondSummary.searches[0].savedSearchId).toBe('search-good');
@@ -569,7 +590,7 @@ describe('runSchedulerAsync', () => {
     expect(secondSummary.searches[0].populatedCount).toBe(1);
   });
 
-  it('processes only the alert-enabled saved search that was run longest ago', async () => {
+  it('processes only up to maxSearchesPerTick due searches, oldest first', async () => {
     const db = freshDb();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
@@ -578,15 +599,141 @@ describe('runSchedulerAsync', () => {
     );
 
     // Both start with last_run_at = NULL, so rowid (insertion order) breaks the
-    // tie — search-a was inserted first and is picked.
+    // tie — search-a was inserted first and is picked when the cap is 1.
     const summary = await runSchedulerAsync({
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 1,
     });
 
     expect(summary.searches).toHaveLength(1);
     expect(summary.searches[0].savedSearchId).toBe('search-a');
+  });
+
+  it('does not select a saved search whose last_run_at is within the target interval, even if others are due', async () => {
+    const db = freshDb();
+    const fixedNow = 1_700_000_000_000;
+    const targetIntervalMs = 60 * 60_000;
+    insertAlertSearch(db, { id: 'search-recent', name: 'Recent search' });
+    insertAlertSearch(db, { id: 'search-old', name: 'Old search' });
+    stmtUpdateSavedSearchLastRunAt(db).run(fixedNow - 10 * 60_000, 'search-recent');
+    stmtUpdateSavedSearchLastRunAt(db).run(fixedNow - 90 * 60_000, 'search-old');
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now: () => fixedNow,
+      targetIntervalMs,
+    });
+
+    expect(summary.searches).toHaveLength(1);
+    expect(summary.searches[0].savedSearchId).toBe('search-old');
+  });
+
+  it('processes multiple due searches in the same tick, up to maxSearchesPerTick', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 2,
+    });
+
+    expect(summary.searches.map((search) => search.savedSearchId)).toEqual([
+      'search-a',
+      'search-b',
+    ]);
+    expect(stmtGetSavedSearch(db).get('search-c')?.last_run_at).toBeNull();
+  });
+
+  it('a synchronous throw from one search in a batch does not prevent the rest of that same tick from being processed', async () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+    insertAlertSearch(db, { id: 'search-good', name: 'Good search' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 2,
+    });
+
+    expect(summary.searches).toHaveLength(2);
+    const corrupt = summary.searches.find((search) => search.savedSearchId === 'search-corrupt');
+    const good = summary.searches.find((search) => search.savedSearchId === 'search-good');
+    expect(corrupt?.errors.length).toBeGreaterThan(0);
+    expect(good?.errors).toHaveLength(0);
+  });
+
+  it('warns when more searches are due than maxSearchesPerTick can process, naming the backlog size', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 2,
+    });
+
+    // Pins each number to its label rather than just checking that '3' and
+    // '2' appear somewhere in the message — a transposed/off-by-one bug
+    // (e.g. logging maxSearchesPerTick where rows.length belongs) would
+    // still contain both digits and pass a looser stringContaining check.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /3 saved search\(es\) are due but only 2 were processed this tick \(maxSearchesPerTick=2\)/
+      )
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when maxSearchesPerTick covers every due search', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 2,
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('sets last_run_at to the injected clock time after processing a saved search', async () => {
@@ -892,5 +1039,334 @@ describe('runSchedulerAsync', () => {
 
     expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith(undefined);
     expect(sendNotificationAsync.mock.calls[0][1]?.image).toBeUndefined();
+  });
+});
+
+function tempLockPath(): string {
+  return path.join(
+    os.tmpdir(),
+    `sifty-scheduler-immediate-test-${Date.now()}-${Math.random()}.lock`
+  );
+}
+
+describe('runImmediatePopulationRunAsync', () => {
+  let lockPath: string;
+
+  beforeEach(() => {
+    lockPath = tempLockPath();
+  });
+
+  afterEach(() => {
+    if (lockPath && fs.existsSync(lockPath)) fs.rmSync(lockPath);
+  });
+
+  it('redoes the population pass even when has_completed_population_run is already 1, without notifying', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    // First run establishes history the normal way (population run).
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const newListing = makeListing({ title: 'New chair', url: 'https://example.com/new' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
+    const sendNotificationAsync = vi.fn();
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    // Redone as a silent population pass: no notification, both listings
+    // recorded (the pre-existing one via INSERT OR IGNORE, left untouched;
+    // the new one added silently), flag still set.
+    expect(sendNotificationAsync).not.toHaveBeenCalled();
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
+  });
+
+  it('leaves pre-existing alerted_listings rows untouched', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    const beforeRow = db
+      .prepare('SELECT created_at FROM alerted_listings WHERE saved_search_id = ?')
+      .get(searchId) as { created_at: number };
+    stmtClearSearch(db).run();
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    const afterRow = db
+      .prepare('SELECT created_at FROM alerted_listings WHERE saved_search_id = ?')
+      .get(searchId) as { created_at: number };
+    expect(afterRow.created_at).toBe(beforeRow.created_at);
+  });
+
+  it('updates last_run_at', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).not.toBeNull();
+  });
+
+  it('resolves without touching the DB row when the lock is already held', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, String(process.pid));
+
+    await expect(
+      runImmediatePopulationRunAsync(
+        searchId,
+        { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+        lockPath
+      )
+    ).resolves.toBeUndefined();
+
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+  });
+
+  it('resolves without throwing when the saved search no longer exists', async () => {
+    const db = freshDb();
+
+    await expect(
+      runImmediatePopulationRunAsync(
+        'missing-id',
+        { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+        lockPath
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  it('releases the lock after finishing, so a subsequent call can acquire it', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('advances last_run_at even when processing throws, so a corrupted saved search does not get stuck retrying forever', async () => {
+    const db = freshDb();
+    // Corrupt urls column — JSON.parse(row.urls) throws synchronously inside processSavedSearchAsync,
+    // mirroring the batch-path scenario in the 'a saved search whose row causes a synchronous throw...' test above.
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+
+    await runImmediatePopulationRunAsync(
+      'search-corrupt',
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(stmtGetSavedSearch(db).get('search-corrupt')?.last_run_at).not.toBeNull();
+  });
+
+  it('releases the lock even when processing throws', async () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+
+    await runImmediatePopulationRunAsync(
+      'search-corrupt',
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+});
+
+describe('triggerImmediatePopulationRunAsync', () => {
+  let lockPath: string;
+
+  beforeEach(() => {
+    lockPath = tempLockPath();
+  });
+
+  afterEach(() => {
+    if (lockPath && fs.existsSync(lockPath)) fs.rmSync(lockPath);
+  });
+
+  it('never throws synchronously, even if the underlying run eventually rejects', async () => {
+    const db = freshDb();
+    // Corrupt urls column makes processSavedSearchAsync throw synchronously.
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      expect(() =>
+        triggerImmediatePopulationRunAsync(
+          'search-corrupt',
+          { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+          lockPath
+        )
+      ).not.toThrow();
+      // Give the fire-and-forget promise a tick to settle.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('is fire-and-forget: returns before the underlying population run completes', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    let resolveScrape: () => void = () => {};
+    const blockedRecipe: Recipe = {
+      name: 'blocked',
+      matches: () => true,
+      extractImplicitFilters: () => [],
+      quickSearchAsync: async (_url, onEvent) => {
+        await new Promise<void>((resolve) => {
+          resolveScrape = resolve;
+        });
+        onEvent({ type: 'complete' });
+      },
+      deepSearchAsync: async () => {},
+      computeAlertFingerprint: stubComputeAlertFingerprint,
+    };
+    vi.mocked(getRecipeForUrl).mockReturnValue(blockedRecipe);
+
+    const returnValue = triggerImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+
+    expect(returnValue).toBeUndefined();
+    // The scrape hasn't resolved yet, so last_run_at must still be unset.
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+    resolveScrape();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it('defers a second immediate-run request for a different saved search while the first still holds the lock, then leaves it to a later cron tick rather than retrying it automatically', async () => {
+    const db = freshDb();
+    const searchAId = insertAlertSearch(db, {
+      id: 'search-a',
+      name: 'Search A',
+      urls: ['https://example.com/a'],
+    });
+    const searchBId = insertAlertSearch(db, {
+      id: 'search-b',
+      name: 'Search B',
+      urls: ['https://example.com/b'],
+    });
+    let resolveScrapeA: () => void = () => {};
+    const blockedRecipeA: Recipe = {
+      name: 'blocked-a',
+      matches: () => true,
+      extractImplicitFilters: () => [],
+      quickSearchAsync: async (_url, onEvent) => {
+        await new Promise<void>((resolve) => {
+          resolveScrapeA = resolve;
+        });
+        onEvent({ type: 'complete' });
+      },
+      deepSearchAsync: async () => {},
+      computeAlertFingerprint: stubComputeAlertFingerprint,
+    };
+    const recipeB = makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })]);
+    vi.mocked(getRecipeForUrl).mockImplementation((url: string) =>
+      url === 'https://example.com/a' ? blockedRecipeA : recipeB
+    );
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Fired back-to-back with no await in between: search-a's synchronous
+    // lock acquisition happens before search-b's call even starts, since
+    // acquireSchedulerLock uses sync fs calls (schedulerLock.ts).
+    triggerImmediatePopulationRunAsync(
+      searchAId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+    triggerImmediatePopulationRunAsync(
+      searchBId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      lockPath
+    );
+    // Let both fire-and-forget runs progress to their next suspension point.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // search-b found the lock held by search-a and deferred rather than
+    // waiting for it — no run recorded, a deferral message logged.
+    expect(stmtGetSavedSearch(db).get(searchBId)?.last_run_at).toBeNull();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(`${searchBId} deferred`));
+
+    resolveScrapeA();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // search-a, which held the lock, completes normally.
+    expect(stmtGetSavedSearch(db).get(searchAId)?.last_run_at).not.toBeNull();
+    // search-b is not automatically retried by the deferred call itself —
+    // it's left for the next real cron tick to pick up, per the documented
+    // "defers gracefully" behaviour in runImmediatePopulationRunAsync.
+    expect(stmtGetSavedSearch(db).get(searchBId)?.last_run_at).toBeNull();
+
+    logSpy.mockRestore();
   });
 });

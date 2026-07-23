@@ -1,6 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderCooldownStore } from '../../lib/recipes/base';
 
 let _testDb: Database.Database | null = null;
 
@@ -78,8 +79,13 @@ vi.mock('../helpers', () => ({
   sendJSON: vi.fn(),
 }));
 
+vi.mock('../scheduler', () => ({
+  triggerImmediatePopulationRunAsync: vi.fn(),
+}));
+
 import { stmtGetSavedSearchByName } from '../db';
 import { readBody, sendJSON } from '../helpers';
+import { triggerImmediatePopulationRunAsync } from '../scheduler';
 import {
   handleCreateSavedSearch,
   handleDeleteSavedSearch,
@@ -92,6 +98,11 @@ import {
 function makeResponse(): ServerResponse {
   return {} as ServerResponse;
 }
+
+const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
+  markExhausted: () => {},
+  getCooldownUntil: () => undefined,
+};
 
 function initTestDb(): void {
   const db = new Database(':memory:');
@@ -115,6 +126,7 @@ beforeEach(() => {
   vi.mocked(sendJSON).mockClear();
   vi.mocked(readBody).mockClear();
   vi.mocked(stmtGetSavedSearchByName).mockClear();
+  vi.mocked(triggerImmediatePopulationRunAsync).mockClear();
 });
 
 describe('handleCreateSavedSearch', () => {
@@ -124,7 +136,7 @@ describe('handleCreateSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/x'],
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -147,7 +159,7 @@ describe('handleCreateSavedSearch', () => {
       discoverInputs,
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     const createCall = vi.mocked(sendJSON).mock.calls[0];
     expect(createCall[1]).toBe(200);
@@ -170,7 +182,7 @@ describe('handleCreateSavedSearch', () => {
       discoverInputs: 'not-an-object',
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -186,7 +198,7 @@ describe('handleCreateSavedSearch', () => {
       discoverInputs: ['prompt', 'something'],
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -202,7 +214,7 @@ describe('handleCreateSavedSearch', () => {
       discoverInputs: { prompt: 'x'.repeat(5000) },
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -216,7 +228,7 @@ describe('handleCreateSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/x'],
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(expect.anything(), 400, expect.anything());
   });
@@ -227,7 +239,7 @@ describe('handleCreateSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/x'],
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -243,7 +255,7 @@ describe('handleCreateSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/x'],
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -260,7 +272,7 @@ describe('handleCreateSavedSearch', () => {
       shouldAlertOnNewListings: true,
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -277,7 +289,7 @@ describe('handleCreateSavedSearch', () => {
       shouldAlertOnNewListings: 'yes',
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -286,12 +298,39 @@ describe('handleCreateSavedSearch', () => {
     );
   });
 
+  it('triggers an immediate population run when created with shouldAlertOnNewListings true', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Plain search',
+      urls: ['https://www.trademe.co.nz/a/x'],
+      shouldAlertOnNewListings: true,
+    });
+
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    expect(triggerImmediatePopulationRunAsync).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ cooldownStore: STUB_COOLDOWN_STORE })
+    );
+  });
+
+  it('does not trigger an immediate population run when created with shouldAlertOnNewListings false (the default)', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Plain search',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+
+    expect(triggerImmediatePopulationRunAsync).not.toHaveBeenCalled();
+  });
+
   it('returns 409 with the existing id when name already exists, and does not insert a duplicate', async () => {
     vi.mocked(readBody).mockResolvedValue({
       name: 'Duplicate name',
       urls: ['https://www.trademe.co.nz/a/x'],
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id: firstId } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -299,7 +338,7 @@ describe('handleCreateSavedSearch', () => {
       name: 'Duplicate name',
       urls: ['https://www.trademe.co.nz/a/y'],
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -340,7 +379,7 @@ describe('handleCreateSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/z'],
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -382,7 +421,7 @@ describe('handleListSavedSearches', () => {
       discoverInputs: { prompt: 'laptop', fulfillment: 'any' },
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     vi.mocked(sendJSON).mockClear();
 
     handleListSavedSearches(makeResponse() as never, makeResponse());
@@ -431,7 +470,7 @@ describe('handleDeleteSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/x'],
     });
 
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -445,7 +484,12 @@ describe('handlePatchSavedSearch', () => {
   it('returns 404 for unknown id', async () => {
     vi.mocked(readBody).mockResolvedValue({ shouldAlertOnNewListings: true });
 
-    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), 'nonexistent-id');
+    await handlePatchSavedSearch(
+      makeResponse() as never,
+      makeResponse(),
+      'nonexistent-id',
+      STUB_COOLDOWN_STORE
+    );
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -459,12 +503,12 @@ describe('handlePatchSavedSearch', () => {
       name: 'To patch',
       urls: ['https://www.trademe.co.nz/a/x'],
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
     vi.mocked(readBody).mockResolvedValue({ shouldAlertOnNewListings: 'yes' });
-    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id);
+    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -478,12 +522,12 @@ describe('handlePatchSavedSearch', () => {
       name: 'To patch',
       urls: ['https://www.trademe.co.nz/a/x'],
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
     vi.mocked(readBody).mockResolvedValue({ shouldAlertOnNewListings: true });
-    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id);
+    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(expect.anything(), 200, { ok: true });
 
@@ -491,6 +535,39 @@ describe('handlePatchSavedSearch', () => {
     handleGetSavedSearch(makeResponse() as never, makeResponse(), id);
     const { search } = vi.mocked(sendJSON).mock.calls[0][2] as { search: Record<string, unknown> };
     expect(search.shouldAlertOnNewListings).toBe(true);
+  });
+
+  it('triggers an immediate population run when patched to shouldAlertOnNewListings true', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'To patch',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    vi.mocked(readBody).mockResolvedValue({ shouldAlertOnNewListings: true });
+    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
+
+    expect(triggerImmediatePopulationRunAsync).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ cooldownStore: STUB_COOLDOWN_STORE })
+    );
+  });
+
+  it('does not trigger an immediate population run when patched to shouldAlertOnNewListings false', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'To patch',
+      urls: ['https://www.trademe.co.nz/a/x'],
+      shouldAlertOnNewListings: true,
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+    vi.mocked(triggerImmediatePopulationRunAsync).mockClear();
+
+    vi.mocked(readBody).mockResolvedValue({ shouldAlertOnNewListings: false });
+    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
+
+    expect(triggerImmediatePopulationRunAsync).not.toHaveBeenCalled();
   });
 });
 
@@ -501,7 +578,12 @@ describe('handleUpdateSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/x'],
     });
 
-    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), 'nonexistent-id');
+    await handleUpdateSavedSearch(
+      makeResponse() as never,
+      makeResponse(),
+      'nonexistent-id',
+      STUB_COOLDOWN_STORE
+    );
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -515,12 +597,12 @@ describe('handleUpdateSavedSearch', () => {
       name: 'To update',
       urls: ['https://www.trademe.co.nz/a/x'],
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
     vi.mocked(readBody).mockResolvedValue({ name: 'To update' });
-    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id);
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -535,7 +617,7 @@ describe('handleUpdateSavedSearch', () => {
       urls: ['https://www.trademe.co.nz/a/original'],
       shouldAlertOnNewListings: true,
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -550,7 +632,7 @@ describe('handleUpdateSavedSearch', () => {
       aiFilter: 'good condition only',
       discoverInputs: { prompt: 'lamp', fulfillment: 'any' },
     });
-    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id);
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(expect.anything(), 200, { ok: true });
 
@@ -574,7 +656,7 @@ describe('handleUpdateSavedSearch', () => {
       name: 'Taken name',
       urls: ['https://www.trademe.co.nz/a/x'],
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id: otherId } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -582,7 +664,7 @@ describe('handleUpdateSavedSearch', () => {
       name: 'To rename',
       urls: ['https://www.trademe.co.nz/a/y'],
     });
-    await handleCreateSavedSearch(makeResponse() as never, makeResponse());
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
     const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
 
     vi.mocked(sendJSON).mockClear();
@@ -590,7 +672,7 @@ describe('handleUpdateSavedSearch', () => {
       name: 'Taken name',
       urls: ['https://www.trademe.co.nz/a/y'],
     });
-    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id);
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
 
     expect(vi.mocked(sendJSON)).toHaveBeenCalledWith(
       expect.anything(),
@@ -605,5 +687,44 @@ describe('handleUpdateSavedSearch', () => {
     handleGetSavedSearch(makeResponse() as never, makeResponse(), id);
     const { search } = vi.mocked(sendJSON).mock.calls[0][2] as { search: Record<string, unknown> };
     expect(search.name).toBe('To rename');
+  });
+
+  it('triggers an immediate population run when overwriting a saved search whose alerts are already on', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Alerts on',
+      urls: ['https://www.trademe.co.nz/a/x'],
+      shouldAlertOnNewListings: true,
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+    vi.mocked(triggerImmediatePopulationRunAsync).mockClear();
+
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Alerts on',
+      urls: ['https://www.trademe.co.nz/a/y'],
+    });
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
+
+    expect(triggerImmediatePopulationRunAsync).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ cooldownStore: STUB_COOLDOWN_STORE })
+    );
+  });
+
+  it('does not trigger an immediate population run when overwriting a saved search whose alerts are off', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Alerts off',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Alerts off',
+      urls: ['https://www.trademe.co.nz/a/y'],
+    });
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
+
+    expect(triggerImmediatePopulationRunAsync).not.toHaveBeenCalled();
   });
 });
