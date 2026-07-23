@@ -27,6 +27,25 @@ import {
 } from './state';
 import { updateUrlGroupHeaders } from './urlGroupsView';
 
+// Runs `fn`'s DOM mutation inside a View Transition so cards that pop in/out
+// or change position (grid reflow) animate instead of snapping. Falls back
+// to a plain synchronous call when the API isn't available (older browsers,
+// and jsdom in tests) — no polyfill, the mutation still happens either way.
+function runWithViewTransition(fn: () => void): void {
+  if (!document.startViewTransition) {
+    fn();
+    return;
+  }
+  // A transition started while another is still in flight (e.g. a fast SSE
+  // burst calling this repeatedly) supersedes the prior one, whose promises
+  // then reject with an AbortError. That's expected/harmless here — there's
+  // nothing awaiting the result — but left unhandled it surfaces as an
+  // uncaught console error on every skip, so swallow it explicitly.
+  const transition = document.startViewTransition(fn);
+  transition.ready.catch(() => {});
+  transition.finished.catch(() => {});
+}
+
 export function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
   return [...urlCardDataById.values()]
@@ -92,10 +111,12 @@ function sortedIfReorderNeeded(listings: ListingItem[]): ListingItem[] | null {
 export function applySortOrder(listings: ListingItem[]): void {
   const sorted = sortedIfReorderNeeded(listings);
   if (!sorted) return;
-  const container = getElement('listingsContainer');
-  sorted.forEach((item) => {
-    const card = getCardByUrl(item.data.url);
-    if (card) container.appendChild(card);
+  runWithViewTransition(() => {
+    const container = getElement('listingsContainer');
+    sorted.forEach((item) => {
+      const card = getCardByUrl(item.data.url);
+      if (card) container.appendChild(card);
+    });
   });
 }
 
@@ -182,23 +203,25 @@ export function renderAiFilterButton(listings: ListingItem[] = getOrderedListing
 }
 
 export function applyClientFilters(): void {
-  for (const item of getOrderedListings()) {
-    const category = getListingCategory(item);
-    const card = getCardByUrl(item.data.url);
-    if (card) {
-      const banner = requireChild<HTMLElement>(card, '.filter-banner');
-      if (category !== 'filtered') {
-        card.classList.remove('filtered-out');
-        banner.textContent = '';
-        banner.classList.add('hidden');
-      } else {
-        card.classList.add('filtered-out');
-        banner.textContent = filterBannerText(item);
-        banner.classList.remove('hidden');
+  runWithViewTransition(() => {
+    for (const item of getOrderedListings()) {
+      const category = getListingCategory(item);
+      const card = getCardByUrl(item.data.url);
+      if (card) {
+        const banner = requireChild<HTMLElement>(card, '.filter-banner');
+        if (category !== 'filtered') {
+          card.classList.remove('filtered-out');
+          banner.textContent = '';
+          banner.classList.add('hidden');
+        } else {
+          card.classList.add('filtered-out');
+          banner.textContent = filterBannerText(item);
+          banner.classList.remove('hidden');
+        }
+        card.style.display = visibleListingCategories.has(category) ? '' : 'none';
       }
-      card.style.display = visibleListingCategories.has(category) ? '' : 'none';
     }
-  }
+  });
   renderDerived();
 }
 
@@ -218,6 +241,22 @@ const scheduleApplyClientFiltersOnNextFrame = rafSchedule(applyClientFilters);
 export function scheduleClientFilterUpdate(): void {
   scheduleApplyClientFiltersOnNextFrame();
 }
+
+// New cards are appended in a hidden 'entering' state (see renderCard) so
+// there's something for the view transition below to animate from. During a
+// fast SSE burst, renderCard() runs once per streamed listing — reverting
+// 'entering' immediately, inside its own view transition, would fire one
+// transition per listing and abort/skip the previous one's animation each
+// time. rafSchedule coalesces a burst into a single reveal (and therefore a
+// single view transition) on the next frame, same pattern as the filter/sort
+// scheduling above.
+const scheduleCardRevealOnNextFrame = rafSchedule((): void => {
+  runWithViewTransition(() => {
+    for (const card of document.querySelectorAll<HTMLElement>('.listing-card.entering')) {
+      card.classList.remove('entering');
+    }
+  });
+});
 
 // Looks up a listing card by URL. Returns null if not yet rendered.
 export function getCardByUrl(url: string): HTMLElement | null {
@@ -240,6 +279,10 @@ export function renderCard(item: ListingItem): void {
   card.className = listing.isSold ? 'listing-card sold' : 'listing-card';
   card.id = cardId;
   card.dataset.url = listing.url;
+  // Stable per-card name so the View Transitions API (see
+  // runWithViewTransition above) can track this card's identity across a
+  // reflow and animate its position, instead of just cross-fading everything.
+  card.style.viewTransitionName = cardId;
 
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
@@ -280,5 +323,9 @@ export function renderCard(item: ListingItem): void {
 
   applyListingCardAccessibility(requireChild(card, '.listing-open-area'), listing.title);
 
-  if (!existing) getElement('listingsContainer').appendChild(card);
+  if (!existing) {
+    card.classList.add('entering');
+    getElement('listingsContainer').appendChild(card);
+    scheduleCardRevealOnNextFrame();
+  }
 }
