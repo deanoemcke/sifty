@@ -9,6 +9,14 @@ This is a Vite frontend with no headless-browser CLI installed
 (`chromium-cli` is not available here) — drive it with the `playwright`
 package that's already a project `devDependency`.
 
+## Before you start
+
+This step is expensive and failure-prone (wrong port, server not ready,
+browser launch issues have repeatedly blown out sessions). Never invoke
+this skill automatically as a default "verify it worked" step — always
+ask the user first. Often it's faster and cheaper for them to check
+themselves.
+
 ## 1. Start (or find) the dev server
 
 Each git worktree binds to a fixed port: `5173 + <trailing digit in the
