@@ -41,3 +41,16 @@ export function formatAlertMessage(listing: Listing): string {
     listing.url,
   ].join('\n');
 }
+
+// Composes a system-health Signal alert for a saved search that had a scrape
+// it could not trust this run (e.g. Facebook Marketplace serving a login
+// wall mid-scrape) rather than a listing to look at. Deliberately distinct
+// in shape from formatAlertMessage's listing card (no bold title/price/
+// location) so the two are never confused at a glance in the Signal thread.
+export function formatScrapeErrorMessage(savedSearchName: string, errorMessages: string[]): string {
+  return [
+    `**Scrape error — ${escapeSignalMarkdown(savedSearchName)}**`,
+    'Some results could not be trusted this run and were discarded — nothing was alerted or filtered from them:',
+    ...errorMessages.map((message) => `- ${escapeSignalMarkdown(message)}`),
+  ].join('\n');
+}

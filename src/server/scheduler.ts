@@ -32,7 +32,7 @@ import {
   runAiFilterBatchesAsync,
 } from './services/aiFilter';
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
-import { formatAlertMessage } from './signalMessage';
+import { formatAlertMessage, formatScrapeErrorMessage } from './signalMessage';
 
 // Upper bound on a single URL's quick search. The scheduler runs unattended
 // via cron with no human to notice a hang — a stalled recipe (login wall,
@@ -168,7 +168,7 @@ async function processSavedSearchAsync(
   row: SavedSearchRow,
   deps: Required<SchedulerDeps>
 ): Promise<SavedSearchRunSummary> {
-  const { database, cooldownStore, now } = deps;
+  const { database, cooldownStore, now, sendNotificationAsync } = deps;
   const urls = JSON.parse(row.urls) as string[];
   const aiFilterPrompt = row.ai_filter?.trim() ? row.ai_filter : null;
 
@@ -200,26 +200,59 @@ async function processSavedSearchAsync(
   // Deduped by content hash, not URL — the same physical listing can appear
   // via more than one of this saved search's own URLs.
   const listingsByHash = new Map<string, Listing>();
+  // Populated only by recipes whose scrape didn't reach a trustworthy
+  // completion this run (see the `didCompleteSuccessfully` check below) —
+  // surfaced as one consolidated Signal alert after the loop so the user
+  // learns their Facebook session needs attention, distinct from a listing
+  // alert (formatScrapeErrorMessage in signalMessage.ts).
+  const facebookFailureMessages: string[] = [];
   for (const url of urls) {
     const recipe = getRecipeForUrl(url);
     if (!recipe) {
       summary.errors.push(`No recipe found for URL: ${url}`);
       continue;
     }
+    let latestErrorMessage: string | undefined;
     try {
-      const { listings } = await withTimeoutAsync(
-        runQuickSearchForUrlAsync(url, recipe, database, (event) =>
-          logQuickSearchEvent(recipe.name, event)
-        ),
+      const { listings, didCompleteSuccessfully } = await withTimeoutAsync(
+        runQuickSearchForUrlAsync(url, recipe, database, (event) => {
+          if (event.type === 'error') latestErrorMessage = event.message;
+          logQuickSearchEvent(recipe.name, event);
+        }),
         SCRAPE_TIMEOUT_MS,
         `Quick search for ${url}`
       );
+      if (!didCompleteSuccessfully) {
+        // A recipe that returns without ever reaching `{type:'complete'}` (a
+        // login wall, a block, a mid-scrape failure) may still have pushed
+        // some `listing` events before it detected the failure — e.g.
+        // facebook.ts's detectLoginWallAsync fires only after already-
+        // rendered DOM listings have been processed by the MutationObserver
+        // injection. Those listings are not trustworthy and must never reach
+        // AI filtering or notification.
+        const reason = latestErrorMessage ?? 'did not complete successfully';
+        const message = `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`;
+        summary.errors.push(message);
+        if (recipe.name === 'facebook') facebookFailureMessages.push(message);
+        continue;
+      }
       for (const listing of listings)
         listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
     } catch (err) {
-      summary.errors.push(`Quick search failed for ${url}: ${(err as Error).message}`);
+      const message = `Quick search failed for ${url}: ${(err as Error).message}`;
+      summary.errors.push(message);
+      if (recipe.name === 'facebook') facebookFailureMessages.push(message);
     }
   }
+
+  if (facebookFailureMessages.length > 0) {
+    try {
+      await sendNotificationAsync(formatScrapeErrorMessage(row.name, facebookFailureMessages));
+    } catch (err) {
+      summary.errors.push(`Scrape-error notification failed: ${(err as Error).message}`);
+    }
+  }
+
   summary.listingsFoundCount = listingsByHash.size;
   console.log(`[scheduler] "${row.name}": scraped ${summary.listingsFoundCount} listing(s)`);
 

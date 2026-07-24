@@ -119,6 +119,25 @@ function makeHangingRecipe(): Recipe {
   };
 }
 
+// Simulates Facebook's login-wall detection firing after some DOM listings
+// were already processed (facebook.ts's detectLoginWallAsync runs after the
+// MutationObserver has already emitted `listing` events for already-rendered
+// links) — some `listing` events fire, then `error`, and `complete` never
+// fires.
+function makeLoginWalledRecipe(recipeName: string, listings: Listing[]): Recipe {
+  return {
+    name: recipeName,
+    matches: () => true,
+    extractImplicitFilters: () => [],
+    quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
+      for (const listing of listings) onEvent({ type: 'listing', data: listing });
+      onEvent({ type: 'error', message: 'Facebook login wall detected' });
+    },
+    deepSearchAsync: async () => {},
+    computeAlertFingerprint: stubComputeAlertFingerprint,
+  };
+}
+
 beforeEach(() => {
   vi.mocked(getRecipeForUrl).mockReset();
   vi.mocked(aiJSON).mockReset();
@@ -1039,6 +1058,115 @@ describe('runSchedulerAsync', () => {
 
     expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith(undefined);
     expect(sendNotificationAsync.mock.calls[0][1]?.image).toBeUndefined();
+  });
+
+  it('discards partial listings and sends one system Signal alert when a facebook-named recipe never completes (login wall)', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // population run — establishes non-population history
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', [taintedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).not.toContain('Tainted FB listing');
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('FB search');
+    expect(summary.searches[0].notifiedCount).toBe(0);
+    expect(summary.searches[0].listingsFoundCount).toBe(0);
+    // Only the run-1 seed baseline is alerted — the tainted listing never got recorded.
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1);
+  });
+
+  it('still notifies for a trademe listing on the same saved search when a facebook URL in it fails', async () => {
+    const db = freshDb();
+    const fbUrl = 'https://facebook.com/marketplace/search';
+    const tmUrl = 'https://trademe.co.nz/search';
+    const searchId = insertAlertSearch(db, { urls: [fbUrl, tmUrl] });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // population run
+    stmtClearSearch(db).run();
+
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    const newTmListing = makeListing({
+      title: 'New trademe chair',
+      url: 'https://trademe.co.nz/1',
+    });
+    vi.mocked(getRecipeForUrl).mockImplementation((url: string) =>
+      url === fbUrl
+        ? makeLoginWalledRecipe('facebook', [taintedListing])
+        : makeStubRecipe([seedListing, newTmListing])
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(
+      sendNotificationAsync.mock.calls.some(([message]) => message.includes('New trademe chair'))
+    ).toBe(true);
+    expect(
+      sendNotificationAsync.mock.calls.some(([message]) => message.includes('Tainted FB listing'))
+    ).toBe(false);
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2); // seed + new trademe listing
+  });
+
+  it('does not send a proactive Signal notification for a non-facebook recipe that never completes — only discards and logs', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // population run
+    stmtClearSearch(db).run();
+
+    const taintedListing = makeListing({
+      title: 'Tainted listing',
+      url: 'https://example.com/tainted',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('trademe', [taintedListing]));
+    const sendNotificationAsync = vi.fn();
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).not.toHaveBeenCalled();
+    expect(summary.searches[0].notifiedCount).toBe(0);
+    expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1); // only the seed baseline
   });
 });
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { makeListing } from '../lib/testFixtures';
-import { escapeSignalMarkdown, formatAlertMessage } from './signalMessage';
+import {
+  escapeSignalMarkdown,
+  formatAlertMessage,
+  formatScrapeErrorMessage,
+} from './signalMessage';
 
 describe('formatAlertMessage', () => {
   it('composes a bold title, then a location/price line, then the url — no saved search name or source', () => {
@@ -100,5 +104,30 @@ describe('escapeSignalMarkdown', () => {
     const input = `Cheap ${marker}car${marker} for sale`;
     const escaped = escapeSignalMarkdown(input);
     expect(escaped).not.toContain(marker);
+  });
+});
+
+describe('formatScrapeErrorMessage', () => {
+  it('includes the saved search name and each error message, one per line', () => {
+    const message = formatScrapeErrorMessage('My search', ['err a', 'err b']);
+
+    expect(message).toContain('My search');
+    expect(message).toContain('err a');
+    expect(message).toContain('err b');
+  });
+
+  it('escapes markdown-special characters in the saved search name', () => {
+    const message = formatScrapeErrorMessage('**Sneaky** search', []);
+
+    // Only the formatter's own ** wrapper should survive.
+    expect(message.match(/\*\*/g)?.length).toBe(2);
+  });
+
+  it('escapes markdown-special characters within each error message', () => {
+    const message = formatScrapeErrorMessage('S', ['contains *asterisks* and _underscores_']);
+    const bulletLine = message.split('\n').at(-1);
+
+    expect(bulletLine).not.toMatch(/[*_]/);
+    expect(bulletLine).toContain('contains asterisks and underscores');
   });
 });
