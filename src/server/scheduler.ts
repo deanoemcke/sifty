@@ -200,12 +200,12 @@ async function processSavedSearchAsync(
   // Deduped by content hash, not URL — the same physical listing can appear
   // via more than one of this saved search's own URLs.
   const listingsByHash = new Map<string, Listing>();
-  // Populated only by recipes whose scrape didn't reach a trustworthy
+  // Populated by any recipe whose scrape didn't reach a trustworthy
   // completion this run (see the `didCompleteSuccessfully` check below) —
   // surfaced as one consolidated Signal alert after the loop so the user
-  // learns their Facebook session needs attention, distinct from a listing
-  // alert (formatScrapeErrorMessage in signalMessage.ts).
-  const facebookFailureMessages: string[] = [];
+  // learns a saved search needs attention, distinct from a listing alert
+  // (formatScrapeErrorMessage in signalMessage.ts).
+  const scrapeFailureReasons: string[] = [];
   for (const url of urls) {
     const recipe = getRecipeForUrl(url);
     if (!recipe) {
@@ -231,23 +231,24 @@ async function processSavedSearchAsync(
         // injection. Those listings are not trustworthy and must never reach
         // AI filtering or notification.
         const reason = latestErrorMessage ?? 'did not complete successfully';
-        const message = `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`;
-        summary.errors.push(message);
-        if (recipe.name === 'facebook') facebookFailureMessages.push(message);
+        summary.errors.push(
+          `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`
+        );
+        scrapeFailureReasons.push(reason);
         continue;
       }
       for (const listing of listings)
         listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
     } catch (err) {
-      const message = `Quick search failed for ${url}: ${(err as Error).message}`;
-      summary.errors.push(message);
-      if (recipe.name === 'facebook') facebookFailureMessages.push(message);
+      const reason = (err as Error).message;
+      summary.errors.push(`Quick search failed for ${url}: ${reason}`);
+      scrapeFailureReasons.push(reason);
     }
   }
 
-  if (facebookFailureMessages.length > 0) {
+  if (scrapeFailureReasons.length > 0) {
     try {
-      await sendNotificationAsync(formatScrapeErrorMessage(row.name, facebookFailureMessages));
+      await sendNotificationAsync(formatScrapeErrorMessage(row.name, scrapeFailureReasons));
     } catch (err) {
       summary.errors.push(`Scrape-error notification failed: ${(err as Error).message}`);
     }

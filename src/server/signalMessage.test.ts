@@ -108,26 +108,39 @@ describe('escapeSignalMarkdown', () => {
 });
 
 describe('formatScrapeErrorMessage', () => {
-  it('includes the saved search name and each error message, one per line', () => {
-    const message = formatScrapeErrorMessage('My search', ['err a', 'err b']);
+  it('formats a single reason as one concise "Scrape error - <name>. <reason>" line', () => {
+    const message = formatScrapeErrorMessage('My search', ['Facebook requires login.']);
 
-    expect(message).toContain('My search');
-    expect(message).toContain('err a');
-    expect(message).toContain('err b');
+    expect(message).toBe('Scrape error - My search. Facebook requires login.');
+  });
+
+  it('omits everything but the name and reason — no header, no framing text', () => {
+    const message = formatScrapeErrorMessage('My search', ['some reason']);
+
+    expect(message).not.toContain('discarded');
+    expect(message).not.toContain('Some results');
+    expect(message).not.toContain('trusted');
+  });
+
+  it('emits one deduplicated line per distinct reason', () => {
+    const message = formatScrapeErrorMessage('My search', ['reason A', 'reason A', 'reason B']);
+
+    expect(message.split('\n')).toEqual([
+      'Scrape error - My search. reason A',
+      'Scrape error - My search. reason B',
+    ]);
   });
 
   it('escapes markdown-special characters in the saved search name', () => {
-    const message = formatScrapeErrorMessage('**Sneaky** search', []);
+    const message = formatScrapeErrorMessage('**Sneaky** search', ['reason']);
 
-    // Only the formatter's own ** wrapper should survive.
-    expect(message.match(/\*\*/g)?.length).toBe(2);
+    expect(message).not.toMatch(/[*_`~]/);
   });
 
-  it('escapes markdown-special characters within each error message', () => {
+  it('escapes markdown-special characters within the reason', () => {
     const message = formatScrapeErrorMessage('S', ['contains *asterisks* and _underscores_']);
-    const bulletLine = message.split('\n').at(-1);
 
-    expect(bulletLine).not.toMatch(/[*_]/);
-    expect(bulletLine).toContain('contains asterisks and underscores');
+    expect(message).not.toMatch(/[*_`~]/);
+    expect(message).toContain('contains asterisks and underscores');
   });
 });

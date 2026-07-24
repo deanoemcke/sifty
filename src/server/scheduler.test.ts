@@ -1086,8 +1086,9 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
-    expect(sendNotificationAsync.mock.calls[0][0]).not.toContain('Tainted FB listing');
-    expect(sendNotificationAsync.mock.calls[0][0]).toContain('FB search');
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(
+      'Scrape error - FB search. Facebook login wall detected'
+    );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].listingsFoundCount).toBe(0);
     // Only the run-1 seed baseline is alerted — the tainted listing never got recorded.
@@ -1138,9 +1139,9 @@ describe('runSchedulerAsync', () => {
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2); // seed + new trademe listing
   });
 
-  it('does not send a proactive Signal notification for a non-facebook recipe that never completes — only discards and logs', async () => {
+  it('sends a proactive Signal notification for a non-facebook recipe that never completes too, not just facebook', async () => {
     const db = freshDb();
-    const searchId = insertAlertSearch(db);
+    const searchId = insertAlertSearch(db, { name: 'TM search' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
     await runSchedulerAsync({
@@ -1155,7 +1156,7 @@ describe('runSchedulerAsync', () => {
       url: 'https://example.com/tainted',
     });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('trademe', [taintedListing]));
-    const sendNotificationAsync = vi.fn();
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
 
     const summary = await runSchedulerAsync({
       database: db,
@@ -1163,7 +1164,10 @@ describe('runSchedulerAsync', () => {
       sendNotificationAsync,
     });
 
-    expect(sendNotificationAsync).not.toHaveBeenCalled();
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(
+      'Scrape error - TM search. Facebook login wall detected'
+    );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1); // only the seed baseline
