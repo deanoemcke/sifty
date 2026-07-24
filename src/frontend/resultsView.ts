@@ -289,6 +289,22 @@ function scheduleFrameMutationFlush(): void {
   rafScheduleFrameMutationFlush(true);
 }
 
+// pendingFrameMutations and rafScheduleFrameMutationFlush's closed-over frame
+// id are module-level state shared by every test in a file (renderCard() and
+// scheduleClientFilterUpdate() both arm it — see the comment on
+// pendingFrameMutations above). Without this, a test that schedules a flush
+// and forgets to await/advance past it leaves that state armed: the next
+// test's own scheduling call silently no-ops against rafSchedule's frameId
+// guard, and if a frame is still pending it can later fire mid-flight against
+// a later test's freshly reset DOM. Call this from a beforeEach/afterEach so
+// every test starts from a clean slate instead of depending on every test
+// remembering to flush before it ends.
+export function resetFrameMutationSchedulingForTests(): void {
+  pendingFrameMutations.shouldRevealCards = false;
+  pendingFrameMutations.shouldApplyClientFilters = false;
+  rafScheduleFrameMutationFlush.cancel();
+}
+
 export function applyClientFilters(): void {
   pendingFrameMutations.shouldApplyClientFilters = true;
   // Called directly (not scheduled): a single user action (e.g. the Show

@@ -9,7 +9,12 @@ import {
   scheduleAiFilterRun,
   shouldAutoRunAiFilter,
 } from './aiFilter';
-import { applyClientFilters, getCardByUrl, renderCard } from './resultsView';
+import {
+  applyClientFilters,
+  getCardByUrl,
+  renderCard,
+  resetFrameMutationSchedulingForTests,
+} from './resultsView';
 import { populateShowControls } from './showDropdown';
 import { isAiFilterRunning, type ListingItem, listingsByUrl, resetState } from './state';
 import { makeListing, makeListingItem } from './testFixtures';
@@ -103,6 +108,12 @@ describe('runAiFilterAsync', () => {
   beforeEach(() => {
     resetState();
     resetUrlCardStore();
+    // Clears any card-reveal/filter-sweep flush left armed by the previous
+    // test (resultsView.ts's pendingFrameMutations/scheduleFrameMutationFlush
+    // is module-level state shared across every test in this file) rather
+    // than relying on every test remembering to await flushAnimationFrame()
+    // before it ends.
+    resetFrameMutationSchedulingForTests();
     document.body.innerHTML = `
       <div id="resultsSection" class="hidden"></div>
       <div id="listingsContainer"></div>
@@ -156,7 +167,6 @@ describe('runAiFilterAsync', () => {
 
     expect(rafSpy).toHaveBeenCalledTimes(1);
     rafSpy.mockRestore();
-    await flushAnimationFrame(); // don't leave a pending real rAF callback for a later test to race
   });
 
   it('does not apply a filtered-out result until the scheduled frame flushes, even for a single-batch run', async () => {
@@ -222,7 +232,6 @@ describe('runAiFilterAsync', () => {
     ]);
 
     await runAiFilterAsync();
-    await flushAnimationFrame(); // don't leave a pending real rAF callback for a later test to race
 
     expect(item.data.relevance).toBe(7);
   });
@@ -232,6 +241,7 @@ describe('ai-scanning overlay', () => {
   beforeEach(() => {
     resetState();
     resetUrlCardStore();
+    resetFrameMutationSchedulingForTests();
     document.body.innerHTML = `
       <div id="resultsSection" class="hidden"></div>
       <div id="listingsContainer"></div>

@@ -9,6 +9,7 @@ import {
   getOrderedListings,
   renderCard,
   renderDerived,
+  resetFrameMutationSchedulingForTests,
   scheduleClientFilterUpdate,
   scheduleSortOrderUpdate,
 } from './resultsView';
@@ -91,13 +92,14 @@ beforeEach(() => {
     <div id="showDropdown"></div>
   `;
   populateShowControls();
-  // renderCard() and scheduleClientFilterUpdate() share one rafSchedule
-  // instance (resultsView.ts's scheduleFrameMutationFlush), so a frame left
-  // pending by one test — real or fake — silently no-ops every later test's
-  // scheduling call, real or fake, for the rest of the file (rafSchedule.ts's
-  // frameId guard). Fake timers file-wide, always flushed below before
-  // switching back to real, closes that off — mirrors quickSearch.test.ts's
-  // file-level setup, which exists for the same reason.
+  // Clears any card-reveal/filter-sweep flush left armed by the previous
+  // test, rather than relying on every test remembering to flush it before
+  // ending (see resetFrameMutationSchedulingForTests's own comment in
+  // resultsView.ts). scheduleSortOrderUpdate uses a separate rafSchedule
+  // instance not covered by this reset — the fake timers below (always
+  // flushed in afterEach) are what keep that one from leaking instead, plus
+  // let tests exercise coalescing behaviour with vi.advanceTimersByTime.
+  resetFrameMutationSchedulingForTests();
   vi.useFakeTimers();
 });
 
@@ -698,7 +700,6 @@ describe('scheduleClientFilterUpdate', () => {
     scheduleClientFilterUpdate();
 
     expect(rafSpy).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(20);
   });
 });
 
