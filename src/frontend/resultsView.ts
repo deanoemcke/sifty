@@ -240,39 +240,64 @@ const pendingFrameMutations = {
   shouldApplyClientFilters: false,
 };
 
-function flushFrameMutations(): void {
+// isFrameCallback distinguishes the two ways this can run: `true` when
+// rafSchedule's own requestAnimationFrame invoked it (scheduleFrameMutationFlush,
+// below), `false` when a caller invoked it synchronously mid-script
+// (applyClientFilters(), below). The reveal branch needs this to preserve
+// revealEnteringCards' two-frame contract — see that branch's comment.
+function flushFrameMutations(isFrameCallback: boolean): void {
   const { shouldRevealCards, shouldApplyClientFilters } = pendingFrameMutations;
   if (!shouldRevealCards && !shouldApplyClientFilters) return;
-  pendingFrameMutations.shouldRevealCards = false;
   pendingFrameMutations.shouldApplyClientFilters = false;
 
-  const aiFilterPromptHash = shouldApplyClientFilters ? currentAiFilterPromptHash() : null;
-  // A rAF callback runs before its frame's paint, and the entering card was
-  // only just appended this same tick — so the browser has never painted its
-  // opacity:0 state yet. Removing 'entering' here would jump straight to
-  // opacity:1 with nothing to visibly transition from. Deferring the reveal
-  // one more frame lets that first paint of the hidden state land before the
-  // reveal fires and the transition actually animates.
-  if (shouldRevealCards) requestAnimationFrame(revealEnteringCards);
-  if (shouldApplyClientFilters) applyClientFiltersDom(aiFilterPromptHash);
-  if (shouldApplyClientFilters) renderDerived();
+  if (shouldRevealCards && !isFrameCallback) {
+    // A synchronous caller (e.g. applyClientFilters() landing before the
+    // frame scheduleCardRevealOnNextFrame() armed has fired) must not
+    // shortcut the reveal to a single level of rAF deferral — that would
+    // strip 'entering' before the browser has ever painted the opacity:0
+    // state, and the CSS transition would have nothing to animate from (see
+    // revealEnteringCards above). Leave shouldRevealCards set and let the
+    // already-armed frame handle it on schedule; re-arming here is a no-op
+    // if that frame is still pending, and a safety net if it somehow isn't.
+    scheduleFrameMutationFlush();
+  } else if (shouldRevealCards) {
+    pendingFrameMutations.shouldRevealCards = false;
+    // A rAF callback runs before its frame's paint, and the entering card was
+    // only just appended this same tick — so the browser has never painted its
+    // opacity:0 state yet. Removing 'entering' here would jump straight to
+    // opacity:1 with nothing to visibly transition from. Deferring the reveal
+    // one more frame lets that first paint of the hidden state land before the
+    // reveal fires and the transition actually animates.
+    requestAnimationFrame(revealEnteringCards);
+  }
+
+  if (shouldApplyClientFilters) {
+    applyClientFiltersDom(currentAiFilterPromptHash());
+    renderDerived();
+  }
 }
 
 // A burst of same-frame calls (e.g. a fast SSE stream) coalesces into a
 // single flush on the next frame, same pattern as scheduleSortOrderUpdate
 // above — the difference here is the flush itself is shared between two
 // call sites (see the comment on pendingFrameMutations) rather than
-// dedicated to one.
-const scheduleFrameMutationFlush = rafSchedule(flushFrameMutations);
+// dedicated to one. Always passes isFrameCallback=true: every call this
+// schedules genuinely is the rAF firing, regardless of which of the two
+// call sites below armed it.
+const rafScheduleFrameMutationFlush = rafSchedule(flushFrameMutations);
+function scheduleFrameMutationFlush(): void {
+  rafScheduleFrameMutationFlush(true);
+}
 
 export function applyClientFilters(): void {
   pendingFrameMutations.shouldApplyClientFilters = true;
   // Called directly (not scheduled): a single user action (e.g. the Show
-  // dropdown checkbox) needs immediate feedback. This also absorbs a still-
-  // pending scheduled reveal into the same flush, and clears both flags —
-  // flushFrameMutations()'s already-scheduled frame then finds nothing left
-  // to do and no-ops instead of redoing the same work a second time.
-  flushFrameMutations();
+  // dropdown checkbox) needs immediate feedback, so the filter sweep itself
+  // still applies synchronously. isFrameCallback=false tells
+  // flushFrameMutations() this isn't the scheduled frame firing, so if a
+  // card reveal is also still pending it stays deferred to that frame
+  // instead of being absorbed and revealed a frame early.
+  flushFrameMutations(false);
 }
 
 // During an active SSE stream — a 'listing' event in quickSearch.ts, or a

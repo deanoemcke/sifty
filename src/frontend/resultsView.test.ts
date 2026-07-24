@@ -737,17 +737,46 @@ describe('frame mutation coalescing (single flush per frame)', () => {
     expect(card.classList.contains('entering')).toBe(false);
   });
 
-  it('does not redo work when an already-scheduled frame fires after a synchronous applyClientFilters call absorbed it', () => {
+  it('does not redo the filter sweep when an already-scheduled frame fires after a synchronous applyClientFilters call absorbed it', () => {
     const item = makeListingItemAt('https://l/1');
     listingsByUrl.set('https://l/1', item);
     addCardWithListings(['https://l/1']);
 
-    renderCard(item); // schedules a frame for the card reveal
-    applyClientFilters(); // absorbs it synchronously, clearing both pending flags
+    renderCard(item);
+    vi.advanceTimersByTime(40); // let the card's own two-frame reveal fully resolve first
+
+    scheduleClientFilterUpdate(); // arms a fresh frame for the filter sweep only
+    applyClientFilters(); // absorbs it synchronously, clearing the pending flag
 
     const staleFrameSpy = vi.spyOn(document, 'getElementById');
     vi.advanceTimersByTime(20); // the now-stale scheduled frame fires and must no-op
 
     expect(staleFrameSpy).not.toHaveBeenCalled();
+  });
+
+  // Regression coverage for the bug the fix in flushFrameMutations() addresses:
+  // a synchronous applyClientFilters() call landing before the frame that
+  // scheduleCardRevealOnNextFrame() armed has fired must not shortcut the
+  // reveal to a single level of rAF deferral — see renderCard's describe
+  // block above for why a single frame isn't enough. quickSearch.ts calling
+  // applyClientFilters() directly right after the last renderCard() of a
+  // completed search (the common real-world path) is exactly this scenario.
+  it('keeps the entering class deferred through two frames even when a synchronous applyClientFilters call absorbs the pending reveal', () => {
+    const item = makeListingItemAt('https://l/1');
+    listingsByUrl.set('https://l/1', item);
+    addCardWithListings(['https://l/1']);
+
+    renderCard(item); // schedules a frame for the card reveal
+    applyClientFilters(); // synchronous call lands before that frame fires
+
+    const card = getCardByUrl('https://l/1') as HTMLElement;
+    // Must not have revealed early just because a synchronous call intervened.
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20); // the originally-armed frame fires
+    expect(card.classList.contains('entering')).toBe(true); // still deferred one more frame
+
+    vi.advanceTimersByTime(20); // second frame: now actually revealed
+    expect(card.classList.contains('entering')).toBe(false);
   });
 });
