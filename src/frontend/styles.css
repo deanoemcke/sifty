@@ -782,7 +782,8 @@ label {
   box-shadow: var(--shadow);
   transition:
     border-color 0.15s,
-    box-shadow 0.15s;
+    box-shadow 0.15s,
+    opacity 0.2s ease;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -791,6 +792,71 @@ label {
 .listing-card:hover {
   border-color: #cbd5e1;
   box-shadow: var(--shadow-md);
+}
+/* Initial state for a card appended by renderCard(); removed on the next
+   coalesced frame (resultsView.ts) once there's a previous frame for this
+   rule's opacity transition to fade in from. No scale/pop — just a plain
+   fade. Filtered/hidden cards, by contrast, are removed instantly
+   (display: none, resultsView.ts) rather than fading out — an earlier
+   attempt at a symmetric fade-out (a .leaving class deferring display:none
+   until a transitionend) caused cards to occasionally get stuck invisible
+   mid-transition, so it was reverted in favour of this simpler, reliable
+   instant hide. */
+.listing-card.entering {
+  opacity: 0;
+}
+/* document.startViewTransition() used to respect prefers-reduced-motion for
+   the .entering fade-in automatically; a plain CSS transition needs it
+   handled explicitly. */
+@media (prefers-reduced-motion: reduce) {
+  .listing-card {
+    transition: none;
+  }
+}
+/* Shown while a card is in aiFilterPendingUrls during an active AI-filter
+   run (applyClientFilters in resultsView.ts) — a diagonal shimmer sweeping
+   across the card to signal "still being checked". z-index sits above
+   .filter-banner/.sold-banner (z-index: 1) so re-checking an
+   already-filtered/sold card still shows the sheen on top.
+   Animates `transform`, not `background-position`: a search can have
+   hundreds of cards pending at once (an AI-filter run marks every
+   not-yet-checked card up front, not just the batch currently being sent to
+   the LLM), and background-position requires a full repaint of the element
+   every frame — with hundreds running at once the browser can't keep up and
+   most appear frozen. transform is compositor-only, so it stays smooth
+   regardless of how many cards are animating simultaneously. */
+.listing-card.ai-scanning::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.22) 45%,
+    rgba(255, 255, 255, 0.32) 50%,
+    rgba(255, 255, 255, 0.22) 55%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: ai-scan-sheen 1.6s ease-in-out infinite;
+  will-change: transform;
+}
+@keyframes ai-scan-sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .listing-card.ai-scanning::after {
+    animation: none;
+    transform: none;
+    background: rgba(255, 255, 255, 0.14);
+  }
 }
 .listing-open-area {
   display: flex;
@@ -867,7 +933,11 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--border);
+}
+.listing-thumb-placeholder-icon {
+  width: 40%;
+  height: 40%;
+  color: #afbccc;
 }
 /* Brand-coloured tile in the thumbnail corner; background set inline per recipe */
 .listing-source-badge {

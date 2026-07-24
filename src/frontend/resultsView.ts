@@ -11,6 +11,7 @@ import { applyListingCardAccessibility } from './listingCardActivation';
 import { buildCardFooterHtml, buildExternalLinkButtonHtml, filterBannerText } from './listingHtml';
 import { rafSchedule } from './rafSchedule';
 import { sourceBadgeHtml } from './recipeDisplay';
+import { djb2Hash } from './renderUtils';
 import { renderShowOptions } from './showDropdown';
 import { DEFAULT_SORT_OPTION, sortListings } from './sortListings';
 import {
@@ -181,42 +182,156 @@ export function renderAiFilterButton(listings: ListingItem[] = getOrderedListing
     aiFilterButtonLabel(listings);
 }
 
-export function applyClientFilters(): void {
+// "Pending" is derived straight from aiCheckedHash vs. the current prompt's
+// hash, not from tracking which run's toCheck list a listing happened to be
+// part of — quickSearch.ts triggers a separate runAiFilterAsync() call per
+// URL card as its own search completes, so a saved search with multiple
+// source URLs runs the AI filter several times over. A listing that streams
+// in from a later URL card's search must still show as not-yet-checked even
+// between runs, not just while the run that happened to cover it is in
+// flight.
+function currentAiFilterPromptHash(): number | null {
+  const aiFilterPrompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
+  return aiFilterPrompt ? djb2Hash(aiFilterPrompt) : null;
+}
+
+function applyClientFiltersDom(aiFilterPromptHash: number | null): void {
   for (const item of getOrderedListings()) {
     const category = getListingCategory(item);
     const card = getCardByUrl(item.data.url);
-    if (card) {
-      const banner = requireChild<HTMLElement>(card, '.filter-banner');
-      if (category !== 'filtered') {
-        card.classList.remove('filtered-out');
-        banner.textContent = '';
-        banner.classList.add('hidden');
-      } else {
-        card.classList.add('filtered-out');
-        banner.textContent = filterBannerText(item);
-        banner.classList.remove('hidden');
-      }
-      card.style.display = visibleListingCategories.has(category) ? '' : 'none';
+    if (!card) continue;
+
+    const banner = requireChild<HTMLElement>(card, '.filter-banner');
+    const isFiltered = category === 'filtered';
+    if (card.classList.contains('filtered-out') !== isFiltered) {
+      card.classList.toggle('filtered-out', isFiltered);
+      banner.textContent = isFiltered ? filterBannerText(item) : '';
+      banner.classList.toggle('hidden', !isFiltered);
     }
+
+    const isScanning = aiFilterPromptHash !== null && item.aiCheckedHash !== aiFilterPromptHash;
+    if (card.classList.contains('ai-scanning') !== isScanning) {
+      card.classList.toggle('ai-scanning', isScanning);
+    }
+
+    const desiredDisplay = visibleListingCategories.has(category) ? '' : 'none';
+    if (card.style.display !== desiredDisplay) card.style.display = desiredDisplay;
   }
-  renderDerived();
 }
 
-// During an active SSE stream, a 'listing' event can fire once per streamed
-// result — often many times within a single animation frame for a fast
-// stream. applyClientFilters() walks every rendered card, so calling it
-// directly from that per-listing hot path is the same O(n)-per-event,
-// O(n^2)-per-stream shape that scheduleSortOrderUpdate() above already
-// solves for sorting. Reuse the same rafSchedule() coalescing here: a burst
-// of calls collapses into a single sweep on the next frame, using whichever
-// state is current when that frame fires. Only the per-listing streaming
-// call sites in quickSearch.ts should use this — a filter change made
-// directly by the user (e.g. the Show dropdown checkbox) should still call
-// applyClientFilters() synchronously for immediate feedback.
-const scheduleApplyClientFiltersOnNextFrame = rafSchedule(applyClientFilters);
+// Initial state for a card appended by renderCard() is the hidden 'entering'
+// class (see below) — this strips it so there's a previous frame for the
+// CSS opacity transition (.listing-card, styles.css) to fade in from.
+function revealEnteringCards(): void {
+  for (const card of document.querySelectorAll<HTMLElement>('.listing-card.entering')) {
+    card.classList.remove('entering');
+  }
+}
 
+// Card reveal (renderCard, below) and the client-filter sweep
+// (applyClientFilters) both mutate the grid, and during an active SSE
+// stream both can be triggered from the same 'listing' event handler
+// (quickSearch.ts) within the same animation frame. Coalescing both into one
+// flush avoids running the O(n) client-filter sweep twice in the same frame
+// when both are pending — same motivation as scheduleSortOrderUpdate's
+// rafSchedule use above, just shared across two call sites instead of one.
+const pendingFrameMutations = {
+  shouldRevealCards: false,
+  shouldApplyClientFilters: false,
+};
+
+// isFrameCallback distinguishes the two ways this can run: `true` when
+// rafSchedule's own requestAnimationFrame invoked it (scheduleFrameMutationFlush,
+// below), `false` when a caller invoked it synchronously mid-script
+// (applyClientFilters(), below). The reveal branch needs this to preserve
+// revealEnteringCards' two-frame contract — see that branch's comment.
+function flushFrameMutations(isFrameCallback: boolean): void {
+  const { shouldRevealCards, shouldApplyClientFilters } = pendingFrameMutations;
+  if (!shouldRevealCards && !shouldApplyClientFilters) return;
+  pendingFrameMutations.shouldApplyClientFilters = false;
+
+  if (shouldRevealCards && !isFrameCallback) {
+    // A synchronous caller (e.g. applyClientFilters() landing before the
+    // frame scheduleCardRevealOnNextFrame() armed has fired) must not
+    // shortcut the reveal to a single level of rAF deferral — that would
+    // strip 'entering' before the browser has ever painted the opacity:0
+    // state, and the CSS transition would have nothing to animate from (see
+    // revealEnteringCards above). Leave shouldRevealCards set and let the
+    // already-armed frame handle it on schedule; re-arming here is a no-op
+    // if that frame is still pending, and a safety net if it somehow isn't.
+    scheduleFrameMutationFlush();
+  } else if (shouldRevealCards) {
+    pendingFrameMutations.shouldRevealCards = false;
+    // A rAF callback runs before its frame's paint, and the entering card was
+    // only just appended this same tick — so the browser has never painted its
+    // opacity:0 state yet. Removing 'entering' here would jump straight to
+    // opacity:1 with nothing to visibly transition from. Deferring the reveal
+    // one more frame lets that first paint of the hidden state land before the
+    // reveal fires and the transition actually animates.
+    requestAnimationFrame(revealEnteringCards);
+  }
+
+  if (shouldApplyClientFilters) {
+    applyClientFiltersDom(currentAiFilterPromptHash());
+    renderDerived();
+  }
+}
+
+// A burst of same-frame calls (e.g. a fast SSE stream) coalesces into a
+// single flush on the next frame, same pattern as scheduleSortOrderUpdate
+// above — the difference here is the flush itself is shared between two
+// call sites (see the comment on pendingFrameMutations) rather than
+// dedicated to one. Always passes isFrameCallback=true: every call this
+// schedules genuinely is the rAF firing, regardless of which of the two
+// call sites below armed it.
+const rafScheduleFrameMutationFlush = rafSchedule(flushFrameMutations);
+function scheduleFrameMutationFlush(): void {
+  rafScheduleFrameMutationFlush(true);
+}
+
+// pendingFrameMutations and rafScheduleFrameMutationFlush's closed-over frame
+// id are module-level state shared by every test in a file (renderCard() and
+// scheduleClientFilterUpdate() both arm it — see the comment on
+// pendingFrameMutations above). Without this, a test that schedules a flush
+// and forgets to await/advance past it leaves that state armed: the next
+// test's own scheduling call silently no-ops against rafSchedule's frameId
+// guard, and if a frame is still pending it can later fire mid-flight against
+// a later test's freshly reset DOM. Call this from a beforeEach/afterEach so
+// every test starts from a clean slate instead of depending on every test
+// remembering to flush before it ends.
+export function resetFrameMutationSchedulingForTests(): void {
+  pendingFrameMutations.shouldRevealCards = false;
+  pendingFrameMutations.shouldApplyClientFilters = false;
+  rafScheduleFrameMutationFlush.cancel();
+}
+
+export function applyClientFilters(): void {
+  pendingFrameMutations.shouldApplyClientFilters = true;
+  // Called directly (not scheduled): a single user action (e.g. the Show
+  // dropdown checkbox) needs immediate feedback, so the filter sweep itself
+  // still applies synchronously. isFrameCallback=false tells
+  // flushFrameMutations() this isn't the scheduled frame firing, so if a
+  // card reveal is also still pending it stays deferred to that frame
+  // instead of being absorbed and revealed a frame early.
+  flushFrameMutations(false);
+}
+
+// During an active SSE stream — a 'listing' event in quickSearch.ts, or a
+// 'result' batch in aiFilter.ts — events can fire many times within a single
+// animation frame. applyClientFilters() walks every rendered card, so
+// calling it directly from a hot streaming path is the same O(n)-per-event,
+// O(n^2)-per-stream shape that scheduleSortOrderUpdate() above already
+// solves for sorting. Streaming/multi-call sources should schedule; a single
+// direct user action (e.g. the Show dropdown checkbox) should still call
+// applyClientFilters() synchronously for immediate feedback.
 export function scheduleClientFilterUpdate(): void {
-  scheduleApplyClientFiltersOnNextFrame();
+  pendingFrameMutations.shouldApplyClientFilters = true;
+  scheduleFrameMutationFlush();
+}
+
+function scheduleCardRevealOnNextFrame(): void {
+  pendingFrameMutations.shouldRevealCards = true;
+  scheduleFrameMutationFlush();
 }
 
 // Looks up a listing card by URL. Returns null if not yet rendered.
@@ -244,7 +359,7 @@ export function renderCard(item: ListingItem): void {
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
     : `<div class="listing-thumb-placeholder">
-         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+         <svg class="listing-thumb-placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
        </div>`;
 
   // The card never re-renders once a deep search populates item.data's
@@ -280,5 +395,9 @@ export function renderCard(item: ListingItem): void {
 
   applyListingCardAccessibility(requireChild(card, '.listing-open-area'), listing.title);
 
-  if (!existing) getElement('listingsContainer').appendChild(card);
+  if (!existing) {
+    card.classList.add('entering');
+    getElement('listingsContainer').appendChild(card);
+    scheduleCardRevealOnNextFrame();
+  }
 }

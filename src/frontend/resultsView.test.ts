@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requireChild } from './domUtils';
+import { djb2Hash } from './renderUtils';
 import {
   applyClientFilters,
   applySortOrder,
@@ -8,6 +9,7 @@ import {
   getOrderedListings,
   renderCard,
   renderDerived,
+  resetFrameMutationSchedulingForTests,
   scheduleClientFilterUpdate,
   scheduleSortOrderUpdate,
 } from './resultsView';
@@ -90,9 +92,20 @@ beforeEach(() => {
     <div id="showDropdown"></div>
   `;
   populateShowControls();
+  // Clears any card-reveal/filter-sweep flush left armed by the previous
+  // test, rather than relying on every test remembering to flush it before
+  // ending (see resetFrameMutationSchedulingForTests's own comment in
+  // resultsView.ts). scheduleSortOrderUpdate uses a separate rafSchedule
+  // instance not covered by this reset — the fake timers below (always
+  // flushed in afterEach) are what keep that one from leaking instead, plus
+  // let tests exercise coalescing behaviour with vi.advanceTimersByTime.
+  resetFrameMutationSchedulingForTests();
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -304,22 +317,17 @@ describe('applySortOrder', () => {
   });
 
   it('re-applies sort order as part of renderDerived, once the scheduled frame fires', () => {
-    vi.useFakeTimers();
-    try {
-      addCardWithListings(urls);
-      renderAllCards();
-      (listingsByUrl.get('https://l/1') as ListingItem).data.price = 30;
-      (listingsByUrl.get('https://l/2') as ListingItem).data.price = 10;
-      (listingsByUrl.get('https://l/3') as ListingItem).data.price = 20;
-      setSortBy('lowest-price');
-      renderDerived();
-      // Not applied synchronously — it's scheduled for the next frame.
-      expect(containerCardUrls()).toEqual(urls);
-      vi.advanceTimersByTime(20);
-      expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
-    } finally {
-      vi.useRealTimers();
-    }
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.price = 30;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.price = 10;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.price = 20;
+    setSortBy('lowest-price');
+    renderDerived();
+    // Not applied synchronously — it's scheduled for the next frame.
+    expect(containerCardUrls()).toEqual(urls);
+    vi.advanceTimersByTime(20);
+    expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
   });
 });
 
@@ -387,14 +395,6 @@ describe('scheduleSortOrderUpdate', () => {
     const container = document.getElementById('listingsContainer') as HTMLElement;
     return [...container.children].map((child) => (child as HTMLElement).dataset.url);
   }
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
 
   it('does not schedule an animation frame for the default source-url sort', () => {
     addCardWithListings(urls);
@@ -487,6 +487,40 @@ describe('renderCard', () => {
     const banner = requireChild<HTMLElement>(card, '.sold-banner');
     expect(banner.classList.contains('hidden')).toBe(true);
   });
+
+  // Regression coverage: the placeholder icon must be sized by CSS
+  // (percentage of its container), not by hardcoded SVG width/height
+  // attributes — otherwise it stays a fixed pixel size regardless of how
+  // large the card's thumbnail area actually is.
+  it('renders a scalable placeholder icon for a listing with no thumbnail', () => {
+    renderCard(makeListingItemAt('https://l/1'));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.querySelector('.listing-thumb')).toBeNull();
+    const placeholder = requireChild<HTMLElement>(card, '.listing-thumb-placeholder');
+    const icon = requireChild<SVGElement>(placeholder, 'svg');
+    expect(icon.hasAttribute('width')).toBe(false);
+    expect(icon.hasAttribute('height')).toBe(false);
+    expect(icon.classList.contains('listing-thumb-placeholder-icon')).toBe(true);
+  });
+
+  // Regression coverage: a single requestAnimationFrame fires before the
+  // browser has ever painted the just-appended card's opacity:0 'entering'
+  // state (nothing has been painted since it was inserted this same tick).
+  // Removing 'entering' inside that first frame skips straight to opacity:1
+  // with no visible fade — the CSS transition never gets a starting frame to
+  // animate from. A second, nested frame gives the browser one paint of the
+  // hidden state first.
+  it('keeps the entering class through the first animation frame, only revealing on the second', () => {
+    renderCard(makeListingItemAt('https://l/1'));
+    const card = requireChild<HTMLElement>(document.body, '.listing-card');
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20);
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20);
+    expect(card.classList.contains('entering')).toBe(false);
+  });
 });
 
 describe('applyClientFilters', () => {
@@ -536,6 +570,68 @@ describe('applyClientFilters', () => {
     applyClientFilters();
     expect((getCardByUrl('https://l/1') as HTMLElement).style.display).toBe('');
   });
+
+  function setAiFilterPrompt(value: string): void {
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = value;
+  }
+
+  it('marks a card as ai-scanning when the AI filter prompt does not match its aiCheckedHash', () => {
+    renderListing('https://l/1');
+    setAiFilterPrompt('bikes');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      true
+    );
+  });
+
+  it('does not mark a card as ai-scanning when the AI filter prompt is empty', () => {
+    renderListing('https://l/1');
+    setAiFilterPrompt('');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      false
+    );
+  });
+
+  it('does not mark a card as ai-scanning once its aiCheckedHash matches the current prompt', () => {
+    renderListing('https://l/1', { aiCheckedHash: djb2Hash('bikes') });
+    setAiFilterPrompt('bikes');
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      false
+    );
+  });
+
+  // Regression coverage: the sheen used to be driven by a Set the currently
+  // in-flight run's toCheck list populated, so a card that streamed in
+  // outside of any run (e.g. from a second URL card's search finishing after
+  // the AI filter already started once) never got marked pending at all.
+  // Deriving straight from aiCheckedHash vs. the prompt's hash means no run
+  // needs to be active — "not yet checked against the current criteria" is
+  // true or false independent of whether a request happens to be in flight.
+  it('marks a card as ai-scanning even when no AI filter run is currently active', () => {
+    renderListing('https://l/1');
+    setAiFilterPrompt('bikes');
+    setIsAiFilterRunning(false);
+    applyClientFilters();
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      true
+    );
+  });
+
+  it('shows ai-scanning only on the not-yet-checked sibling when one card already matches the prompt', () => {
+    renderListing('https://l/1', { aiCheckedHash: djb2Hash('bikes') });
+    renderListing('https://l/2');
+    setAiFilterPrompt('bikes');
+    applyClientFilters();
+
+    expect((getCardByUrl('https://l/1') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      false
+    );
+    expect((getCardByUrl('https://l/2') as HTMLElement).classList.contains('ai-scanning')).toBe(
+      true
+    );
+  });
 });
 
 // Regression coverage for the SSE hot-path cost of applyClientFilters(): a
@@ -554,14 +650,6 @@ describe('scheduleClientFilterUpdate', () => {
     addCardWithListings([url]);
     renderCard(item);
   }
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
 
   it('does not apply the filter synchronously — only once the next frame fires', () => {
     renderListing('https://l/1');
@@ -597,11 +685,14 @@ describe('scheduleClientFilterUpdate', () => {
     expect(burstSpy).toHaveBeenCalledTimes(singleSweepCost);
   });
 
-  // Placed last: unlike the tests above, this deliberately never flushes the
-  // scheduled frame, so it must not leave a pending frame behind for a test
-  // that runs afterward — see rafSchedule.ts's frameId guard.
   it('only requests a single animation frame for a burst of calls', () => {
+    // renderListing() itself schedules a frame (renderCard()'s card-reveal
+    // scheduling shares scheduleClientFilterUpdate()'s flush — see
+    // resultsView.ts's scheduleFrameMutationFlush). Flush that one first so
+    // the spy below only observes the calls this test is actually about.
     renderListing('https://l/1');
+    vi.advanceTimersByTime(20);
+
     const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
 
     scheduleClientFilterUpdate();
@@ -609,5 +700,84 @@ describe('scheduleClientFilterUpdate', () => {
     scheduleClientFilterUpdate();
 
     expect(rafSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Regression coverage: a streamed 'listing' SSE event calls renderCard()
+// (which schedules the new card's entering->revealed fade) and
+// scheduleClientFilterUpdate() (which schedules a filter sweep) in the same
+// synchronous tick, so both land in the same animation frame. They share one
+// rafSchedule-coalesced flush (pendingFrameMutations/flushFrameMutations in
+// resultsView.ts) rather than each independently scheduling its own frame,
+// so a fast burst never redoes the O(n) filter sweep more than once per
+// frame.
+describe('frame mutation coalescing (single flush per frame)', () => {
+  it('coalesces a same-frame card reveal and filter sweep into a single animation frame', () => {
+    const item = makeListingItemAt('https://l/1');
+    listingsByUrl.set('https://l/1', item);
+    addCardWithListings(['https://l/1']);
+
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
+
+    renderCard(item);
+    setListingCategoryVisible('used', false);
+    scheduleClientFilterUpdate();
+
+    expect(rafSpy).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(20);
+
+    const card = getCardByUrl('https://l/1') as HTMLElement;
+    // The filter sweep applies within this first frame...
+    expect(card.style.display).toBe('none');
+    // ...but the reveal itself waits one more frame (see renderCard's
+    // describe block above) so the browser paints the entering state first.
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20);
+    expect(card.classList.contains('entering')).toBe(false);
+  });
+
+  it('does not redo the filter sweep when an already-scheduled frame fires after a synchronous applyClientFilters call absorbed it', () => {
+    const item = makeListingItemAt('https://l/1');
+    listingsByUrl.set('https://l/1', item);
+    addCardWithListings(['https://l/1']);
+
+    renderCard(item);
+    vi.advanceTimersByTime(40); // let the card's own two-frame reveal fully resolve first
+
+    scheduleClientFilterUpdate(); // arms a fresh frame for the filter sweep only
+    applyClientFilters(); // absorbs it synchronously, clearing the pending flag
+
+    const staleFrameSpy = vi.spyOn(document, 'getElementById');
+    vi.advanceTimersByTime(20); // the now-stale scheduled frame fires and must no-op
+
+    expect(staleFrameSpy).not.toHaveBeenCalled();
+  });
+
+  // Regression coverage for the bug the fix in flushFrameMutations() addresses:
+  // a synchronous applyClientFilters() call landing before the frame that
+  // scheduleCardRevealOnNextFrame() armed has fired must not shortcut the
+  // reveal to a single level of rAF deferral — see renderCard's describe
+  // block above for why a single frame isn't enough. quickSearch.ts calling
+  // applyClientFilters() directly right after the last renderCard() of a
+  // completed search (the common real-world path) is exactly this scenario.
+  it('keeps the entering class deferred through two frames even when a synchronous applyClientFilters call absorbs the pending reveal', () => {
+    const item = makeListingItemAt('https://l/1');
+    listingsByUrl.set('https://l/1', item);
+    addCardWithListings(['https://l/1']);
+
+    renderCard(item); // schedules a frame for the card reveal
+    applyClientFilters(); // synchronous call lands before that frame fires
+
+    const card = getCardByUrl('https://l/1') as HTMLElement;
+    // Must not have revealed early just because a synchronous call intervened.
+    expect(card.classList.contains('entering')).toBe(true);
+
+    vi.advanceTimersByTime(20); // the originally-armed frame fires
+    expect(card.classList.contains('entering')).toBe(true); // still deferred one more frame
+
+    vi.advanceTimersByTime(20); // second frame: now actually revealed
+    expect(card.classList.contains('entering')).toBe(false);
   });
 });

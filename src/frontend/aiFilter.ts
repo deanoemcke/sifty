@@ -1,7 +1,7 @@
 import { formatListingPrice } from '../lib/priceFormat';
 import { getElement } from './domUtils';
 import { djb2Hash } from './renderUtils';
-import { applyClientFilters, getOrderedListings, renderDerived } from './resultsView';
+import { applyClientFilters, getOrderedListings, scheduleClientFilterUpdate } from './resultsView';
 import {
   aiFilterPendingRun,
   isAiFilterRunning,
@@ -109,7 +109,11 @@ export async function runAiFilterAsync(): Promise<void> {
   if (toCheck.length === 0) return;
 
   setIsAiFilterRunning(true);
-  renderDerived();
+  // Scheduled, not direct: the per-batch handler below also schedules, and a
+  // direct call here would run the O(n) client-filter sweep a second time
+  // this same frame instead of coalescing with that call — see the finally
+  // block below for the matching call and its longer explanation.
+  scheduleClientFilterUpdate();
 
   let streamError: string | null = null;
 
@@ -141,7 +145,13 @@ export async function runAiFilterAsync(): Promise<void> {
               item.data.relevance = result.relevance;
             }
           }
-          applyClientFilters();
+          // Batches stream in from up to 3 concurrent backend requests, so a
+          // burst of 'result' events can land within the same animation
+          // frame — schedule (not call directly) so they coalesce into a
+          // single O(n) sweep instead of running one per event, same as
+          // quickSearch.ts's per-listing stream (see
+          // scheduleClientFilterUpdate's comment in resultsView.ts).
+          scheduleClientFilterUpdate();
         } else if (event.type === 'error') {
           streamError = event.message as string;
         }
@@ -152,7 +162,14 @@ export async function runAiFilterAsync(): Promise<void> {
     setStatus((error as Error).message, 'error');
   } finally {
     setIsAiFilterRunning(false);
-    renderDerived();
+    // Scheduled, not direct — see the run-start comment above. A single-batch
+    // run (the common case, since BATCH_SIZE is 50) reaches this call within
+    // a few milliseconds of the batch handler's own scheduleClientFilterUpdate()
+    // call above: calling applyClientFilters() directly here would run the
+    // O(n) filter sweep a second time this same frame. Scheduling both means
+    // they coalesce into the single frame still pending, so the sweep runs
+    // only once.
+    scheduleClientFilterUpdate();
     if (aiFilterPendingRun) {
       setAiFilterPendingRun(false);
       void runAiFilterAsync();

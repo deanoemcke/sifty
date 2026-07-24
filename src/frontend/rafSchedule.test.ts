@@ -64,4 +64,39 @@ describe('rafSchedule', () => {
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn).toHaveBeenNthCalledWith(2, 'second');
   });
+
+  describe('cancel', () => {
+    it('drops a pending call so the frame that fires never invokes the function', () => {
+      const fn = vi.fn();
+      const scheduled = rafSchedule(fn);
+
+      scheduled('a');
+      scheduled.cancel();
+      vi.advanceTimersByTime(20);
+
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it('lets a later call schedule a fresh frame after a cancel', () => {
+      const fn = vi.fn();
+      const scheduled = rafSchedule(fn);
+
+      scheduled('a');
+      scheduled.cancel();
+      scheduled('b');
+      vi.advanceTimersByTime(20);
+
+      expect(fn).toHaveBeenCalledExactlyOnceWith('b');
+    });
+
+    it('is a no-op when nothing is pending', () => {
+      const fn = vi.fn();
+      const scheduled = rafSchedule(fn);
+
+      expect(() => scheduled.cancel()).not.toThrow();
+      scheduled('a');
+      vi.advanceTimersByTime(20);
+      expect(fn).toHaveBeenCalledExactlyOnceWith('a');
+    });
+  });
 });
