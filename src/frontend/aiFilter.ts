@@ -109,11 +109,10 @@ export async function runAiFilterAsync(): Promise<void> {
   if (toCheck.length === 0) return;
 
   setIsAiFilterRunning(true);
-  // Scheduled, not direct: the per-batch handler below also schedules, and
-  // mixing a direct call with a scheduled one on the same
-  // runWithViewTransition-wrapped mutator means whichever fires second
-  // aborts the other's animation mid-flight — see the finally block below
-  // for the matching call and its longer explanation.
+  // Scheduled, not direct: the per-batch handler below also schedules, and a
+  // direct call here would run the O(n) client-filter sweep a second time
+  // this same frame instead of coalescing with that call — see the finally
+  // block below for the matching call and its longer explanation.
   scheduleClientFilterUpdate();
 
   let streamError: string | null = null;
@@ -148,8 +147,8 @@ export async function runAiFilterAsync(): Promise<void> {
           }
           // Batches stream in from up to 3 concurrent backend requests, so a
           // burst of 'result' events can land within the same animation
-          // frame — schedule (not call directly) so they coalesce into one
-          // view transition instead of each aborting the last, same as
+          // frame — schedule (not call directly) so they coalesce into a
+          // single O(n) sweep instead of running one per event, same as
           // quickSearch.ts's per-listing stream (see
           // scheduleClientFilterUpdate's comment in resultsView.ts).
           scheduleClientFilterUpdate();
@@ -166,12 +165,10 @@ export async function runAiFilterAsync(): Promise<void> {
     // Scheduled, not direct — see the run-start comment above. A single-batch
     // run (the common case, since BATCH_SIZE is 50) reaches this call within
     // a few milliseconds of the batch handler's own scheduleClientFilterUpdate()
-    // call above: if this one called applyClientFilters() directly, it would
-    // start its own view transition immediately, aborting the still-animating
-    // one the scheduled call had just started a frame earlier — snapping
-    // cards into place instead of letting them slide. Scheduling both means
-    // they coalesce into whichever single frame is still pending, so only
-    // one transition ever actually plays.
+    // call above: calling applyClientFilters() directly here would run the
+    // O(n) filter sweep a second time this same frame. Scheduling both means
+    // they coalesce into the single frame still pending, so the sweep runs
+    // only once.
     scheduleClientFilterUpdate();
     if (aiFilterPendingRun) {
       setAiFilterPendingRun(false);
