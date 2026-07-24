@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireAllCardSearches } from './cardSearch';
 import type { ListingItem } from './state';
 import { loadIndexHtmlBodyFixture, makeListing, makeListingItem } from './testFixtures';
+import type { UrlCard } from './urlCardStore';
 
 describe('fireAllCardSearches', () => {
   it('calls the search function exactly once per card', () => {
@@ -81,6 +82,23 @@ function makeListingItemAt(url: string): ListingItem {
   return makeListingItem({ data: makeListing({ url, title: url, price: null, location: '' }) });
 }
 
+// runAiFilterAsync needs a real toCheck.length > 0 to reach streamPostAsync,
+// so every AI-filter test must seed a real listing attached to a real url
+// card before triggering a run. initApp() already created one blank url card
+// (mirroring production startup) — attach the seeded listing to that real
+// card rather than pushing a second, synthetic one, which would leave
+// urlCards with an entry missing DOM handles (e.g. removeButton) and break
+// other code that iterates every card, such as updateRemoveButtons().
+function seedAiFilterQualifyingListing(
+  listingsByUrl: Map<string, ListingItem>,
+  urlCards: UrlCard[],
+  urlCardData: (card: UrlCard) => { listingUrls: string[] }
+): void {
+  const url = 'https://example.com/listing/1';
+  listingsByUrl.set(url, makeListingItemAt(url));
+  urlCardData(urlCards[0]).listingUrls = [url];
+}
+
 describe('initApp() wiring', () => {
   beforeEach(() => {
     // Fresh module instances per test so each dynamic import("./app") gets
@@ -129,14 +147,7 @@ describe('initApp() wiring', () => {
 
       await import('./app');
 
-      // initApp() already created one blank url card (mirroring production
-      // startup) — attach the seeded listing to that real card rather than
-      // pushing a second, synthetic one, which would leave urlCards with an
-      // entry missing DOM handles (e.g. removeButton) and break other code
-      // that iterates every card, such as updateRemoveButtons().
-      const url = 'https://example.com/listing/1';
-      listingsByUrl.set(url, makeListingItemAt(url));
-      urlCardData(urlCards[0]).listingUrls = [url];
+      seedAiFilterQualifyingListing(listingsByUrl, urlCards, urlCardData);
 
       const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
       aiFilterInput.value = 'good condition only please';
@@ -160,9 +171,7 @@ describe('initApp() wiring', () => {
       const { urlCards, urlCardData } = await import('./urlCardStore');
       await import('./app');
 
-      const url = 'https://example.com/listing/1';
-      listingsByUrl.set(url, makeListingItemAt(url));
-      urlCardData(urlCards[0]).listingUrls = [url];
+      seedAiFilterQualifyingListing(listingsByUrl, urlCards, urlCardData);
 
       const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
 
@@ -268,9 +277,7 @@ describe('initApp() wiring', () => {
       const { urlCards, urlCardData } = await import('./urlCardStore');
       await import('./app');
 
-      const url = 'https://example.com/listing/1';
-      listingsByUrl.set(url, makeListingItemAt(url));
-      urlCardData(urlCards[0]).listingUrls = [url];
+      seedAiFilterQualifyingListing(listingsByUrl, urlCards, urlCardData);
 
       const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
       const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
@@ -296,9 +303,7 @@ describe('initApp() wiring', () => {
       );
       await import('./app');
 
-      const url = 'https://example.com/listing/1';
-      listingsByUrl.set(url, makeListingItemAt(url));
-      urlCardData(urlCards[0]).listingUrls = [url];
+      seedAiFilterQualifyingListing(listingsByUrl, urlCards, urlCardData);
 
       const aiFilterInput = document.getElementById('aiFilter') as HTMLTextAreaElement;
       const aiFilterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
