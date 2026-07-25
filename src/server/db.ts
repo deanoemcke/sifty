@@ -47,6 +47,10 @@ export function initSchema(database: Database.Database): void {
       created_at       INTEGER NOT NULL,
       PRIMARY KEY (saved_search_id, listing_hash)
     );
+    CREATE TABLE IF NOT EXISTS scrape_error_alerts (
+      reason          TEXT PRIMARY KEY,
+      last_alerted_at INTEGER NOT NULL
+    );
   `);
 
   // CREATE TABLE IF NOT EXISTS doesn't retroactively add columns to an
@@ -303,6 +307,17 @@ export function stmtHasAlertedListing(database: Database.Database) {
 export function stmtInsertAlertedListing(database: Database.Database) {
   return database.prepare(
     'INSERT OR IGNORE INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
+  );
+}
+export type ScrapeErrorAlertRow = { last_alerted_at: number };
+export function stmtGetScrapeErrorAlert(database: Database.Database) {
+  return database.prepare<[string], ScrapeErrorAlertRow>(
+    'SELECT last_alerted_at FROM scrape_error_alerts WHERE reason = ?'
+  );
+}
+export function stmtUpsertScrapeErrorAlert(database: Database.Database) {
+  return database.prepare(
+    'INSERT OR REPLACE INTO scrape_error_alerts (reason, last_alerted_at) VALUES (?, ?)'
   );
 }
 export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {

@@ -30,6 +30,7 @@ import {
   NOTIFY_LOOP_TIMEOUT_MS,
   runImmediatePopulationRunAsync,
   runSchedulerAsync as runSchedulerAsyncUngated,
+  SCRAPE_ERROR_ALERT_SUPPRESS_MS,
   SCRAPE_TIMEOUT_MS,
   type SchedulerDeps,
   triggerImmediatePopulationRunAsync,
@@ -132,6 +133,21 @@ function makeLoginWalledRecipe(recipeName: string, listings: Listing[]): Recipe 
     quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
       for (const listing of listings) onEvent({ type: 'listing', data: listing });
       onEvent({ type: 'error', message: 'Facebook login wall detected' });
+    },
+    deepSearchAsync: async () => {},
+    computeAlertFingerprint: stubComputeAlertFingerprint,
+  };
+}
+
+// Like makeLoginWalledRecipe, but with a caller-chosen reason, for tests that
+// need to distinguish "same reason" from "different reason" suppression.
+function makeFailingRecipeWithReason(recipeName: string, reason: string): Recipe {
+  return {
+    name: recipeName,
+    matches: () => true,
+    extractImplicitFilters: () => [],
+    quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
+      onEvent({ type: 'error', message: reason });
     },
     deepSearchAsync: async () => {},
     computeAlertFingerprint: stubComputeAlertFingerprint,
@@ -1171,6 +1187,118 @@ describe('runSchedulerAsync', () => {
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1); // only the seed baseline
+  });
+
+  it('suppresses a repeat Signal alert for the same reason on the same saved search within 12h', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', [taintedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    const baseTime = Date.now();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime,
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + SCRAPE_ERROR_ALERT_SUPPRESS_MS - 1,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-sends a Signal alert for the same reason once the 12h suppression window has elapsed', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', [taintedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    const baseTime = Date.now();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime,
+    });
+    stmtClearSearch(db).run();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + SCRAPE_ERROR_ALERT_SUPPRESS_MS,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not suppress a genuinely different reason even within the 12h window', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', [taintedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    const baseTime = Date.now();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime,
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeFailingRecipeWithReason('facebook', 'Rate limited by Facebook')
+    );
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + 1_000,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('suppresses duplicate fan-out alerts across saved searches that share the same scrape-failure reason in one tick', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', [taintedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
+    expect(summary.searches[1].errors.some((error) => error.includes('Discarded'))).toBe(true);
   });
 });
 

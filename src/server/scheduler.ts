@@ -12,10 +12,12 @@ import {
   stmtCountDueAlertEnabledSavedSearches,
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearch,
+  stmtGetScrapeErrorAlert,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
+  stmtUpsertScrapeErrorAlert,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
@@ -67,6 +69,13 @@ export const TARGET_INTERVAL_MINUTES = 240;
 // subsequent ticks — oldest (most overdue) searches sort first, so it
 // self-heals rather than starving anything indefinitely.
 export const MAX_SEARCHES_PER_TICK = 5;
+
+// How long a Signal scrape-error alert for the same failure reason is
+// suppressed before re-alerting, regardless of which saved search(es) hit it.
+// Prevents a persistent or widely shared problem (e.g. a standing Facebook
+// login wall affecting several saved searches) from re-sending the same
+// Signal message every scheduler tick indefinitely.
+export const SCRAPE_ERROR_ALERT_SUPPRESS_MS = 12 * 60 * 60 * 1000;
 
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
@@ -247,10 +256,31 @@ async function processSavedSearchAsync(
   }
 
   if (scrapeFailureReasons.length > 0) {
-    try {
-      await sendNotificationAsync(formatScrapeErrorMessage(row.name, scrapeFailureReasons));
-    } catch (err) {
-      summary.errors.push(`Scrape-error notification failed: ${(err as Error).message}`);
+    // Suppression is keyed globally by exact reason text, not per saved
+    // search: a shared root cause (e.g. Facebook logging the scraper out)
+    // trips the same reason string across every affected saved search, so
+    // only the first alert for that reason goes out — the rest are
+    // suppressed here, even though every affected search still recorded its
+    // own "Discarded ..." entry in summary.errors above.
+    const distinctReasons = [...new Set(scrapeFailureReasons)];
+    const freshReasons = distinctReasons.filter((reason) => {
+      const existingAlert = stmtGetScrapeErrorAlert(database).get(reason);
+      return (
+        existingAlert === undefined ||
+        now() - existingAlert.last_alerted_at >= SCRAPE_ERROR_ALERT_SUPPRESS_MS
+      );
+    });
+    if (freshReasons.length === 0) {
+      console.log(
+        `[scheduler] "${row.name}": scrape error(s) already alerted globally within the last 12h, suppressing Signal notification`
+      );
+    } else {
+      try {
+        await sendNotificationAsync(formatScrapeErrorMessage(row.name, freshReasons));
+        for (const reason of freshReasons) stmtUpsertScrapeErrorAlert(database).run(reason, now());
+      } catch (err) {
+        summary.errors.push(`Scrape-error notification failed: ${(err as Error).message}`);
+      }
     }
   }
 
