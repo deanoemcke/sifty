@@ -12,10 +12,12 @@ import {
   stmtCountDueAlertEnabledSavedSearches,
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearch,
+  stmtGetScrapeErrorAlert,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
+  stmtUpsertScrapeErrorAlert,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
@@ -32,7 +34,7 @@ import {
   runAiFilterBatchesAsync,
 } from './services/aiFilter';
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
-import { formatAlertMessage } from './signalMessage';
+import { formatAlertMessage, formatScrapeErrorMessage } from './signalMessage';
 
 // Upper bound on a single URL's quick search. The scheduler runs unattended
 // via cron with no human to notice a hang — a stalled recipe (login wall,
@@ -67,6 +69,35 @@ export const TARGET_INTERVAL_MINUTES = 240;
 // subsequent ticks — oldest (most overdue) searches sort first, so it
 // self-heals rather than starving anything indefinitely.
 export const MAX_SEARCHES_PER_TICK = 5;
+
+// How long a Signal scrape-error alert for the same failure reason is
+// suppressed before re-alerting, regardless of which saved search(es) hit it.
+// Prevents a persistent or widely shared problem (e.g. a standing Facebook
+// login wall affecting several saved searches) from re-sending the same
+// Signal message every scheduler tick indefinitely.
+export const SCRAPE_ERROR_ALERT_SUPPRESS_MS = 12 * 60 * 60 * 1000;
+
+// Collapses a scrape-failure reason down to a stable suppression key by
+// stripping content that varies run-to-run for the same underlying failure —
+// e.g. Facebook's login-wall message embeds however many listings loaded
+// before the wall appeared, and a scrape-timeout message embeds the specific
+// URL. Without this, the exact scenario the suppression table exists for
+// (the same failure recurring every tick) rarely produces two identical raw
+// strings, so it never actually suppresses anything. This only affects the
+// dedup key used against scrape_error_alerts — the raw, un-normalized reason
+// is still what's shown in full via formatScrapeErrorMessage and recorded in
+// summary.errors.
+export function normalizeScrapeErrorReason(reason: string): string {
+  return reason.replace(/https?:\/\/\S+/g, '<url>').replace(/\d+/g, '#');
+}
+
+// Bound on a captured scrape-failure reason's length, applied at the point
+// the raw text is captured — before it flows into the SQLite `reason_key`
+// primary key (via normalizeScrapeErrorReason), summary.errors, or the
+// outbound Signal alert (formatScrapeErrorMessage) — so an unusually long or
+// malformed error can't grow unbounded downstream. Matches the existing
+// 200-char precedent for AI parse-error messages in ai.ts.
+export const SCRAPE_ERROR_REASON_MAX_LENGTH = 200;
 
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
@@ -168,7 +199,7 @@ async function processSavedSearchAsync(
   row: SavedSearchRow,
   deps: Required<SchedulerDeps>
 ): Promise<SavedSearchRunSummary> {
-  const { database, cooldownStore, now } = deps;
+  const { database, cooldownStore, now, sendNotificationAsync } = deps;
   const urls = JSON.parse(row.urls) as string[];
   const aiFilterPrompt = row.ai_filter?.trim() ? row.ai_filter : null;
 
@@ -200,26 +231,88 @@ async function processSavedSearchAsync(
   // Deduped by content hash, not URL — the same physical listing can appear
   // via more than one of this saved search's own URLs.
   const listingsByHash = new Map<string, Listing>();
+  // Populated by any recipe whose scrape didn't reach a trustworthy
+  // completion this run (see the `didCompleteSuccessfully` check below) —
+  // surfaced as one consolidated Signal alert after the loop so the user
+  // learns a saved search needs attention, distinct from a listing alert
+  // (formatScrapeErrorMessage in signalMessage.ts).
+  const scrapeFailureReasons: string[] = [];
   for (const url of urls) {
     const recipe = getRecipeForUrl(url);
     if (!recipe) {
       summary.errors.push(`No recipe found for URL: ${url}`);
       continue;
     }
+    let latestErrorMessage: string | undefined;
     try {
-      const { listings } = await withTimeoutAsync(
-        runQuickSearchForUrlAsync(url, recipe, database, (event) =>
-          logQuickSearchEvent(recipe.name, event)
-        ),
+      const { listings, didCompleteSuccessfully } = await withTimeoutAsync(
+        runQuickSearchForUrlAsync(url, recipe, database, (event) => {
+          if (event.type === 'error') latestErrorMessage = event.message;
+          logQuickSearchEvent(recipe.name, event);
+        }),
         SCRAPE_TIMEOUT_MS,
         `Quick search for ${url}`
       );
+      if (!didCompleteSuccessfully) {
+        // A recipe that returns without ever reaching `{type:'complete'}` (a
+        // login wall, a block, a mid-scrape failure) may still have pushed
+        // some `listing` events before it detected the failure — e.g.
+        // facebook.ts's detectLoginWallAsync fires only after already-
+        // rendered DOM listings have been processed by the MutationObserver
+        // injection. Those listings are not trustworthy and must never reach
+        // AI filtering or notification.
+        const reason = (latestErrorMessage ?? 'did not complete successfully').slice(
+          0,
+          SCRAPE_ERROR_REASON_MAX_LENGTH
+        );
+        summary.errors.push(
+          `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`
+        );
+        scrapeFailureReasons.push(reason);
+        continue;
+      }
       for (const listing of listings)
         listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
     } catch (err) {
-      summary.errors.push(`Quick search failed for ${url}: ${(err as Error).message}`);
+      const reason = (err as Error).message.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
+      summary.errors.push(`Quick search failed for ${url}: ${reason}`);
+      scrapeFailureReasons.push(reason);
     }
   }
+
+  if (scrapeFailureReasons.length > 0) {
+    // Suppression is keyed globally by normalized reason (see
+    // normalizeScrapeErrorReason), not per saved search: a shared root cause
+    // (e.g. Facebook logging the scraper out) trips the same normalized
+    // reason across every affected saved search, so only the first alert for
+    // that reason goes out — the rest are suppressed here, even though every
+    // affected search still recorded its own "Discarded ..." entry in
+    // summary.errors above.
+    const distinctReasons = [...new Set(scrapeFailureReasons)];
+    const freshReasons = distinctReasons.filter((reason) => {
+      const existingAlert = stmtGetScrapeErrorAlert(database).get(
+        normalizeScrapeErrorReason(reason)
+      );
+      return (
+        existingAlert === undefined ||
+        now() - existingAlert.last_alerted_at >= SCRAPE_ERROR_ALERT_SUPPRESS_MS
+      );
+    });
+    if (freshReasons.length === 0) {
+      console.log(
+        `[scheduler] "${row.name}": scrape error(s) already alerted globally within the last 12h, suppressing Signal notification`
+      );
+    } else {
+      try {
+        await sendNotificationAsync(formatScrapeErrorMessage(row.name, freshReasons));
+        for (const reason of freshReasons)
+          stmtUpsertScrapeErrorAlert(database).run(normalizeScrapeErrorReason(reason), now());
+      } catch (err) {
+        summary.errors.push(`Scrape-error notification failed: ${(err as Error).message}`);
+      }
+    }
+  }
+
   summary.listingsFoundCount = listingsByHash.size;
   console.log(`[scheduler] "${row.name}": scraped ${summary.listingsFoundCount} listing(s)`);
 
@@ -258,25 +351,42 @@ async function processSavedSearchAsync(
   }
 
   if (summary.isPopulationRun) {
-    // The baseline insert and the "population run done" flag must land
-    // together or not at all: if this were split across two statements, a
-    // mid-run crash could commit some baseline rows and never set the flag
-    // (next run redoes the notify-suppressed backfill — harmless), or set
-    // the flag without a complete baseline (next run wrongly notifies on
-    // pre-existing listings that were never actually recorded). Wrapping
-    // both in one transaction makes a crash all-or-nothing: either the full
-    // baseline plus the flag commit, or neither does and the next run
-    // safely retries the whole population from scratch (stmtInsertAlertedListing
-    // is INSERT OR IGNORE, so redoing it is idempotent).
-    const insertPopulationBaseline = database.transaction((rows: [string, Listing][]) => {
-      for (const [hash] of rows) stmtInsertAlertedListing(database).run(row.id, hash, now());
-      stmtMarkPopulationRunComplete(database).run(row.id);
-    });
-    insertPopulationBaseline(candidates);
-    summary.populatedCount = candidates.length;
-    console.log(
-      `[scheduler] "${row.name}": population run complete — recorded ${summary.populatedCount} baseline listing(s), no notifications sent`
-    );
+    if (scrapeFailureReasons.length > 0) {
+      // At least one of this search's URLs never reached a trustworthy
+      // completion this run (see the didCompleteSuccessfully check above),
+      // so `candidates` is missing that URL's listings entirely. Leaving
+      // has_completed_population_run unset means the whole search retries
+      // as a population run next tick instead of silently baselining only
+      // the URLs that happened to succeed — otherwise, the next time the
+      // failed URL succeeds, every listing on it would look "new" (never
+      // baselined) and flood out as individual notifications.
+      summary.errors.push(
+        `Population run incomplete — ${scrapeFailureReasons.length} URL(s) failed; retrying full baseline next run`
+      );
+      console.log(
+        `[scheduler] "${row.name}": population run incomplete — ${scrapeFailureReasons.length} URL(s) failed, retrying next tick`
+      );
+    } else {
+      // The baseline insert and the "population run done" flag must land
+      // together or not at all: if this were split across two statements, a
+      // mid-run crash could commit some baseline rows and never set the flag
+      // (next run redoes the notify-suppressed backfill — harmless), or set
+      // the flag without a complete baseline (next run wrongly notifies on
+      // pre-existing listings that were never actually recorded). Wrapping
+      // both in one transaction makes a crash all-or-nothing: either the full
+      // baseline plus the flag commit, or neither does and the next run
+      // safely retries the whole population from scratch (stmtInsertAlertedListing
+      // is INSERT OR IGNORE, so redoing it is idempotent).
+      const insertPopulationBaseline = database.transaction((rows: [string, Listing][]) => {
+        for (const [hash] of rows) stmtInsertAlertedListing(database).run(row.id, hash, now());
+        stmtMarkPopulationRunComplete(database).run(row.id);
+      });
+      insertPopulationBaseline(candidates);
+      summary.populatedCount = candidates.length;
+      console.log(
+        `[scheduler] "${row.name}": population run complete — recorded ${summary.populatedCount} baseline listing(s), no notifications sent`
+      );
+    }
   } else {
     // Partial progress is preserved intentionally: stmtInsertAlertedListing
     // commits per-listing rather than in one wrapping transaction, so a

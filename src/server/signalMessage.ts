@@ -41,3 +41,15 @@ export function formatAlertMessage(listing: Listing): string {
     listing.url,
   ].join('\n');
 }
+
+// Composes a terse system-health Signal alert for a saved search that had a
+// scrape it could not trust this run (e.g. a login wall mid-scrape). Kept to
+// one plain line per distinct reason — no header, no markdown emphasis, no
+// explanation of what was discarded — so it reads at a glance in the Signal
+// thread rather than as a log dump.
+export function formatScrapeErrorMessage(savedSearchName: string, reasons: string[]): string {
+  const escapedName = escapeSignalMarkdown(savedSearchName);
+  return [...new Set(reasons)]
+    .map((reason) => `Scrape error - ${escapedName}. ${escapeSignalMarkdown(reason)}`)
+    .join('\n');
+}

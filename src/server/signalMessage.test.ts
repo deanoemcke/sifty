@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { makeListing } from '../lib/testFixtures';
-import { escapeSignalMarkdown, formatAlertMessage } from './signalMessage';
+import {
+  escapeSignalMarkdown,
+  formatAlertMessage,
+  formatScrapeErrorMessage,
+} from './signalMessage';
 
 describe('formatAlertMessage', () => {
   it('composes a bold title, then a location/price line, then the url — no saved search name or source', () => {
@@ -100,5 +104,43 @@ describe('escapeSignalMarkdown', () => {
     const input = `Cheap ${marker}car${marker} for sale`;
     const escaped = escapeSignalMarkdown(input);
     expect(escaped).not.toContain(marker);
+  });
+});
+
+describe('formatScrapeErrorMessage', () => {
+  it('formats a single reason as one concise "Scrape error - <name>. <reason>" line', () => {
+    const message = formatScrapeErrorMessage('My search', ['Facebook requires login.']);
+
+    expect(message).toBe('Scrape error - My search. Facebook requires login.');
+  });
+
+  it('omits everything but the name and reason — no header, no framing text', () => {
+    const message = formatScrapeErrorMessage('My search', ['some reason']);
+
+    expect(message).not.toContain('discarded');
+    expect(message).not.toContain('Some results');
+    expect(message).not.toContain('trusted');
+  });
+
+  it('emits one deduplicated line per distinct reason', () => {
+    const message = formatScrapeErrorMessage('My search', ['reason A', 'reason A', 'reason B']);
+
+    expect(message.split('\n')).toEqual([
+      'Scrape error - My search. reason A',
+      'Scrape error - My search. reason B',
+    ]);
+  });
+
+  it('escapes markdown-special characters in the saved search name', () => {
+    const message = formatScrapeErrorMessage('**Sneaky** search', ['reason']);
+
+    expect(message).not.toMatch(/[*_`~]/);
+  });
+
+  it('escapes markdown-special characters within the reason', () => {
+    const message = formatScrapeErrorMessage('S', ['contains *asterisks* and _underscores_']);
+
+    expect(message).not.toMatch(/[*_`~]/);
+    expect(message).toContain('contains asterisks and underscores');
   });
 });
