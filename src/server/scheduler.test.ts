@@ -32,6 +32,7 @@ import {
   runImmediatePopulationRunAsync,
   runSchedulerAsync as runSchedulerAsyncUngated,
   SCRAPE_ERROR_ALERT_SUPPRESS_MS,
+  SCRAPE_ERROR_REASON_MAX_LENGTH,
   SCRAPE_TIMEOUT_MS,
   type SchedulerDeps,
   triggerImmediatePopulationRunAsync,
@@ -1285,6 +1286,46 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps an overlong scrape-failure reason before it becomes the SQLite primary key or reaches the Signal alert', async () => {
+    // Matches the existing 200-char precedent in ai.ts (AI parse-error
+    // messages) — an unusually long or malformed error message must not
+    // flow uncapped into a TEXT PRIMARY KEY or an outbound Signal payload.
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const overlongReason = `Login wall detected — ${'x'.repeat(50)} listings loaded, url=https://facebook.com/marketplace/${'y'.repeat(200)}`;
+    expect(overlongReason.length).toBeGreaterThan(SCRAPE_ERROR_REASON_MAX_LENGTH);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeFailingRecipeWithReason('facebook', overlongReason)
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // The outbound Signal message never includes the uncapped tail.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    const message = sendNotificationAsync.mock.calls[0][0] as string;
+    expect(message).not.toContain(overlongReason);
+    expect(message).toBe(
+      `Scrape error - FB search. ${overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH)}`
+    );
+
+    // The row written as the SQLite primary key is capped too (normalizing
+    // the already-capped reason can only shrink it further, never grow it
+    // back past the cap).
+    const row = db.prepare('SELECT reason_key FROM scrape_error_alerts').get() as
+      | { reason_key: string }
+      | undefined;
+    expect(row).toBeDefined();
+    expect(row?.reason_key.length).toBeLessThanOrEqual(SCRAPE_ERROR_REASON_MAX_LENGTH);
+    expect(row?.reason_key).toBe(
+      normalizeScrapeErrorReason(overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH))
+    );
   });
 
   it('suppresses a repeat login-wall alert even though the listing count embedded in the message differs between runs', async () => {

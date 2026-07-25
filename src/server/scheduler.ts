@@ -91,6 +91,14 @@ export function normalizeScrapeErrorReason(reason: string): string {
   return reason.replace(/https?:\/\/\S+/g, '<url>').replace(/\d+/g, '#');
 }
 
+// Bound on a captured scrape-failure reason's length, applied at the point
+// the raw text is captured — before it flows into the SQLite `reason_key`
+// primary key (via normalizeScrapeErrorReason), summary.errors, or the
+// outbound Signal alert (formatScrapeErrorMessage) — so an unusually long or
+// malformed error can't grow unbounded downstream. Matches the existing
+// 200-char precedent for AI parse-error messages in ai.ts.
+export const SCRAPE_ERROR_REASON_MAX_LENGTH = 200;
+
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -253,7 +261,10 @@ async function processSavedSearchAsync(
         // rendered DOM listings have been processed by the MutationObserver
         // injection. Those listings are not trustworthy and must never reach
         // AI filtering or notification.
-        const reason = latestErrorMessage ?? 'did not complete successfully';
+        const reason = (latestErrorMessage ?? 'did not complete successfully').slice(
+          0,
+          SCRAPE_ERROR_REASON_MAX_LENGTH
+        );
         summary.errors.push(
           `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`
         );
@@ -263,7 +274,7 @@ async function processSavedSearchAsync(
       for (const listing of listings)
         listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
     } catch (err) {
-      const reason = (err as Error).message;
+      const reason = (err as Error).message.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
       summary.errors.push(`Quick search failed for ${url}: ${reason}`);
       scrapeFailureReasons.push(reason);
     }
