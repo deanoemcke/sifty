@@ -1300,6 +1300,63 @@ describe('runSchedulerAsync', () => {
     expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
     expect(summary.searches[1].errors.some((error) => error.includes('Discarded'))).toBe(true);
   });
+
+  it('leaves has_completed_population_run unset when a URL is discarded during a population run, so the full baseline retries next tick', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', [taintedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(summary.searches[0].isPopulationRun).toBe(true);
+    // The flag must stay unset — not just "not incorrectly set to 1" — so the
+    // next tick still sees this as a population run and retries the full
+    // baseline, rather than treating the tainted URL's future listings as new.
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(0);
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+    expect(
+      summary.searches[0].errors.some((error) => error.includes('Population run incomplete'))
+    ).toBe(true);
+  });
+
+  it('leaves the whole saved search in population mode when only one of several URLs fails during the population run, even though another URL succeeded', async () => {
+    const db = freshDb();
+    const fbUrl = 'https://facebook.com/marketplace/search';
+    const tmUrl = 'https://trademe.co.nz/search';
+    const searchId = insertAlertSearch(db, { urls: [fbUrl, tmUrl] });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    const tmListing = makeListing({ title: 'New trademe chair', url: 'https://trademe.co.nz/1' });
+    vi.mocked(getRecipeForUrl).mockImplementation((url: string) =>
+      url === fbUrl
+        ? makeLoginWalledRecipe('facebook', [taintedListing])
+        : makeStubRecipe([tmListing])
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(0);
+    // Neither URL's listings are baselined this run — not even trademe's,
+    // which succeeded — because the population run as a whole retries next
+    // tick rather than partially completing.
+    expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+  });
 });
 
 function tempLockPath(): string {

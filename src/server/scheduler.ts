@@ -322,25 +322,42 @@ async function processSavedSearchAsync(
   }
 
   if (summary.isPopulationRun) {
-    // The baseline insert and the "population run done" flag must land
-    // together or not at all: if this were split across two statements, a
-    // mid-run crash could commit some baseline rows and never set the flag
-    // (next run redoes the notify-suppressed backfill — harmless), or set
-    // the flag without a complete baseline (next run wrongly notifies on
-    // pre-existing listings that were never actually recorded). Wrapping
-    // both in one transaction makes a crash all-or-nothing: either the full
-    // baseline plus the flag commit, or neither does and the next run
-    // safely retries the whole population from scratch (stmtInsertAlertedListing
-    // is INSERT OR IGNORE, so redoing it is idempotent).
-    const insertPopulationBaseline = database.transaction((rows: [string, Listing][]) => {
-      for (const [hash] of rows) stmtInsertAlertedListing(database).run(row.id, hash, now());
-      stmtMarkPopulationRunComplete(database).run(row.id);
-    });
-    insertPopulationBaseline(candidates);
-    summary.populatedCount = candidates.length;
-    console.log(
-      `[scheduler] "${row.name}": population run complete — recorded ${summary.populatedCount} baseline listing(s), no notifications sent`
-    );
+    if (scrapeFailureReasons.length > 0) {
+      // At least one of this search's URLs never reached a trustworthy
+      // completion this run (see the didCompleteSuccessfully check above),
+      // so `candidates` is missing that URL's listings entirely. Leaving
+      // has_completed_population_run unset means the whole search retries
+      // as a population run next tick instead of silently baselining only
+      // the URLs that happened to succeed — otherwise, the next time the
+      // failed URL succeeds, every listing on it would look "new" (never
+      // baselined) and flood out as individual notifications.
+      summary.errors.push(
+        `Population run incomplete — ${scrapeFailureReasons.length} URL(s) failed; retrying full baseline next run`
+      );
+      console.log(
+        `[scheduler] "${row.name}": population run incomplete — ${scrapeFailureReasons.length} URL(s) failed, retrying next tick`
+      );
+    } else {
+      // The baseline insert and the "population run done" flag must land
+      // together or not at all: if this were split across two statements, a
+      // mid-run crash could commit some baseline rows and never set the flag
+      // (next run redoes the notify-suppressed backfill — harmless), or set
+      // the flag without a complete baseline (next run wrongly notifies on
+      // pre-existing listings that were never actually recorded). Wrapping
+      // both in one transaction makes a crash all-or-nothing: either the full
+      // baseline plus the flag commit, or neither does and the next run
+      // safely retries the whole population from scratch (stmtInsertAlertedListing
+      // is INSERT OR IGNORE, so redoing it is idempotent).
+      const insertPopulationBaseline = database.transaction((rows: [string, Listing][]) => {
+        for (const [hash] of rows) stmtInsertAlertedListing(database).run(row.id, hash, now());
+        stmtMarkPopulationRunComplete(database).run(row.id);
+      });
+      insertPopulationBaseline(candidates);
+      summary.populatedCount = candidates.length;
+      console.log(
+        `[scheduler] "${row.name}": population run complete — recorded ${summary.populatedCount} baseline listing(s), no notifications sent`
+      );
+    }
   } else {
     // Partial progress is preserved intentionally: stmtInsertAlertedListing
     // commits per-listing rather than in one wrapping transaction, so a
