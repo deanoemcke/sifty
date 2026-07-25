@@ -77,6 +77,20 @@ export const MAX_SEARCHES_PER_TICK = 5;
 // Signal message every scheduler tick indefinitely.
 export const SCRAPE_ERROR_ALERT_SUPPRESS_MS = 12 * 60 * 60 * 1000;
 
+// Collapses a scrape-failure reason down to a stable suppression key by
+// stripping content that varies run-to-run for the same underlying failure —
+// e.g. Facebook's login-wall message embeds however many listings loaded
+// before the wall appeared, and a scrape-timeout message embeds the specific
+// URL. Without this, the exact scenario the suppression table exists for
+// (the same failure recurring every tick) rarely produces two identical raw
+// strings, so it never actually suppresses anything. This only affects the
+// dedup key used against scrape_error_alerts — the raw, un-normalized reason
+// is still what's shown in full via formatScrapeErrorMessage and recorded in
+// summary.errors.
+export function normalizeScrapeErrorReason(reason: string): string {
+  return reason.replace(/https?:\/\/\S+/g, '<url>').replace(/\d+/g, '#');
+}
+
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -256,15 +270,18 @@ async function processSavedSearchAsync(
   }
 
   if (scrapeFailureReasons.length > 0) {
-    // Suppression is keyed globally by exact reason text, not per saved
-    // search: a shared root cause (e.g. Facebook logging the scraper out)
-    // trips the same reason string across every affected saved search, so
-    // only the first alert for that reason goes out — the rest are
-    // suppressed here, even though every affected search still recorded its
-    // own "Discarded ..." entry in summary.errors above.
+    // Suppression is keyed globally by normalized reason (see
+    // normalizeScrapeErrorReason), not per saved search: a shared root cause
+    // (e.g. Facebook logging the scraper out) trips the same normalized
+    // reason across every affected saved search, so only the first alert for
+    // that reason goes out — the rest are suppressed here, even though every
+    // affected search still recorded its own "Discarded ..." entry in
+    // summary.errors above.
     const distinctReasons = [...new Set(scrapeFailureReasons)];
     const freshReasons = distinctReasons.filter((reason) => {
-      const existingAlert = stmtGetScrapeErrorAlert(database).get(reason);
+      const existingAlert = stmtGetScrapeErrorAlert(database).get(
+        normalizeScrapeErrorReason(reason)
+      );
       return (
         existingAlert === undefined ||
         now() - existingAlert.last_alerted_at >= SCRAPE_ERROR_ALERT_SUPPRESS_MS
@@ -277,7 +294,8 @@ async function processSavedSearchAsync(
     } else {
       try {
         await sendNotificationAsync(formatScrapeErrorMessage(row.name, freshReasons));
-        for (const reason of freshReasons) stmtUpsertScrapeErrorAlert(database).run(reason, now());
+        for (const reason of freshReasons)
+          stmtUpsertScrapeErrorAlert(database).run(normalizeScrapeErrorReason(reason), now());
       } catch (err) {
         summary.errors.push(`Scrape-error notification failed: ${(err as Error).message}`);
       }

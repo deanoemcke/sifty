@@ -48,7 +48,11 @@ export function initSchema(database: Database.Database): void {
       PRIMARY KEY (saved_search_id, listing_hash)
     );
     CREATE TABLE IF NOT EXISTS scrape_error_alerts (
-      reason          TEXT PRIMARY KEY,
+      -- Normalized suppression key (see normalizeScrapeErrorReason in
+      -- scheduler.ts), not the raw error text — dynamic content like counts
+      -- and URLs is stripped before it lands here so the same underlying
+      -- failure collapses to one row across runs.
+      reason_key      TEXT PRIMARY KEY,
       last_alerted_at INTEGER NOT NULL
     );
   `);
@@ -312,12 +316,12 @@ export function stmtInsertAlertedListing(database: Database.Database) {
 export type ScrapeErrorAlertRow = { last_alerted_at: number };
 export function stmtGetScrapeErrorAlert(database: Database.Database) {
   return database.prepare<[string], ScrapeErrorAlertRow>(
-    'SELECT last_alerted_at FROM scrape_error_alerts WHERE reason = ?'
+    'SELECT last_alerted_at FROM scrape_error_alerts WHERE reason_key = ?'
   );
 }
 export function stmtUpsertScrapeErrorAlert(database: Database.Database) {
   return database.prepare(
-    'INSERT OR REPLACE INTO scrape_error_alerts (reason, last_alerted_at) VALUES (?, ?)'
+    'INSERT OR REPLACE INTO scrape_error_alerts (reason_key, last_alerted_at) VALUES (?, ?)'
   );
 }
 export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {

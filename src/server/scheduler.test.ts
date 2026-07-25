@@ -28,6 +28,7 @@ import { getRecipeForUrl } from './recipes/registry';
 import {
   AI_FILTER_TIMEOUT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
+  normalizeScrapeErrorReason,
   runImmediatePopulationRunAsync,
   runSchedulerAsync as runSchedulerAsyncUngated,
   SCRAPE_ERROR_ALERT_SUPPRESS_MS,
@@ -124,7 +125,11 @@ function makeHangingRecipe(): Recipe {
 // were already processed (facebook.ts's detectLoginWallAsync runs after the
 // MutationObserver has already emitted `listing` events for already-rendered
 // links) — some `listing` events fire, then `error`, and `complete` never
-// fires.
+// fires. The error message mirrors the real shape emitted by
+// detectLoginWallAsync's caller in facebook.ts, which embeds however many
+// listings had loaded before the wall appeared — that count varies from run
+// to run for what is otherwise the same underlying failure, which is exactly
+// what normalizeScrapeErrorReason (scheduler.ts) exists to see through.
 function makeLoginWalledRecipe(recipeName: string, listings: Listing[]): Recipe {
   return {
     name: recipeName,
@@ -132,7 +137,10 @@ function makeLoginWalledRecipe(recipeName: string, listings: Listing[]): Recipe 
     extractImplicitFilters: () => [],
     quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
       for (const listing of listings) onEvent({ type: 'listing', data: listing });
-      onEvent({ type: 'error', message: 'Facebook login wall detected' });
+      onEvent({
+        type: 'error',
+        message: `Login wall detected — only ${listings.length} listing${listings.length !== 1 ? 's' : ''} loaded. Set the FB_COOKIES environment variable to get full results.`,
+      });
     },
     deepSearchAsync: async () => {},
     computeAlertFingerprint: stubComputeAlertFingerprint,
@@ -1103,7 +1111,7 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      'Scrape error - FB search. Facebook login wall detected'
+      'Scrape error - FB search. Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].listingsFoundCount).toBe(0);
@@ -1182,7 +1190,7 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      'Scrape error - TM search. Facebook login wall detected'
+      'Scrape error - TM search. Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
@@ -1277,6 +1285,99 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('suppresses a repeat login-wall alert even though the listing count embedded in the message differs between runs', async () => {
+    // Mirrors facebook.ts's real login-wall message, which reports however
+    // many listings had loaded before the wall appeared — a count that
+    // varies run to run even though the underlying failure (no FB_COOKIES)
+    // hasn't changed. Without normalizing that count out of the suppression
+    // key, this exact case — the one the suppression table exists for — would
+    // never actually suppress.
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    const baseTime = Date.now();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeLoginWalledRecipe('facebook', [
+        makeListing({ title: 'Listing A', url: 'https://facebook.com/a' }),
+        makeListing({ title: 'Listing B', url: 'https://facebook.com/b' }),
+        makeListing({ title: 'Listing C', url: 'https://facebook.com/c' }),
+      ])
+    );
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime,
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeLoginWalledRecipe('facebook', [
+        makeListing({ title: 'Listing A', url: 'https://facebook.com/a' }),
+        makeListing({ title: 'Listing D', url: 'https://facebook.com/d' }),
+        makeListing({ title: 'Listing E', url: 'https://facebook.com/e' }),
+        makeListing({ title: 'Listing F', url: 'https://facebook.com/f' }),
+        makeListing({ title: 'Listing G', url: 'https://facebook.com/g' }),
+      ])
+    );
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + SCRAPE_ERROR_ALERT_SUPPRESS_MS - 1,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses a repeat timeout alert even though the URL embedded in the message differs between runs', async () => {
+    // withTimeoutAsync labels its error with the specific URL that timed out
+    // (`Quick search for ${url} timed out after ${timeoutMs}ms`), so two
+    // saved searches hitting the same underlying stall on different URLs
+    // must still collapse to one suppression key.
+    vi.useFakeTimers();
+    try {
+      const db = freshDb();
+      insertAlertSearch(db, {
+        id: 'search-a',
+        name: 'Search A',
+        urls: ['https://example.com/marketplace/search-a'],
+      });
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeHangingRecipe());
+      const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+      const firstRunPromise = runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync,
+      });
+      await vi.advanceTimersByTimeAsync(SCRAPE_TIMEOUT_MS);
+      await firstRunPromise;
+
+      insertAlertSearch(db, {
+        id: 'search-b',
+        name: 'Search B',
+        urls: ['https://example.com/marketplace/search-b'],
+      });
+      // search-a already ran once and isn't due again for ages — pass a huge
+      // interval so only never-run search-b is picked up this tick, keeping
+      // this test to a single SCRAPE_TIMEOUT_MS advance.
+      const secondRunPromise = runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync,
+        targetIntervalMs: Number.MAX_SAFE_INTEGER,
+      });
+      await vi.advanceTimersByTimeAsync(SCRAPE_TIMEOUT_MS);
+      await secondRunPromise;
+
+      expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('suppresses duplicate fan-out alerts across saved searches that share the same scrape-failure reason in one tick', async () => {
@@ -1685,5 +1786,30 @@ describe('triggerImmediatePopulationRunAsync', () => {
     expect(stmtGetSavedSearch(db).get(searchBId)?.last_run_at).toBeNull();
 
     logSpy.mockRestore();
+  });
+});
+
+describe('normalizeScrapeErrorReason', () => {
+  it('collapses reasons that differ only by an embedded count to the same key', () => {
+    const a =
+      'Login wall detected — only 3 listings loaded. Set the FB_COOKIES environment variable to get full results.';
+    const b =
+      'Login wall detected — only 47 listings loaded. Set the FB_COOKIES environment variable to get full results.';
+
+    expect(normalizeScrapeErrorReason(a)).toBe(normalizeScrapeErrorReason(b));
+  });
+
+  it('collapses reasons that differ only by an embedded URL to the same key', () => {
+    const a = 'Quick search for https://facebook.com/marketplace/search-a timed out after 30000ms';
+    const b = 'Quick search for https://facebook.com/marketplace/search-b timed out after 30000ms';
+
+    expect(normalizeScrapeErrorReason(a)).toBe(normalizeScrapeErrorReason(b));
+  });
+
+  it('does not collapse genuinely different failure categories', () => {
+    const loginWall = 'Login wall detected — only 3 listings loaded.';
+    const rateLimited = 'Rate limited by Facebook';
+
+    expect(normalizeScrapeErrorReason(loginWall)).not.toBe(normalizeScrapeErrorReason(rateLimited));
   });
 });
