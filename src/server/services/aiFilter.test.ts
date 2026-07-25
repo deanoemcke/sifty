@@ -134,6 +134,57 @@ describe('runAiFilterBatchesAsync', () => {
     ]);
   });
 
+  it('includes a Category segment in the prompt when a listing has a category', async () => {
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+    });
+
+    await runAiFilterBatchesAsync(
+      [{ ...makeListing('https://example.com/1'), category: 'Computers/Laptops' }],
+      'laptop',
+      STUB_COOLDOWN_STORE
+    );
+
+    const userMessage = vi.mocked(aiJSON).mock.calls[0][3];
+    expect(userMessage).toContain('| Category: Computers/Laptops');
+  });
+
+  it('strips a leading slash from the category before rendering it into the prompt', async () => {
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+    });
+
+    await runAiFilterBatchesAsync(
+      [{ ...makeListing('https://example.com/1'), category: '/Computers/Laptops/Lenovo' }],
+      'laptop',
+      STUB_COOLDOWN_STORE
+    );
+
+    const userMessage = vi.mocked(aiJSON).mock.calls[0][3];
+    expect(userMessage).toContain('| Category: Computers/Laptops/Lenovo');
+    expect(userMessage).not.toContain('Category: /Computers');
+  });
+
+  it('omits the Category segment when a listing has no category', async () => {
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    vi.mocked(aiJSON).mockResolvedValueOnce({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+    });
+
+    await runAiFilterBatchesAsync(
+      [makeListing('https://example.com/1')],
+      'laptop',
+      STUB_COOLDOWN_STORE
+    );
+
+    expect(vi.mocked(aiJSON).mock.calls[0][3]).not.toContain('Category:');
+  });
+
   it('invokes onBatchError for a failed batch instead of throwing, and does not abort other batches', async () => {
     vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
     vi.mocked(aiJSON)

@@ -47,6 +47,9 @@ export type AiFilterListing = {
   price: string;
   location: string;
   description: string;
+  // TradeMe-only: slash-delimited category path (e.g. 'Computers/Laptops');
+  // Facebook listings never carry one.
+  category?: string;
 };
 
 export type FilterResultEntry = {
@@ -82,7 +85,7 @@ export async function runAiFilterBatchesAsync(
         const numbered = batch
           .map(
             (listing, batchIndex) =>
-              `${batchIndex + 1}. Title: "${listing.title}" | Price: ${listing.price} | Location: ${listing.location}${listing.description ? ` | Description: ${listing.description}` : ''}`
+              `${batchIndex + 1}. Title: "${listing.title}" | Price: ${listing.price} | Location: ${listing.location}${listing.category ? ` | Category: ${listing.category.replace(/^\//, '')}` : ''}${listing.description ? ` | Description: ${listing.description}` : ''}`
           )
           .join('\n');
         try {

@@ -157,6 +157,7 @@ function toAiFilterListing(listing: Listing): AiFilterListing {
       listing.price === null || listing.price === undefined ? 'unknown' : String(listing.price),
     location: listing.location,
     description: listing.description ?? '',
+    category: listing.categoryPath,
   };
 }
 

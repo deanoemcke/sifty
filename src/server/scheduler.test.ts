@@ -452,6 +452,46 @@ describe('runSchedulerAsync', () => {
     expect(sendNotificationAsync.mock.calls[0][0]).toContain('Gaming laptop');
   });
 
+  it('passes a listing categoryPath through to the AI filter prompt', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    vi.mocked(getAIConfig).mockReturnValue({
+      url: 'a',
+      model: 'm',
+      apiKey: 'k',
+      providerKey: 'a',
+      cooldownStore: STUB_COOLDOWN_STORE,
+    });
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 5 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const newListing = makeListing({
+      title: 'Gaming laptop',
+      url: 'https://example.com/new',
+      categoryPath: '/Computers/Laptops',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
+    vi.mocked(aiJSON).mockClear();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(vi.mocked(aiJSON).mock.calls[0][3]).toContain('| Category: Computers/Laptops');
+  });
+
   it('does not record an alert when the notification send fails, so it is retried next run', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);

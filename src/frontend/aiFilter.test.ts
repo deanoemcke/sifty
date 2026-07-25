@@ -210,6 +210,40 @@ describe('runAiFilterAsync', () => {
     expect(getCardByUrl(url)?.style.display).toBe('none');
   });
 
+  it('sends the listing categoryPath as category in the request payload', async () => {
+    const url = 'https://example.com/1';
+    const item: ListingItem = makeListingItem({
+      data: makeListing({
+        url,
+        title: 'Item',
+        location: 'Auckland',
+        categoryPath: '/Computers/Laptops',
+      }),
+    });
+    listingsByUrl.set(url, item);
+    addUrlCard(makeCardDom(), {
+      searchStatus: 'done',
+      searchedUrl: url,
+      searchId: null,
+      listingUrls: [url],
+      lastProgress: null,
+      errorMessage: null,
+      wasCancelled: false,
+      isEditing: false,
+    });
+
+    stubAiFilterStream([
+      `data: {"type":"result","results":[{"url":"${url}","pass":true,"reason":null,"relevance":7}]}\n`,
+    ]);
+
+    await runAiFilterAsync();
+
+    const requestBody = JSON.parse(
+      (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string
+    );
+    expect(requestBody.listings[0].category).toBe('/Computers/Laptops');
+  });
+
   it('writes the AI-assigned relevance score onto the listing when a result event arrives', async () => {
     const url = 'https://example.com/1';
     const item: ListingItem = makeListingItem({
