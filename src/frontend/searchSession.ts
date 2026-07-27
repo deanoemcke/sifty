@@ -38,14 +38,12 @@ import {
 import { readCardUrl, urlCards } from './urlCardStore';
 
 export function markDirty(): void {
-  getElement<HTMLButtonElement>('saveCurrentBtn').disabled = false;
   scheduleDraftSessionSave();
 }
 
 export function setSearchName(id: string | null, name: string | null): void {
   setCurrentSearchId(id);
   setCurrentSearchName(name);
-  getElement<HTMLButtonElement>('saveCurrentBtn').disabled = true;
 }
 
 // ── Saved searches ────────────────────────────────────────────────────────────

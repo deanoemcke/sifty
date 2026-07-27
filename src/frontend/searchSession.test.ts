@@ -73,8 +73,8 @@ beforeEach(() => {
       <div id="savedSearchesHeaderRow" class="hidden"></div>
       <div id="savedSearchesList"></div>
       <span id="savedSearchesCount" class="hidden">0</span>
+      <button id="saveCurrentBtn"></button>
     </div>
-    <button id="saveCurrentBtn" disabled></button>
 
     <div id="saveSearchModal" class="hidden">
       <input id="saveSearchName" />
@@ -402,6 +402,19 @@ describe('markDirty', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('saveCurrentBtn', () => {
+  it('is never disabled, regardless of dirty state or search load/unload', () => {
+    const saveButton = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(false);
+
+    markDirty();
+    expect(saveButton.disabled).toBe(false);
+
+    unloadCurrentSearch();
+    expect(saveButton.disabled).toBe(false);
   });
 });
 
