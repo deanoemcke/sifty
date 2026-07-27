@@ -73,7 +73,7 @@ beforeEach(() => {
       <div id="savedSearchesHeaderRow" class="hidden"></div>
       <div id="savedSearchesList"></div>
       <span id="savedSearchesCount" class="hidden">0</span>
-      <button id="saveCurrentBtn"></button>
+      <button id="saveCurrentBtn" disabled></button>
     </div>
 
     <div id="saveSearchModal" class="hidden">
@@ -406,15 +406,53 @@ describe('markDirty', () => {
 });
 
 describe('saveCurrentBtn', () => {
-  it('is never disabled, regardless of dirty state or search load/unload', () => {
+  it('starts disabled (no discovered urls yet)', () => {
     const saveButton = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
-    expect(saveButton.disabled).toBe(false);
+    expect(saveButton.disabled).toBe(true);
+  });
 
-    markDirty();
+  it('is enabled once a saved search with urls is loaded, and disabled again after unloading', async () => {
+    const saveButton = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
+    mockStreamingFetchResolved();
+
+    await loadSavedSearchAsync(makeSavedSearch({ urls: ['https://example.com/a'] }));
     expect(saveButton.disabled).toBe(false);
 
     unloadCurrentSearch();
+    expect(saveButton.disabled).toBe(true);
+  });
+
+  it('stays disabled when a loaded saved search has no urls', async () => {
+    const saveButton = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
+
+    await loadSavedSearchAsync(makeSavedSearch({ urls: [] }));
+
+    expect(saveButton.disabled).toBe(true);
+  });
+
+  it('is enabled once a restored draft with urls is loaded', async () => {
+    const saveButton = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
+    mockStreamingFetchResolved();
+
+    await restoreDraftSessionAsync({
+      urls: ['https://example.com/draft'],
+      discoverInputs: { prompt: '', fulfillment: 'pickup' },
+      aiFilter: '',
+    });
+
     expect(saveButton.disabled).toBe(false);
+  });
+
+  it('is enabled once a discovery run finishes with urls, and disabled again once cleared', () => {
+    const saveButton = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
+
+    urlCards[0].dom.input.value = 'https://example.com/manual';
+    markDirty();
+    expect(saveButton.disabled).toBe(false);
+
+    urlCards[0].dom.input.value = '';
+    markDirty();
+    expect(saveButton.disabled).toBe(true);
   });
 });
 

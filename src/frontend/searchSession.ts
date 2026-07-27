@@ -37,8 +37,19 @@ import {
 } from './urlCardRow';
 import { readCardUrl, urlCards } from './urlCardStore';
 
+// Enabled once the url cards hold at least one real (non-blank) url — i.e.
+// discovery has produced something, a favourite/draft with urls was loaded,
+// or the user has manually entered one — never while the session is still
+// blank/mid-discovery.
+export function updateSaveCurrentBtn(): void {
+  getElement<HTMLButtonElement>('saveCurrentBtn').disabled = !urlCards.some(
+    (card) => readCardUrl(card) !== ''
+  );
+}
+
 export function markDirty(): void {
   scheduleDraftSessionSave();
+  updateSaveCurrentBtn();
 }
 
 export function setSearchName(id: string | null, name: string | null): void {
@@ -189,12 +200,16 @@ export async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   setUrlsSectionState('ready');
   trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), search.discoverInputs);
-  if (search.urls.length === 0) return;
+  if (search.urls.length === 0) {
+    updateSaveCurrentBtn();
+    return;
+  }
   urlCards[0].dom.input.value = search.urls[0];
   for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
     createUrlCard(searchUrlCardAsync).dom.input.value = search.urls[urlIndex];
   }
   for (const card of urlCards) handleUrlInputChanged(card);
+  updateSaveCurrentBtn();
   getElement<HTMLTextAreaElement>('aiFilter').value = search.aiFilter ?? '';
   setSearchName(search.id, search.name);
   setActiveSidebarTab('search');
@@ -216,12 +231,16 @@ export async function restoreDraftSessionAsync(draft: DraftSession): Promise<voi
   trimUrlCardsToOne();
   applyLoadedDiscoverInputs(discoveryFormElements(), draft.discoverInputs);
   getElement<HTMLTextAreaElement>('aiFilter').value = draft.aiFilter;
-  if (draft.urls.length === 0) return;
+  if (draft.urls.length === 0) {
+    updateSaveCurrentBtn();
+    return;
+  }
   urlCards[0].dom.input.value = draft.urls[0];
   for (let urlIndex = 1; urlIndex < draft.urls.length; urlIndex++) {
     createUrlCard(searchUrlCardAsync).dom.input.value = draft.urls[urlIndex];
   }
   for (const card of urlCards) handleUrlInputChanged(card);
+  updateSaveCurrentBtn();
   await fireAllCardSearches(urlCards, searchUrlCardAsync);
 }
 
@@ -237,6 +256,7 @@ export function unloadCurrentSearch(): void {
   getElement<HTMLTextAreaElement>('aiFilter').value = '';
   setSearchName(null, null);
   setUrlsSectionState('idle');
+  updateSaveCurrentBtn();
 }
 
 // ── Discovery submit ──────────────────────────────────────────────────────────
@@ -263,6 +283,7 @@ export async function handleDiscoverySubmitAsync(): Promise<void> {
   trimUrlCardsToOne();
   urlCards[0].dom.input.value = '';
   handleUrlInputChanged(urlCards[0]);
+  updateSaveCurrentBtn();
   try {
     const response = await fetch('/api/discover', {
       method: 'POST',
