@@ -101,6 +101,20 @@ export function initSchema(database: Database.Database): void {
     database.exec('ALTER TABLE trademe_categories DROP COLUMN top2');
   }
 
+  // CREATE TABLE IF NOT EXISTS doesn't retroactively rename columns on an
+  // existing on-disk scrape_error_alerts table, so the reason → reason_key
+  // rename (see comment on the CREATE TABLE above) needs an explicit,
+  // idempotency-checked ALTER TABLE.
+  const scrapeErrorAlertColumns = database
+    .prepare<[], { name: string }>('PRAGMA table_info(scrape_error_alerts)')
+    .all();
+  if (
+    scrapeErrorAlertColumns.some((column) => column.name === 'reason') &&
+    !scrapeErrorAlertColumns.some((column) => column.name === 'reason_key')
+  ) {
+    database.exec('ALTER TABLE scrape_error_alerts RENAME COLUMN reason TO reason_key');
+  }
+
   // Backs the create/update handlers' duplicate-name rejection with a real DB
   // guarantee — the app-level SELECT-then-INSERT check alone can't stop two
   // concurrent saves both passing the check before either commits. CREATE
