@@ -187,3 +187,15 @@ export async function applyUrlState(parsed: ParsedUrlState): Promise<void> {
     closeListingModal();
   }
 }
+
+// Resets the whole app to a fresh, base-URL page (tab, sort, visible
+// categories, modal — via applyUrlState) and unconditionally clears the
+// in-progress discovery session too. applyUrlState alone only unloads a
+// session when a saved search was previously loaded (currentSearchId !==
+// null), so an unsaved-but-dirty discovery form/results would otherwise
+// survive the reset.
+export async function resetToBaseUrlAsync(): Promise<void> {
+  unloadCurrentSearch();
+  await applyUrlState(parseUrlState(new URLSearchParams()));
+  syncUrlToState({ push: true });
+}

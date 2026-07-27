@@ -785,6 +785,31 @@ describe('initApp() wiring', () => {
       expect(new URLSearchParams(location.search).get('search')).toBe(null);
     });
 
+    it('clicking the logo/title resets to the base URL and clears the in-progress session', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+
+      document.getElementById('favouritesTabBtn')?.dispatchEvent(new Event('click'));
+
+      const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
+      bestMatchRadio.checked = true;
+      bestMatchRadio.dispatchEvent(new Event('change'));
+
+      // Nothing has been loaded/saved (currentSearchId stays null), so this
+      // exercises the case applyUrlState alone would miss — see the gotcha
+      // noted for resetToBaseUrlAsync.
+      const promptInput = document.getElementById('discoveryPrompt') as HTMLTextAreaElement;
+      promptInput.value = 'lamp';
+      promptInput.dispatchEvent(new Event('input'));
+
+      document.getElementById('brandLink')?.dispatchEvent(new Event('click'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(location.search).toBe('');
+      expect(document.getElementById('searchTabBtn')?.classList.contains('active')).toBe(true);
+      expect(promptInput.value).toBe('');
+    });
+
     it('opening a listing card modal pushes a new history entry', async () => {
       await import('./app');
       await vi.advanceTimersByTimeAsync(0);

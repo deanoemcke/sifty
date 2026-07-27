@@ -86,6 +86,15 @@ header {
 header .brand {
   display: flex;
   align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+header .brand:hover {
+  opacity: 0.85;
 }
 header .brand img {
   height: 2.2rem;

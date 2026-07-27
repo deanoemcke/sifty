@@ -74,6 +74,7 @@ import {
   currentLocationSearchParams,
   isAppPushedModalEntryFor,
   parseUrlState,
+  resetToBaseUrlAsync,
   syncUrlToState,
 } from './urlState';
 
@@ -316,6 +317,10 @@ function initApp(): void {
   getElement('listingsContainer').addEventListener('keydown', (keyboardEvent: KeyboardEvent) =>
     handleListingCardKeydown(keyboardEvent, openListingCardModalAndSyncUrl)
   );
+
+  getElement('brandLink').addEventListener('click', () => {
+    void resetToBaseUrlAsync();
+  });
 
   // ── Sidebar tabs / saved searches UI ──────────────────────────────────────────
 
