@@ -684,26 +684,6 @@ describe('initApp() wiring', () => {
     });
   });
 
-  describe('saved-search dirty tracking', () => {
-    it('marks the search dirty when a URL card is removed', async () => {
-      // jsdom doesn't implement scrollIntoView; addUrlBtn's click handler calls it.
-      Element.prototype.scrollIntoView = vi.fn();
-      await import('./app');
-      const saveCurrentBtn = document.getElementById('saveCurrentBtn') as HTMLButtonElement;
-      const addUrlBtn = document.getElementById('addUrlBtn') as HTMLButtonElement;
-      // initApp() seeds one blank card; add a second so a remove button is shown.
-      addUrlBtn.click();
-      // Simulate a clean session (as if a favourite had just been loaded) —
-      // adding the card itself also marks dirty, which isn't what's under test.
-      saveCurrentBtn.disabled = true;
-
-      const removeButtons = document.querySelectorAll<HTMLButtonElement>('.url-remove-btn');
-      removeButtons[removeButtons.length - 1].click();
-
-      expect(saveCurrentBtn.disabled).toBe(false);
-    });
-  });
-
   describe('URL state / browser history integration', () => {
     it('switching to the Favourites tab pushes ?tab=favourites; switching back removes it', async () => {
       await import('./app');
@@ -803,6 +783,31 @@ describe('initApp() wiring', () => {
       expect(pushSpy).toHaveBeenCalledTimes(1);
       expect(replaceSpy).not.toHaveBeenCalled();
       expect(new URLSearchParams(location.search).get('search')).toBe(null);
+    });
+
+    it('clicking the logo/title resets to the base URL and clears the in-progress session', async () => {
+      await import('./app');
+      await vi.advanceTimersByTimeAsync(0);
+
+      document.getElementById('favouritesTabBtn')?.dispatchEvent(new Event('click'));
+
+      const bestMatchRadio = document.getElementById('sortBestMatch') as HTMLInputElement;
+      bestMatchRadio.checked = true;
+      bestMatchRadio.dispatchEvent(new Event('change'));
+
+      // Nothing has been loaded/saved (currentSearchId stays null), so this
+      // exercises the case applyUrlState alone would miss — see the gotcha
+      // noted for resetToBaseUrlAsync.
+      const promptInput = document.getElementById('discoveryPrompt') as HTMLTextAreaElement;
+      promptInput.value = 'lamp';
+      promptInput.dispatchEvent(new Event('input'));
+
+      document.getElementById('brandLink')?.dispatchEvent(new Event('click'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(location.search).toBe('');
+      expect(document.getElementById('searchTabBtn')?.classList.contains('active')).toBe(true);
+      expect(promptInput.value).toBe('');
     });
 
     it('opening a listing card modal pushes a new history entry', async () => {

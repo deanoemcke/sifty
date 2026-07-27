@@ -10,10 +10,10 @@
 <div class="app-layout">
 <aside class="sidebar">
   <header>
-    <div class="brand">
+    <button id="brandLink" class="brand" type="button">
       <img src="sifty-logo.png" alt="Sifty logo" width="128" height="128">
       <h1 id="brandHeading">Sifty</h1>
-    </div>
+    </button>
   </header>
 
   <nav class="sidebar-tabs" role="tablist">
@@ -57,7 +57,6 @@
     <div class="discovery-actions">
       <!-- Label set by JS (DISCOVERY_BUTTON_LABEL) -->
       <button id="discoveryBtn" class="btn btn-primary" disabled></button>
-      <button id="saveCurrentBtn" class="btn btn-secondary save-current-btn" type="button" disabled>Save</button>
     </div>
   </div>
 
@@ -74,6 +73,7 @@
     <div id="savedSearchesList">
       <p class="deep-empty" id="savedSearchesEmpty">No favourites yet.</p>
     </div>
+    <button id="saveCurrentBtn" class="btn btn-primary save-current-btn" type="button" disabled>Save current search</button>
   </div>
 
   <!-- Source URLs — revealed once a search runs -->
