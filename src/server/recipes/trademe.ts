@@ -549,6 +549,25 @@ export function buildRootMarketplaceSearchUrl(
   return `https://www.trademe.co.nz/a/marketplace/search${qs ? `?${qs}` : ''}`;
 }
 
+// TradeMe's categoryless "general" search API silently ignores price_max
+// (live-verified against production: a $200 max returned listings up to
+// $3,000), while its category-scoped search enforces it correctly. Used to
+// scope the defensive price-ceiling filter in runQuickSearchAsync to only
+// the broken URL shape, matching what buildRootMarketplaceSearchUrl builds.
+export function isRootMarketplaceSearchUrl(url: string): boolean {
+  return new URL(url).pathname === '/a/marketplace/search';
+}
+
+// Recovers the price ceiling to defensively enforce against a root
+// marketplace URL's own price_max param — null for any other URL shape, or
+// when price_max is absent/non-positive, meaning no filtering is applied.
+function rootMarketplacePriceCeiling(searchUrl: string): number | null {
+  if (!isRootMarketplaceSearchUrl(searchUrl)) return null;
+  const raw = new URL(searchUrl).searchParams.get('price_max');
+  const parsed = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 // Fires a categoryless root-marketplace search on the raw prompt before falling back
 // to AI category selection. A small, non-zero TotalCount on that root search is itself
 // a strong "no narrowing needed" signal — the widest possible net already found the
@@ -730,11 +749,14 @@ async function runQuickSearchAsync(
 
     onEvent({ type: 'progress', phase: 'counted', totalResults: totalCount, totalPages });
 
+    const priceCeiling = rootMarketplacePriceCeiling(searchUrl);
     const seenUrls = new Set<string>();
     let emittedCount = 0;
     const emit = (listings: Listing[]) => {
       for (const listing of listings) {
         if (emittedCount >= MAX_RESULTS_PER_URL) return;
+        if (priceCeiling !== null && listing.price !== null && listing.price > priceCeiling)
+          continue;
         if (seenUrls.has(listing.url)) continue;
         seenUrls.add(listing.url);
         emittedCount++;

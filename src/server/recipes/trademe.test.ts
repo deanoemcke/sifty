@@ -20,6 +20,7 @@ import {
   extractImplicitFilters,
   fetchSearchPage1Async,
   fetchSingleListingDetailAsync,
+  isRootMarketplaceSearchUrl,
   mapReserveState,
   PAGER_CLICK_TIMEOUT_MS,
   PAGER_NEXT_SELECTOR,
@@ -1217,6 +1218,26 @@ describe('buildRootMarketplaceSearchUrl', () => {
   });
 });
 
+describe('isRootMarketplaceSearchUrl', () => {
+  it('returns true for a categoryless marketplace search URL', () => {
+    expect(
+      isRootMarketplaceSearchUrl('https://www.trademe.co.nz/a/marketplace/search?price_max=200')
+    ).toBe(true);
+  });
+
+  it('returns false for a category-scoped marketplace search URL', () => {
+    expect(
+      isRootMarketplaceSearchUrl(
+        'https://www.trademe.co.nz/a/marketplace/home-living/beds/king-single/search?price_max=200'
+      )
+    ).toBe(false);
+  });
+
+  it('returns false for a non-marketplace section search URL', () => {
+    expect(isRootMarketplaceSearchUrl('https://www.trademe.co.nz/a/motors/search')).toBe(false);
+  });
+});
+
 // ── buildDiscoverUrlsAsync ────────────────────────────────────────────────────
 
 describe('buildDiscoverUrlsAsync', () => {
@@ -2097,6 +2118,92 @@ describe('quickSearch', () => {
       // though totalPages=8 — the loop was cut off by the deadline, not by
       // running out of pages.
       expect(collected).toHaveLength(70);
+    });
+  });
+
+  // TradeMe's categoryless "general" search API silently ignores price_max
+  // (live-verified against production: a $200 max returned listings up to
+  // $3,000), while its category-scoped search enforces it correctly. So this
+  // guard is deliberately confined to the root marketplace URL shape rather
+  // than applied everywhere — see isRootMarketplaceSearchUrl.
+  describe('price ceiling on the root marketplace search URL', () => {
+    const makeItemWithPrice = (i: number, priceDisplay: string) => ({
+      Title: `Item ${i}`,
+      PriceDisplay: priceDisplay,
+      Region: 'Auckland',
+      CanonicalPath: `/listing/${i}`,
+    });
+
+    it('drops listings priced above price_max on a root marketplace URL', async () => {
+      resetPageQueue(
+        clickThroughScript({
+          List: [
+            makeItemWithPrice(1, '$150.00'),
+            makeItemWithPrice(2, '$200.00'),
+            makeItemWithPrice(3, '$250.00'),
+            makeItemWithPrice(4, '$3,000'),
+          ],
+          TotalCount: 4,
+          PageSize: 22,
+        })
+      );
+
+      const collected: Array<{ title: string }> = [];
+      await trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/search?price_max=200',
+        (ev) => {
+          if (ev.type === 'listing') collected.push(ev.data as { title: string });
+        }
+      );
+
+      expect(collected.map((l) => l.title)).toEqual(['Item 1', 'Item 2']);
+    });
+
+    it('does not filter listings on a category-scoped URL, even with price_max set', async () => {
+      resetPageQueue(
+        clickThroughScript({
+          List: [makeItemWithPrice(1, '$150.00'), makeItemWithPrice(2, '$3,000')],
+          TotalCount: 2,
+          PageSize: 22,
+        })
+      );
+
+      const collected: Array<{ title: string }> = [];
+      await trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/home-living/beds/king-single/search?price_max=200',
+        (ev) => {
+          if (ev.type === 'listing') collected.push(ev.data as { title: string });
+        }
+      );
+
+      expect(collected.map((l) => l.title)).toEqual(['Item 1', 'Item 2']);
+    });
+
+    it('applies the price ceiling across pages 2+ on a root marketplace URL', async () => {
+      resetPageQueue(
+        clickThroughScript(
+          {
+            List: [makeItemWithPrice(1, '$150.00'), makeItemWithPrice(2, '$250.00')],
+            TotalCount: 4,
+            PageSize: 2,
+          },
+          {
+            List: [makeItemWithPrice(3, '$200.00'), makeItemWithPrice(4, '$3,000')],
+            TotalCount: 4,
+            PageSize: 2,
+          }
+        )
+      );
+
+      const collected: Array<{ title: string }> = [];
+      await trademeRecipe.quickSearchAsync(
+        'https://www.trademe.co.nz/a/marketplace/search?price_max=200',
+        (ev) => {
+          if (ev.type === 'listing') collected.push(ev.data as { title: string });
+        }
+      );
+
+      expect(collected.map((l) => l.title)).toEqual(['Item 1', 'Item 3']);
     });
   });
 });
