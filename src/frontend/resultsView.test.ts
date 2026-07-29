@@ -329,6 +329,45 @@ describe('applySortOrder', () => {
     vi.advanceTimersByTime(20);
     expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
   });
+
+  it('restores source-url order after switching away to another sort and back', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    applySortOrder(getOrderedListings());
+    expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
+
+    setSortBy('source-url');
+    applySortOrder(getOrderedListings());
+    // Regression: this used to no-op, leaving the cards in best-match order,
+    // because the DOM was assumed to already match insertion order for the
+    // default sort with a single source.
+    expect(containerCardUrls()).toEqual(urls);
+  });
+
+  it('restores source-url grouping after switching away and back, with mixed sources already grouped by insertion', () => {
+    const mixedUrls = ['https://a/1', 'https://a/2', 'https://b/1'];
+    addCardWithListings(mixedUrls);
+    (listingsByUrl.get('https://b/1') as ListingItem).data.source = 'facebook';
+    for (const url of mixedUrls) renderCard(listingsByUrl.get(url) as ListingItem);
+    (listingsByUrl.get('https://a/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://a/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://b/1') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    applySortOrder(getOrderedListings());
+    expect(containerCardUrls()).toEqual(['https://a/2', 'https://b/1', 'https://a/1']);
+
+    setSortBy('source-url');
+    applySortOrder(getOrderedListings());
+    // Insertion order here already happens to match source-url grouping, so
+    // this exercises the coincidental-equality shortcut (comparing the
+    // target sort against insertion order rather than the DOM's actual,
+    // still-best-match-ordered state) rather than the unmixed-only fast path.
+    expect(containerCardUrls()).toEqual(mixedUrls);
+  });
 });
 
 // Regression coverage for the SSE hot-path cost of sorting: scheduleSortOrderUpdate
@@ -381,6 +420,23 @@ describe('sort call efficiency (SSE hot-path regression coverage)', () => {
     const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
     applySortOrder(listings);
     expect(sortSpy).not.toHaveBeenCalled();
+  });
+
+  it('calls sortListings again when returning to the default sort after a non-default sort', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    applySortOrder(getOrderedListings());
+    setSortBy('source-url');
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(getOrderedListings());
+    // The fast path only applies once we know the DOM already matches
+    // insertion order — it was moved away from that by the best-match sort
+    // above, so this must not skip straight to a no-op.
+    expect(sortSpy).toHaveBeenCalledTimes(1);
   });
 });
 
