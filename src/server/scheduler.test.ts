@@ -26,6 +26,7 @@ import {
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { getRecipeForUrl } from './recipes/registry';
 import {
+  AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
   FAILURE_REALERT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
@@ -1472,6 +1473,43 @@ describe('runSchedulerAsync', () => {
     const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail;
     expect(detail).not.toContain(overlongReason);
     expect(detail).toContain(overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH));
+  });
+
+  it('caps the aggregated error text across multiple failures before it flows into the outbound Signal alert or last_run_detail', async () => {
+    // A single overlong reason is already bounded at capture
+    // (SCRAPE_ERROR_REASON_MAX_LENGTH), but summary.errors was designed as an
+    // internal diagnostic list, not an external payload — nothing previously
+    // bounded the *aggregate* once several such per-URL failures (each
+    // already individually capped) are joined together for last_run_detail
+    // and the outbound Signal message.
+    const urls = Array.from(
+      { length: 12 },
+      (_, i) => `https://facebook.com/marketplace/search-${i}`
+    );
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { urls });
+    const reason = 'x'.repeat(SCRAPE_ERROR_REASON_MAX_LENGTH);
+    vi.mocked(getRecipeForUrl).mockImplementation(() =>
+      makeFailingRecipeWithReason('facebook', reason)
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // Sanity check: joining all 12 per-URL failures uncapped would comfortably
+    // exceed the aggregate cap, so this test actually exercises the new bound.
+    expect(urls.length * reason.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    const message = sendNotificationAsync.mock.calls[0][0] as string;
+    expect(message.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+
+    const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail as string;
+    expect(detail.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   });
 
   it('suppresses a repeat login-wall alert even though the listing count embedded in the message differs between runs', async () => {

@@ -112,6 +112,19 @@ export function normalizeScrapeErrorReason(reason: string): string {
 // for AI parse-error messages in ai.ts.
 export const SCRAPE_ERROR_REASON_MAX_LENGTH = 200;
 
+// Bound on the *aggregated* failure text — summary.errors joined together —
+// applied in recordSavedSearchRunStatusAndAlertAsync just before it reaches
+// last_run_detail or the outbound Signal alert. Unlike
+// SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at each individual
+// summary.errors.push() call site (notification-send failures and AI-filter
+// error messages aren't capped there), so without this second, coarser bound
+// the aggregate could still grow unbounded even though each scrape-failure
+// reason on its own is already bounded. Sized as a multiple of
+// SCRAPE_ERROR_REASON_MAX_LENGTH so a run with several already-capped
+// scrape-failure reasons still fits, rather than being an independent value
+// to keep in sync by hand.
+export const AGGREGATED_FAILURE_DETAIL_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
+
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -426,7 +439,9 @@ async function recordSavedSearchRunStatusAndAlertAsync(
   deps: Required<SchedulerDeps>
 ): Promise<void> {
   const succeeded = summary.errors.length === 0;
-  const detail = succeeded ? null : summary.errors.join('\n');
+  const detail = succeeded
+    ? null
+    : summary.errors.join('\n').slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
   if (succeeded) {
     if (row.last_run_succeeded === 0) {
@@ -455,7 +470,11 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     return;
   }
 
-  await sendAlertSafelyAsync(formatSearchFailingMessage(row.name, summary.errors), summary, deps);
+  const failingMessage = formatSearchFailingMessage(row.name, summary.errors).slice(
+    0,
+    AGGREGATED_FAILURE_DETAIL_MAX_LENGTH
+  );
+  await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);
 }
 
