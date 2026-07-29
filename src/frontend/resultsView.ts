@@ -95,14 +95,14 @@ let isDomOrderedByNonDefaultSort = false;
 // or a non-default sort falls through to an actual sort, and even then only
 // once.
 function sortedIfReorderNeeded(listings: ListingItem[]): ListingItem[] | null {
+  const domMatchesInsertionOrder = !isDomOrderedByNonDefaultSort;
   const isDefaultSortWithUnmixedSources =
     sortBy === DEFAULT_SORT_OPTION && !sourcesAreMixed(listings);
-  if (isDefaultSortWithUnmixedSources && !isDomOrderedByNonDefaultSort) return null;
+  if (domMatchesInsertionOrder && isDefaultSortWithUnmixedSources) return null;
   const sorted = sortListings(listings, sortBy);
-  if (!isDomOrderedByNonDefaultSort && sorted.every((item, index) => item === listings[index])) {
-    return null;
-  }
-  return sorted;
+  const domAlreadyMatchesTarget =
+    domMatchesInsertionOrder && sorted.every((item, index) => item === listings[index]);
+  return domAlreadyMatchesTarget ? null : sorted;
 }
 
 export function applySortOrder(listings: ListingItem[]): void {
