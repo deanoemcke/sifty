@@ -1727,11 +1727,11 @@ describe('runImmediatePopulationRunAsync', () => {
 
     const newListing = makeListing({ title: 'New chair', url: 'https://example.com/new' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
-    const sendNotificationAsync = vi.fn();
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync },
       lockPath
     );
 
@@ -1879,6 +1879,50 @@ describe('runImmediatePopulationRunAsync', () => {
     );
 
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('persists failure status and sends a failure alert when the population scrape fails', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', []));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync },
+      lockPath
+    );
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('FB search');
+    const row = stmtGetSavedSearch(db).get(searchId);
+    expect(row?.last_run_succeeded).toBe(0);
+    expect(row?.last_run_detail).toContain('Login wall detected');
+  });
+
+  it('persists failure status and sends a failure alert when processing throws synchronously', async () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runImmediatePopulationRunAsync(
+      'search-corrupt',
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync },
+      lockPath
+    );
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    const row = stmtGetSavedSearch(db).get('search-corrupt');
+    expect(row?.last_run_succeeded).toBe(0);
+    expect(row?.last_run_detail).toContain('Unhandled error');
   });
 });
 

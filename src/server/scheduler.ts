@@ -543,6 +543,7 @@ export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerS
 export type ImmediatePopulationRunDeps = {
   database: Database.Database;
   cooldownStore: ProviderCooldownStore;
+  sendNotificationAsync?: SchedulerNotifier;
 };
 
 // Forces a fresh, silent population pass for one specific saved search,
@@ -570,7 +571,7 @@ export async function runImmediatePopulationRunAsync(
     const resolvedDeps: Required<SchedulerDeps> = {
       database: deps.database,
       cooldownStore: deps.cooldownStore,
-      sendNotificationAsync: sendSignalNotificationAsync,
+      sendNotificationAsync: deps.sendNotificationAsync ?? sendSignalNotificationAsync,
       now: () => Date.now(),
       targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
       maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
@@ -583,6 +584,7 @@ export async function runImmediatePopulationRunAsync(
       console.log(
         `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
       );
+      await recordSavedSearchRunStatusAndAlertAsync(row, summary, resolvedDeps);
     } catch (err) {
       // Mirrors runOneSavedSearchAsync's batch-path handling: last_run_at
       // below still needs to advance even on a synchronous throw (e.g.
@@ -591,6 +593,22 @@ export async function runImmediatePopulationRunAsync(
       // attempt was made.
       console.error(
         `[scheduler] "${row.name}": immediate population run failed: ${(err as Error).message}`
+      );
+      await recordSavedSearchRunStatusAndAlertAsync(
+        row,
+        {
+          savedSearchId: row.id,
+          savedSearchName: row.name,
+          isPopulationRun: true,
+          listingsFoundCount: 0,
+          soldSkippedCount: 0,
+          aiFilteredOutCount: 0,
+          alreadyAlertedCount: 0,
+          notifiedCount: 0,
+          populatedCount: 0,
+          errors: [`Unhandled error: ${(err as Error).message}`],
+        },
+        resolvedDeps
       );
     }
     stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
