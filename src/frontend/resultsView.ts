@@ -305,23 +305,31 @@ function scheduleFrameMutationFlush(): void {
   rafScheduleFrameMutationFlush(true);
 }
 
-// pendingFrameMutations, rafScheduleFrameMutationFlush's closed-over frame
-// id, and isDomOrderedByNonDefaultSort are module-level state shared by every
-// test in a file (renderCard() and scheduleClientFilterUpdate() both arm the
-// former two — see the comment on pendingFrameMutations above — and
-// applySortOrder() sets the latter). Without this, a test that schedules a
-// flush and forgets to await/advance past it leaves that state armed: the
-// next test's own scheduling call silently no-ops against rafSchedule's
-// frameId guard, and if a frame is still pending it can later fire mid-flight
-// against a later test's freshly reset DOM. Likewise a test that reorders the
-// DOM away from insertion order would otherwise leak that into the next
-// test's fast-path assumption. Call this from a beforeEach/afterEach so every
-// test starts from a clean slate instead of depending on every test
+// pendingFrameMutations and rafScheduleFrameMutationFlush's closed-over frame
+// id are module-level state shared by every test in a file (renderCard() and
+// scheduleClientFilterUpdate() both arm them — see the comment on
+// pendingFrameMutations above). Without this, a test that schedules a flush
+// and forgets to await/advance past it leaves that state armed: the next
+// test's own scheduling call silently no-ops against rafSchedule's frameId
+// guard, and if a frame is still pending it can later fire mid-flight against
+// a later test's freshly reset DOM. Call this from a beforeEach/afterEach so
+// every test starts from a clean slate instead of depending on every test
 // remembering to flush before it ends.
 export function resetFrameMutationSchedulingForTests(): void {
   pendingFrameMutations.shouldRevealCards = false;
   pendingFrameMutations.shouldApplyClientFilters = false;
   rafScheduleFrameMutationFlush.cancel();
+}
+
+// isDomOrderedByNonDefaultSort is module-level state shared by every test in
+// a file (applySortOrder() sets it). A test that reorders the DOM away from
+// insertion order would otherwise leak that into the next test's fast-path
+// assumption in sortedIfReorderNeeded above. Call this from a
+// beforeEach/afterEach alongside resetFrameMutationSchedulingForTests — the
+// two reset independent pieces of state — so every test starts from a clean
+// slate instead of depending on every test remembering to reorder back before
+// it ends.
+export function resetSortOrderStateForTests(): void {
   isDomOrderedByNonDefaultSort = false;
 }
 

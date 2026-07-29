@@ -10,6 +10,7 @@ import {
   renderCard,
   renderDerived,
   resetFrameMutationSchedulingForTests,
+  resetSortOrderStateForTests,
   scheduleClientFilterUpdate,
   scheduleSortOrderUpdate,
 } from './resultsView';
@@ -100,6 +101,11 @@ beforeEach(() => {
   // flushed in afterEach) are what keep that one from leaking instead, plus
   // let tests exercise coalescing behaviour with vi.advanceTimersByTime.
   resetFrameMutationSchedulingForTests();
+  // Clears the DOM-order tracking flag left by the previous test's
+  // applySortOrder() calls (see resetSortOrderStateForTests's own comment in
+  // resultsView.ts) — independent state from the frame-mutation reset above,
+  // so both are called here.
+  resetSortOrderStateForTests();
   vi.useFakeTimers();
 });
 
