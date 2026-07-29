@@ -104,6 +104,18 @@ export function normalizeScrapeErrorReason(reason: string): string {
   return reason.replace(/https?:\/\/\S+/g, '<url>').replace(/\d+/g, '#');
 }
 
+// Builds an order-independent comparison key from a run's individual error
+// messages, for the "is this the same failure as last run" check in
+// recordSavedSearchRunStatusAndAlertAsync below. AI-filter batches complete
+// concurrently (see runAiFilterBatchesAsync's ConcurrencyQueue), so the same
+// underlying set of failures can land in summary.errors in a different order
+// on two consecutive runs — comparing normalized, deduped, sorted messages
+// (rather than one order-sensitive joined blob) keeps the 12h re-alert
+// suppression working regardless of that ordering.
+export function buildFailureComparisonKey(errorMessages: string[]): string {
+  return [...new Set(errorMessages.map(normalizeScrapeErrorReason))].sort().join('\n');
+}
+
 // Bound on a captured scrape-failure reason's length, applied at the point
 // the raw text is captured — before it flows into summary.errors (and from
 // there into last_run_detail and the outbound Signal alert,
@@ -487,8 +499,8 @@ async function recordSavedSearchRunStatusAndAlertAsync(
 
   const isSameFailureAsLastRun =
     row.last_run_succeeded === 0 &&
-    normalizeScrapeErrorReason(row.last_run_detail ?? '') ===
-      normalizeScrapeErrorReason(detail ?? '');
+    buildFailureComparisonKey((row.last_run_detail ?? '').split('\n').filter(Boolean)) ===
+      buildFailureComparisonKey(healthErrors.map((error) => error.message));
   const isWithinReAlertWindow =
     isSameFailureAsLastRun &&
     row.last_failure_alerted_at !== null &&

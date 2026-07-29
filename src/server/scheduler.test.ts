@@ -28,6 +28,7 @@ import { getRecipeForUrl } from './recipes/registry';
 import {
   AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
+  buildFailureComparisonKey,
   determineExitCode,
   FAILURE_REALERT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
@@ -2110,6 +2111,31 @@ describe('normalizeScrapeErrorReason', () => {
     const rateLimited = 'Rate limited by Facebook';
 
     expect(normalizeScrapeErrorReason(loginWall)).not.toBe(normalizeScrapeErrorReason(rateLimited));
+  });
+});
+
+describe('buildFailureComparisonKey', () => {
+  it('is order-independent: the same messages in a different order produce the same key', () => {
+    const a = ['AI filter: batch 1 timed out', 'AI filter: batch 2 timed out'];
+    const b = ['AI filter: batch 2 timed out', 'AI filter: batch 1 timed out'];
+
+    expect(buildFailureComparisonKey(a)).toBe(buildFailureComparisonKey(b));
+  });
+
+  it('collapses duplicate messages so a repeated error does not change the key', () => {
+    const withDuplicate = ['AI filter: batch timed out', 'AI filter: batch timed out'];
+    const withoutDuplicate = ['AI filter: batch timed out'];
+
+    expect(buildFailureComparisonKey(withDuplicate)).toBe(
+      buildFailureComparisonKey(withoutDuplicate)
+    );
+  });
+
+  it('still differentiates genuinely different error sets', () => {
+    const a = ['AI filter: batch 1 timed out', 'AI filter: batch 2 timed out'];
+    const b = ['AI filter: batch 1 timed out', 'Rate limited by Facebook'];
+
+    expect(buildFailureComparisonKey(a)).not.toBe(buildFailureComparisonKey(b));
   });
 });
 
