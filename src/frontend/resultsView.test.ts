@@ -10,6 +10,7 @@ import {
   renderCard,
   renderDerived,
   resetFrameMutationSchedulingForTests,
+  resetSortOrderStateForTests,
   scheduleClientFilterUpdate,
   scheduleSortOrderUpdate,
 } from './resultsView';
@@ -100,6 +101,11 @@ beforeEach(() => {
   // flushed in afterEach) are what keep that one from leaking instead, plus
   // let tests exercise coalescing behaviour with vi.advanceTimersByTime.
   resetFrameMutationSchedulingForTests();
+  // Clears the DOM-order tracking flag left by the previous test's
+  // applySortOrder() calls (see resetSortOrderStateForTests's own comment in
+  // resultsView.ts) — independent state from the frame-mutation reset above,
+  // so both are called here.
+  resetSortOrderStateForTests();
   vi.useFakeTimers();
 });
 
@@ -329,6 +335,45 @@ describe('applySortOrder', () => {
     vi.advanceTimersByTime(20);
     expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
   });
+
+  it('restores source-url order after switching away to another sort and back', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    applySortOrder(getOrderedListings());
+    expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
+
+    setSortBy('source-url');
+    applySortOrder(getOrderedListings());
+    // Regression: this used to no-op, leaving the cards in best-match order,
+    // because the DOM was assumed to already match insertion order for the
+    // default sort with a single source.
+    expect(containerCardUrls()).toEqual(urls);
+  });
+
+  it('restores source-url grouping after switching away and back, with mixed sources already grouped by insertion', () => {
+    const mixedUrls = ['https://a/1', 'https://a/2', 'https://b/1'];
+    addCardWithListings(mixedUrls);
+    (listingsByUrl.get('https://b/1') as ListingItem).data.source = 'facebook';
+    for (const url of mixedUrls) renderCard(listingsByUrl.get(url) as ListingItem);
+    (listingsByUrl.get('https://a/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://a/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://b/1') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    applySortOrder(getOrderedListings());
+    expect(containerCardUrls()).toEqual(['https://a/2', 'https://b/1', 'https://a/1']);
+
+    setSortBy('source-url');
+    applySortOrder(getOrderedListings());
+    // Insertion order here already happens to match source-url grouping, so
+    // this exercises the coincidental-equality shortcut (comparing the
+    // target sort against insertion order rather than the DOM's actual,
+    // still-best-match-ordered state) rather than the unmixed-only fast path.
+    expect(containerCardUrls()).toEqual(mixedUrls);
+  });
 });
 
 // Regression coverage for the SSE hot-path cost of sorting: scheduleSortOrderUpdate
@@ -381,6 +426,23 @@ describe('sort call efficiency (SSE hot-path regression coverage)', () => {
     const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
     applySortOrder(listings);
     expect(sortSpy).not.toHaveBeenCalled();
+  });
+
+  it('calls sortListings again when returning to the default sort after a non-default sort', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+    setSortBy('best-match');
+    applySortOrder(getOrderedListings());
+    setSortBy('source-url');
+    const sortSpy = vi.spyOn(sortListingsModule, 'sortListings');
+    applySortOrder(getOrderedListings());
+    // The fast path only applies once we know the DOM already matches
+    // insertion order — it was moved away from that by the best-match sort
+    // above, so this must not skip straight to a no-op.
+    expect(sortSpy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -455,6 +517,39 @@ describe('scheduleSortOrderUpdate', () => {
     scheduleSortOrderUpdate(getOrderedListings());
 
     expect(rafSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression coverage for the applySortOrder-level fix above, but through
+  // renderDerived() — the entry point a live SSE stream actually calls
+  // (quickSearch.ts's 'listing' handler) — rather than calling
+  // applySortOrder() directly. scheduleSortOrderUpdate() runs its own
+  // sortedIfReorderNeeded() check to decide whether to schedule a frame at
+  // all, before applySortOrder() ever runs; this proves that scheduling gate
+  // doesn't itself regress into declining to schedule a frame for the
+  // switch-back-to-source-url case, which would reproduce the user-visible
+  // bug even if applySortOrder() alone stayed correct.
+  it('restores source-url order after switching away and back, via renderDerived', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+
+    setSortBy('best-match');
+    renderDerived();
+    vi.advanceTimersByTime(20);
+    expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
+
+    setSortBy('source-url');
+    renderDerived();
+    vi.advanceTimersByTime(20);
+    // Regression: this used to leave the cards in best-match order, because
+    // scheduleSortOrderUpdate's sortedIfReorderNeeded() check wrongly
+    // declined to even schedule a frame — the same stale
+    // DOM-matches-insertion-order assumption applySortOrder's own regression
+    // test above guards against, but caught here at the scheduling gate
+    // instead of the DOM-update step.
+    expect(containerCardUrls()).toEqual(urls);
   });
 });
 

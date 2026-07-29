@@ -71,6 +71,16 @@ function sourcesAreMixed(listings: ListingItem[]): boolean {
   return listings.some((item) => requirePattern(item.data.source).groupId !== firstGroupId);
 }
 
+// Whether the DOM's current card order was last set by a non-default sort
+// (or is otherwise not known to match insertion order). Both shortcuts in
+// sortedIfReorderNeeded below compare a freshly computed target order
+// against `listings` (insertion order) as a proxy for "does the DOM already
+// look like this" — a proxy that's only valid while the DOM has never been
+// explicitly reordered away from insertion order. Once applySortOrder moves
+// nodes for a non-default sort, that proxy goes stale, so this flag gates
+// both shortcuts until an actual reorder puts the DOM back in sync.
+let isDomOrderedByNonDefaultSort = false;
+
 // Returns the sorted listings when re-sorting would actually reorder the
 // DOM, or null when it wouldn't. Shared by scheduleSortOrderUpdate (to
 // decide whether to schedule a frame at all) and applySortOrder (to decide
@@ -85,9 +95,14 @@ function sourcesAreMixed(listings: ListingItem[]): boolean {
 // or a non-default sort falls through to an actual sort, and even then only
 // once.
 function sortedIfReorderNeeded(listings: ListingItem[]): ListingItem[] | null {
-  if (sortBy === DEFAULT_SORT_OPTION && !sourcesAreMixed(listings)) return null;
+  const domMatchesInsertionOrder = !isDomOrderedByNonDefaultSort;
+  const isDefaultSortWithUnmixedSources =
+    sortBy === DEFAULT_SORT_OPTION && !sourcesAreMixed(listings);
+  if (domMatchesInsertionOrder && isDefaultSortWithUnmixedSources) return null;
   const sorted = sortListings(listings, sortBy);
-  return sorted.every((item, index) => item === listings[index]) ? null : sorted;
+  const domAlreadyMatchesTarget =
+    domMatchesInsertionOrder && sorted.every((item, index) => item === listings[index]);
+  return domAlreadyMatchesTarget ? null : sorted;
 }
 
 export function applySortOrder(listings: ListingItem[]): void {
@@ -98,6 +113,7 @@ export function applySortOrder(listings: ListingItem[]): void {
     const card = getCardByUrl(item.data.url);
     if (card) container.appendChild(card);
   });
+  isDomOrderedByNonDefaultSort = sortBy !== DEFAULT_SORT_OPTION;
 }
 
 // During an active SSE stream, renderDerived() (and therefore this) fires
@@ -291,7 +307,7 @@ function scheduleFrameMutationFlush(): void {
 
 // pendingFrameMutations and rafScheduleFrameMutationFlush's closed-over frame
 // id are module-level state shared by every test in a file (renderCard() and
-// scheduleClientFilterUpdate() both arm it — see the comment on
+// scheduleClientFilterUpdate() both arm them — see the comment on
 // pendingFrameMutations above). Without this, a test that schedules a flush
 // and forgets to await/advance past it leaves that state armed: the next
 // test's own scheduling call silently no-ops against rafSchedule's frameId
@@ -303,6 +319,18 @@ export function resetFrameMutationSchedulingForTests(): void {
   pendingFrameMutations.shouldRevealCards = false;
   pendingFrameMutations.shouldApplyClientFilters = false;
   rafScheduleFrameMutationFlush.cancel();
+}
+
+// isDomOrderedByNonDefaultSort is module-level state shared by every test in
+// a file (applySortOrder() sets it). A test that reorders the DOM away from
+// insertion order would otherwise leak that into the next test's fast-path
+// assumption in sortedIfReorderNeeded above. Call this from a
+// beforeEach/afterEach alongside resetFrameMutationSchedulingForTests — the
+// two reset independent pieces of state — so every test starts from a clean
+// slate instead of depending on every test remembering to reorder back before
+// it ends.
+export function resetSortOrderStateForTests(): void {
+  isDomOrderedByNonDefaultSort = false;
 }
 
 export function applyClientFilters(): void {
