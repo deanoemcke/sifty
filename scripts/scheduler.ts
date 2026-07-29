@@ -13,7 +13,7 @@ import { closeAllPooledBrowsersAsync } from '../src/server/browserPool';
 import { getDb } from '../src/server/db';
 import { loadServerEnv } from '../src/server/env';
 import { sendSignalNotificationAsync } from '../src/server/notify';
-import { runSchedulerAsync } from '../src/server/scheduler';
+import { determineExitCode, runSchedulerAsync } from '../src/server/scheduler';
 import {
   acquireSchedulerLock,
   DEFAULT_SCHEDULER_LOCK_PATH,
@@ -53,7 +53,6 @@ async function main(): Promise<number> {
       sendNotificationAsync: sendSignalNotificationAsync,
     });
 
-    let hadErrors = false;
     for (const search of summary.searches) {
       console.log(
         `[scheduler] ${search.savedSearchName}${search.isPopulationRun ? ' (population run)' : ''}: ` +
@@ -62,12 +61,22 @@ async function main(): Promise<number> {
           `${search.notifiedCount} notified, ${search.populatedCount} populated`
       );
       for (const error of search.errors) {
-        hadErrors = true;
-        console.error(`[scheduler] ${search.savedSearchName}: ${error}`);
+        console.error(`[scheduler] ${search.savedSearchName}: ${error.message}`);
       }
     }
 
-    return hadErrors ? 1 : 0;
+    const exitCode = determineExitCode(summary);
+    if (exitCode === 2) {
+      // Same exit code as the catastrophic "nothing could be attempted" case
+      // above — the external wrapper only pages on exit 2, and this needs
+      // that same external page precisely because it's a Signal delivery
+      // outage: the scheduler's own Signal-based alerting can't report it.
+      console.error(
+        '[scheduler] notify delivery failed for multiple searches this tick — ' +
+          'likely a systemic Signal/notification outage, not a per-listing blip'
+      );
+    }
+    return exitCode;
   } finally {
     // runSchedulerAsync funnels through the facebook/trademe recipes, which check
     // out browsers from the shared pool in src/server/browserPool.ts — that pool

@@ -28,6 +28,7 @@ import { getRecipeForUrl } from './recipes/registry';
 import {
   AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
+  determineExitCode,
   FAILURE_REALERT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
   normalizeScrapeErrorReason,
@@ -36,6 +37,7 @@ import {
   SCRAPE_ERROR_REASON_MAX_LENGTH,
   SCRAPE_TIMEOUT_MS,
   type SchedulerDeps,
+  type SchedulerSummary,
   STATUS_ALERT_TIMEOUT_MS,
   triggerImmediatePopulationRunAsync,
 } from './scheduler';
@@ -520,9 +522,9 @@ describe('runSchedulerAsync', () => {
     expect(summary.searches[0].errors.length).toBeGreaterThan(0);
   });
 
-  it('a failed notification for one listing does not prevent others from being processed', async () => {
+  it('a failed notification for one listing does not prevent others from being processed, and does not falsely fail the search', async () => {
     const db = freshDb();
-    insertAlertSearch(db);
+    const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
     await runSchedulerAsync({
@@ -544,16 +546,22 @@ describe('runSchedulerAsync', () => {
       if (message.includes('Fails to notify')) throw new Error('boom');
     });
 
-    await runSchedulerAsync({
+    const summary = await runSchedulerAsync({
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync,
     });
 
-    // 2 listing sends (one fails, one succeeds) plus 1 failure-status alert —
-    // this run's own notify failure makes summary.errors non-empty, which is
-    // this search's first failure (its previous run succeeded), so it alerts.
-    expect(sendNotificationAsync).toHaveBeenCalledTimes(3);
+    // Only the 2 listing sends (one fails, one succeeds) — a notify-kind
+    // error is excluded from health, so it doesn't also trigger a false
+    // failure-status alert.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+    expect(
+      summary.searches[0].errors.some(
+        (error) => error.kind === 'notify' && error.message.includes('https://example.com/fails')
+      )
+    ).toBe(true);
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
   });
 
   it('alerts independently per saved search for the same physical listing', async () => {
@@ -888,7 +896,9 @@ describe('runSchedulerAsync', () => {
       const summary = await summaryPromise;
 
       expect(summary.searches).toHaveLength(1);
-      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      expect(summary.searches[0].errors.some((error) => error.message.includes('timed out'))).toBe(
+        true
+      );
       expect(summary.searches[0].listingsFoundCount).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -967,7 +977,9 @@ describe('runSchedulerAsync', () => {
       const summary = await summaryPromise;
 
       expect(summary.searches).toHaveLength(1);
-      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      expect(summary.searches[0].errors.some((error) => error.message.includes('timed out'))).toBe(
+        true
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1007,7 +1019,9 @@ describe('runSchedulerAsync', () => {
       const summary = await summaryPromise;
 
       expect(summary.searches).toHaveLength(1);
-      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      expect(summary.searches[0].errors.some((error) => error.message.includes('timed out'))).toBe(
+        true
+      );
       // Only the seed baseline is alerted — the hung listing's send never completed.
       expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1);
     } finally {
@@ -1104,10 +1118,10 @@ describe('runSchedulerAsync', () => {
       sendNotificationAsync,
     });
 
-    // 1 listing send (no retry, since no image was ever attached) plus 1
-    // failure-status alert — this search's first failure since its previous
-    // run succeeded.
-    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+    // Only 1 listing send (no retry, since no image was ever attached) — a
+    // notify-kind error is excluded from health, so it doesn't also trigger
+    // a failure-status alert.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.length).toBeGreaterThan(0);
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1); // only the seed baseline
@@ -1251,7 +1265,9 @@ describe('runSchedulerAsync', () => {
       `Scrape error - TM search. Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
-    expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
+    expect(summary.searches[0].errors.some((error) => error.message.includes('Discarded'))).toBe(
+      true
+    );
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1); // only the seed baseline
   });
 
@@ -1631,8 +1647,12 @@ describe('runSchedulerAsync', () => {
     expect(sendNotificationAsync.mock.calls.some(([message]) => message.includes('Search B'))).toBe(
       true
     );
-    expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
-    expect(summary.searches[1].errors.some((error) => error.includes('Discarded'))).toBe(true);
+    expect(summary.searches[0].errors.some((error) => error.message.includes('Discarded'))).toBe(
+      true
+    );
+    expect(summary.searches[1].errors.some((error) => error.message.includes('Discarded'))).toBe(
+      true
+    );
   });
 
   it('leaves has_completed_population_run unset when a URL is discarded during a population run, so the full baseline retries next tick', async () => {
@@ -1658,7 +1678,9 @@ describe('runSchedulerAsync', () => {
     expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(0);
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
     expect(
-      summary.searches[0].errors.some((error) => error.includes('Population run incomplete'))
+      summary.searches[0].errors.some((error) =>
+        error.message.includes('Population run incomplete')
+      )
     ).toBe(true);
   });
 
@@ -2088,5 +2110,59 @@ describe('normalizeScrapeErrorReason', () => {
     const rateLimited = 'Rate limited by Facebook';
 
     expect(normalizeScrapeErrorReason(loginWall)).not.toBe(normalizeScrapeErrorReason(rateLimited));
+  });
+});
+
+describe('determineExitCode', () => {
+  function makeSearchSummary(
+    errors: SchedulerSummary['searches'][number]['errors']
+  ): SchedulerSummary['searches'][number] {
+    return {
+      savedSearchId: 'search-a',
+      savedSearchName: 'Search A',
+      isPopulationRun: false,
+      listingsFoundCount: 0,
+      soldSkippedCount: 0,
+      aiFilteredOutCount: 0,
+      alreadyAlertedCount: 0,
+      notifiedCount: 0,
+      populatedCount: 0,
+      errors,
+    };
+  }
+
+  it('returns 0 when no search had any errors', () => {
+    const summary: SchedulerSummary = { searches: [makeSearchSummary([])] };
+    expect(determineExitCode(summary)).toBe(0);
+  });
+
+  it('returns 1 when a search has a non-notify error', () => {
+    const summary: SchedulerSummary = {
+      searches: [makeSearchSummary([{ kind: 'scrape', message: 'Quick search failed' }])],
+    };
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
+  it('returns 1 when only a single search has a notify error — not yet systemic', () => {
+    const summary: SchedulerSummary = {
+      searches: [makeSearchSummary([{ kind: 'notify', message: 'Notification failed' }])],
+    };
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
+  it('returns 2 when notify errors hit multiple searches in the same tick — likely a systemic outage', () => {
+    const summary: SchedulerSummary = {
+      searches: [
+        {
+          ...makeSearchSummary([{ kind: 'notify', message: 'Notification failed' }]),
+          savedSearchId: 'search-a',
+        },
+        {
+          ...makeSearchSummary([{ kind: 'notify', message: 'Status notification failed' }]),
+          savedSearchId: 'search-b',
+        },
+      ],
+    };
+    expect(determineExitCode(summary)).toBe(2);
   });
 });
