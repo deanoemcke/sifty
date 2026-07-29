@@ -512,6 +512,39 @@ describe('scheduleSortOrderUpdate', () => {
 
     expect(rafSpy).toHaveBeenCalledTimes(1);
   });
+
+  // Regression coverage for the applySortOrder-level fix above, but through
+  // renderDerived() — the entry point a live SSE stream actually calls
+  // (quickSearch.ts's 'listing' handler) — rather than calling
+  // applySortOrder() directly. scheduleSortOrderUpdate() runs its own
+  // sortedIfReorderNeeded() check to decide whether to schedule a frame at
+  // all, before applySortOrder() ever runs; this proves that scheduling gate
+  // doesn't itself regress into declining to schedule a frame for the
+  // switch-back-to-source-url case, which would reproduce the user-visible
+  // bug even if applySortOrder() alone stayed correct.
+  it('restores source-url order after switching away and back, via renderDerived', () => {
+    addCardWithListings(urls);
+    renderAllCards();
+    (listingsByUrl.get('https://l/1') as ListingItem).data.relevance = 2;
+    (listingsByUrl.get('https://l/2') as ListingItem).data.relevance = 9;
+    (listingsByUrl.get('https://l/3') as ListingItem).data.relevance = 5;
+
+    setSortBy('best-match');
+    renderDerived();
+    vi.advanceTimersByTime(20);
+    expect(containerCardUrls()).toEqual(['https://l/2', 'https://l/3', 'https://l/1']);
+
+    setSortBy('source-url');
+    renderDerived();
+    vi.advanceTimersByTime(20);
+    // Regression: this used to leave the cards in best-match order, because
+    // scheduleSortOrderUpdate's sortedIfReorderNeeded() check wrongly
+    // declined to even schedule a frame — the same stale
+    // DOM-matches-insertion-order assumption applySortOrder's own regression
+    // test above guards against, but caught here at the scheduling gate
+    // instead of the DOM-update step.
+    expect(containerCardUrls()).toEqual(urls);
+  });
 });
 
 describe('renderCard', () => {
