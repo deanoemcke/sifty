@@ -249,12 +249,33 @@ async function notifyNewListingsAsync(
   }
 }
 
+// row.urls is external/untrusted data at this boundary — it can be corrupted
+// by a direct DB edit outside the app's control. Name the search and state
+// what's wrong rather than letting a raw JSON.parse error (or a silently
+// wrong-shaped value) reach the Signal alert unexplained.
+function parseSavedSearchUrls(row: SavedSearchRow): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.urls);
+  } catch (err) {
+    throw new Error(
+      `Corrupted saved search "${row.name}": urls column is not valid JSON (${(err as Error).message})`
+    );
+  }
+  if (!Array.isArray(parsed) || !parsed.every((url) => typeof url === 'string')) {
+    throw new Error(
+      `Corrupted saved search "${row.name}": urls column did not parse to an array of strings`
+    );
+  }
+  return parsed;
+}
+
 async function processSavedSearchAsync(
   row: SavedSearchRow,
   deps: Required<SchedulerDeps>
 ): Promise<SavedSearchRunSummary> {
   const { database, cooldownStore, now } = deps;
-  const urls = JSON.parse(row.urls) as string[];
+  const urls = parseSavedSearchUrls(row);
   const aiFilterPrompt = row.ai_filter?.trim() ? row.ai_filter : null;
 
   const summary: SavedSearchRunSummary = {
