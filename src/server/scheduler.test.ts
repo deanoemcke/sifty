@@ -688,6 +688,56 @@ describe('runSchedulerAsync', () => {
     expect(secondSummary.searches[0].populatedCount).toBe(1);
   });
 
+  it('names the saved search and states the column is corrupted when urls is not valid JSON', async () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 1,
+    });
+
+    expect(summary.searches[0].errors[0].message).toContain(
+      'Corrupted saved search "Corrupt search"'
+    );
+    expect(summary.searches[0].errors[0].message).toContain('urls column is not valid JSON');
+  });
+
+  it('names the saved search and states the column is the wrong shape when urls is valid JSON but not an array of strings', async () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run(
+      'search-wrong-shape',
+      'Wrong shape search',
+      JSON.stringify([123, null]),
+      null,
+      null,
+      Date.now(),
+      1
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 1,
+    });
+
+    expect(summary.searches[0].errors[0].message).toContain(
+      'Corrupted saved search "Wrong shape search"'
+    );
+    expect(summary.searches[0].errors[0].message).toContain('did not parse to an array of strings');
+  });
+
   it('processes only up to maxSearchesPerTick due searches, oldest first', async () => {
     const db = freshDb();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
