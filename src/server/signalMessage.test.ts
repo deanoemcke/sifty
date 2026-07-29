@@ -3,7 +3,8 @@ import { makeListing } from '../lib/testFixtures';
 import {
   escapeSignalMarkdown,
   formatAlertMessage,
-  formatScrapeErrorMessage,
+  formatSearchFailingMessage,
+  formatSearchRecoveredMessage,
 } from './signalMessage';
 
 describe('formatAlertMessage', () => {
@@ -107,23 +108,23 @@ describe('escapeSignalMarkdown', () => {
   });
 });
 
-describe('formatScrapeErrorMessage', () => {
-  it('formats a single reason as one concise "Scrape error - <name>. <reason>" line', () => {
-    const message = formatScrapeErrorMessage('My search', ['Facebook requires login.']);
+describe('formatSearchFailingMessage', () => {
+  it('formats a single error as one concise "Scrape error - <name>. <error>" line', () => {
+    const message = formatSearchFailingMessage('My search', ['Facebook requires login.']);
 
     expect(message).toBe('Scrape error - My search. Facebook requires login.');
   });
 
-  it('omits everything but the name and reason — no header, no framing text', () => {
-    const message = formatScrapeErrorMessage('My search', ['some reason']);
+  it('omits everything but the name and error — no header, no framing text', () => {
+    const message = formatSearchFailingMessage('My search', ['some reason']);
 
     expect(message).not.toContain('discarded');
     expect(message).not.toContain('Some results');
     expect(message).not.toContain('trusted');
   });
 
-  it('emits one deduplicated line per distinct reason', () => {
-    const message = formatScrapeErrorMessage('My search', ['reason A', 'reason A', 'reason B']);
+  it('emits one deduplicated line per distinct error', () => {
+    const message = formatSearchFailingMessage('My search', ['reason A', 'reason A', 'reason B']);
 
     expect(message.split('\n')).toEqual([
       'Scrape error - My search. reason A',
@@ -132,15 +133,30 @@ describe('formatScrapeErrorMessage', () => {
   });
 
   it('escapes markdown-special characters in the saved search name', () => {
-    const message = formatScrapeErrorMessage('**Sneaky** search', ['reason']);
+    const message = formatSearchFailingMessage('**Sneaky** search', ['reason']);
 
     expect(message).not.toMatch(/[*_`~]/);
   });
 
-  it('escapes markdown-special characters within the reason', () => {
-    const message = formatScrapeErrorMessage('S', ['contains *asterisks* and _underscores_']);
+  it('escapes markdown-special characters within the error', () => {
+    const message = formatSearchFailingMessage('S', ['contains *asterisks* and _underscores_']);
 
     expect(message).not.toMatch(/[*_`~]/);
     expect(message).toContain('contains asterisks and underscores');
+  });
+});
+
+describe('formatSearchRecoveredMessage', () => {
+  it('names the saved search as working again', () => {
+    const message = formatSearchRecoveredMessage('My search');
+
+    expect(message).toContain('My search');
+    expect(message).toContain('working again');
+  });
+
+  it('escapes markdown-special characters in the saved search name', () => {
+    const message = formatSearchRecoveredMessage('**Sneaky** search');
+
+    expect(message).not.toMatch(/[*_`~]/);
   });
 });

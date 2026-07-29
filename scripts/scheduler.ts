@@ -24,7 +24,13 @@ loadServerEnv();
 
 if (!process.env.OPENCLAW_BEARER_TOKEN) {
   console.error('OPENCLAW_BEARER_TOKEN environment variable is not set');
-  process.exit(1);
+  // Exit 2, not 1: nothing could be attempted at all, distinct from "ran
+  // fine but some searches had errors" (exit 1, alerted individually and
+  // non-repetitively by the scheduler itself — see recordSavedSearchRunStatusAndAlertAsync
+  // in scheduler.ts) — the wrapper script (run-and-notify.sh) only pages on
+  // exit 2, so a per-tick per-search failure doesn't also trigger a second,
+  // blunter "the whole scheduler is broken" alert.
+  process.exit(2);
 }
 
 // Returns an exit code rather than calling process.exit() itself — process.exit()
@@ -81,5 +87,6 @@ main()
   .then((exitCode) => process.exit(exitCode))
   .catch((err) => {
     console.error('[scheduler] fatal error:', (err as Error).message);
-    process.exit(1);
+    // Exit 2 — see the OPENCLAW_BEARER_TOKEN check above for why this is 2, not 1.
+    process.exit(2);
   });

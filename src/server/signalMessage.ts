@@ -42,14 +42,21 @@ export function formatAlertMessage(listing: Listing): string {
   ].join('\n');
 }
 
-// Composes a terse system-health Signal alert for a saved search that had a
-// scrape it could not trust this run (e.g. a login wall mid-scrape). Kept to
-// one plain line per distinct reason — no header, no markdown emphasis, no
-// explanation of what was discarded — so it reads at a glance in the Signal
-// thread rather than as a log dump.
-export function formatScrapeErrorMessage(savedSearchName: string, reasons: string[]): string {
+// Composes a terse system-health Signal alert for a saved search whose most
+// recent scheduled run failed, sent only on the success→failure edge (or on
+// a same-failure re-alert after the 12h window — see
+// recordSavedSearchRunStatusAndAlertAsync in scheduler.ts). One plain line
+// per distinct error — no header, no markdown emphasis — so it reads at a
+// glance in the Signal thread rather than as a log dump.
+export function formatSearchFailingMessage(savedSearchName: string, errors: string[]): string {
   const escapedName = escapeSignalMarkdown(savedSearchName);
-  return [...new Set(reasons)]
-    .map((reason) => `Scrape error - ${escapedName}. ${escapeSignalMarkdown(reason)}`)
+  return [...new Set(errors)]
+    .map((error) => `Scrape error - ${escapedName}. ${escapeSignalMarkdown(error)}`)
     .join('\n');
+}
+
+// Composes the counterpart recovery alert, sent on the failure→success edge
+// — the moment a previously-failing saved search's scheduled run succeeds.
+export function formatSearchRecoveredMessage(savedSearchName: string): string {
+  return `✅ ${escapeSignalMarkdown(savedSearchName)} is working again`;
 }
