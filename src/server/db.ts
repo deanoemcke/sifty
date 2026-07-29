@@ -47,15 +47,12 @@ export function initSchema(database: Database.Database): void {
       created_at       INTEGER NOT NULL,
       PRIMARY KEY (saved_search_id, listing_hash)
     );
-    CREATE TABLE IF NOT EXISTS scrape_error_alerts (
-      -- Normalized suppression key (see normalizeScrapeErrorReason in
-      -- scheduler.ts), not the raw error text — dynamic content like counts
-      -- and URLs is stripped before it lands here so the same underlying
-      -- failure collapses to one row across runs.
-      reason_key      TEXT PRIMARY KEY,
-      last_alerted_at INTEGER NOT NULL
-    );
   `);
+
+  // Superseded by the per-saved-search last_run_succeeded/last_run_detail/
+  // last_failure_alerted_at columns below (edge-triggered alerts scoped to
+  // one search, instead of a global cross-search reason-text TTL).
+  database.exec('DROP TABLE IF EXISTS scrape_error_alerts');
 
   // CREATE TABLE IF NOT EXISTS doesn't retroactively add columns to an
   // existing on-disk saved_searches table, so new columns need an explicit,
@@ -83,6 +80,15 @@ export function initSchema(database: Database.Database): void {
       WHERE id IN (SELECT DISTINCT saved_search_id FROM alerted_listings)
     `);
   }
+  if (!savedSearchColumns.some((column) => column.name === 'last_run_succeeded')) {
+    database.exec('ALTER TABLE saved_searches ADD COLUMN last_run_succeeded INTEGER');
+  }
+  if (!savedSearchColumns.some((column) => column.name === 'last_run_detail')) {
+    database.exec('ALTER TABLE saved_searches ADD COLUMN last_run_detail TEXT');
+  }
+  if (!savedSearchColumns.some((column) => column.name === 'last_failure_alerted_at')) {
+    database.exec('ALTER TABLE saved_searches ADD COLUMN last_failure_alerted_at INTEGER');
+  }
 
   // Same CREATE TABLE IF NOT EXISTS limitation as saved_searches above: an
   // existing on-disk trademe_categories table predating this column won't
@@ -99,20 +105,6 @@ export function initSchema(database: Database.Database): void {
   }
   if (categoryColumns.some((column) => column.name === 'top2')) {
     database.exec('ALTER TABLE trademe_categories DROP COLUMN top2');
-  }
-
-  // CREATE TABLE IF NOT EXISTS doesn't retroactively rename columns on an
-  // existing on-disk scrape_error_alerts table, so the reason → reason_key
-  // rename (see comment on the CREATE TABLE above) needs an explicit,
-  // idempotency-checked ALTER TABLE.
-  const scrapeErrorAlertColumns = database
-    .prepare<[], { name: string }>('PRAGMA table_info(scrape_error_alerts)')
-    .all();
-  if (
-    scrapeErrorAlertColumns.some((column) => column.name === 'reason') &&
-    !scrapeErrorAlertColumns.some((column) => column.name === 'reason_key')
-  ) {
-    database.exec('ALTER TABLE scrape_error_alerts RENAME COLUMN reason TO reason_key');
   }
 
   // Backs the create/update handlers' duplicate-name rejection with a real DB
@@ -201,6 +193,9 @@ export type SavedSearchRow = {
   should_alert_on_new_listings: number;
   last_run_at: number | null;
   has_completed_population_run: number;
+  last_run_succeeded: number | null;
+  last_run_detail: string | null;
+  last_failure_alerted_at: number | null;
 };
 export type CategoryRow = { slug: string; display: string };
 export type CategoryWithEmbeddingRow = {
@@ -253,17 +248,17 @@ export function stmtClearDetailsForUrl(database: Database.Database) {
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches ORDER BY created_at DESC'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at FROM saved_searches ORDER BY created_at DESC'
   );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches WHERE id = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at FROM saved_searches WHERE id = ?'
   );
 }
 export function stmtGetSavedSearchByName(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run FROM saved_searches WHERE name = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at FROM saved_searches WHERE name = ?'
   );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
@@ -280,7 +275,7 @@ const DUE_ALERT_ENABLED_SAVED_SEARCH_WHERE =
 
 export function stmtGetDueAlertEnabledSavedSearches(database: Database.Database) {
   return database.prepare<[number, number], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run ' +
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at ' +
       `FROM saved_searches ${DUE_ALERT_ENABLED_SAVED_SEARCH_WHERE} ` +
       'ORDER BY last_run_at ASC, rowid ASC LIMIT ?'
   );
@@ -327,15 +322,13 @@ export function stmtInsertAlertedListing(database: Database.Database) {
     'INSERT OR IGNORE INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
   );
 }
-export type ScrapeErrorAlertRow = { last_alerted_at: number };
-export function stmtGetScrapeErrorAlert(database: Database.Database) {
-  return database.prepare<[string], ScrapeErrorAlertRow>(
-    'SELECT last_alerted_at FROM scrape_error_alerts WHERE reason_key = ?'
-  );
-}
-export function stmtUpsertScrapeErrorAlert(database: Database.Database) {
+// Persists the outcome of a saved search's most recent scheduled run —
+// last_failure_alerted_at only changes when a failure alert is actually sent
+// (not on every failed run), so it's the clock recordSavedSearchRunStatusAndAlertAsync
+// (scheduler.ts) measures its re-alert window against.
+export function stmtUpdateSavedSearchRunStatus(database: Database.Database) {
   return database.prepare(
-    'INSERT OR REPLACE INTO scrape_error_alerts (reason_key, last_alerted_at) VALUES (?, ?)'
+    'UPDATE saved_searches SET last_run_succeeded = ?, last_run_detail = ?, last_failure_alerted_at = ? WHERE id = ?'
   );
 }
 export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {

@@ -13,7 +13,7 @@ import { closeAllPooledBrowsersAsync } from '../src/server/browserPool';
 import { getDb } from '../src/server/db';
 import { loadServerEnv } from '../src/server/env';
 import { sendSignalNotificationAsync } from '../src/server/notify';
-import { runSchedulerAsync } from '../src/server/scheduler';
+import { determineExitCode, runSchedulerAsync } from '../src/server/scheduler';
 import {
   acquireSchedulerLock,
   DEFAULT_SCHEDULER_LOCK_PATH,
@@ -24,7 +24,13 @@ loadServerEnv();
 
 if (!process.env.OPENCLAW_BEARER_TOKEN) {
   console.error('OPENCLAW_BEARER_TOKEN environment variable is not set');
-  process.exit(1);
+  // Exit 2, not 1: nothing could be attempted at all, distinct from "ran
+  // fine but some searches had errors" (exit 1, alerted individually and
+  // non-repetitively by the scheduler itself — see recordSavedSearchRunStatusAndAlertAsync
+  // in scheduler.ts) — the wrapper script (run-and-notify.sh) only pages on
+  // exit 2, so a per-tick per-search failure doesn't also trigger a second,
+  // blunter "the whole scheduler is broken" alert.
+  process.exit(2);
 }
 
 // Returns an exit code rather than calling process.exit() itself — process.exit()
@@ -47,7 +53,6 @@ async function main(): Promise<number> {
       sendNotificationAsync: sendSignalNotificationAsync,
     });
 
-    let hadErrors = false;
     for (const search of summary.searches) {
       console.log(
         `[scheduler] ${search.savedSearchName}${search.isPopulationRun ? ' (population run)' : ''}: ` +
@@ -56,12 +61,22 @@ async function main(): Promise<number> {
           `${search.notifiedCount} notified, ${search.populatedCount} populated`
       );
       for (const error of search.errors) {
-        hadErrors = true;
-        console.error(`[scheduler] ${search.savedSearchName}: ${error}`);
+        console.error(`[scheduler] ${search.savedSearchName}: ${error.message}`);
       }
     }
 
-    return hadErrors ? 1 : 0;
+    const exitCode = determineExitCode(summary);
+    if (exitCode === 2) {
+      // Same exit code as the catastrophic "nothing could be attempted" case
+      // above — the external wrapper only pages on exit 2, and this needs
+      // that same external page precisely because it's a Signal delivery
+      // outage: the scheduler's own Signal-based alerting can't report it.
+      console.error(
+        '[scheduler] notify delivery failed for multiple searches this tick — ' +
+          'likely a systemic Signal/notification outage, not a per-listing blip'
+      );
+    }
+    return exitCode;
   } finally {
     // runSchedulerAsync funnels through the facebook/trademe recipes, which check
     // out browsers from the shared pool in src/server/browserPool.ts — that pool
@@ -81,5 +96,6 @@ main()
   .then((exitCode) => process.exit(exitCode))
   .catch((err) => {
     console.error('[scheduler] fatal error:', (err as Error).message);
-    process.exit(1);
+    // Exit 2 — see the OPENCLAW_BEARER_TOKEN check above for why this is 2, not 1.
+    process.exit(2);
   });

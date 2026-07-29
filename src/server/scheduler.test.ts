@@ -26,15 +26,20 @@ import {
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { getRecipeForUrl } from './recipes/registry';
 import {
+  AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
+  buildFailureComparisonKey,
+  determineExitCode,
+  FAILURE_REALERT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
   normalizeScrapeErrorReason,
   runImmediatePopulationRunAsync,
   runSchedulerAsync as runSchedulerAsyncUngated,
-  SCRAPE_ERROR_ALERT_SUPPRESS_MS,
   SCRAPE_ERROR_REASON_MAX_LENGTH,
   SCRAPE_TIMEOUT_MS,
   type SchedulerDeps,
+  type SchedulerSummary,
+  STATUS_ALERT_TIMEOUT_MS,
   triggerImmediatePopulationRunAsync,
 } from './scheduler';
 
@@ -518,9 +523,9 @@ describe('runSchedulerAsync', () => {
     expect(summary.searches[0].errors.length).toBeGreaterThan(0);
   });
 
-  it('a failed notification for one listing does not prevent others from being processed', async () => {
+  it('a failed notification for one listing does not prevent others from being processed, and does not falsely fail the search', async () => {
     const db = freshDb();
-    insertAlertSearch(db);
+    const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
     await runSchedulerAsync({
@@ -542,13 +547,22 @@ describe('runSchedulerAsync', () => {
       if (message.includes('Fails to notify')) throw new Error('boom');
     });
 
-    await runSchedulerAsync({
+    const summary = await runSchedulerAsync({
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync,
     });
 
+    // Only the 2 listing sends (one fails, one succeeds) — a notify-kind
+    // error is excluded from health, so it doesn't also trigger a false
+    // failure-status alert.
     expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+    expect(
+      summary.searches[0].errors.some(
+        (error) => error.kind === 'notify' && error.message.includes('https://example.com/fails')
+      )
+    ).toBe(true);
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
   });
 
   it('alerts independently per saved search for the same physical listing', async () => {
@@ -883,7 +897,9 @@ describe('runSchedulerAsync', () => {
       const summary = await summaryPromise;
 
       expect(summary.searches).toHaveLength(1);
-      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      expect(summary.searches[0].errors.some((error) => error.message.includes('timed out'))).toBe(
+        true
+      );
       expect(summary.searches[0].listingsFoundCount).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -962,7 +978,9 @@ describe('runSchedulerAsync', () => {
       const summary = await summaryPromise;
 
       expect(summary.searches).toHaveLength(1);
-      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      expect(summary.searches[0].errors.some((error) => error.message.includes('timed out'))).toBe(
+        true
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -993,10 +1011,18 @@ describe('runSchedulerAsync', () => {
         sendNotificationAsync,
       });
       await vi.advanceTimersByTimeAsync(NOTIFY_LOOP_TIMEOUT_MS);
+      // The notify-loop timeout above makes this run fail (first failure
+      // since the earlier population run succeeded), so
+      // recordSavedSearchRunStatusAndAlertAsync attempts its own status
+      // alert next — via the same permanently-hung sendNotificationAsync
+      // mock, so it needs its own timeout advanced too before it resolves.
+      await vi.advanceTimersByTimeAsync(STATUS_ALERT_TIMEOUT_MS);
       const summary = await summaryPromise;
 
       expect(summary.searches).toHaveLength(1);
-      expect(summary.searches[0].errors.some((error) => error.includes('timed out'))).toBe(true);
+      expect(summary.searches[0].errors.some((error) => error.message.includes('timed out'))).toBe(
+        true
+      );
       // Only the seed baseline is alerted — the hung listing's send never completed.
       expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1);
     } finally {
@@ -1093,6 +1119,9 @@ describe('runSchedulerAsync', () => {
       sendNotificationAsync,
     });
 
+    // Only 1 listing send (no retry, since no image was ever attached) — a
+    // notify-kind error is excluded from health, so it doesn't also trigger
+    // a failure-status alert.
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.length).toBeGreaterThan(0);
@@ -1125,7 +1154,7 @@ describe('runSchedulerAsync', () => {
     expect(sendNotificationAsync.mock.calls[0][1]?.image).toBeUndefined();
   });
 
-  it('discards partial listings and sends one system Signal alert when a facebook-named recipe never completes (login wall)', async () => {
+  it('discards partial listings and sends one failure Signal alert when a facebook-named recipe never completes (login wall)', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -1150,14 +1179,17 @@ describe('runSchedulerAsync', () => {
       sendNotificationAsync,
     });
 
+    // This run's own scrape failure is the search's first failure since its
+    // previous (population) run succeeded, so recordSavedSearchRunStatusAndAlertAsync alerts.
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      'Scrape error - FB search. Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
+      `Scrape error - FB search. Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].listingsFoundCount).toBe(0);
     // Only the run-1 seed baseline is alerted — the tainted listing never got recorded.
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1);
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(0);
   });
 
   it('still notifies for a trademe listing on the same saved search when a facebook URL in it fails', async () => {
@@ -1231,10 +1263,12 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      'Scrape error - TM search. Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
+      `Scrape error - TM search. Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
-    expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
+    expect(summary.searches[0].errors.some((error) => error.message.includes('Discarded'))).toBe(
+      true
+    );
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(1); // only the seed baseline
   });
 
@@ -1261,7 +1295,7 @@ describe('runSchedulerAsync', () => {
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync,
-      now: () => baseTime + SCRAPE_ERROR_ALERT_SUPPRESS_MS - 1,
+      now: () => baseTime + FAILURE_REALERT_MS - 1,
     });
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
@@ -1290,7 +1324,7 @@ describe('runSchedulerAsync', () => {
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync,
-      now: () => baseTime + SCRAPE_ERROR_ALERT_SUPPRESS_MS,
+      now: () => baseTime + FAILURE_REALERT_MS,
     });
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
@@ -1328,12 +1362,111 @@ describe('runSchedulerAsync', () => {
     expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
   });
 
-  it('caps an overlong scrape-failure reason before it becomes the SQLite primary key or reaches the Signal alert', async () => {
+  it('sends a recovery alert when a previously-failing saved search succeeds, and resets its persisted failure state', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', [taintedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(0);
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+    expect(sendNotificationAsync.mock.calls[1][0]).toContain('working again');
+    const row = stmtGetSavedSearch(db).get(searchId);
+    expect(row?.last_run_succeeded).toBe(1);
+    expect(row?.last_run_detail).toBeNull();
+    expect(row?.last_failure_alerted_at).toBeNull();
+  });
+
+  it('does not re-send a recovery alert for a saved search that keeps succeeding', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).not.toHaveBeenCalled();
+  });
+
+  it("evaluates each saved search's success/failure independently within the same tick", async () => {
+    const db = freshDb();
+    insertAlertSearch(db, {
+      id: 'search-fail',
+      name: 'Search Fail',
+      urls: ['https://facebook.com/marketplace/search'],
+    });
+    insertAlertSearch(db, {
+      id: 'search-ok',
+      name: 'Search OK',
+      urls: ['https://example.com/marketplace/search'],
+    });
+    const taintedListing = makeListing({
+      title: 'Tainted FB listing',
+      url: 'https://facebook.com/x',
+    });
+    const okListing = makeListing({ title: 'Chair', url: 'https://example.com/1' });
+    vi.mocked(getRecipeForUrl).mockImplementation((url: string) =>
+      url.includes('facebook')
+        ? makeLoginWalledRecipe('facebook', [taintedListing])
+        : makeStubRecipe([okListing])
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // Only the failing search's first failure alerts — the succeeding one
+    // (also its first-ever run) generates no alert, and each search's
+    // persisted status reflects its own outcome, not the other's.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Search Fail');
+    expect(stmtGetSavedSearch(db).get('search-fail')?.last_run_succeeded).toBe(0);
+    expect(stmtGetSavedSearch(db).get('search-ok')?.last_run_succeeded).toBe(1);
+  });
+
+  it('caps an overlong scrape-failure reason before it flows into the outbound Signal alert or last_run_detail', async () => {
     // Matches the existing 200-char precedent in ai.ts (AI parse-error
     // messages) — an unusually long or malformed error message must not
-    // flow uncapped into a TEXT PRIMARY KEY or an outbound Signal payload.
+    // flow uncapped into last_run_detail or an outbound Signal payload.
     const db = freshDb();
-    insertAlertSearch(db, { name: 'FB search' });
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
     const overlongReason = `Login wall detected — ${'x'.repeat(50)} listings loaded, url=https://facebook.com/marketplace/${'y'.repeat(200)}`;
     expect(overlongReason.length).toBeGreaterThan(SCRAPE_ERROR_REASON_MAX_LENGTH);
     vi.mocked(getRecipeForUrl).mockReturnValue(
@@ -1351,21 +1484,49 @@ describe('runSchedulerAsync', () => {
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     const message = sendNotificationAsync.mock.calls[0][0] as string;
     expect(message).not.toContain(overlongReason);
-    expect(message).toBe(
-      `Scrape error - FB search. ${overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH)}`
-    );
+    expect(message).toContain(overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH));
 
-    // The row written as the SQLite primary key is capped too (normalizing
-    // the already-capped reason can only shrink it further, never grow it
-    // back past the cap).
-    const row = db.prepare('SELECT reason_key FROM scrape_error_alerts').get() as
-      | { reason_key: string }
-      | undefined;
-    expect(row).toBeDefined();
-    expect(row?.reason_key.length).toBeLessThanOrEqual(SCRAPE_ERROR_REASON_MAX_LENGTH);
-    expect(row?.reason_key).toBe(
-      normalizeScrapeErrorReason(overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH))
+    // last_run_detail — the new per-search persisted failure text — is capped too.
+    const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail;
+    expect(detail).not.toContain(overlongReason);
+    expect(detail).toContain(overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH));
+  });
+
+  it('caps the aggregated error text across multiple failures before it flows into the outbound Signal alert or last_run_detail', async () => {
+    // A single overlong reason is already bounded at capture
+    // (SCRAPE_ERROR_REASON_MAX_LENGTH), but summary.errors was designed as an
+    // internal diagnostic list, not an external payload — nothing previously
+    // bounded the *aggregate* once several such per-URL failures (each
+    // already individually capped) are joined together for last_run_detail
+    // and the outbound Signal message.
+    const urls = Array.from(
+      { length: 12 },
+      (_, i) => `https://facebook.com/marketplace/search-${i}`
     );
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { urls });
+    const reason = 'x'.repeat(SCRAPE_ERROR_REASON_MAX_LENGTH);
+    vi.mocked(getRecipeForUrl).mockImplementation(() =>
+      makeFailingRecipeWithReason('facebook', reason)
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // Sanity check: joining all 12 per-URL failures uncapped would comfortably
+    // exceed the aggregate cap, so this test actually exercises the new bound.
+    expect(urls.length * reason.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    const message = sendNotificationAsync.mock.calls[0][0] as string;
+    expect(message.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+
+    const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail as string;
+    expect(detail.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   });
 
   it('suppresses a repeat login-wall alert even though the listing count embedded in the message differs between runs', async () => {
@@ -1408,17 +1569,17 @@ describe('runSchedulerAsync', () => {
       database: db,
       cooldownStore: STUB_COOLDOWN_STORE,
       sendNotificationAsync,
-      now: () => baseTime + SCRAPE_ERROR_ALERT_SUPPRESS_MS - 1,
+      now: () => baseTime + FAILURE_REALERT_MS - 1,
     });
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
   });
 
-  it('suppresses a repeat timeout alert even though the URL embedded in the message differs between runs', async () => {
-    // withTimeoutAsync labels its error with the specific URL that timed out
-    // (`Quick search for ${url} timed out after ${timeoutMs}ms`), so two
-    // saved searches hitting the same underlying stall on different URLs
-    // must still collapse to one suppression key.
+  it("does not suppress a different saved search's first-ever timeout failure, even though it shares the same underlying reason as an earlier alert", async () => {
+    // Suppression (see recordSavedSearchRunStatusAndAlertAsync) is scoped
+    // per saved search, deliberately not shared across searches — search-b
+    // failing for the first time must always alert, regardless of what
+    // search-a already experienced and was alerted for.
     vi.useFakeTimers();
     try {
       const db = freshDb();
@@ -1455,13 +1616,15 @@ describe('runSchedulerAsync', () => {
       await vi.advanceTimersByTimeAsync(SCRAPE_TIMEOUT_MS);
       await secondRunPromise;
 
-      expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+      // search-a's first failure alerts, and search-b's first failure alerts
+      // independently too — per-search state, not a shared reason-text table.
+      expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('suppresses duplicate fan-out alerts across saved searches that share the same scrape-failure reason in one tick', async () => {
+  it('sends an independent first-failure alert for each saved search that fails in the same tick, even sharing the same underlying reason', async () => {
     const db = freshDb();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
@@ -1478,9 +1641,19 @@ describe('runSchedulerAsync', () => {
       sendNotificationAsync,
     });
 
-    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
-    expect(summary.searches[0].errors.some((error) => error.includes('Discarded'))).toBe(true);
-    expect(summary.searches[1].errors.some((error) => error.includes('Discarded'))).toBe(true);
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+    expect(sendNotificationAsync.mock.calls.some(([message]) => message.includes('Search A'))).toBe(
+      true
+    );
+    expect(sendNotificationAsync.mock.calls.some(([message]) => message.includes('Search B'))).toBe(
+      true
+    );
+    expect(summary.searches[0].errors.some((error) => error.message.includes('Discarded'))).toBe(
+      true
+    );
+    expect(summary.searches[1].errors.some((error) => error.message.includes('Discarded'))).toBe(
+      true
+    );
   });
 
   it('leaves has_completed_population_run unset when a URL is discarded during a population run, so the full baseline retries next tick', async () => {
@@ -1506,7 +1679,9 @@ describe('runSchedulerAsync', () => {
     expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(0);
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
     expect(
-      summary.searches[0].errors.some((error) => error.includes('Population run incomplete'))
+      summary.searches[0].errors.some((error) =>
+        error.message.includes('Population run incomplete')
+      )
     ).toBe(true);
   });
 
@@ -1575,11 +1750,11 @@ describe('runImmediatePopulationRunAsync', () => {
 
     const newListing = makeListing({ title: 'New chair', url: 'https://example.com/new' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
-    const sendNotificationAsync = vi.fn();
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync },
       lockPath
     );
 
@@ -1727,6 +1902,50 @@ describe('runImmediatePopulationRunAsync', () => {
     );
 
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('persists failure status and sends a failure alert when the population scrape fails', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', []));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runImmediatePopulationRunAsync(
+      searchId,
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync },
+      lockPath
+    );
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('FB search');
+    const row = stmtGetSavedSearch(db).get(searchId);
+    expect(row?.last_run_succeeded).toBe(0);
+    expect(row?.last_run_detail).toContain('Login wall detected');
+  });
+
+  it('persists failure status and sends a failure alert when processing throws synchronously', async () => {
+    const db = freshDb();
+    stmtInsertSavedSearch(db).run(
+      'search-corrupt',
+      'Corrupt search',
+      'not valid json',
+      null,
+      null,
+      Date.now(),
+      1
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runImmediatePopulationRunAsync(
+      'search-corrupt',
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync },
+      lockPath
+    );
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    const row = stmtGetSavedSearch(db).get('search-corrupt');
+    expect(row?.last_run_succeeded).toBe(0);
+    expect(row?.last_run_detail).toContain('Unhandled error');
   });
 });
 
@@ -1892,5 +2111,84 @@ describe('normalizeScrapeErrorReason', () => {
     const rateLimited = 'Rate limited by Facebook';
 
     expect(normalizeScrapeErrorReason(loginWall)).not.toBe(normalizeScrapeErrorReason(rateLimited));
+  });
+});
+
+describe('buildFailureComparisonKey', () => {
+  it('is order-independent: the same messages in a different order produce the same key', () => {
+    const a = ['AI filter: batch 1 timed out', 'AI filter: batch 2 timed out'];
+    const b = ['AI filter: batch 2 timed out', 'AI filter: batch 1 timed out'];
+
+    expect(buildFailureComparisonKey(a)).toBe(buildFailureComparisonKey(b));
+  });
+
+  it('collapses duplicate messages so a repeated error does not change the key', () => {
+    const withDuplicate = ['AI filter: batch timed out', 'AI filter: batch timed out'];
+    const withoutDuplicate = ['AI filter: batch timed out'];
+
+    expect(buildFailureComparisonKey(withDuplicate)).toBe(
+      buildFailureComparisonKey(withoutDuplicate)
+    );
+  });
+
+  it('still differentiates genuinely different error sets', () => {
+    const a = ['AI filter: batch 1 timed out', 'AI filter: batch 2 timed out'];
+    const b = ['AI filter: batch 1 timed out', 'Rate limited by Facebook'];
+
+    expect(buildFailureComparisonKey(a)).not.toBe(buildFailureComparisonKey(b));
+  });
+});
+
+describe('determineExitCode', () => {
+  function makeSearchSummary(
+    errors: SchedulerSummary['searches'][number]['errors']
+  ): SchedulerSummary['searches'][number] {
+    return {
+      savedSearchId: 'search-a',
+      savedSearchName: 'Search A',
+      isPopulationRun: false,
+      listingsFoundCount: 0,
+      soldSkippedCount: 0,
+      aiFilteredOutCount: 0,
+      alreadyAlertedCount: 0,
+      notifiedCount: 0,
+      populatedCount: 0,
+      errors,
+    };
+  }
+
+  it('returns 0 when no search had any errors', () => {
+    const summary: SchedulerSummary = { searches: [makeSearchSummary([])] };
+    expect(determineExitCode(summary)).toBe(0);
+  });
+
+  it('returns 1 when a search has a non-notify error', () => {
+    const summary: SchedulerSummary = {
+      searches: [makeSearchSummary([{ kind: 'scrape', message: 'Quick search failed' }])],
+    };
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
+  it('returns 1 when only a single search has a notify error — not yet systemic', () => {
+    const summary: SchedulerSummary = {
+      searches: [makeSearchSummary([{ kind: 'notify', message: 'Notification failed' }])],
+    };
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
+  it('returns 2 when notify errors hit multiple searches in the same tick — likely a systemic outage', () => {
+    const summary: SchedulerSummary = {
+      searches: [
+        {
+          ...makeSearchSummary([{ kind: 'notify', message: 'Notification failed' }]),
+          savedSearchId: 'search-a',
+        },
+        {
+          ...makeSearchSummary([{ kind: 'notify', message: 'Status notification failed' }]),
+          savedSearchId: 'search-b',
+        },
+      ],
+    };
+    expect(determineExitCode(summary)).toBe(2);
   });
 });

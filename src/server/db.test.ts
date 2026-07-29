@@ -270,34 +270,39 @@ describe('initSchema', () => {
     expect(columnNames(db, 'trademe_categories')).not.toContain('top2');
   });
 
-  it('scrape_error_alerts renames reason to reason_key, idempotently, when migrating an existing on-disk database', () => {
-    // Simulates a pre-migration on-disk schema — column still named reason.
+  it('drops the superseded scrape_error_alerts table, idempotently, when migrating an existing on-disk database', () => {
     const db = new Database(':memory:');
     db.exec(`
       CREATE TABLE scrape_error_alerts (
-        reason          TEXT PRIMARY KEY,
+        reason_key      TEXT PRIMARY KEY,
         last_alerted_at INTEGER NOT NULL
       );
     `);
-    db.prepare('INSERT INTO scrape_error_alerts (reason, last_alerted_at) VALUES (?, ?)').run(
+    db.prepare('INSERT INTO scrape_error_alerts (reason_key, last_alerted_at) VALUES (?, ?)').run(
       'facebook login wall',
       1700000000000
     );
 
     expect(() => initSchema(db)).not.toThrow();
-    expect(columnNames(db, 'scrape_error_alerts')).toContain('reason_key');
-    expect(columnNames(db, 'scrape_error_alerts')).not.toContain('reason');
-
-    const row = db
-      .prepare<[string], { reason_key: string; last_alerted_at: number }>(
-        'SELECT reason_key, last_alerted_at FROM scrape_error_alerts WHERE reason_key = ?'
-      )
-      .get('facebook login wall');
-    expect(row?.last_alerted_at).toBe(1700000000000);
+    expect(
+      db
+        .prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((t) => t.name)
+    ).not.toContain('scrape_error_alerts');
 
     expect(() => initSchema(db)).not.toThrow();
-    expect(columnNames(db, 'scrape_error_alerts')).toContain('reason_key');
-    expect(columnNames(db, 'scrape_error_alerts')).not.toContain('reason');
+  });
+
+  it('saved_searches has last_run_succeeded, last_run_detail and last_failure_alerted_at columns, added idempotently', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const cols = columnNames(db, 'saved_searches');
+    expect(cols).toContain('last_run_succeeded');
+    expect(cols).toContain('last_run_detail');
+    expect(cols).toContain('last_failure_alerted_at');
+    expect(() => initSchema(db)).not.toThrow();
+    expect(columnNames(db, 'saved_searches')).toContain('last_run_succeeded');
   });
 
   it('preserves existing data when called on an existing database', () => {

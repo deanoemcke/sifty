@@ -12,12 +12,11 @@ import {
   stmtCountDueAlertEnabledSavedSearches,
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearch,
-  stmtGetScrapeErrorAlert,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
-  stmtUpsertScrapeErrorAlert,
+  stmtUpdateSavedSearchRunStatus,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
@@ -34,7 +33,11 @@ import {
   runAiFilterBatchesAsync,
 } from './services/aiFilter';
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
-import { formatAlertMessage, formatScrapeErrorMessage } from './signalMessage';
+import {
+  formatAlertMessage,
+  formatSearchFailingMessage,
+  formatSearchRecoveredMessage,
+} from './signalMessage';
 
 // Upper bound on a single URL's quick search. The scheduler runs unattended
 // via cron with no human to notice a hang — a stalled recipe (login wall,
@@ -56,6 +59,16 @@ export const AI_FILTER_TIMEOUT_MS = 120_000;
 // mirroring SCRAPE_TIMEOUT_MS/AI_FILTER_TIMEOUT_MS above.
 export const NOTIFY_LOOP_TIMEOUT_MS = 5 * 60_000;
 
+// Upper bound on the single Signal send in recordSavedSearchRunStatusAndAlertAsync.
+// Unlike the per-listing sends inside notifyNewListingsAsync (bounded only by
+// the enclosing NOTIFY_LOOP_TIMEOUT_MS), this call isn't nested inside any
+// other timeout — without its own bound, an unresponsive notifier here would
+// wedge runOneSavedSearchAsync indefinitely, the exact failure mode
+// SCRAPE_TIMEOUT_MS/AI_FILTER_TIMEOUT_MS/NOTIFY_LOOP_TIMEOUT_MS all exist to
+// prevent elsewhere in this file. Generous relative to notify.ts's own
+// internal 10s bound, same rationale as those three.
+export const STATUS_ALERT_TIMEOUT_MS = 30_000;
+
 // The guarantee: no alert-enabled saved search should go longer than this
 // between runs. Only holds if the external tick interval (launchd's
 // StartInterval in ai.openclaw.sifty-scheduler.plist, currently 1800s/30min)
@@ -70,34 +83,59 @@ export const TARGET_INTERVAL_MINUTES = 240;
 // self-heals rather than starving anything indefinitely.
 export const MAX_SEARCHES_PER_TICK = 5;
 
-// How long a Signal scrape-error alert for the same failure reason is
-// suppressed before re-alerting, regardless of which saved search(es) hit it.
-// Prevents a persistent or widely shared problem (e.g. a standing Facebook
-// login wall affecting several saved searches) from re-sending the same
-// Signal message every scheduler tick indefinitely.
-export const SCRAPE_ERROR_ALERT_SUPPRESS_MS = 12 * 60 * 60 * 1000;
+// Once a saved search is failing and has already been alerted on, how long
+// before the *same* underlying failure is re-alerted anyway (see
+// recordSavedSearchRunStatusAndAlertAsync below) — so a persistent problem
+// doesn't go silent forever between the initial alert and its eventual fix,
+// while still not re-sending every single tick.
+export const FAILURE_REALERT_MS = 12 * 60 * 60 * 1000;
 
-// Collapses a scrape-failure reason down to a stable suppression key by
-// stripping content that varies run-to-run for the same underlying failure —
-// e.g. Facebook's login-wall message embeds however many listings loaded
-// before the wall appeared, and a scrape-timeout message embeds the specific
-// URL. Without this, the exact scenario the suppression table exists for
-// (the same failure recurring every tick) rarely produces two identical raw
-// strings, so it never actually suppresses anything. This only affects the
-// dedup key used against scrape_error_alerts — the raw, un-normalized reason
-// is still what's shown in full via formatScrapeErrorMessage and recorded in
-// summary.errors.
+// Collapses a failure reason down to a stable comparison key by stripping
+// content that varies run-to-run for the same underlying failure — e.g.
+// Facebook's login-wall message embeds however many listings loaded before
+// the wall appeared, and a scrape-timeout message embeds the specific URL.
+// Without this, "the same failure as last run" (what
+// recordSavedSearchRunStatusAndAlertAsync checks before suppressing a
+// re-alert) rarely produces two identical raw strings, so it would never
+// actually recognize a repeat. This only affects that comparison — the raw,
+// un-normalized reason is still what's shown in full via
+// formatSearchFailingMessage and recorded in summary.errors/last_run_detail.
 export function normalizeScrapeErrorReason(reason: string): string {
   return reason.replace(/https?:\/\/\S+/g, '<url>').replace(/\d+/g, '#');
 }
 
+// Builds an order-independent comparison key from a run's individual error
+// messages, for the "is this the same failure as last run" check in
+// recordSavedSearchRunStatusAndAlertAsync below. AI-filter batches complete
+// concurrently (see runAiFilterBatchesAsync's ConcurrencyQueue), so the same
+// underlying set of failures can land in summary.errors in a different order
+// on two consecutive runs — comparing normalized, deduped, sorted messages
+// (rather than one order-sensitive joined blob) keeps the 12h re-alert
+// suppression working regardless of that ordering.
+export function buildFailureComparisonKey(errorMessages: string[]): string {
+  return [...new Set(errorMessages.map(normalizeScrapeErrorReason))].sort().join('\n');
+}
+
 // Bound on a captured scrape-failure reason's length, applied at the point
-// the raw text is captured — before it flows into the SQLite `reason_key`
-// primary key (via normalizeScrapeErrorReason), summary.errors, or the
-// outbound Signal alert (formatScrapeErrorMessage) — so an unusually long or
-// malformed error can't grow unbounded downstream. Matches the existing
-// 200-char precedent for AI parse-error messages in ai.ts.
+// the raw text is captured — before it flows into summary.errors (and from
+// there into last_run_detail and the outbound Signal alert,
+// formatSearchFailingMessage) — so an unusually long or malformed error
+// can't grow unbounded downstream. Matches the existing 200-char precedent
+// for AI parse-error messages in ai.ts.
 export const SCRAPE_ERROR_REASON_MAX_LENGTH = 200;
+
+// Bound on the *aggregated* failure text — summary.errors joined together —
+// applied in recordSavedSearchRunStatusAndAlertAsync just before it reaches
+// last_run_detail or the outbound Signal alert. Unlike
+// SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at each individual
+// summary.errors.push() call site (notification-send failures and AI-filter
+// error messages aren't capped there), so without this second, coarser bound
+// the aggregate could still grow unbounded even though each scrape-failure
+// reason on its own is already bounded. Sized as a multiple of
+// SCRAPE_ERROR_REASON_MAX_LENGTH so a run with several already-capped
+// scrape-failure reasons still fits, rather than being an independent value
+// to keep in sync by hand.
+export const AGGREGATED_FAILURE_DETAIL_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
 
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
@@ -132,6 +170,18 @@ export type SchedulerDeps = {
   maxSearchesPerTick?: number;
 };
 
+// 'notify' covers both per-listing alert sends (notifyNewListingsAsync) and
+// the status alert send itself (sendAlertSafelyAsync) — both are Signal
+// delivery failures, not evidence the saved search's own scrape/filter is
+// broken, so recordSavedSearchRunStatusAndAlertAsync below excludes this kind
+// from its health/alerting decision.
+export type SchedulerErrorKind = 'scrape' | 'ai-filter' | 'notify' | 'unhandled';
+
+export type SchedulerError = {
+  kind: SchedulerErrorKind;
+  message: string;
+};
+
 export type SavedSearchRunSummary = {
   savedSearchId: string;
   savedSearchName: string;
@@ -142,7 +192,7 @@ export type SavedSearchRunSummary = {
   alreadyAlertedCount: number;
   notifiedCount: number;
   populatedCount: number;
-  errors: string[];
+  errors: SchedulerError[];
 };
 
 export type SchedulerSummary = {
@@ -191,7 +241,10 @@ async function notifyNewListingsAsync(
       summary.notifiedCount++;
     } catch (err) {
       // Not recorded as alerted — retried on the next scheduler run.
-      summary.errors.push(`Notification failed for ${listing.url}: ${(err as Error).message}`);
+      summary.errors.push({
+        kind: 'notify',
+        message: `Notification failed for ${listing.url}: ${(err as Error).message}`,
+      });
     }
   }
 }
@@ -200,7 +253,7 @@ async function processSavedSearchAsync(
   row: SavedSearchRow,
   deps: Required<SchedulerDeps>
 ): Promise<SavedSearchRunSummary> {
-  const { database, cooldownStore, now, sendNotificationAsync } = deps;
+  const { database, cooldownStore, now } = deps;
   const urls = JSON.parse(row.urls) as string[];
   const aiFilterPrompt = row.ai_filter?.trim() ? row.ai_filter : null;
 
@@ -234,14 +287,14 @@ async function processSavedSearchAsync(
   const listingsByHash = new Map<string, Listing>();
   // Populated by any recipe whose scrape didn't reach a trustworthy
   // completion this run (see the `didCompleteSuccessfully` check below) —
-  // surfaced as one consolidated Signal alert after the loop so the user
-  // learns a saved search needs attention, distinct from a listing alert
-  // (formatScrapeErrorMessage in signalMessage.ts).
+  // used below to decide whether a population run can safely complete this
+  // tick. The individual reasons also land in summary.errors, which is what
+  // recordSavedSearchRunStatusAndAlertAsync (below) alerts on.
   const scrapeFailureReasons: string[] = [];
   for (const url of urls) {
     const recipe = getRecipeForUrl(url);
     if (!recipe) {
-      summary.errors.push(`No recipe found for URL: ${url}`);
+      summary.errors.push({ kind: 'scrape', message: `No recipe found for URL: ${url}` });
       continue;
     }
     let latestErrorMessage: string | undefined;
@@ -266,9 +319,10 @@ async function processSavedSearchAsync(
           0,
           SCRAPE_ERROR_REASON_MAX_LENGTH
         );
-        summary.errors.push(
-          `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`
-        );
+        summary.errors.push({
+          kind: 'scrape',
+          message: `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`,
+        });
         scrapeFailureReasons.push(reason);
         continue;
       }
@@ -276,41 +330,8 @@ async function processSavedSearchAsync(
         listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
     } catch (err) {
       const reason = (err as Error).message.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
-      summary.errors.push(`Quick search failed for ${url}: ${reason}`);
+      summary.errors.push({ kind: 'scrape', message: `Quick search failed for ${url}: ${reason}` });
       scrapeFailureReasons.push(reason);
-    }
-  }
-
-  if (scrapeFailureReasons.length > 0) {
-    // Suppression is keyed globally by normalized reason (see
-    // normalizeScrapeErrorReason), not per saved search: a shared root cause
-    // (e.g. Facebook logging the scraper out) trips the same normalized
-    // reason across every affected saved search, so only the first alert for
-    // that reason goes out — the rest are suppressed here, even though every
-    // affected search still recorded its own "Discarded ..." entry in
-    // summary.errors above.
-    const distinctReasons = [...new Set(scrapeFailureReasons)];
-    const freshReasons = distinctReasons.filter((reason) => {
-      const existingAlert = stmtGetScrapeErrorAlert(database).get(
-        normalizeScrapeErrorReason(reason)
-      );
-      return (
-        existingAlert === undefined ||
-        now() - existingAlert.last_alerted_at >= SCRAPE_ERROR_ALERT_SUPPRESS_MS
-      );
-    });
-    if (freshReasons.length === 0) {
-      console.log(
-        `[scheduler] "${row.name}": scrape error(s) already alerted globally within the last 12h, suppressing Signal notification`
-      );
-    } else {
-      try {
-        await sendNotificationAsync(formatScrapeErrorMessage(row.name, freshReasons));
-        for (const reason of freshReasons)
-          stmtUpsertScrapeErrorAlert(database).run(normalizeScrapeErrorReason(reason), now());
-      } catch (err) {
-        summary.errors.push(`Scrape-error notification failed: ${(err as Error).message}`);
-      }
     }
   }
 
@@ -330,7 +351,7 @@ async function processSavedSearchAsync(
           aiFilterPrompt,
           cooldownStore,
           undefined,
-          (message) => summary.errors.push(`AI filter: ${message}`)
+          (message) => summary.errors.push({ kind: 'ai-filter', message: `AI filter: ${message}` })
         ),
         AI_FILTER_TIMEOUT_MS,
         'AI filter batch run'
@@ -339,7 +360,10 @@ async function processSavedSearchAsync(
       // Mirrors the per-batch error path in runAiFilterBatchesAsync: none of
       // these candidates are treated as having passed, so nothing is
       // notified on unverified AI judgement rather than risking false alerts.
-      summary.errors.push(`AI filter timed out: ${(err as Error).message}`);
+      summary.errors.push({
+        kind: 'ai-filter',
+        message: `AI filter timed out: ${(err as Error).message}`,
+      });
       results = [];
     }
     const passedUrls = new Set(results.filter((result) => result.pass).map((result) => result.url));
@@ -361,9 +385,10 @@ async function processSavedSearchAsync(
       // the URLs that happened to succeed — otherwise, the next time the
       // failed URL succeeds, every listing on it would look "new" (never
       // baselined) and flood out as individual notifications.
-      summary.errors.push(
-        `Population run incomplete — ${scrapeFailureReasons.length} URL(s) failed; retrying full baseline next run`
-      );
+      summary.errors.push({
+        kind: 'scrape',
+        message: `Population run incomplete — ${scrapeFailureReasons.length} URL(s) failed; retrying full baseline next run`,
+      });
       console.log(
         `[scheduler] "${row.name}": population run incomplete — ${scrapeFailureReasons.length} URL(s) failed, retrying next tick`
       );
@@ -400,7 +425,10 @@ async function processSavedSearchAsync(
         `Notify loop for "${row.name}"`
       );
     } catch (err) {
-      summary.errors.push(`Notify loop timed out: ${(err as Error).message}`);
+      summary.errors.push({
+        kind: 'notify',
+        message: `Notify loop timed out: ${(err as Error).message}`,
+      });
     }
     if (summary.notifiedCount === 0) {
       console.log(`[scheduler] "${row.name}": no new listings found`);
@@ -408,6 +436,92 @@ async function processSavedSearchAsync(
   }
 
   return summary;
+}
+
+// Sends a Signal alert and swallows any failure into summary.errors instead
+// of letting it propagate — mirrors the per-listing pattern in
+// notifyNewListingsAsync above. Called after `succeeded`/`detail` are already
+// decided, so a failed send here can't retroactively change what this run's
+// outcome was, only whether the exit code (via summary.errors) reflects that
+// the alert itself didn't go out.
+async function sendAlertSafelyAsync(
+  message: string,
+  summary: SavedSearchRunSummary,
+  deps: Required<SchedulerDeps>
+): Promise<void> {
+  try {
+    await withTimeoutAsync(
+      deps.sendNotificationAsync(message),
+      STATUS_ALERT_TIMEOUT_MS,
+      'Status alert notification'
+    );
+  } catch (err) {
+    summary.errors.push({
+      kind: 'notify',
+      message: `Status notification failed: ${(err as Error).message}`,
+    });
+  }
+}
+
+// Single choke point for "did this saved search's run succeed or fail, and
+// does that change from last time warrant a Signal alert" — covers every
+// failure mode processSavedSearchAsync can produce, plus the catch-all
+// "Unhandled error" case, since both flow through the same `summary` shape
+// by the time this runs. Alerts only on the success→failure and
+// failure→success edges, with one exception: the *same* normalized failure
+// persisting re-alerts after FAILURE_REALERT_MS so a standing issue doesn't
+// go silent indefinitely between the initial alert and its eventual fix.
+async function recordSavedSearchRunStatusAndAlertAsync(
+  row: SavedSearchRow,
+  summary: SavedSearchRunSummary,
+  deps: Required<SchedulerDeps>
+): Promise<void> {
+  // Notify-kind errors (a flaky Signal send) are excluded from health: they
+  // mean delivery hiccuped, not that this saved search's scrape/filter is
+  // broken, and are already retried next run without needing a failure
+  // alert of their own (see notifyNewListingsAsync/sendAlertSafelyAsync).
+  const healthErrors = summary.errors.filter((error) => error.kind !== 'notify');
+  const succeeded = healthErrors.length === 0;
+  const detail = succeeded
+    ? null
+    : healthErrors
+        .map((error) => error.message)
+        .join('\n')
+        .slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+
+  if (succeeded) {
+    if (row.last_run_succeeded === 0) {
+      await sendAlertSafelyAsync(formatSearchRecoveredMessage(row.name), summary, deps);
+    }
+    stmtUpdateSavedSearchRunStatus(deps.database).run(1, null, null, row.id);
+    return;
+  }
+
+  const isSameFailureAsLastRun =
+    row.last_run_succeeded === 0 &&
+    buildFailureComparisonKey((row.last_run_detail ?? '').split('\n').filter(Boolean)) ===
+      buildFailureComparisonKey(healthErrors.map((error) => error.message));
+  const isWithinReAlertWindow =
+    isSameFailureAsLastRun &&
+    row.last_failure_alerted_at !== null &&
+    deps.now() - row.last_failure_alerted_at < FAILURE_REALERT_MS;
+
+  if (isWithinReAlertWindow) {
+    stmtUpdateSavedSearchRunStatus(deps.database).run(
+      0,
+      detail,
+      row.last_failure_alerted_at,
+      row.id
+    );
+    return;
+  }
+
+  const failingMessage = formatSearchFailingMessage(
+    row.name,
+    healthErrors.map((error) => error.message)
+  ).slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+  await sendAlertSafelyAsync(failingMessage, summary, deps);
+  stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);
 }
 
 async function runOneSavedSearchAsync(
@@ -432,9 +546,10 @@ async function runOneSavedSearchAsync(
       alreadyAlertedCount: 0,
       notifiedCount: 0,
       populatedCount: 0,
-      errors: [`Unhandled error: ${(err as Error).message}`],
+      errors: [{ kind: 'unhandled', message: `Unhandled error: ${(err as Error).message}` }],
     };
   }
+  await recordSavedSearchRunStatusAndAlertAsync(row, summary, deps);
   stmtUpdateSavedSearchLastRunAt(deps.database).run(deps.now(), row.id);
   return summary;
 }
@@ -474,6 +589,7 @@ export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerS
 export type ImmediatePopulationRunDeps = {
   database: Database.Database;
   cooldownStore: ProviderCooldownStore;
+  sendNotificationAsync?: SchedulerNotifier;
 };
 
 // Forces a fresh, silent population pass for one specific saved search,
@@ -501,7 +617,7 @@ export async function runImmediatePopulationRunAsync(
     const resolvedDeps: Required<SchedulerDeps> = {
       database: deps.database,
       cooldownStore: deps.cooldownStore,
-      sendNotificationAsync: sendSignalNotificationAsync,
+      sendNotificationAsync: deps.sendNotificationAsync ?? sendSignalNotificationAsync,
       now: () => Date.now(),
       targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
       maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
@@ -514,6 +630,7 @@ export async function runImmediatePopulationRunAsync(
       console.log(
         `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
       );
+      await recordSavedSearchRunStatusAndAlertAsync(row, summary, resolvedDeps);
     } catch (err) {
       // Mirrors runOneSavedSearchAsync's batch-path handling: last_run_at
       // below still needs to advance even on a synchronous throw (e.g.
@@ -522,6 +639,22 @@ export async function runImmediatePopulationRunAsync(
       // attempt was made.
       console.error(
         `[scheduler] "${row.name}": immediate population run failed: ${(err as Error).message}`
+      );
+      await recordSavedSearchRunStatusAndAlertAsync(
+        row,
+        {
+          savedSearchId: row.id,
+          savedSearchName: row.name,
+          isPopulationRun: true,
+          listingsFoundCount: 0,
+          soldSkippedCount: 0,
+          aiFilteredOutCount: 0,
+          alreadyAlertedCount: 0,
+          notifiedCount: 0,
+          populatedCount: 0,
+          errors: [{ kind: 'unhandled', message: `Unhandled error: ${(err as Error).message}` }],
+        },
+        resolvedDeps
       );
     }
     stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
@@ -544,4 +677,24 @@ export function triggerImmediatePopulationRunAsync(
       `[scheduler] immediate population run for ${savedSearchId} failed: ${(err as Error).message}`
     );
   });
+}
+
+// A single search hitting a notify error is just as likely to be one flaky
+// send as anything systemic — recordSavedSearchRunStatusAndAlertAsync already
+// excludes that from health. But several independent searches hitting a
+// notify error in the very same tick is a much stronger signal that Signal
+// delivery itself (not any one search) is broken — and that's exactly the
+// failure mode a Signal-based alert can never report on its own. This lets
+// scripts/scheduler.ts escalate that case through the exit-code path instead,
+// which pages independently of whether Signal delivery is working.
+export const MIN_SEARCHES_FOR_SYSTEMIC_NOTIFY_FAILURE = 2;
+
+// Pure decision, no I/O — scripts/scheduler.ts's main() uses this for the
+// process exit code while still logging every individual error itself.
+export function determineExitCode(summary: SchedulerSummary): number {
+  const searchesWithNotifyErrorCount = summary.searches.filter((search) =>
+    search.errors.some((error) => error.kind === 'notify')
+  ).length;
+  if (searchesWithNotifyErrorCount >= MIN_SEARCHES_FOR_SYSTEMIC_NOTIFY_FAILURE) return 2;
+  return summary.searches.some((search) => search.errors.length > 0) ? 1 : 0;
 }
