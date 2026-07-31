@@ -1784,7 +1784,7 @@ describe('runImmediatePopulationRunAsync', () => {
     if (lockPath && fs.existsSync(lockPath)) fs.rmSync(lockPath);
   });
 
-  it('redoes the population pass even when has_completed_population_run is already 1, without notifying', async () => {
+  it('redoes the population pass even when has_completed_population_run is already 1, sending one setup-success alert but no per-listing alerts', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -1808,10 +1808,13 @@ describe('runImmediatePopulationRunAsync', () => {
       lockPath
     );
 
-    // Redone as a silent population pass: no notification, both listings
-    // recorded (the pre-existing one via INSERT OR IGNORE, left untouched;
-    // the new one added silently), flag still set.
-    expect(sendNotificationAsync).not.toHaveBeenCalled();
+    // Redone as a silent population pass: no per-listing notification, both
+    // listings recorded (the pre-existing one via INSERT OR IGNORE, left
+    // untouched; the new one added silently), flag still set — but the
+    // immediate trigger itself sends one "alerts are set up" confirmation.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).not.toContain('New chair');
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Alerts set up');
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
     expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
   });
@@ -1834,7 +1837,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1854,7 +1857,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1903,7 +1906,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1926,7 +1929,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       'search-corrupt',
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1947,7 +1950,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       'search-corrupt',
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 

@@ -307,6 +307,21 @@ export function stmtMarkPopulationRunComplete(database: Database.Database) {
     'UPDATE saved_searches SET has_completed_population_run = 1 WHERE id = ?'
   );
 }
+// Synchronous counterpart to stmtMarkPopulationRunComplete, called the moment
+// alerts are (re-)enabled or an already alert-on search's urls/aiFilter
+// change (see routes/savedSearches.ts). Without this, a search that already
+// completed one population run keeps has_completed_population_run = 1 in the
+// DB until the fire-and-forget immediate population run (scheduler.ts)
+// finishes — if that background job is deferred (scheduler lock held by a
+// real cron tick) or just hasn't finished yet, a real tick can read the
+// stale flag first, wrongly treat the never-actually-rebaselined
+// configuration as fully baselined, and notify on every currently matching
+// listing at once.
+export function stmtResetSavedSearchPopulationRun(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET has_completed_population_run = 0 WHERE id = ?'
+  );
+}
 export function stmtCountAlertsForSavedSearch(database: Database.Database) {
   return database.prepare<[string], CountRow>(
     'SELECT COUNT(*) as n FROM alerted_listings WHERE saved_search_id = ?'

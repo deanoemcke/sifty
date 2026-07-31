@@ -35,6 +35,8 @@ import {
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
 import {
   formatAlertMessage,
+  formatAlertSetupFailedMessage,
+  formatAlertSetupSuccessMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
 } from './signalMessage';
@@ -492,10 +494,19 @@ async function sendAlertSafelyAsync(
 // failure→success edges, with one exception: the *same* normalized failure
 // persisting re-alerts after FAILURE_REALERT_MS so a standing issue doesn't
 // go silent indefinitely between the initial alert and its eventual fix.
+//
+// `isImmediateSetupRun` marks the one other case that always alerts on
+// success too: the immediate population run triggered by turning a saved
+// search's alert checkbox on (or editing an already alert-on search) — see
+// runImmediatePopulationRunAsync below. Regular scheduler ticks leave this
+// false, so a saved search's *first* (silent) population run via the normal
+// cron rotation still doesn't notify — only the user-triggered "set up my
+// alert" moment does.
 async function recordSavedSearchRunStatusAndAlertAsync(
   row: SavedSearchRow,
   summary: SavedSearchRunSummary,
-  deps: Required<SchedulerDeps>
+  deps: Required<SchedulerDeps>,
+  options: { isImmediateSetupRun?: boolean } = {}
 ): Promise<void> {
   // Notify-kind errors (a flaky Signal send) are excluded from health: they
   // mean delivery hiccuped, not that this saved search's scrape/filter is
@@ -511,7 +522,13 @@ async function recordSavedSearchRunStatusAndAlertAsync(
         .slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
   if (succeeded) {
-    if (row.last_run_succeeded === 0) {
+    if (options.isImmediateSetupRun && summary.isPopulationRun) {
+      await sendAlertSafelyAsync(
+        formatAlertSetupSuccessMessage(row.name, summary.populatedCount),
+        summary,
+        deps
+      );
+    } else if (row.last_run_succeeded === 0) {
       await sendAlertSafelyAsync(formatSearchRecoveredMessage(row.name), summary, deps);
     }
     stmtUpdateSavedSearchRunStatus(deps.database).run(1, null, null, row.id);
@@ -537,9 +554,16 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     return;
   }
 
-  const failingMessage = formatSearchFailingMessage(
-    row.name,
-    healthErrors.map((error) => error.message)
+  const failingMessage = (
+    options.isImmediateSetupRun
+      ? formatAlertSetupFailedMessage(
+          row.name,
+          healthErrors.map((error) => error.message)
+        )
+      : formatSearchFailingMessage(
+          row.name,
+          healthErrors.map((error) => error.message)
+        )
   ).slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);
@@ -651,7 +675,9 @@ export async function runImmediatePopulationRunAsync(
       console.log(
         `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
       );
-      await recordSavedSearchRunStatusAndAlertAsync(row, summary, resolvedDeps);
+      await recordSavedSearchRunStatusAndAlertAsync(row, summary, resolvedDeps, {
+        isImmediateSetupRun: true,
+      });
     } catch (err) {
       // Mirrors runOneSavedSearchAsync's batch-path handling: last_run_at
       // below still needs to advance even on a synchronous throw (e.g.
@@ -675,7 +701,8 @@ export async function runImmediatePopulationRunAsync(
           populatedCount: 0,
           errors: [{ kind: 'unhandled', message: `Unhandled error: ${(err as Error).message}` }],
         },
-        resolvedDeps
+        resolvedDeps,
+        { isImmediateSetupRun: true }
       );
     }
     stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);
