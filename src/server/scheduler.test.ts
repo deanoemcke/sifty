@@ -21,6 +21,8 @@ import {
   stmtCountAlertsForSavedSearch,
   stmtGetSavedSearch,
   stmtInsertSavedSearch,
+  stmtMarkAlertSetupNotificationPending,
+  stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
@@ -1763,6 +1765,54 @@ describe('runSchedulerAsync', () => {
     // which succeeded — because the population run as a whole retries next
     // tick rather than partially completing.
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+  });
+
+  // Regression coverage for the success/failure "setup moment" gate staying
+  // in sync: alert_setup_notification_pending can in principle still be set
+  // on a row whose population run has already completed by the time it's
+  // finally consumed (e.g. a cron tick that fetched the row just before the
+  // pending flag was written misses it, and the *next* tick to see the flag
+  // is an ordinary post-population run). That run is not a genuine
+  // "finishing alert setup" moment, so neither the success nor the failure
+  // branch should use the setup-specific message for it — both must agree.
+  it('does not use the setup-failure message for an ordinary run that merely has a stale pending setup flag and is not itself a population run', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    stmtMarkPopulationRunComplete(db).run(searchId);
+    stmtMarkAlertSetupNotificationPending(db).run(searchId);
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', []));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).not.toContain("Couldn't set up alerts");
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Scrape error');
+  });
+
+  it('does not use the setup-success message for an ordinary run that merely has a stale pending setup flag and is not itself a population run', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    stmtMarkPopulationRunComplete(db).run(searchId);
+    stmtMarkAlertSetupNotificationPending(db).run(searchId);
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // No listings, no prior failure to recover from, and this run is not a
+    // population run — nothing should be sent, and in particular not an
+    // "Alerts set up" confirmation claiming a baseline that was never taken
+    // this run.
+    expect(sendNotificationAsync).not.toHaveBeenCalled();
   });
 });
 

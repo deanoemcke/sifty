@@ -513,16 +513,31 @@ async function sendAlertSafelyAsync(
 // carries the "this row still owes the user a setup confirmation" intent
 // forward onto the DB row itself, so whichever run eventually processes this
 // saved search next — a deferred retry or an ordinary due-search tick —
-// still counts as the setup moment. Consumed (cleared) here the moment it's
-// read, so a later run can't see the same flag and resend the confirmation.
+// still counts as the setup moment, *provided that run is itself still a
+// population run*: the pending flag can outlive that guarantee (e.g. a cron
+// tick fetched the row just before the flag was written, missed it, and
+// completed the population run anyway — the next tick to see the flag is
+// then an ordinary post-population run, not a genuine setup moment), so
+// isSetupMoment below also requires summary.isPopulationRun. Consumed
+// (cleared) here the moment the flag is read, regardless of that check, so a
+// later run can't see the same flag and resend the confirmation.
 async function recordSavedSearchRunStatusAndAlertAsync(
   row: SavedSearchRow,
   summary: SavedSearchRunSummary,
   deps: Required<SchedulerDeps>,
   options: { isImmediateSetupRun?: boolean } = {}
 ): Promise<void> {
+  // Both success and failure below key off this single flag so they can
+  // never disagree — see the comment above this function for why the pending
+  // flag alone isn't enough: it can still be true on a row whose population
+  // run already completed (e.g. a cron tick fetched the row just before the
+  // flag was written, missed it, and the next tick to consume it is an
+  // ordinary post-population run) so isSetupMoment also requires
+  // summary.isPopulationRun, matching the guarantee that holds at both of
+  // runImmediatePopulationRunAsync's own call sites.
   const isSetupMoment =
-    options.isImmediateSetupRun === true || row.alert_setup_notification_pending === 1;
+    (options.isImmediateSetupRun === true || row.alert_setup_notification_pending === 1) &&
+    summary.isPopulationRun;
   if (row.alert_setup_notification_pending === 1) {
     stmtClearAlertSetupNotificationPending(deps.database).run(row.id);
   }
@@ -541,7 +556,7 @@ async function recordSavedSearchRunStatusAndAlertAsync(
         .slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
   if (succeeded) {
-    if (isSetupMoment && summary.isPopulationRun) {
+    if (isSetupMoment) {
       await sendAlertSafelyAsync(
         formatAlertSetupSuccessMessage(row.name, summary.populatedCount),
         summary,
