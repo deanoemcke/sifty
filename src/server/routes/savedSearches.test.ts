@@ -61,6 +61,10 @@ vi.mock('../db', () => {
     );
   }
 
+  function stmtResetSavedSearchPopulationRun(db: Database.Database) {
+    return db.prepare('UPDATE saved_searches SET has_completed_population_run = 0 WHERE id = ?');
+  }
+
   return {
     getDb,
     isUniqueConstraintViolation,
@@ -71,6 +75,7 @@ vi.mock('../db', () => {
     stmtDeleteSavedSearch,
     stmtUpdateSavedSearchAlert,
     stmtUpdateSavedSearch,
+    stmtResetSavedSearchPopulationRun,
   };
 });
 
@@ -108,13 +113,14 @@ function initTestDb(): void {
   const db = new Database(':memory:');
   db.exec(`
     CREATE TABLE saved_searches (
-      id                           TEXT PRIMARY KEY,
-      name                         TEXT NOT NULL,
-      urls                         TEXT NOT NULL,
-      discover_inputs              TEXT,
-      ai_filter                    TEXT,
-      created_at                   INTEGER NOT NULL,
-      should_alert_on_new_listings INTEGER NOT NULL DEFAULT 0
+      id                            TEXT PRIMARY KEY,
+      name                          TEXT NOT NULL,
+      urls                          TEXT NOT NULL,
+      discover_inputs               TEXT,
+      ai_filter                     TEXT,
+      created_at                    INTEGER NOT NULL,
+      should_alert_on_new_listings  INTEGER NOT NULL DEFAULT 0,
+      has_completed_population_run  INTEGER NOT NULL DEFAULT 0
     );
     CREATE UNIQUE INDEX idx_saved_searches_name ON saved_searches(name);
   `);
@@ -569,6 +575,56 @@ describe('handlePatchSavedSearch', () => {
 
     expect(triggerImmediatePopulationRunAsync).not.toHaveBeenCalled();
   });
+
+  it('resets has_completed_population_run to 0 synchronously when patched to shouldAlertOnNewListings true, even if a prior population run already completed', async () => {
+    // Regression test: this reset must happen synchronously in the same
+    // request, not only via the fire-and-forget immediate population run —
+    // otherwise a real scheduler tick that reads the row before that
+    // background job finishes (or if it's deferred because the scheduler
+    // lock is held) would see the stale "already populated" flag and
+    // flood-notify on every currently matching listing instead of silently
+    // rebaselining.
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Re-toggle search',
+      urls: ['https://www.trademe.co.nz/a/x'],
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+    // Simulate a saved search that already completed a population run in the past
+    // (e.g. alerts were on, then toggled off, and are now being toggled back on).
+    requireTestDb()
+      .prepare('UPDATE saved_searches SET has_completed_population_run = 1 WHERE id = ?')
+      .run(id);
+
+    vi.mocked(readBody).mockResolvedValue({ shouldAlertOnNewListings: true });
+    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
+
+    const row = requireTestDb()
+      .prepare('SELECT has_completed_population_run FROM saved_searches WHERE id = ?')
+      .get(id) as { has_completed_population_run: number };
+    expect(row.has_completed_population_run).toBe(0);
+  });
+
+  it('does not reset has_completed_population_run when patched to shouldAlertOnNewListings false', async () => {
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Turning off',
+      urls: ['https://www.trademe.co.nz/a/x'],
+      shouldAlertOnNewListings: true,
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+    requireTestDb()
+      .prepare('UPDATE saved_searches SET has_completed_population_run = 1 WHERE id = ?')
+      .run(id);
+
+    vi.mocked(readBody).mockResolvedValue({ shouldAlertOnNewListings: false });
+    await handlePatchSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
+
+    const row = requireTestDb()
+      .prepare('SELECT has_completed_population_run FROM saved_searches WHERE id = ?')
+      .get(id) as { has_completed_population_run: number };
+    expect(row.has_completed_population_run).toBe(1);
+  });
 });
 
 describe('handleUpdateSavedSearch', () => {
@@ -726,5 +782,33 @@ describe('handleUpdateSavedSearch', () => {
     await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
 
     expect(triggerImmediatePopulationRunAsync).not.toHaveBeenCalled();
+  });
+
+  it('resets has_completed_population_run to 0 synchronously when overwriting a saved search whose alerts are already on', async () => {
+    // Regression test mirroring the PATCH case above: editing an already
+    // alert-on search's urls/aiFilter must durably clear the stale
+    // "already populated" flag in the same request, not only rely on the
+    // fire-and-forget immediate population run finishing first.
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Alerts on, editing',
+      urls: ['https://www.trademe.co.nz/a/x'],
+      shouldAlertOnNewListings: true,
+    });
+    await handleCreateSavedSearch(makeResponse() as never, makeResponse(), STUB_COOLDOWN_STORE);
+    const { id } = vi.mocked(sendJSON).mock.calls[0][2] as { id: string };
+    requireTestDb()
+      .prepare('UPDATE saved_searches SET has_completed_population_run = 1 WHERE id = ?')
+      .run(id);
+
+    vi.mocked(readBody).mockResolvedValue({
+      name: 'Alerts on, editing',
+      urls: ['https://www.trademe.co.nz/a/y'],
+    });
+    await handleUpdateSavedSearch(makeResponse() as never, makeResponse(), id, STUB_COOLDOWN_STORE);
+
+    const row = requireTestDb()
+      .prepare('SELECT has_completed_population_run FROM saved_searches WHERE id = ?')
+      .get(id) as { has_completed_population_run: number };
+    expect(row.has_completed_population_run).toBe(0);
   });
 });

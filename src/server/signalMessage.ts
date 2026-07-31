@@ -60,3 +60,29 @@ export function formatSearchFailingMessage(savedSearchName: string, errors: stri
 export function formatSearchRecoveredMessage(savedSearchName: string): string {
   return `✅ ${escapeSignalMarkdown(savedSearchName)} is working again`;
 }
+
+// Sent once, right when a saved search's alert finishes being set up — i.e.
+// the immediate, silent population run triggered by turning the alert
+// checkbox on (or editing an already alert-on search) completes
+// successfully. Distinct from formatSearchRecoveredMessage, which only
+// covers a previously-*failing* search recovering, not this first-time
+// "your alert is now live" confirmation.
+export function formatAlertSetupSuccessMessage(
+  savedSearchName: string,
+  baselineListingCount: number
+): string {
+  const escapedName = escapeSignalMarkdown(savedSearchName);
+  return `✅ Alerts set up for "${escapedName}" — recorded ${baselineListingCount} existing listing(s) as the starting point. You'll be notified about new ones from here.`;
+}
+
+// Counterpart failure message for the same "just finished setting up alerts"
+// moment — distinguishes a setup failure from formatSearchFailingMessage's
+// ongoing steady-state scrape-failure alert, even though both share the same
+// underlying error shape.
+export function formatAlertSetupFailedMessage(savedSearchName: string, errors: string[]): string {
+  const escapedName = escapeSignalMarkdown(savedSearchName);
+  return [
+    `⚠️ Couldn't set up alerts for "${escapedName}":`,
+    ...[...new Set(errors)].map((error) => `- ${escapeSignalMarkdown(error)}`),
+  ].join('\n');
+}

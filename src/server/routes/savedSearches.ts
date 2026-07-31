@@ -16,6 +16,7 @@ import {
   stmtGetSavedSearchByName,
   stmtInsertSavedSearch,
   stmtListSavedSearches,
+  stmtResetSavedSearchPopulationRun,
   stmtUpdateSavedSearch,
   stmtUpdateSavedSearchAlert,
 } from '../db';
@@ -176,6 +177,13 @@ export async function handlePatchSavedSearch(
 
   stmtUpdateSavedSearchAlert(database).run(shouldAlertOnNewListings ? 1 : 0, id);
   if (shouldAlertOnNewListings) {
+    // Reset synchronously, not just via the immediate population run below —
+    // if this search already completed a population run before (e.g.
+    // alerts were toggled off then on again), has_completed_population_run
+    // would otherwise stay stale at 1 until that fire-and-forget run
+    // finishes, and a real scheduler tick that beats it would flood-notify
+    // on every currently matching listing instead of silently rebaselining.
+    stmtResetSavedSearchPopulationRun(database).run(id);
     triggerImmediatePopulationRunAsync(id, { database, cooldownStore });
   }
   sendJSON(response, 200, { ok: true });
@@ -221,8 +229,11 @@ export async function handleUpdateSavedSearch(
     // PUT never changes should_alert_on_new_listings itself (only PATCH
     // does) — this re-checks the value already fetched above, so overwriting
     // a search that already has alerts on redoes its baseline for the
-    // (possibly changed) urls/aiFilter.
+    // (possibly changed) urls/aiFilter. The synchronous reset (not just the
+    // immediate run below) is what makes that redo durable even if the
+    // immediate run is deferred or slow — see stmtResetSavedSearchPopulationRun.
     if (row.should_alert_on_new_listings) {
+      stmtResetSavedSearchPopulationRun(database).run(id);
       triggerImmediatePopulationRunAsync(id, { database, cooldownStore });
     }
     sendJSON(response, 200, { ok: true });

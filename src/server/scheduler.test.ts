@@ -21,6 +21,8 @@ import {
   stmtCountAlertsForSavedSearch,
   stmtGetSavedSearch,
   stmtInsertSavedSearch,
+  stmtMarkAlertSetupNotificationPending,
+  stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
@@ -1764,6 +1766,54 @@ describe('runSchedulerAsync', () => {
     // tick rather than partially completing.
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
   });
+
+  // Regression coverage for the success/failure "setup moment" gate staying
+  // in sync: alert_setup_notification_pending can in principle still be set
+  // on a row whose population run has already completed by the time it's
+  // finally consumed (e.g. a cron tick that fetched the row just before the
+  // pending flag was written misses it, and the *next* tick to see the flag
+  // is an ordinary post-population run). That run is not a genuine
+  // "finishing alert setup" moment, so neither the success nor the failure
+  // branch should use the setup-specific message for it — both must agree.
+  it('does not use the setup-failure message for an ordinary run that merely has a stale pending setup flag and is not itself a population run', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    stmtMarkPopulationRunComplete(db).run(searchId);
+    stmtMarkAlertSetupNotificationPending(db).run(searchId);
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', []));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).not.toContain("Couldn't set up alerts");
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Scrape error');
+  });
+
+  it('does not use the setup-success message for an ordinary run that merely has a stale pending setup flag and is not itself a population run', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    stmtMarkPopulationRunComplete(db).run(searchId);
+    stmtMarkAlertSetupNotificationPending(db).run(searchId);
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // No listings, no prior failure to recover from, and this run is not a
+    // population run — nothing should be sent, and in particular not an
+    // "Alerts set up" confirmation claiming a baseline that was never taken
+    // this run.
+    expect(sendNotificationAsync).not.toHaveBeenCalled();
+  });
 });
 
 function tempLockPath(): string {
@@ -1784,7 +1834,7 @@ describe('runImmediatePopulationRunAsync', () => {
     if (lockPath && fs.existsSync(lockPath)) fs.rmSync(lockPath);
   });
 
-  it('redoes the population pass even when has_completed_population_run is already 1, without notifying', async () => {
+  it('redoes the population pass even when has_completed_population_run is already 1, sending one setup-success alert but no per-listing alerts', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -1808,10 +1858,13 @@ describe('runImmediatePopulationRunAsync', () => {
       lockPath
     );
 
-    // Redone as a silent population pass: no notification, both listings
-    // recorded (the pre-existing one via INSERT OR IGNORE, left untouched;
-    // the new one added silently), flag still set.
-    expect(sendNotificationAsync).not.toHaveBeenCalled();
+    // Redone as a silent population pass: no per-listing notification, both
+    // listings recorded (the pre-existing one via INSERT OR IGNORE, left
+    // untouched; the new one added silently), flag still set — but the
+    // immediate trigger itself sends one "alerts are set up" confirmation.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).not.toContain('New chair');
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Alerts set up');
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
     expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
   });
@@ -1834,7 +1887,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1854,14 +1907,14 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
     expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).not.toBeNull();
   });
 
-  it('resolves without touching the DB row when the lock is already held', async () => {
+  it('resolves without running a population pass when the lock is already held, but marks the setup notification as pending so a later run still sends it', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
@@ -1880,6 +1933,10 @@ describe('runImmediatePopulationRunAsync', () => {
 
     expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+    // Deferring must not silently drop the setup confirmation forever (see
+    // recordSavedSearchRunStatusAndAlertAsync) — the row is marked pending
+    // so whichever run processes it next still sends one.
+    expect(stmtGetSavedSearch(db).get(searchId)?.alert_setup_notification_pending).toBe(1);
   });
 
   it('resolves without throwing when the saved search no longer exists', async () => {
@@ -1903,7 +1960,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1926,7 +1983,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       'search-corrupt',
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1947,7 +2004,7 @@ describe('runImmediatePopulationRunAsync', () => {
 
     await runImmediatePopulationRunAsync(
       'search-corrupt',
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -1996,6 +2053,59 @@ describe('runImmediatePopulationRunAsync', () => {
     const row = stmtGetSavedSearch(db).get('search-corrupt');
     expect(row?.last_run_succeeded).toBe(0);
     expect(row?.last_run_detail).toContain('Unhandled error');
+  });
+
+  it('still sends the "Alerts set up" confirmation via the next scheduler tick when the immediate run is deferred by a contended lock, and does not resend it once consumed', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    // Simulate the lock already held by a real cron tick in progress.
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, String(process.pid));
+
+    const deferredSendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    await runImmediatePopulationRunAsync(
+      searchId,
+      {
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: deferredSendNotificationAsync,
+      },
+      lockPath
+    );
+
+    // Deferred: no notification sent yet, no run recorded — matches the
+    // pre-existing "defers gracefully" contract.
+    expect(deferredSendNotificationAsync).not.toHaveBeenCalled();
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+
+    // The cron tick that was holding the lock finishes and releases it; the
+    // next real tick then picks this saved search up as an ordinary due
+    // population run — isImmediateSetupRun is never set on this path.
+    fs.rmSync(lockPath);
+    const tickSendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: tickSendNotificationAsync,
+    });
+
+    // The setup confirmation still arrives — carried forward by the pending
+    // flag set at deferral time, not by isImmediateSetupRun.
+    expect(tickSendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(tickSendNotificationAsync.mock.calls[0][0]).toContain('Alerts set up');
+
+    // Consumed: a later tick that reprocesses the same (now-populated)
+    // search must not resend the confirmation a second time.
+    tickSendNotificationAsync.mockClear();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: tickSendNotificationAsync,
+    });
+    expect(tickSendNotificationAsync).not.toHaveBeenCalled();
   });
 });
 
@@ -2060,7 +2170,7 @@ describe('triggerImmediatePopulationRunAsync', () => {
 
     const returnValue = triggerImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -2108,12 +2218,12 @@ describe('triggerImmediatePopulationRunAsync', () => {
     // acquireSchedulerLock uses sync fs calls (schedulerLock.ts).
     triggerImmediatePopulationRunAsync(
       searchAId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
     triggerImmediatePopulationRunAsync(
       searchBId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
     // Let both fire-and-forget runs progress to their next suspension point.

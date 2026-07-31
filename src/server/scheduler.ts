@@ -9,11 +9,13 @@ import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import {
   type SavedSearchRow,
+  stmtClearAlertSetupNotificationPending,
   stmtCountDueAlertEnabledSavedSearches,
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
+  stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
   stmtUpdateSavedSearchRunStatus,
@@ -35,6 +37,8 @@ import {
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
 import {
   formatAlertMessage,
+  formatAlertSetupFailedMessage,
+  formatAlertSetupSuccessMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
 } from './signalMessage';
@@ -492,11 +496,52 @@ async function sendAlertSafelyAsync(
 // failure→success edges, with one exception: the *same* normalized failure
 // persisting re-alerts after FAILURE_REALERT_MS so a standing issue doesn't
 // go silent indefinitely between the initial alert and its eventual fix.
+//
+// `isImmediateSetupRun` marks the one other case that always alerts on
+// success too: the immediate population run triggered by turning a saved
+// search's alert checkbox on (or editing an already alert-on search) — see
+// runImmediatePopulationRunAsync below. Regular scheduler ticks leave this
+// false, so a saved search's *first* (silent) population run via the normal
+// cron rotation still doesn't notify — only the user-triggered "set up my
+// alert" moment does.
+//
+// `row.alert_setup_notification_pending` covers the case where that
+// user-triggered moment couldn't run at all: runImmediatePopulationRunAsync
+// only gets one lock-acquisition attempt, and if a real cron tick already
+// holds the lock it defers and never runs again — isImmediateSetupRun is
+// never set for the row again either. stmtMarkAlertSetupNotificationPending
+// carries the "this row still owes the user a setup confirmation" intent
+// forward onto the DB row itself, so whichever run eventually processes this
+// saved search next — a deferred retry or an ordinary due-search tick —
+// still counts as the setup moment, *provided that run is itself still a
+// population run*: the pending flag can outlive that guarantee (e.g. a cron
+// tick fetched the row just before the flag was written, missed it, and
+// completed the population run anyway — the next tick to see the flag is
+// then an ordinary post-population run, not a genuine setup moment), so
+// isSetupMoment below also requires summary.isPopulationRun. Consumed
+// (cleared) here the moment the flag is read, regardless of that check, so a
+// later run can't see the same flag and resend the confirmation.
 async function recordSavedSearchRunStatusAndAlertAsync(
   row: SavedSearchRow,
   summary: SavedSearchRunSummary,
-  deps: Required<SchedulerDeps>
+  deps: Required<SchedulerDeps>,
+  options: { isImmediateSetupRun?: boolean } = {}
 ): Promise<void> {
+  // Both success and failure below key off this single flag so they can
+  // never disagree — see the comment above this function for why the pending
+  // flag alone isn't enough: it can still be true on a row whose population
+  // run already completed (e.g. a cron tick fetched the row just before the
+  // flag was written, missed it, and the next tick to consume it is an
+  // ordinary post-population run) so isSetupMoment also requires
+  // summary.isPopulationRun, matching the guarantee that holds at both of
+  // runImmediatePopulationRunAsync's own call sites.
+  const isSetupMoment =
+    (options.isImmediateSetupRun === true || row.alert_setup_notification_pending === 1) &&
+    summary.isPopulationRun;
+  if (row.alert_setup_notification_pending === 1) {
+    stmtClearAlertSetupNotificationPending(deps.database).run(row.id);
+  }
+
   // Notify-kind errors (a flaky Signal send) are excluded from health: they
   // mean delivery hiccuped, not that this saved search's scrape/filter is
   // broken, and are already retried next run without needing a failure
@@ -511,7 +556,13 @@ async function recordSavedSearchRunStatusAndAlertAsync(
         .slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
   if (succeeded) {
-    if (row.last_run_succeeded === 0) {
+    if (isSetupMoment) {
+      await sendAlertSafelyAsync(
+        formatAlertSetupSuccessMessage(row.name, summary.populatedCount),
+        summary,
+        deps
+      );
+    } else if (row.last_run_succeeded === 0) {
       await sendAlertSafelyAsync(formatSearchRecoveredMessage(row.name), summary, deps);
     }
     stmtUpdateSavedSearchRunStatus(deps.database).run(1, null, null, row.id);
@@ -537,9 +588,16 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     return;
   }
 
-  const failingMessage = formatSearchFailingMessage(
-    row.name,
-    healthErrors.map((error) => error.message)
+  const failingMessage = (
+    isSetupMoment
+      ? formatAlertSetupFailedMessage(
+          row.name,
+          healthErrors.map((error) => error.message)
+        )
+      : formatSearchFailingMessage(
+          row.name,
+          healthErrors.map((error) => error.message)
+        )
   ).slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);
@@ -619,7 +677,13 @@ export type ImmediatePopulationRunDeps = {
 // INSERT OR IGNORE). Reuses the same file lock as scripts/scheduler.ts so
 // this can never run concurrently with a real cron pass; if the lock is
 // already held, this defers gracefully (cron will pick the search up on its
-// own rotation) rather than retrying.
+// own rotation) rather than retrying — but first marks the row as owing a
+// setup confirmation (stmtMarkAlertSetupNotificationPending), so whichever
+// run eventually processes it still sends one instead of the deferral
+// silently dropping it forever (see recordSavedSearchRunStatusAndAlertAsync).
+// Every caller of this function only ever does so from an alert-on
+// transition (create/PATCH/PUT with alerts on — see routes/savedSearches.ts),
+// so marking pending here unconditionally is safe.
 export async function runImmediatePopulationRunAsync(
   savedSearchId: string,
   deps: ImmediatePopulationRunDeps,
@@ -630,6 +694,7 @@ export async function runImmediatePopulationRunAsync(
     console.log(
       `[scheduler] immediate population run for ${savedSearchId} deferred — ${lockResult.reason}`
     );
+    stmtMarkAlertSetupNotificationPending(deps.database).run(savedSearchId);
     return;
   }
   try {
@@ -651,7 +716,9 @@ export async function runImmediatePopulationRunAsync(
       console.log(
         `[scheduler] "${row.name}": immediate population run complete — ${summary.populatedCount} baseline listing(s)`
       );
-      await recordSavedSearchRunStatusAndAlertAsync(row, summary, resolvedDeps);
+      await recordSavedSearchRunStatusAndAlertAsync(row, summary, resolvedDeps, {
+        isImmediateSetupRun: true,
+      });
     } catch (err) {
       // Mirrors runOneSavedSearchAsync's batch-path handling: last_run_at
       // below still needs to advance even on a synchronous throw (e.g.
@@ -675,7 +742,8 @@ export async function runImmediatePopulationRunAsync(
           populatedCount: 0,
           errors: [{ kind: 'unhandled', message: `Unhandled error: ${(err as Error).message}` }],
         },
-        resolvedDeps
+        resolvedDeps,
+        { isImmediateSetupRun: true }
       );
     }
     stmtUpdateSavedSearchLastRunAt(resolvedDeps.database).run(resolvedDeps.now(), row.id);

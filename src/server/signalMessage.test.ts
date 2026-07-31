@@ -3,6 +3,8 @@ import { makeListing } from '../lib/testFixtures';
 import {
   escapeSignalMarkdown,
   formatAlertMessage,
+  formatAlertSetupFailedMessage,
+  formatAlertSetupSuccessMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
 } from './signalMessage';
@@ -158,5 +160,63 @@ describe('formatSearchRecoveredMessage', () => {
     const message = formatSearchRecoveredMessage('**Sneaky** search');
 
     expect(message).not.toMatch(/[*_`~]/);
+  });
+});
+
+describe('formatAlertSetupSuccessMessage', () => {
+  it('names the search and reports the baseline listing count', () => {
+    const message = formatAlertSetupSuccessMessage('My search', 3);
+
+    expect(message).toBe(
+      '✅ Alerts set up for "My search" — recorded 3 existing listing(s) as the starting point. ' +
+        "You'll be notified about new ones from here."
+    );
+  });
+
+  it('renders a zero baseline count rather than omitting it', () => {
+    const message = formatAlertSetupSuccessMessage('My search', 0);
+
+    expect(message).toContain('recorded 0 existing listing(s)');
+  });
+
+  it('escapes markdown-special characters in the saved search name', () => {
+    const message = formatAlertSetupSuccessMessage('**Sneaky** search', 3);
+
+    expect(message).not.toMatch(/[*_`~]/);
+  });
+});
+
+describe('formatAlertSetupFailedMessage', () => {
+  it('formats a single error as a header line plus one "- <error>" line', () => {
+    const message = formatAlertSetupFailedMessage('My search', ['Facebook requires login.']);
+
+    expect(message).toBe('⚠️ Couldn\'t set up alerts for "My search":\n- Facebook requires login.');
+  });
+
+  it('emits one deduplicated line per distinct error', () => {
+    const message = formatAlertSetupFailedMessage('My search', [
+      'reason A',
+      'reason A',
+      'reason B',
+    ]);
+
+    expect(message.split('\n')).toEqual([
+      '⚠️ Couldn\'t set up alerts for "My search":',
+      '- reason A',
+      '- reason B',
+    ]);
+  });
+
+  it('escapes markdown-special characters in the saved search name', () => {
+    const message = formatAlertSetupFailedMessage('**Sneaky** search', ['reason']);
+
+    expect(message).not.toMatch(/[*_`~]/);
+  });
+
+  it('escapes markdown-special characters within each error', () => {
+    const message = formatAlertSetupFailedMessage('S', ['contains *asterisks* and _underscores_']);
+
+    expect(message).not.toMatch(/[*_`~]/);
+    expect(message).toContain('contains asterisks and underscores');
   });
 });
