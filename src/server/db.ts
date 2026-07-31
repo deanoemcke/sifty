@@ -89,6 +89,17 @@ export function initSchema(database: Database.Database): void {
   if (!savedSearchColumns.some((column) => column.name === 'last_failure_alerted_at')) {
     database.exec('ALTER TABLE saved_searches ADD COLUMN last_failure_alerted_at INTEGER');
   }
+  // Set (synchronously, by stmtMarkAlertSetupNotificationPending) when
+  // runImmediatePopulationRunAsync (scheduler.ts) can't acquire the
+  // scheduler lock and defers — that deferred call never runs again, so
+  // without this flag the eventual real cron tick that later processes the
+  // row has no way to know it owes the user an "Alerts set up"/"Couldn't set
+  // up alerts" confirmation, and the message is silently dropped forever.
+  if (!savedSearchColumns.some((column) => column.name === 'alert_setup_notification_pending')) {
+    database.exec(
+      'ALTER TABLE saved_searches ADD COLUMN alert_setup_notification_pending INTEGER NOT NULL DEFAULT 0'
+    );
+  }
 
   // Same CREATE TABLE IF NOT EXISTS limitation as saved_searches above: an
   // existing on-disk trademe_categories table predating this column won't
@@ -196,6 +207,7 @@ export type SavedSearchRow = {
   last_run_succeeded: number | null;
   last_run_detail: string | null;
   last_failure_alerted_at: number | null;
+  alert_setup_notification_pending: number;
 };
 export type CategoryRow = { slug: string; display: string };
 export type CategoryWithEmbeddingRow = {
@@ -248,17 +260,17 @@ export function stmtClearDetailsForUrl(database: Database.Database) {
 }
 export function stmtListSavedSearches(database: Database.Database) {
   return database.prepare<[], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at FROM saved_searches ORDER BY created_at DESC'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at, alert_setup_notification_pending FROM saved_searches ORDER BY created_at DESC'
   );
 }
 export function stmtGetSavedSearch(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at FROM saved_searches WHERE id = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at, alert_setup_notification_pending FROM saved_searches WHERE id = ?'
   );
 }
 export function stmtGetSavedSearchByName(database: Database.Database) {
   return database.prepare<[string], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at FROM saved_searches WHERE name = ?'
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at, alert_setup_notification_pending FROM saved_searches WHERE name = ?'
   );
 }
 export function stmtInsertSavedSearch(database: Database.Database) {
@@ -275,7 +287,7 @@ const DUE_ALERT_ENABLED_SAVED_SEARCH_WHERE =
 
 export function stmtGetDueAlertEnabledSavedSearches(database: Database.Database) {
   return database.prepare<[number, number], SavedSearchRow>(
-    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at ' +
+    'SELECT id, name, urls, discover_inputs, ai_filter, created_at, should_alert_on_new_listings, last_run_at, has_completed_population_run, last_run_succeeded, last_run_detail, last_failure_alerted_at, alert_setup_notification_pending ' +
       `FROM saved_searches ${DUE_ALERT_ENABLED_SAVED_SEARCH_WHERE} ` +
       'ORDER BY last_run_at ASC, rowid ASC LIMIT ?'
   );
@@ -320,6 +332,26 @@ export function stmtMarkPopulationRunComplete(database: Database.Database) {
 export function stmtResetSavedSearchPopulationRun(database: Database.Database) {
   return database.prepare(
     'UPDATE saved_searches SET has_completed_population_run = 0 WHERE id = ?'
+  );
+}
+// Set when runImmediatePopulationRunAsync (scheduler.ts) can't acquire the
+// scheduler lock and defers, carrying the "this row owes the user a setup
+// confirmation" intent forward to whichever future run — deferred retry or
+// ordinary cron tick — actually processes this saved search next, since
+// isImmediateSetupRun itself is only ever set on the one call that deferred.
+export function stmtMarkAlertSetupNotificationPending(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET alert_setup_notification_pending = 1 WHERE id = ?'
+  );
+}
+// Counterpart to stmtMarkAlertSetupNotificationPending — called by
+// recordSavedSearchRunStatusAndAlertAsync (scheduler.ts) the moment a pending
+// flag is read and folded into that run's setup-confirmation decision, so a
+// later run doesn't see the same flag still set and resend the confirmation
+// a second time.
+export function stmtClearAlertSetupNotificationPending(database: Database.Database) {
+  return database.prepare(
+    'UPDATE saved_searches SET alert_setup_notification_pending = 0 WHERE id = ?'
   );
 }
 export function stmtCountAlertsForSavedSearch(database: Database.Database) {

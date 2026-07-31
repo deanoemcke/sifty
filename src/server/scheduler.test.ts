@@ -1864,7 +1864,7 @@ describe('runImmediatePopulationRunAsync', () => {
     expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).not.toBeNull();
   });
 
-  it('resolves without touching the DB row when the lock is already held', async () => {
+  it('resolves without running a population pass when the lock is already held, but marks the setup notification as pending so a later run still sends it', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
@@ -1883,6 +1883,10 @@ describe('runImmediatePopulationRunAsync', () => {
 
     expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(0);
+    // Deferring must not silently drop the setup confirmation forever (see
+    // recordSavedSearchRunStatusAndAlertAsync) — the row is marked pending
+    // so whichever run processes it next still sends one.
+    expect(stmtGetSavedSearch(db).get(searchId)?.alert_setup_notification_pending).toBe(1);
   });
 
   it('resolves without throwing when the saved search no longer exists', async () => {
@@ -1999,6 +2003,59 @@ describe('runImmediatePopulationRunAsync', () => {
     const row = stmtGetSavedSearch(db).get('search-corrupt');
     expect(row?.last_run_succeeded).toBe(0);
     expect(row?.last_run_detail).toContain('Unhandled error');
+  });
+
+  it('still sends the "Alerts set up" confirmation via the next scheduler tick when the immediate run is deferred by a contended lock, and does not resend it once consumed', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db);
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+    // Simulate the lock already held by a real cron tick in progress.
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, String(process.pid));
+
+    const deferredSendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    await runImmediatePopulationRunAsync(
+      searchId,
+      {
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: deferredSendNotificationAsync,
+      },
+      lockPath
+    );
+
+    // Deferred: no notification sent yet, no run recorded — matches the
+    // pre-existing "defers gracefully" contract.
+    expect(deferredSendNotificationAsync).not.toHaveBeenCalled();
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_at).toBeNull();
+
+    // The cron tick that was holding the lock finishes and releases it; the
+    // next real tick then picks this saved search up as an ordinary due
+    // population run — isImmediateSetupRun is never set on this path.
+    fs.rmSync(lockPath);
+    const tickSendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: tickSendNotificationAsync,
+    });
+
+    // The setup confirmation still arrives — carried forward by the pending
+    // flag set at deferral time, not by isImmediateSetupRun.
+    expect(tickSendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(tickSendNotificationAsync.mock.calls[0][0]).toContain('Alerts set up');
+
+    // Consumed: a later tick that reprocesses the same (now-populated)
+    // search must not resend the confirmation a second time.
+    tickSendNotificationAsync.mockClear();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: tickSendNotificationAsync,
+    });
+    expect(tickSendNotificationAsync).not.toHaveBeenCalled();
   });
 });
 

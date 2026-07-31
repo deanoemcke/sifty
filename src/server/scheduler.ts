@@ -9,11 +9,13 @@ import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import {
   type SavedSearchRow,
+  stmtClearAlertSetupNotificationPending,
   stmtCountDueAlertEnabledSavedSearches,
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearch,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
+  stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
   stmtUpdateSavedSearchRunStatus,
@@ -502,12 +504,29 @@ async function sendAlertSafelyAsync(
 // false, so a saved search's *first* (silent) population run via the normal
 // cron rotation still doesn't notify — only the user-triggered "set up my
 // alert" moment does.
+//
+// `row.alert_setup_notification_pending` covers the case where that
+// user-triggered moment couldn't run at all: runImmediatePopulationRunAsync
+// only gets one lock-acquisition attempt, and if a real cron tick already
+// holds the lock it defers and never runs again — isImmediateSetupRun is
+// never set for the row again either. stmtMarkAlertSetupNotificationPending
+// carries the "this row still owes the user a setup confirmation" intent
+// forward onto the DB row itself, so whichever run eventually processes this
+// saved search next — a deferred retry or an ordinary due-search tick —
+// still counts as the setup moment. Consumed (cleared) here the moment it's
+// read, so a later run can't see the same flag and resend the confirmation.
 async function recordSavedSearchRunStatusAndAlertAsync(
   row: SavedSearchRow,
   summary: SavedSearchRunSummary,
   deps: Required<SchedulerDeps>,
   options: { isImmediateSetupRun?: boolean } = {}
 ): Promise<void> {
+  const isSetupMoment =
+    options.isImmediateSetupRun === true || row.alert_setup_notification_pending === 1;
+  if (row.alert_setup_notification_pending === 1) {
+    stmtClearAlertSetupNotificationPending(deps.database).run(row.id);
+  }
+
   // Notify-kind errors (a flaky Signal send) are excluded from health: they
   // mean delivery hiccuped, not that this saved search's scrape/filter is
   // broken, and are already retried next run without needing a failure
@@ -522,7 +541,7 @@ async function recordSavedSearchRunStatusAndAlertAsync(
         .slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
   if (succeeded) {
-    if (options.isImmediateSetupRun && summary.isPopulationRun) {
+    if (isSetupMoment && summary.isPopulationRun) {
       await sendAlertSafelyAsync(
         formatAlertSetupSuccessMessage(row.name, summary.populatedCount),
         summary,
@@ -555,7 +574,7 @@ async function recordSavedSearchRunStatusAndAlertAsync(
   }
 
   const failingMessage = (
-    options.isImmediateSetupRun
+    isSetupMoment
       ? formatAlertSetupFailedMessage(
           row.name,
           healthErrors.map((error) => error.message)
@@ -643,7 +662,13 @@ export type ImmediatePopulationRunDeps = {
 // INSERT OR IGNORE). Reuses the same file lock as scripts/scheduler.ts so
 // this can never run concurrently with a real cron pass; if the lock is
 // already held, this defers gracefully (cron will pick the search up on its
-// own rotation) rather than retrying.
+// own rotation) rather than retrying — but first marks the row as owing a
+// setup confirmation (stmtMarkAlertSetupNotificationPending), so whichever
+// run eventually processes it still sends one instead of the deferral
+// silently dropping it forever (see recordSavedSearchRunStatusAndAlertAsync).
+// Every caller of this function only ever does so from an alert-on
+// transition (create/PATCH/PUT with alerts on — see routes/savedSearches.ts),
+// so marking pending here unconditionally is safe.
 export async function runImmediatePopulationRunAsync(
   savedSearchId: string,
   deps: ImmediatePopulationRunDeps,
@@ -654,6 +679,7 @@ export async function runImmediatePopulationRunAsync(
     console.log(
       `[scheduler] immediate population run for ${savedSearchId} deferred — ${lockResult.reason}`
     );
+    stmtMarkAlertSetupNotificationPending(deps.database).run(savedSearchId);
     return;
   }
   try {
