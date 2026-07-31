@@ -2170,7 +2170,7 @@ describe('triggerImmediatePopulationRunAsync', () => {
 
     const returnValue = triggerImmediatePopulationRunAsync(
       searchId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
 
@@ -2218,12 +2218,12 @@ describe('triggerImmediatePopulationRunAsync', () => {
     // acquireSchedulerLock uses sync fs calls (schedulerLock.ts).
     triggerImmediatePopulationRunAsync(
       searchAId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
     triggerImmediatePopulationRunAsync(
       searchBId,
-      { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+      { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
       lockPath
     );
     // Let both fire-and-forget runs progress to their next suspension point.
