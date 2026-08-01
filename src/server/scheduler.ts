@@ -108,16 +108,77 @@ export function normalizeScrapeErrorReason(reason: string): string {
   return reason.replace(/https?:\/\/\S+/g, '<url>').replace(/\d+/g, '#');
 }
 
-// Builds an order-independent comparison key from a run's individual error
-// messages, for the "is this the same failure as last run" check in
+// Builds an order-independent comparison key from a run's individual errors,
+// for the "is this the same failure as last run" check in
 // recordSavedSearchRunStatusAndAlertAsync below. AI-filter batches complete
 // concurrently (see runAiFilterBatchesAsync's ConcurrencyQueue), so the same
 // underlying set of failures can land in summary.errors in a different order
-// on two consecutive runs — comparing normalized, deduped, sorted messages
-// (rather than one order-sensitive joined blob) keeps the 12h re-alert
-// suppression working regardless of that ordering.
-export function buildFailureComparisonKey(errorMessages: string[]): string {
-  return [...new Set(errorMessages.map(normalizeScrapeErrorReason))].sort().join('\n');
+// on two consecutive runs — comparing normalized, deduped, sorted
+// `kind:message` pairs (rather than one order-sensitive joined blob) keeps
+// the 12h re-alert suppression working regardless of that ordering.
+//
+// `kind` is included alongside `message`, not just `message` alone: this PR's
+// per-line categorization tags each failure with a subsystem/severity (see
+// categorizedErrorLine in signalMessage.ts), and a failure that escalates —
+// e.g. the same recurring error text reclassified from a minor subsystem to
+// 'unhandled' — is exactly the kind of change worth breaking the re-alert
+// suppression for. Comparing on message alone would let that escalation hide
+// behind unchanged message text and never re-alert. `kind` is typed as
+// `string` rather than `SchedulerErrorKind` here so the same function can
+// compare live SchedulerError values against parseStoredFailureDetail's
+// output below, which — for last_run_detail rows that predate this
+// kind-tagged format — deliberately produces a kind outside that union (see
+// LEGACY_DETAIL_KIND) rather than crashing or guessing.
+export function buildFailureComparisonKey(errors: { kind: string; message: string }[]): string {
+  return [
+    ...new Set(errors.map((error) => `${error.kind}:${normalizeScrapeErrorReason(error.message)}`)),
+  ]
+    .sort()
+    .join('\n');
+}
+
+// Sentinel kind assigned to a last_run_detail line that can't be attributed
+// to a real SchedulerErrorKind — either because it predates this format
+// (rows written before this PR stored bare message text, with no kind at
+// all) or because the tag doesn't match one of KNOWN_SCHEDULER_ERROR_KINDS.
+// Deliberately not a valid SchedulerErrorKind value, so it can never
+// coincidentally equal a real run's kind and wrongly confirm a "same
+// failure" match — the worst case is one extra, harmless re-alert right
+// after this format change ships, never a crash and never a wrongly
+// suppressed alert for data this code can't fully interpret.
+const LEGACY_DETAIL_KIND = 'legacy-unknown';
+
+const KNOWN_SCHEDULER_ERROR_KINDS: readonly SchedulerErrorKind[] = [
+  'scrape',
+  'ai-filter',
+  'notify',
+  'unhandled',
+];
+
+// Parses one line of a persisted last_run_detail value (see
+// recordSavedSearchRunStatusAndAlertAsync below, which writes each health
+// error as `${kind}:${message}`) back into a kind/message pair for
+// buildFailureComparisonKey. Only trusts the text before the first `:` as a
+// kind when it's one of the real SchedulerErrorKind values — anything else
+// (including bare pre-kind-tagging message text, which often contains its
+// own `:`, e.g. "Quick search failed for <url>: <reason>") falls back to
+// LEGACY_DETAIL_KIND with the line kept whole as the message.
+function parseStoredFailureDetailLine(line: string): { kind: string; message: string } {
+  const separatorIndex = line.indexOf(':');
+  if (separatorIndex !== -1) {
+    const candidateKind = line.slice(0, separatorIndex);
+    if (KNOWN_SCHEDULER_ERROR_KINDS.includes(candidateKind as SchedulerErrorKind)) {
+      return { kind: candidateKind, message: line.slice(separatorIndex + 1) };
+    }
+  }
+  return { kind: LEGACY_DETAIL_KIND, message: line };
+}
+
+// Splits a persisted last_run_detail value back into per-error kind/message
+// pairs for the "same failure as last run" comparison in
+// recordSavedSearchRunStatusAndAlertAsync below.
+function parseStoredFailureDetail(detail: string | null): { kind: string; message: string }[] {
+  return (detail ?? '').split('\n').filter(Boolean).map(parseStoredFailureDetailLine);
 }
 
 // Bound on a captured scrape-failure reason's length, applied at the point
@@ -548,10 +609,14 @@ async function recordSavedSearchRunStatusAndAlertAsync(
   // alert of their own (see notifyNewListingsAsync/sendAlertSafelyAsync).
   const healthErrors = summary.errors.filter((error) => error.kind !== 'notify');
   const succeeded = healthErrors.length === 0;
+  // Persists `kind` alongside `message` per line (parsed back by
+  // parseStoredFailureDetail above) so a later run's "same failure as last
+  // run" comparison can see a kind change, not just message text — see
+  // buildFailureComparisonKey's comment for why that matters.
   const detail = succeeded
     ? null
     : healthErrors
-        .map((error) => error.message)
+        .map((error) => `${error.kind}:${error.message}`)
         .join('\n')
         .slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
@@ -571,8 +636,8 @@ async function recordSavedSearchRunStatusAndAlertAsync(
 
   const isSameFailureAsLastRun =
     row.last_run_succeeded === 0 &&
-    buildFailureComparisonKey((row.last_run_detail ?? '').split('\n').filter(Boolean)) ===
-      buildFailureComparisonKey(healthErrors.map((error) => error.message));
+    buildFailureComparisonKey(parseStoredFailureDetail(row.last_run_detail)) ===
+      buildFailureComparisonKey(healthErrors);
   const isWithinReAlertWindow =
     isSameFailureAsLastRun &&
     row.last_failure_alerted_at !== null &&
@@ -590,14 +655,8 @@ async function recordSavedSearchRunStatusAndAlertAsync(
 
   const failingMessage = (
     isSetupMoment
-      ? formatAlertSetupFailedMessage(
-          row.name,
-          healthErrors.map((error) => error.message)
-        )
-      : formatSearchFailingMessage(
-          row.name,
-          healthErrors.map((error) => error.message)
-        )
+      ? formatAlertSetupFailedMessage(row.name, healthErrors)
+      : formatSearchFailingMessage(row.name, healthErrors)
   ).slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);

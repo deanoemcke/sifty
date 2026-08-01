@@ -3,6 +3,56 @@
 
 import { formatListingPrice } from '../lib/priceFormat';
 import type { Listing } from '../lib/recipes/base';
+import type { SchedulerError, SchedulerErrorKind } from './scheduler';
+
+// Which subsystem produced the error (shown in the alert so a failure can be
+// triaged without digging into logs) and how urgently it needs attention.
+// `unhandled` is an unanticipated code path — something is actually broken.
+// `scrape` means this run found nothing at all for a URL. `ai-filter` means
+// listings did come in but couldn't be judged, so nothing from them was
+// notified. `notify` is a delivery hiccup that retries on its own next run
+// (and in practice never reaches these formatters — see
+// recordSavedSearchRunStatusAndAlertAsync's healthErrors filter — but is
+// covered here for type exhaustiveness).
+const ERROR_KIND_LABEL: Record<SchedulerErrorKind, string> = {
+  scrape: 'Scrape',
+  'ai-filter': 'AI Filter',
+  notify: 'Notify',
+  unhandled: 'Unhandled',
+};
+
+type ErrorSeverity = 'critical' | 'high' | 'medium';
+
+const ERROR_KIND_SEVERITY: Record<SchedulerErrorKind, ErrorSeverity> = {
+  unhandled: 'critical',
+  scrape: 'high',
+  'ai-filter': 'medium',
+  notify: 'medium',
+};
+
+const SEVERITY_ICON: Record<ErrorSeverity, string> = {
+  critical: '🔴',
+  high: '🟠',
+  medium: '🟡',
+};
+
+// De-dupes on the (kind, message) pair rather than message alone — two
+// different subsystems could in principle produce the same text.
+function dedupeErrors(errors: SchedulerError[]): SchedulerError[] {
+  const seen = new Set<string>();
+  return errors.filter((error) => {
+    const key = `${error.kind}:${error.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function categorizedErrorLine(error: SchedulerError): string {
+  const icon = SEVERITY_ICON[ERROR_KIND_SEVERITY[error.kind]];
+  const label = ERROR_KIND_LABEL[error.kind];
+  return `${icon} [${label}] ${escapeSignalMarkdown(error.message)}`;
+}
 
 // Trailing comma-segments that identify the regiona and country rather than the suburb
 function stripLocationSuffix(location: string): string {
@@ -45,13 +95,18 @@ export function formatAlertMessage(listing: Listing): string {
 // Composes a terse system-health Signal alert for a saved search whose most
 // recent scheduled run failed, sent only on the success→failure edge (or on
 // a same-failure re-alert after the 12h window — see
-// recordSavedSearchRunStatusAndAlertAsync in scheduler.ts). One plain line
-// per distinct error — no header, no markdown emphasis — so it reads at a
-// glance in the Signal thread rather than as a log dump.
-export function formatSearchFailingMessage(savedSearchName: string, errors: string[]): string {
+// recordSavedSearchRunStatusAndAlertAsync in scheduler.ts). One line per
+// distinct error, each tagged with its subsystem and a severity icon (see
+// ERROR_KIND_LABEL/ERROR_KIND_SEVERITY above) so a failure can be triaged —
+// which part broke, how badly — straight from the Signal thread rather than
+// requiring a log dive. No header beyond that, so it still reads at a glance.
+export function formatSearchFailingMessage(
+  savedSearchName: string,
+  errors: SchedulerError[]
+): string {
   const escapedName = escapeSignalMarkdown(savedSearchName);
-  return [...new Set(errors)]
-    .map((error) => `Scrape error - ${escapedName}. ${escapeSignalMarkdown(error)}`)
+  return dedupeErrors(errors)
+    .map((error) => `${escapedName}: ${categorizedErrorLine(error)}`)
     .join('\n');
 }
 
@@ -78,11 +133,14 @@ export function formatAlertSetupSuccessMessage(
 // Counterpart failure message for the same "just finished setting up alerts"
 // moment — distinguishes a setup failure from formatSearchFailingMessage's
 // ongoing steady-state scrape-failure alert, even though both share the same
-// underlying error shape.
-export function formatAlertSetupFailedMessage(savedSearchName: string, errors: string[]): string {
+// underlying error shape (and the same per-error category/severity tagging).
+export function formatAlertSetupFailedMessage(
+  savedSearchName: string,
+  errors: SchedulerError[]
+): string {
   const escapedName = escapeSignalMarkdown(savedSearchName);
   return [
     `⚠️ Couldn't set up alerts for "${escapedName}":`,
-    ...[...new Set(errors)].map((error) => `- ${escapeSignalMarkdown(error)}`),
+    ...dedupeErrors(errors).map((error) => `- ${categorizedErrorLine(error)}`),
   ].join('\n');
 }
