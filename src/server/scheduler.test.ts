@@ -2177,7 +2177,7 @@ describe('triggerImmediatePopulationRunAsync', () => {
       expect(() =>
         triggerImmediatePopulationRunAsync(
           'search-corrupt',
-          { database: db, cooldownStore: STUB_COOLDOWN_STORE },
+          { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
           lockPath
         )
       ).not.toThrow();
