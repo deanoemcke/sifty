@@ -113,29 +113,40 @@ header {
   display: flex;
   justify-content: flex-start;
 }
-/* Logo overlaps the top edge of .sidebar-tabs by half its own height —
-   anchored to header's bottom edge (which sits flush against the tabs
-   once #brandHeading is hidden and collapses header to zero height).
-   No z-index here: header comes before .sidebar-tabs in the DOM and
-   neither establishes its own stacking context, so plain DOM-order
-   stacking already puts .sidebar-tabs (and its clickable tabs) on top
-   of the logo wherever the two overlap — a z-index here would invert
-   that and let the logo block clicks on the tabs underneath it. */
-header .brand {
+/* The logo is split into two layers so it can visually overlap
+   .sidebar-tabs by half its own height without blocking clicks on the
+   tabs underneath:
+   - .brand-image is the decorative logo art. It paints on top of
+     .sidebar-tabs (z-index) but is pointer-events: none, so clicks
+     anywhere on it fall through to whatever's beneath — including the
+     Search tab where they overlap.
+   - .brand is the real "go home" button. It's anchored flush with
+     header's bottom edge (= .sidebar-tabs' top edge) with no downward
+     offset, so its own clickable box sits entirely above the tabs and
+     never competes with them — it only covers the top, non-overlapping
+     portion of the logo's visible art. */
+header .brand-image {
   position: absolute;
   bottom: 0;
   left: 0;
   transform: translateY(calc(50% - 10px));
   display: flex;
   align-items: center;
+  pointer-events: none;
+  z-index: 1000;
+}
+header .brand {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 4rem;
+  height: 2.8rem;
   background: none;
   border: none;
   padding: 0;
-  font: inherit;
-  text-align: left;
   cursor: pointer;
 }
-header .brand:hover {
+header .brand:hover ~ .brand-image {
   opacity: 0.85;
 }
 /* Fades the logo out over the back half of the scroll distance to
@@ -148,7 +159,7 @@ header .brand:hover {
    stick point for this fade to lead up to. */
 @supports (animation-timeline: scroll()) {
   @media (min-width: 901px) {
-    header .brand {
+    header .brand-image {
       animation: logo-scroll-fade linear both;
       animation-timeline: scroll(root block);
       animation-range: calc(var(--logo-fade-scroll-distance) * 0.5) var(--logo-fade-scroll-distance);
@@ -161,15 +172,14 @@ header .brand:hover {
   }
   to {
     opacity: 0;
-    pointer-events: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  header .brand {
+  header .brand-image {
     animation: none;
   }
 }
-header .brand img {
+header .brand-image img {
   height: 6.6rem;
   width: auto;
 }
