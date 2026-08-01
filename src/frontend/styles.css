@@ -108,13 +108,17 @@ header {
 }
 /* Logo overlaps the top edge of .sidebar-tabs by half its own height —
    anchored to header's bottom edge (which sits flush against the tabs
-   once #brandHeading is hidden and collapses header to zero height). */
+   once #brandHeading is hidden and collapses header to zero height).
+   No z-index here: header comes before .sidebar-tabs in the DOM and
+   neither establishes its own stacking context, so plain DOM-order
+   stacking already puts .sidebar-tabs (and its clickable tabs) on top
+   of the logo wherever the two overlap — a z-index here would invert
+   that and let the logo block clicks on the tabs underneath it. */
 header .brand {
   position: absolute;
   bottom: 0;
   left: 0;
   transform: translateY(calc(50% - 10px));
-  z-index: 1000;
   display: flex;
   align-items: center;
   background: none;
