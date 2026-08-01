@@ -36,6 +36,10 @@
      viewport .sidebar's negative sticky `top` pins it. Used as the logo's
      fade-out range so it's gone by the time the tabs settle in place. */
   --logo-fade-scroll-distance: calc(0.9rem + var(--sidebar-tabs-offset));
+  /* Gap between the logo's right edge and the Search/Favourites tab
+     boundary it's anchored to — read by both header .brand-image and
+     header .brand below, so their positions stay in sync. */
+  --logo-right-inset: 0.5rem;
 }
 
 *,
@@ -113,7 +117,15 @@ header {
   display: flex;
   justify-content: flex-start;
 }
-/* The logo is split into two layers so it can visually overlap
+/* The logo is right-aligned to the Search/Favourites tab boundary — the
+   midpoint of .sidebar-tabs, since both tabs are flex:1 — via left: 50%
+   plus a translateX that pulls it back by its own width (100%) and a
+   further --logo-right-inset gap. header and .sidebar-tabs share the same
+   content width (both are direct children of .sidebar with the same
+   horizontal padding), so this holds at any viewport width with no media
+   query needed.
+
+   The logo is split into two layers so it can visually overlap
    .sidebar-tabs by half its own height without blocking clicks on the
    tabs underneath:
    - .brand-image is the decorative logo art. It paints on top of
@@ -128,8 +140,8 @@ header {
 header .brand-image {
   position: absolute;
   bottom: 0;
-  left: 0;
-  transform: translateY(calc(50% - 10px));
+  left: 50%;
+  transform: translate(calc(-100% - var(--logo-right-inset)), calc(50% - 10px));
   display: flex;
   align-items: center;
   pointer-events: none;
@@ -138,7 +150,8 @@ header .brand-image {
 header .brand {
   position: absolute;
   bottom: 0;
-  left: 0;
+  left: 50%;
+  transform: translateX(calc(-100% - var(--logo-right-inset)));
   width: 4rem;
   height: 2.8rem;
   background: none;
