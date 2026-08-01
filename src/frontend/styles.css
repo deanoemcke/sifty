@@ -79,11 +79,20 @@ body.scroll-locked {
 }
 
 header {
-  margin-bottom: 1.25rem;
+  position: relative;
+  padding-top: calc(2.8rem + 10px);
   display: flex;
   justify-content: flex-start;
 }
+/* Logo overlaps the top edge of .sidebar-tabs by half its own height —
+   anchored to header's bottom edge (which sits flush against the tabs
+   once #brandHeading is hidden and collapses header to zero height). */
 header .brand {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  transform: translateY(calc(50% - 10px));
+  z-index: 1000;
   display: flex;
   align-items: center;
   background: none;
@@ -97,14 +106,11 @@ header .brand:hover {
   opacity: 0.85;
 }
 header .brand img {
-  height: 2.2rem;
+  height: 6.6rem;
   width: auto;
-  margin-right: 0.4rem;
 }
 header h1 {
-  font-size: 1.6rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  display: none;
 }
 
 /* ── Sidebar tabs ── */
