@@ -12,7 +12,7 @@ function buildSidebar(): {
   const sidebar = document.createElement('aside');
   sidebar.innerHTML = `
     <nav class="sidebar-tabs" role="tablist">
-      <button id="searchTabBtn" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="searchTabPanel">Sift</button>
+      <button id="searchTabBtn" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="searchTabPanel">Search</button>
       <button id="favouritesTabBtn" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="savedSearchesPanel">Favourites</button>
     </nav>
     <div id="searchTabPanel" role="tabpanel"></div>
