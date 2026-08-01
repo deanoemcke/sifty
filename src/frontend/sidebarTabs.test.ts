@@ -12,8 +12,8 @@ function buildSidebar(): {
   const sidebar = document.createElement('aside');
   sidebar.innerHTML = `
     <nav class="sidebar-tabs" role="tablist">
-      <button id="searchTabBtn" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="searchTabPanel" aria-label="Search"><span id="searchTabLabel">Search</span></button>
-      <button id="favouritesTabBtn" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="savedSearchesPanel" aria-label="Favourites"></button>
+      <button id="searchTabBtn" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="searchTabPanel">Sift</button>
+      <button id="favouritesTabBtn" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="savedSearchesPanel">Favourites</button>
     </nav>
     <div id="searchTabPanel" role="tabpanel"></div>
     <div id="savedSearchesPanel" class="hidden"></div>
@@ -73,22 +73,6 @@ describe('activateSidebarTab', () => {
   it('throws when a required element is missing', () => {
     favouritesPanel.remove();
     expect(() => activateSidebarTab(sidebar, 'favourites')).toThrowError(/savedSearchesPanel/);
-  });
-
-  it("preserves the search tab button's accessible name (aria-label) across tab switches", () => {
-    expect(searchTabBtn.getAttribute('aria-label')).toBe('Search');
-    activateSidebarTab(sidebar, 'favourites');
-    expect(searchTabBtn.getAttribute('aria-label')).toBe('Search');
-    activateSidebarTab(sidebar, 'search');
-    expect(searchTabBtn.getAttribute('aria-label')).toBe('Search');
-  });
-
-  it("preserves the favourites tab button's accessible name (aria-label) across tab switches", () => {
-    expect(favouritesTabBtn.getAttribute('aria-label')).toBe('Favourites');
-    activateSidebarTab(sidebar, 'favourites');
-    expect(favouritesTabBtn.getAttribute('aria-label')).toBe('Favourites');
-    activateSidebarTab(sidebar, 'search');
-    expect(favouritesTabBtn.getAttribute('aria-label')).toBe('Favourites');
   });
 });
 

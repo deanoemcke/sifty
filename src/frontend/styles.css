@@ -229,10 +229,6 @@ header h1 {
   font-weight: 600;
   z-index: 1;
 }
-#searchTabLabel {
-  display: none;
-}
-
 /* Tab panels are the card surface the tabs connect to */
 #searchTabPanel,
 #savedSearchesPanel {
@@ -613,14 +609,6 @@ label {
 }
 .ai-filter-btn {
   flex-shrink: 0;
-}
-.results-count {
-  background: var(--primary);
-  color: white;
-  padding: 0.1rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
 }
 /* Keeps a label paired with its trigger so .sort-row's flex-wrap moves them
    to the next line together, rather than wrapping the trigger alone. */
