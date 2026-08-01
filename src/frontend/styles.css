@@ -61,6 +61,10 @@ body.scroll-locked {
   margin: 0 auto;
   padding: 1.5rem 1rem 4rem;
   align-items: flex-start;
+  /* column-gap only, not gap: it has no effect once .app-layout switches to
+     flex-direction:column below 900px, so this is wide-viewport-only by
+     construction — no separate media query needed. */
+  column-gap: 0.75rem;
 }
 /* A negative `top` pins .sidebar above the viewport by --sidebar-tabs-offset,
    so once stuck, the logo (which lives in that offset's worth of space at
