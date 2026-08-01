@@ -590,14 +590,8 @@ async function recordSavedSearchRunStatusAndAlertAsync(
 
   const failingMessage = (
     isSetupMoment
-      ? formatAlertSetupFailedMessage(
-          row.name,
-          healthErrors.map((error) => error.message)
-        )
-      : formatSearchFailingMessage(
-          row.name,
-          healthErrors.map((error) => error.message)
-        )
+      ? formatAlertSetupFailedMessage(row.name, healthErrors)
+      : formatSearchFailingMessage(row.name, healthErrors)
   ).slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);

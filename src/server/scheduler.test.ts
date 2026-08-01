@@ -1235,7 +1235,7 @@ describe('runSchedulerAsync', () => {
     // previous (population) run succeeded, so recordSavedSearchRunStatusAndAlertAsync alerts.
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      `Scrape error - FB search. Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
+      `FB search: 🟠 [Scrape] Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].listingsFoundCount).toBe(0);
@@ -1315,7 +1315,7 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      `Scrape error - TM search. Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
+      `TM search: 🟠 [Scrape] Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.some((error) => error.message.includes('Discarded'))).toBe(
@@ -1791,7 +1791,7 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).not.toContain("Couldn't set up alerts");
-    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Scrape error');
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('[Scrape]');
   });
 
   it('does not use the setup-success message for an ordinary run that merely has a stale pending setup flag and is not itself a population run', async () => {

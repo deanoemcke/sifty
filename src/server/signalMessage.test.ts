@@ -111,37 +111,70 @@ describe('escapeSignalMarkdown', () => {
 });
 
 describe('formatSearchFailingMessage', () => {
-  it('formats a single error as one concise "Scrape error - <name>. <error>" line', () => {
-    const message = formatSearchFailingMessage('My search', ['Facebook requires login.']);
+  it('formats a single error as "<name>: <severity icon> [<category>] <error>"', () => {
+    const message = formatSearchFailingMessage('My search', [
+      { kind: 'scrape', message: 'Facebook requires login.' },
+    ]);
 
-    expect(message).toBe('Scrape error - My search. Facebook requires login.');
+    expect(message).toBe('My search: 🟠 [Scrape] Facebook requires login.');
   });
 
-  it('omits everything but the name and error — no header, no framing text', () => {
-    const message = formatSearchFailingMessage('My search', ['some reason']);
+  it('labels each error kind with its own category and severity icon', () => {
+    expect(
+      formatSearchFailingMessage('S', [{ kind: 'ai-filter', message: 'AI parse error' }])
+    ).toBe('S: 🟡 [AI Filter] AI parse error');
+    expect(formatSearchFailingMessage('S', [{ kind: 'unhandled', message: 'boom' }])).toBe(
+      'S: 🔴 [Unhandled] boom'
+    );
+  });
+
+  it('omits everything but the name, category, and error — no extra framing text', () => {
+    const message = formatSearchFailingMessage('My search', [
+      { kind: 'scrape', message: 'some reason' },
+    ]);
 
     expect(message).not.toContain('discarded');
     expect(message).not.toContain('Some results');
     expect(message).not.toContain('trusted');
   });
 
-  it('emits one deduplicated line per distinct error', () => {
-    const message = formatSearchFailingMessage('My search', ['reason A', 'reason A', 'reason B']);
+  it('emits one deduplicated line per distinct (kind, message) pair', () => {
+    const message = formatSearchFailingMessage('My search', [
+      { kind: 'scrape', message: 'reason A' },
+      { kind: 'scrape', message: 'reason A' },
+      { kind: 'scrape', message: 'reason B' },
+    ]);
 
     expect(message.split('\n')).toEqual([
-      'Scrape error - My search. reason A',
-      'Scrape error - My search. reason B',
+      'My search: 🟠 [Scrape] reason A',
+      'My search: 🟠 [Scrape] reason B',
+    ]);
+  });
+
+  it('does not dedupe the same message across different error kinds', () => {
+    const message = formatSearchFailingMessage('My search', [
+      { kind: 'scrape', message: 'timed out' },
+      { kind: 'ai-filter', message: 'timed out' },
+    ]);
+
+    expect(message.split('\n')).toEqual([
+      'My search: 🟠 [Scrape] timed out',
+      'My search: 🟡 [AI Filter] timed out',
     ]);
   });
 
   it('escapes markdown-special characters in the saved search name', () => {
-    const message = formatSearchFailingMessage('**Sneaky** search', ['reason']);
+    const message = formatSearchFailingMessage('**Sneaky** search', [
+      { kind: 'scrape', message: 'reason' },
+    ]);
 
     expect(message).not.toMatch(/[*_`~]/);
   });
 
   it('escapes markdown-special characters within the error', () => {
-    const message = formatSearchFailingMessage('S', ['contains *asterisks* and _underscores_']);
+    const message = formatSearchFailingMessage('S', [
+      { kind: 'scrape', message: 'contains *asterisks* and _underscores_' },
+    ]);
 
     expect(message).not.toMatch(/[*_`~]/);
     expect(message).toContain('contains asterisks and underscores');
@@ -187,34 +220,42 @@ describe('formatAlertSetupSuccessMessage', () => {
 });
 
 describe('formatAlertSetupFailedMessage', () => {
-  it('formats a single error as a header line plus one "- <error>" line', () => {
-    const message = formatAlertSetupFailedMessage('My search', ['Facebook requires login.']);
+  it('formats a single error as a header line plus one "- <severity icon> [<category>] <error>" line', () => {
+    const message = formatAlertSetupFailedMessage('My search', [
+      { kind: 'scrape', message: 'Facebook requires login.' },
+    ]);
 
-    expect(message).toBe('⚠️ Couldn\'t set up alerts for "My search":\n- Facebook requires login.');
+    expect(message).toBe(
+      '⚠️ Couldn\'t set up alerts for "My search":\n- 🟠 [Scrape] Facebook requires login.'
+    );
   });
 
-  it('emits one deduplicated line per distinct error', () => {
+  it('emits one deduplicated line per distinct (kind, message) pair', () => {
     const message = formatAlertSetupFailedMessage('My search', [
-      'reason A',
-      'reason A',
-      'reason B',
+      { kind: 'scrape', message: 'reason A' },
+      { kind: 'scrape', message: 'reason A' },
+      { kind: 'ai-filter', message: 'reason B' },
     ]);
 
     expect(message.split('\n')).toEqual([
       '⚠️ Couldn\'t set up alerts for "My search":',
-      '- reason A',
-      '- reason B',
+      '- 🟠 [Scrape] reason A',
+      '- 🟡 [AI Filter] reason B',
     ]);
   });
 
   it('escapes markdown-special characters in the saved search name', () => {
-    const message = formatAlertSetupFailedMessage('**Sneaky** search', ['reason']);
+    const message = formatAlertSetupFailedMessage('**Sneaky** search', [
+      { kind: 'scrape', message: 'reason' },
+    ]);
 
     expect(message).not.toMatch(/[*_`~]/);
   });
 
   it('escapes markdown-special characters within each error', () => {
-    const message = formatAlertSetupFailedMessage('S', ['contains *asterisks* and _underscores_']);
+    const message = formatAlertSetupFailedMessage('S', [
+      { kind: 'scrape', message: 'contains *asterisks* and _underscores_' },
+    ]);
 
     expect(message).not.toMatch(/[*_`~]/);
     expect(message).toContain('contains asterisks and underscores');
