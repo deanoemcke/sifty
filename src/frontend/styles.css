@@ -129,9 +129,13 @@ header {
    .sidebar-tabs by half its own height without blocking clicks on the
    tabs underneath:
    - .brand-image is the decorative logo art. It paints on top of
-     .sidebar-tabs (z-index) but is pointer-events: none, so clicks
-     anywhere on it fall through to whatever's beneath — including the
-     Search tab where they overlap.
+     .sidebar-tabs (z-index: 2, above .sidebar-tab.active's z-index: 1)
+     but is pointer-events: none, so clicks anywhere on it fall through
+     to whatever's beneath — including the Search tab where they
+     overlap. It must still stay below the dropdown panels (z-index: 20)
+     and modals/backdrops (z-index: 100) elsewhere in this file, so it
+     never paints over an open filter/show panel, the listing detail
+     modal, or a modal's opaque backdrop.
    - .brand is the real "go home" button. It's anchored flush with
      header's bottom edge (= .sidebar-tabs' top edge) with no downward
      offset, so its own clickable box sits entirely above the tabs and
@@ -145,7 +149,7 @@ header .brand-image {
   display: flex;
   align-items: center;
   pointer-events: none;
-  z-index: 1000;
+  z-index: 2;
 }
 header .brand {
   position: absolute;
