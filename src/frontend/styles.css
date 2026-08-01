@@ -157,6 +157,11 @@ header .brand:hover {
     pointer-events: none;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  header .brand {
+    animation: none;
+  }
+}
 header .brand img {
   height: 6.6rem;
   width: auto;
