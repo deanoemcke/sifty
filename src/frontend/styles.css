@@ -17,13 +17,20 @@
   --radius: 6px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  /* .sidebar's own padding-top — named once here so --sidebar-tabs-offset
+     below derives from it instead of re-stating the literal. */
+  --sidebar-padding-top: 0.5rem;
+  /* .results-header's own vertical padding — named once here so .sidebar's
+     sticky `top`/`max-height` and .results-header's own margin-top below
+     derive from it instead of re-stating the literal. */
+  --results-header-padding-y: 0.6rem;
   /* Space the oversized logo needs above .sidebar-tabs — read by both
      header's own padding-top and .results-header's wide-viewport alignment
      below, so the two stay in sync as this value gets retuned. */
   --logo-header-padding-top: calc(2.8rem + 10px);
   /* Distance from .sidebar's own top edge down to .sidebar-tabs' top edge
      (sidebar's padding-top plus the logo header's padding-top above it). */
-  --sidebar-tabs-offset: calc(0.5rem + var(--logo-header-padding-top));
+  --sidebar-tabs-offset: calc(var(--sidebar-padding-top) + var(--logo-header-padding-top));
   /* Page-scroll distance (from y=0) until .sidebar reaches its sticky
      point: .app-layout's own padding-top (1.5rem) minus how far above the
      viewport .sidebar's negative sticky `top` pins it. Used as the logo's
@@ -69,17 +76,17 @@ body.scroll-locked {
 /* A negative `top` pins .sidebar above the viewport by --sidebar-tabs-offset,
    so once stuck, the logo (which lives in that offset's worth of space at
    the top of the box) has scrolled out of view and .sidebar-tabs lands
-   exactly at 0.6rem — flush with #aiFilterPanel's top once .results-header
-   is stuck too. max-height is grown by the same offset so the sidebar still
-   fills the full viewport height once pinned. */
+   exactly at --results-header-padding-y — flush with #aiFilterPanel's top
+   once .results-header is stuck too. max-height is grown by the same
+   offset so the sidebar still fills the full viewport height once pinned. */
 .sidebar {
   width: 320px;
   flex-shrink: 0;
   position: sticky;
-  top: calc(0.6rem - var(--sidebar-tabs-offset));
-  max-height: calc(100vh - 0.6rem + var(--sidebar-tabs-offset));
+  top: calc(var(--results-header-padding-y) - var(--sidebar-tabs-offset));
+  max-height: calc(100vh - var(--results-header-padding-y) + var(--sidebar-tabs-offset));
   overflow-y: auto;
-  padding: 0.5rem 0.25rem;
+  padding: var(--sidebar-padding-top) 0.25rem;
 }
 .main-pane {
   flex: 1;
@@ -575,7 +582,7 @@ label {
   top: 0;
   z-index: 10;
   background: var(--bg);
-  padding: 0.6rem 0;
+  padding: var(--results-header-padding-y) 0;
   margin-bottom: 0.875rem;
   border-bottom: 1px solid var(--border);
 }
@@ -583,7 +590,7 @@ label {
    first row down to align with .sidebar-tabs. */
 @media (min-width: 901px) {
   .results-header {
-    margin-top: calc(var(--sidebar-tabs-offset) - 0.6rem);
+    margin-top: calc(var(--sidebar-tabs-offset) - var(--results-header-padding-y));
   }
 }
 .results-header-row {
