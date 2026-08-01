@@ -212,7 +212,7 @@ describe('renderDerived', () => {
     expect(filterBtn.textContent).toBe('Filter');
   });
 
-  it('shows a live pass/total count on the mobile full-screen sheet instead of "Filter"', () => {
+  it('shows a live filtered-out/total count on the mobile full-screen sheet instead of "Filter"', () => {
     const restore = stubMobileMatchMedia(true);
     addCardWithListings(['https://l/1', 'https://l/2']);
     setAiFilterReason('https://l/2', 'too old');
@@ -220,6 +220,18 @@ describe('renderDerived', () => {
     renderDerived();
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
     expect(filterBtn.textContent).toBe('Filtering 1 / 2 results');
+    restore();
+  });
+
+  it('counts listings filtered out, not listings still passing', () => {
+    const restore = stubMobileMatchMedia(true);
+    addCardWithListings(['https://l/1', 'https://l/2', 'https://l/3']);
+    setAiFilterReason('https://l/1', 'too old');
+    setAiFilterReason('https://l/2', 'wrong category');
+    (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
+    renderDerived();
+    const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
+    expect(filterBtn.textContent).toBe('Filtering 2 / 3 results');
     restore();
   });
 
@@ -233,7 +245,7 @@ describe('renderDerived', () => {
     restore();
   });
 
-  it('updates the mobile pass/total count on repeated renders without recreating the spinner', () => {
+  it('updates the mobile filtered-out/total count on repeated renders without recreating the spinner', () => {
     const restore = stubMobileMatchMedia(true);
     addCardWithListings(['https://l/1', 'https://l/2']);
     (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
@@ -241,7 +253,7 @@ describe('renderDerived', () => {
     renderDerived();
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
     const spinnerElement = filterBtn.querySelector('.spinner');
-    expect(filterBtn.textContent).toBe('Filtering 2 / 2 results');
+    expect(filterBtn.textContent).toBe('Filtering 0 / 2 results');
     setAiFilterReason('https://l/2', 'too old');
     renderDerived();
     expect(filterBtn.textContent).toBe('Filtering 1 / 2 results');

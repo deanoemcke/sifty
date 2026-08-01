@@ -153,12 +153,12 @@ export function renderDerived(): void {
 // "apply and close" footer button (aiFilterDropdown.ts wires it as the
 // dropdown's footer), so — matching the Show/Sort footer's live-count
 // convention (setDropdownLabel in showDropdown.ts) — its label previews how
-// many listings currently pass the AI filter instead of the bare "Filter" CTA
-// that's all there's room for inline on desktop.
+// many listings the AI filter has excluded so far instead of the bare
+// "Filter" CTA that's all there's room for inline on desktop.
 function aiFilterButtonLabel(listings: ListingItem[]): string {
   if (!isMobileSheetActive()) return isAiFilterRunning ? 'Filtering..' : 'Filter';
-  const passingCount = listings.filter((item) => item.aiFilterReason === null).length;
-  return `Filtering ${passingCount} / ${listings.length} results`;
+  const filteredOutCount = listings.filter((item) => item.aiFilterReason !== null).length;
+  return `Filtering ${filteredOutCount} / ${listings.length} results`;
 }
 
 // Sole writer of the ai-filter button's disabled/label state — disabled with
