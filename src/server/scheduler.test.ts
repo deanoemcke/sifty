@@ -24,6 +24,7 @@ import {
   stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
+  stmtUpdateSavedSearchRunStatus,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { getRecipeForUrl } from './recipes/registry';
@@ -1414,6 +1415,44 @@ describe('runSchedulerAsync', () => {
     expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
   });
 
+  it('does not suppress a re-alert when the persisted failure predates kind-tagged storage, even if the message text is unchanged', async () => {
+    // Regression coverage for the PR #59 review finding: buildFailureComparisonKey
+    // compared on message text alone, so a failure that changed kind/severity
+    // (e.g. ai-filter escalating to unhandled) but kept similar message text
+    // was wrongly treated as "the same failure as last run" and suppressed.
+    // last_run_detail rows written before kind-tagged persistence existed are
+    // the general case of this: their kind can't be recovered at all, so they
+    // must never be trusted as a confirmed match — this is exactly what
+    // forces one conservative re-alert here rather than silently suppressing.
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search' });
+    // This run must not itself be treated as the population run — otherwise
+    // it also emits a "Population run incomplete" error line that the seeded
+    // single-line last_run_detail below can never match, which would mask
+    // the kind-comparison bug this test targets behind an unrelated mismatch.
+    stmtMarkPopulationRunComplete(db).run(searchId);
+    const baseTime = Date.now();
+    const reason = 'Rate limited by Facebook';
+    // Matches the exact message makeFailingRecipeWithReason's "error, never
+    // completes" shape produces (see processSavedSearchAsync's
+    // !didCompleteSuccessfully branch) — 0 listings loaded before the error.
+    const message = `Discarded 0 untrusted listing(s) from ${SEARCH_URL}: ${reason}`;
+    // Simulates a row persisted by the pre-fix code path, which stored the
+    // bare joined message text with no kind information at all.
+    stmtUpdateSavedSearchRunStatus(db).run(0, message, baseTime, searchId);
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFailingRecipeWithReason('facebook', reason));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + 1_000, // well within FAILURE_REALERT_MS
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+  });
+
   it('sends a recovery alert when a previously-failing saved search succeeds, and resets its persisted failure state', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
@@ -2276,15 +2315,24 @@ describe('normalizeScrapeErrorReason', () => {
 
 describe('buildFailureComparisonKey', () => {
   it('is order-independent: the same messages in a different order produce the same key', () => {
-    const a = ['AI filter: batch 1 timed out', 'AI filter: batch 2 timed out'];
-    const b = ['AI filter: batch 2 timed out', 'AI filter: batch 1 timed out'];
+    const a = [
+      { kind: 'ai-filter', message: 'AI filter: batch 1 timed out' },
+      { kind: 'ai-filter', message: 'AI filter: batch 2 timed out' },
+    ];
+    const b = [
+      { kind: 'ai-filter', message: 'AI filter: batch 2 timed out' },
+      { kind: 'ai-filter', message: 'AI filter: batch 1 timed out' },
+    ];
 
     expect(buildFailureComparisonKey(a)).toBe(buildFailureComparisonKey(b));
   });
 
-  it('collapses duplicate messages so a repeated error does not change the key', () => {
-    const withDuplicate = ['AI filter: batch timed out', 'AI filter: batch timed out'];
-    const withoutDuplicate = ['AI filter: batch timed out'];
+  it('collapses duplicate (kind, message) pairs so a repeated error does not change the key', () => {
+    const withDuplicate = [
+      { kind: 'ai-filter', message: 'AI filter: batch timed out' },
+      { kind: 'ai-filter', message: 'AI filter: batch timed out' },
+    ];
+    const withoutDuplicate = [{ kind: 'ai-filter', message: 'AI filter: batch timed out' }];
 
     expect(buildFailureComparisonKey(withDuplicate)).toBe(
       buildFailureComparisonKey(withoutDuplicate)
@@ -2292,10 +2340,29 @@ describe('buildFailureComparisonKey', () => {
   });
 
   it('still differentiates genuinely different error sets', () => {
-    const a = ['AI filter: batch 1 timed out', 'AI filter: batch 2 timed out'];
-    const b = ['AI filter: batch 1 timed out', 'Rate limited by Facebook'];
+    const a = [
+      { kind: 'ai-filter', message: 'AI filter: batch 1 timed out' },
+      { kind: 'ai-filter', message: 'AI filter: batch 2 timed out' },
+    ];
+    const b = [
+      { kind: 'ai-filter', message: 'AI filter: batch 1 timed out' },
+      { kind: 'scrape', message: 'Rate limited by Facebook' },
+    ];
 
     expect(buildFailureComparisonKey(a)).not.toBe(buildFailureComparisonKey(b));
+  });
+
+  it('distinguishes the same message under a different kind, so a severity/subsystem escalation is not treated as the same failure', () => {
+    // Regression coverage for the PR #59 review finding: kind-aware alert
+    // formatting was layered on top of a kind-blind comparison key, so a
+    // failure escalating from e.g. ai-filter to unhandled (same message
+    // text) was silently swallowed by the 12h re-alert window.
+    const beforeEscalation = [{ kind: 'ai-filter', message: 'Request timed out' }];
+    const afterEscalation = [{ kind: 'unhandled', message: 'Request timed out' }];
+
+    expect(buildFailureComparisonKey(beforeEscalation)).not.toBe(
+      buildFailureComparisonKey(afterEscalation)
+    );
   });
 });
 
