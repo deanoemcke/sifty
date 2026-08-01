@@ -13,7 +13,7 @@ function buildSidebar(): {
   sidebar.innerHTML = `
     <nav class="sidebar-tabs" role="tablist">
       <button id="searchTabBtn" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="searchTabPanel" aria-label="Search"><span id="searchTabLabel">Search</span></button>
-      <button id="favouritesTabBtn" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="savedSearchesPanel">Favourites</button>
+      <button id="favouritesTabBtn" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="savedSearchesPanel" aria-label="Favourites"></button>
     </nav>
     <div id="searchTabPanel" role="tabpanel"></div>
     <div id="savedSearchesPanel" class="hidden"></div>
@@ -81,6 +81,14 @@ describe('activateSidebarTab', () => {
     expect(searchTabBtn.getAttribute('aria-label')).toBe('Search');
     activateSidebarTab(sidebar, 'search');
     expect(searchTabBtn.getAttribute('aria-label')).toBe('Search');
+  });
+
+  it("preserves the favourites tab button's accessible name (aria-label) across tab switches", () => {
+    expect(favouritesTabBtn.getAttribute('aria-label')).toBe('Favourites');
+    activateSidebarTab(sidebar, 'favourites');
+    expect(favouritesTabBtn.getAttribute('aria-label')).toBe('Favourites');
+    activateSidebarTab(sidebar, 'search');
+    expect(favouritesTabBtn.getAttribute('aria-label')).toBe('Favourites');
   });
 });
 

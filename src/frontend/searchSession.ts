@@ -71,11 +71,8 @@ export async function fetchSavedSearchesAsync(): Promise<void> {
 
 export function renderSavedSearches(searches: SavedSearch[]): void {
   const list = getElement('savedSearchesList');
-  const count = getElement('savedSearchesCount');
   const header = getElement('savedSearchesHeaderRow');
 
-  count.textContent = String(searches.length);
-  count.classList.toggle('hidden', searches.length === 0);
   header.classList.toggle('hidden', searches.length === 0);
 
   if (searches.length === 0) {

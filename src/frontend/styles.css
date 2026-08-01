@@ -323,20 +323,11 @@ label {
 
 /* ── Form field rows ── */
 .prompt-box {
-  position: relative;
   margin-bottom: 0.5rem;
-}
-.prompt-box .prompt-icon {
-  position: absolute;
-  left: 0.75rem;
-  top: 0.75rem;
-  color: var(--text-muted);
-  pointer-events: none;
 }
 .prompt-box textarea {
   width: 100%;
   resize: vertical;
-  padding-left: 2rem;
   display: block;
 }
 .field-row {
