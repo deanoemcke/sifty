@@ -17,6 +17,18 @@
   --radius: 6px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  /* Space the oversized logo needs above .sidebar-tabs — read by both
+     header's own padding-top and .results-header's wide-viewport alignment
+     below, so the two stay in sync as this value gets retuned. */
+  --logo-header-padding-top: calc(2.8rem + 10px);
+  /* Distance from .sidebar's own top edge down to .sidebar-tabs' top edge
+     (sidebar's padding-top plus the logo header's padding-top above it). */
+  --sidebar-tabs-offset: calc(0.5rem + var(--logo-header-padding-top));
+  /* Page-scroll distance (from y=0) until .sidebar reaches its sticky
+     point: .app-layout's own padding-top (1.5rem) minus how far above the
+     viewport .sidebar's negative sticky `top` pins it. Used as the logo's
+     fade-out range so it's gone by the time the tabs settle in place. */
+  --logo-fade-scroll-distance: calc(0.9rem + var(--sidebar-tabs-offset));
 }
 
 *,
@@ -50,12 +62,18 @@ body.scroll-locked {
   padding: 1.5rem 1rem 4rem;
   align-items: flex-start;
 }
+/* A negative `top` pins .sidebar above the viewport by --sidebar-tabs-offset,
+   so once stuck, the logo (which lives in that offset's worth of space at
+   the top of the box) has scrolled out of view and .sidebar-tabs lands
+   exactly at 0.6rem — flush with #aiFilterPanel's top once .results-header
+   is stuck too. max-height is grown by the same offset so the sidebar still
+   fills the full viewport height once pinned. */
 .sidebar {
   width: 320px;
   flex-shrink: 0;
   position: sticky;
-  top: 0;
-  max-height: 100vh;
+  top: calc(0.6rem - var(--sidebar-tabs-offset));
+  max-height: calc(100vh - 0.6rem + var(--sidebar-tabs-offset));
   overflow-y: auto;
   padding: 0.5rem 0.25rem;
 }
@@ -80,7 +98,7 @@ body.scroll-locked {
 
 header {
   position: relative;
-  padding-top: calc(2.8rem + 10px);
+  padding-top: var(--logo-header-padding-top);
   display: flex;
   justify-content: flex-start;
 }
@@ -104,6 +122,32 @@ header .brand {
 }
 header .brand:hover {
   opacity: 0.85;
+}
+/* Fades the logo out over the back half of the scroll distance to
+   .sidebar's sticky point, so it's gone by the time .sidebar sticks
+   instead of lingering, overlapped, over the now-stuck tabs — but stays
+   fully visible longer before the fade starts. Scroll-driven animations
+   aren't supported everywhere yet; @supports just leaves the logo visible
+   in browsers that lack it, rather than breaking anything. Wide viewport
+   only: below 900px .sidebar is position:static, not sticky, so there's no
+   stick point for this fade to lead up to. */
+@supports (animation-timeline: scroll()) {
+  @media (min-width: 901px) {
+    header .brand {
+      animation: logo-scroll-fade linear both;
+      animation-timeline: scroll(root block);
+      animation-range: calc(var(--logo-fade-scroll-distance) * 0.5) var(--logo-fade-scroll-distance);
+    }
+  }
+}
+@keyframes logo-scroll-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    pointer-events: none;
+  }
 }
 header .brand img {
   height: 6.6rem;
@@ -521,6 +565,13 @@ label {
   padding: 0.6rem 0;
   margin-bottom: 0.875rem;
   border-bottom: 1px solid var(--border);
+}
+/* Side-by-side layout only (mirrors the .sidebar breakpoint): push the
+   first row down to align with .sidebar-tabs. */
+@media (min-width: 901px) {
+  .results-header {
+    margin-top: calc(var(--sidebar-tabs-offset) - 0.6rem);
+  }
 }
 .results-header-row {
   display: flex;
