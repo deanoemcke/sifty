@@ -153,30 +153,35 @@ export function renderDerived(): void {
 // "apply and close" footer button (aiFilterDropdown.ts wires it as the
 // dropdown's footer), so — matching the Show/Sort footer's live-count
 // convention (setDropdownLabel in showDropdown.ts) — its label previews how
-// many listings currently pass the AI filter instead of the bare "Filter" CTA
-// that's all there's room for inline on desktop.
+// many listings the AI filter has excluded so far instead of the bare
+// "Filter" CTA that's all there's room for inline on desktop.
 function aiFilterButtonLabel(listings: ListingItem[]): string {
   if (!isMobileSheetActive()) return isAiFilterRunning ? 'Filtering..' : 'Filter';
-  const passingCount = listings.filter((item) => item.aiFilterReason === null).length;
-  return `Filtering ${passingCount} / ${listings.length} results`;
+  const filteredOutCount = listings.filter((item) => item.aiFilterReason !== null).length;
+  return `Filtering ${filteredOutCount} / ${listings.length} results`;
 }
 
-// Sole writer of the ai-filter button's disabled/label state — disabled with
-// a spinner while a run is in flight, otherwise enabled and ready to submit.
-// With no criteria typed yet it's only *visually* disabled (aria-disabled,
-// not the native attribute): on the mobile full-screen sheet this button
-// doubles as the sheet's sole dismiss control (aiFilterDropdown.ts), and a
-// natively disabled button never fires `click` in any browser — that would
-// leave the sheet stuck open with no other way to close it. requestAiFilterRun
-// already no-ops on a blank prompt (aiFilter.ts), so staying clickable here is
-// safe. `listings` defaults to getOrderedListings() for the standalone
-// 'input' listener wired in app.ts; renderDerived() passes its own
-// already-computed list instead, so this doesn't recompute it a second time
-// on every streamed listing.
+// Sole writer of the ai-filter button's disabled/label state — never
+// natively disabled, on either axis: with no criteria typed yet it's only
+// *visually* disabled (aria-disabled), and while a run is in flight it shows
+// a spinner but stays clickable rather than disabling. Both cases share the
+// same reason — on the mobile full-screen sheet this button doubles as the
+// sheet's sole dismiss control (aiFilterDropdown.ts), and a natively
+// disabled button never fires `click` in any browser, which would leave the
+// sheet stuck open with no other way to close it. requestAiFilterRun/
+// scheduleAiFilterRun already no-op on a blank prompt and queue a pending
+// re-run instead of double-submitting when already running (aiFilter.ts), so
+// staying clickable in both states is safe. `listings` defaults to
+// getOrderedListings() for the standalone 'input' listener wired in app.ts;
+// renderDerived() passes its own already-computed list instead, so this
+// doesn't recompute it a second time on every streamed listing.
 export function renderAiFilterButton(listings: ListingItem[] = getOrderedListings()): void {
   const filterBtn = getElement<HTMLButtonElement>('aiFilterBtn');
   const promptIsEmpty = getElement<HTMLTextAreaElement>('aiFilter').value.trim() === '';
-  filterBtn.disabled = isAiFilterRunning;
+  // index.html seeds this button with the native `disabled` attribute (so it
+  // isn't briefly clickable before the first render); this is the one place
+  // that ever clears it, since it's never re-disabled after.
+  filterBtn.disabled = false;
   if (promptIsEmpty) filterBtn.setAttribute('aria-disabled', 'true');
   else filterBtn.removeAttribute('aria-disabled');
   // The wrapper markup below (spinner + label span) is fully determined by

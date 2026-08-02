@@ -141,7 +141,7 @@ export function renderShowOptions(listings: ListingItem[]): void {
   setDropdownLabel(
     getShowDropdownElements(),
     `${visibleCount} of ${listings.length} results`,
-    `Show ${visibleCount} of ${listings.length} results`
+    `Showing ${visibleCount} of ${listings.length} results`
   );
 }
 

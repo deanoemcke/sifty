@@ -291,7 +291,7 @@ describe('initApp() wiring', () => {
       expect(vi.mocked(streamPostAsync)).toHaveBeenCalledTimes(1);
     });
 
-    it('disables the button while a run is in flight and re-enables it once done', async () => {
+    it('keeps the button clickable (spinner, not disabled) while a run is in flight', async () => {
       const { streamPostAsync } = await import('./streamPost');
       const { listingsByUrl } = await import('./state');
       const { urlCards, urlCardData } = await import('./urlCardStore');
@@ -317,11 +317,12 @@ describe('initApp() wiring', () => {
       // block's beforeEach already put fake timers in place.
       vi.advanceTimersByTime(20);
 
-      expect(aiFilterBtn.disabled).toBe(true);
+      expect(aiFilterBtn.disabled).toBe(false);
       expect(aiFilterBtn.querySelector('.spinner')).not.toBeNull();
 
       resolveStream();
-      await vi.waitFor(() => expect(aiFilterBtn.disabled).toBe(false));
+      await vi.waitFor(() => expect(aiFilterBtn.querySelector('.spinner')).toBeNull());
+      expect(aiFilterBtn.disabled).toBe(false);
       expect(aiFilterBtn.textContent).toBe('Filter');
     });
 

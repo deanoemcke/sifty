@@ -72,7 +72,6 @@ beforeEach(() => {
     <div id="savedSearchesPanel" class="hidden">
       <div id="savedSearchesHeaderRow" class="hidden"></div>
       <div id="savedSearchesList"></div>
-      <span id="savedSearchesCount" class="hidden">0</span>
       <button id="saveCurrentBtn" disabled></button>
     </div>
 

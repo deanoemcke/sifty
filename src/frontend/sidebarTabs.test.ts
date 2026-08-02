@@ -11,11 +11,11 @@ function buildSidebar(): {
 } {
   const sidebar = document.createElement('aside');
   sidebar.innerHTML = `
-    <nav class="sidebar-tabs">
-      <button id="searchTabBtn" class="sidebar-tab active" aria-selected="true">Search</button>
-      <button id="favouritesTabBtn" class="sidebar-tab" aria-selected="false">Favourites</button>
+    <nav class="sidebar-tabs" role="tablist">
+      <button id="searchTabBtn" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="searchTabPanel">Search</button>
+      <button id="favouritesTabBtn" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="savedSearchesPanel">Favourites</button>
     </nav>
-    <div id="searchTabPanel"></div>
+    <div id="searchTabPanel" role="tabpanel"></div>
     <div id="savedSearchesPanel" class="hidden"></div>
   `;
   const searchTabBtn = sidebar.querySelector<HTMLButtonElement>('#searchTabBtn');

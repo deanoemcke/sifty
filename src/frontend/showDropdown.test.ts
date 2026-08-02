@@ -39,10 +39,10 @@ describe('populateShowControls', () => {
     expect(rowLabels).toEqual(['Used', 'Sold', 'New', 'Filtered']);
   });
 
-  it('seeds the trigger label to "0 of 0 results" and the footer label to "Show 0 of 0 results"', () => {
+  it('seeds the trigger label to "0 of 0 results" and the footer label to "Showing 0 of 0 results"', () => {
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('0 of 0 results');
     expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe(
-      'Show 0 of 0 results'
+      'Showing 0 of 0 results'
     );
   });
 
@@ -98,7 +98,7 @@ describe('tallyListingCategories', () => {
 });
 
 describe('renderShowOptions', () => {
-  it('writes per-category counts, a bare trigger label, and a "Show" footer label', () => {
+  it('writes per-category counts, a bare trigger label, and a "Showing" footer label', () => {
     const listings = [
       makeListingItem(),
       makeListingItem({ data: { ...makeListingItem().data, isSold: true } }),
@@ -117,7 +117,7 @@ describe('renderShowOptions', () => {
     }
     expect(document.querySelector('.dropdown-trigger-label')?.textContent).toBe('3 of 4 results');
     expect(document.getElementById('showDropdownFooterBtn')?.textContent).toBe(
-      'Show 3 of 4 results'
+      'Showing 3 of 4 results'
     );
   });
 

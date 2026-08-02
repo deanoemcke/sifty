@@ -299,7 +299,7 @@ export function handleDropdownTabKey(event: KeyboardEvent): void {
 
 // Sole writer of the trigger/footer text. Takes the two texts separately —
 // the footer button (the mobile sheet's sticky "done" button) reads as a
-// call-to-action ("Show 2 of 3 results") while the trigger stays a bare
+// call-to-action ("Showing 2 of 3 results") while the trigger stays a bare
 // summary ("2 of 3 results") — rather than forcing callers to derive one
 // from the other. Writes into the trigger's label span rather than the
 // button's own textContent, since the button also holds a caret icon that
