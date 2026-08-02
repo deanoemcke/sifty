@@ -176,13 +176,16 @@ describe('renderDerived', () => {
     expect(filterBtn.hasAttribute('aria-disabled')).toBe(false);
   });
 
-  it('shows a spinner and disables the ai-filter button while the ai filter is running', () => {
+  it('shows a spinner but keeps the ai-filter button clickable while the ai filter is running', () => {
     addCardWithListings(['https://l/1']);
     (document.getElementById('aiFilter') as HTMLTextAreaElement).value = 'not a bike';
     setIsAiFilterRunning(true);
     renderDerived();
     const filterBtn = document.getElementById('aiFilterBtn') as HTMLButtonElement;
-    expect(filterBtn.disabled).toBe(true);
+    // Not the native `disabled` attribute: on the mobile full-screen sheet
+    // this button is also the sheet's sole dismiss control, so it must stay
+    // clickable during a run too — see renderAiFilterButton.
+    expect(filterBtn.disabled).toBe(false);
     expect(filterBtn.querySelector('.spinner')).not.toBeNull();
     expect(filterBtn.textContent).toContain('Filtering..');
   });
