@@ -21,7 +21,7 @@ import {
   handlePatchSavedSearch,
   handleUpdateSavedSearch,
 } from './src/server/routes/savedSearches';
-import { getWorktreeLabel, getWorktreePort } from './vite.config.helpers';
+import { getWorktreePort } from './vite.config.helpers';
 
 loadServerEnv();
 
@@ -33,9 +33,6 @@ const providerCooldownStore = createProviderCooldownStore();
 type Next = (err?: unknown) => void;
 
 export default defineConfig({
-  define: {
-    __WORKTREE_LABEL__: JSON.stringify(getWorktreeLabel(process.cwd())),
-  },
   server: {
     port: getWorktreePort(process.cwd()),
     strictPort: true,

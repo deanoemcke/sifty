@@ -30,7 +30,6 @@ import { SEARCH_ICON } from './icons';
 import { handleListingCardKeydown, resolveListingCardOpenArea } from './listingCardActivation';
 import { closeListingModal, openListingCardModal, runDeepSearchAsync } from './listingDetail';
 import { consumeModalDismissalPopState } from './modalOverlay';
-import { applyBrandTitle } from './pageTitle';
 import { searchUrlCardAsync } from './quickSearch';
 import { applyClientFilters, renderAiFilterButton, renderDerived } from './resultsView';
 import {
@@ -131,7 +130,6 @@ async function bootFromPersistedStateAsync(): Promise<void> {
 }
 
 function initApp(): void {
-  applyBrandTitle(__WORKTREE_LABEL__);
   getElement('discoveryBtn').textContent = DISCOVERY_BUTTON_LABEL;
   populateAiFilterDropdown();
   populateShowControls(handleShowCategoryToggle);

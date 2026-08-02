@@ -200,8 +200,20 @@ header .brand-image img {
   height: 6.6rem;
   width: auto;
 }
-header h1 {
-  display: none;
+/* Visually hidden but still exposed to the accessibility tree — use for
+   content that must stay in the a11y tree/DOM order but has no visible
+   spot in the layout. Unlike `display: none`/`visibility: hidden`, this
+   keeps the element reachable by screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ── Sidebar tabs ── */
