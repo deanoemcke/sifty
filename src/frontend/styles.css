@@ -24,6 +24,10 @@
      sticky `top`/`max-height` and .results-header's own margin-top below
      derive from it instead of re-stating the literal. */
   --results-header-padding-y: 0.6rem;
+  /* .app-layout's own padding-top — named once here so
+     --logo-fade-scroll-distance below derives from it instead of
+     re-stating the literal. */
+  --app-layout-padding-top: 1.5rem;
   /* Space the oversized logo needs above .sidebar-tabs — read by both
      header's own padding-top and .results-header's wide-viewport alignment
      below, so the two stay in sync as this value gets retuned. */
@@ -32,14 +36,23 @@
      (sidebar's padding-top plus the logo header's padding-top above it). */
   --sidebar-tabs-offset: calc(var(--sidebar-padding-top) + var(--logo-header-padding-top));
   /* Page-scroll distance (from y=0) until .sidebar reaches its sticky
-     point: .app-layout's own padding-top (1.5rem) minus how far above the
-     viewport .sidebar's negative sticky `top` pins it. Used as the logo's
-     fade-out range so it's gone by the time the tabs settle in place. */
-  --logo-fade-scroll-distance: calc(0.9rem + var(--sidebar-tabs-offset));
+     point: .app-layout's own padding-top minus how far above the viewport
+     .sidebar's negative sticky `top` pins it (--sidebar-tabs-offset minus
+     --results-header-padding-y). Used as the logo's fade-out range so it's
+     gone by the time the tabs settle in place. */
+  --logo-fade-scroll-distance: calc(
+    var(--app-layout-padding-top) -
+    var(--results-header-padding-y) +
+    var(--sidebar-tabs-offset)
+  );
   /* Gap between the logo's right edge and the Search/Favourites tab
      boundary it's anchored to — read by both header .brand-image and
      header .brand below, so their positions stay in sync. */
   --logo-right-inset: 0.5rem;
+  /* Fine-tunes .brand-image's vertical centering against .sidebar-tabs —
+     pulls it down from a dead-center 50% so it optically aligns with the
+     tab row. */
+  --logo-vertical-nudge: 10px;
 }
 
 *,
@@ -70,7 +83,7 @@ body.scroll-locked {
   display: flex;
   max-width: 1600px;
   margin: 0 auto;
-  padding: 1.5rem 1rem 4rem;
+  padding: var(--app-layout-padding-top) 1rem 4rem;
   align-items: flex-start;
   /* column-gap only, not gap: it has no effect once .app-layout switches to
      flex-direction:column below 900px, so this is wide-viewport-only by
@@ -145,7 +158,10 @@ header .brand-image {
   position: absolute;
   bottom: 0;
   left: 50%;
-  transform: translate(calc(-100% - var(--logo-right-inset)), calc(50% - 10px));
+  transform: translate(
+    calc(-100% - var(--logo-right-inset)),
+    calc(50% - var(--logo-vertical-nudge))
+  );
   display: flex;
   align-items: center;
   pointer-events: none;
