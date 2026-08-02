@@ -53,6 +53,21 @@
      pulls it down from a dead-center 50% so it optically aligns with the
      tab row. */
   --logo-vertical-nudge: 10px;
+  /* Rendered height of the logo artwork itself (header .brand-image img).
+     Read by header .brand-image img below AND named here (rather than
+     left as a bare `6.6rem` on that rule) so --logo-clickable-height's
+     comment can point at it directly: the two must be kept in proportion
+     by eye whenever either one is retuned. */
+  --logo-visible-height: 6.6rem;
+  /* Height of header .brand, the real "go home" button — deliberately
+     less than --logo-visible-height, since only the top, non-overlapping
+     portion of the logo art (the part that doesn't sit over
+     .sidebar-tabs; see the comment above header .brand-image below)
+     should be clickable. Not derived arithmetically from
+     --logo-visible-height (CSS can't read the image's actual rendered
+     box from here); if --logo-visible-height changes, re-check this
+     value still looks right against the new art. */
+  --logo-clickable-height: 2.8rem;
 }
 
 *,
@@ -172,8 +187,14 @@ header .brand {
   bottom: 0;
   left: 50%;
   transform: translateX(calc(-100% - var(--logo-right-inset)));
+  /* Must stay >= the logo art's rendered width at --logo-visible-height
+     tall (currently ~4rem for the wordmark at 6.6rem). Unlike the height
+     above, this can't be tied to a shared custom property — width scales
+     with the source image's intrinsic aspect ratio, which CSS has no way
+     to read back into a sibling element's box. Re-check this against the
+     art whenever --logo-visible-height or the logo image itself changes. */
   width: 4rem;
-  height: 2.8rem;
+  height: var(--logo-clickable-height);
   background: none;
   border: none;
   padding: 0;
@@ -213,7 +234,7 @@ header .brand:hover ~ .brand-image {
   }
 }
 header .brand-image img {
-  height: 6.6rem;
+  height: var(--logo-visible-height);
   width: auto;
 }
 /* Visually hidden but still exposed to the accessibility tree — use for
