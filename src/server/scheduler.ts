@@ -292,16 +292,23 @@ async function notifyNewListingsAsync(
       console.log(`[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`);
       const image = await fetchListingImageAttachmentAsync(listing.thumbnailUrl);
       const message = formatAlertMessage(listing);
-      try {
-        await sendNotificationAsync(message, { image });
-      } catch (err) {
-        // A broken/oversized thumbnail must never sink the whole alert
-        // (mirrors imageAttachment.ts's own stated invariant) — only retry
-        // if an image was actually attached; retrying an already-imageless
-        // call would just repeat the same failure.
-        if (image === undefined) throw err;
-        await sendNotificationAsync(message, {});
+      // Sent as two separate messages, not one combined image+caption send:
+      // the Signal client renders a combined send's caption at the width of
+      // a fixed, cropped image thumbnail box rather than the chat's full
+      // bubble width, which visibly cramps the caption regardless of its
+      // own length. A broken/oversized thumbnail must never sink the whole
+      // alert (mirrors imageAttachment.ts's own stated invariant), so a
+      // failed image send is swallowed — only the text message is required.
+      if (image !== undefined) {
+        try {
+          await sendNotificationAsync('', { image });
+        } catch (err) {
+          console.warn(
+            `[scheduler] image notification failed for ${listing.url}: ${(err as Error).message}`
+          );
+        }
       }
+      await sendNotificationAsync(message);
       stmtInsertAlertedListing(database).run(row.id, hash, now());
       summary.notifiedCount++;
     } catch (err) {

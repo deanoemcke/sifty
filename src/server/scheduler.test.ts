@@ -1083,7 +1083,7 @@ describe('runSchedulerAsync', () => {
     }
   });
 
-  it('passes the fetched thumbnail image through to the notifier when the listing has one', async () => {
+  it('sends the image as its own message before the text message when the listing has a thumbnail', async () => {
     const db = freshDb();
     insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -1111,10 +1111,16 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(fetchListingImageAttachmentAsync).toHaveBeenCalledWith('https://example.com/thumb.jpg');
-    expect(sendNotificationAsync.mock.calls[0][1]?.image).toBe('data:image/jpeg;base64,abc');
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+    expect(sendNotificationAsync.mock.calls[0]).toEqual([
+      '',
+      { image: 'data:image/jpeg;base64,abc' },
+    ]);
+    expect(sendNotificationAsync.mock.calls[1][0]).toContain('Chair');
+    expect(sendNotificationAsync.mock.calls[1][1]).toBeUndefined();
   });
 
-  it('retries without the image when the notifier rejects an image-attached message, and marks the listing notified', async () => {
+  it('still sends the text message and marks the listing notified when the image-only send fails', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -1145,7 +1151,7 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
-    expect(sendNotificationAsync.mock.calls[1][1]?.image).toBeUndefined();
+    expect(sendNotificationAsync.mock.calls[1][1]).toBeUndefined();
     expect(summary.searches[0].notifiedCount).toBe(1);
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
   });
