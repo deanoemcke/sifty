@@ -111,20 +111,20 @@ describe('escapeSignalMarkdown', () => {
 });
 
 describe('formatSearchFailingMessage', () => {
-  it('formats a single error as "<name>: <severity icon> [<category>] <error>"', () => {
+  it('formats a single error as "<severity icon> <name>: [<category>] <error>"', () => {
     const message = formatSearchFailingMessage('My search', [
       { kind: 'scrape', message: 'Facebook requires login.' },
     ]);
 
-    expect(message).toBe('My search: 🟠 [Scrape] Facebook requires login.');
+    expect(message).toBe('🟠 My search: [Scrape] Facebook requires login.');
   });
 
   it('labels each error kind with its own category and severity icon', () => {
     expect(
       formatSearchFailingMessage('S', [{ kind: 'ai-filter', message: 'AI parse error' }])
-    ).toBe('S: 🟡 [AI Filter] AI parse error');
+    ).toBe('🟡 S: [AI Filter] AI parse error');
     expect(formatSearchFailingMessage('S', [{ kind: 'unhandled', message: 'boom' }])).toBe(
-      'S: 🔴 [Unhandled] boom'
+      '🔴 S: [Unhandled] boom'
     );
   });
 
@@ -146,8 +146,8 @@ describe('formatSearchFailingMessage', () => {
     ]);
 
     expect(message.split('\n')).toEqual([
-      'My search: 🟠 [Scrape] reason A',
-      'My search: 🟠 [Scrape] reason B',
+      '🟠 My search: [Scrape] reason A',
+      '🟠 My search: [Scrape] reason B',
     ]);
   });
 
@@ -180,8 +180,8 @@ describe('formatSearchFailingMessage', () => {
     ]);
 
     expect(message.split('\n')).toEqual([
-      'My search: 🟠 [Scrape] timed out',
-      'My search: 🟡 [AI Filter] timed out',
+      '🟠 My search: [Scrape] timed out',
+      '🟡 My search: [AI Filter] timed out',
     ]);
   });
 

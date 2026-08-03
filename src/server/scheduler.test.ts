@@ -1274,7 +1274,7 @@ describe('runSchedulerAsync', () => {
     // previous (population) run succeeded, so recordSavedSearchRunStatusAndAlertAsync alerts.
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      'FB search: 🟠 [Scrape] Discarded 1 untrusted listing(s): Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
+      '🟠 FB search: [Scrape] Discarded 1 untrusted listing(s): Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].listingsFoundCount).toBe(0);
@@ -1354,7 +1354,7 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      'TM search: 🟠 [Scrape] Discarded 1 untrusted listing(s): Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
+      '🟠 TM search: [Scrape] Discarded 1 untrusted listing(s): Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.some((error) => error.message.includes('Discarded'))).toBe(

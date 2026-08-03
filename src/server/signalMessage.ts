@@ -54,10 +54,13 @@ function dedupeErrors(errors: SchedulerError[]): SchedulerError[] {
   });
 }
 
+function severityIcon(error: SchedulerError): string {
+  return SEVERITY_ICON[ERROR_KIND_SEVERITY[error.kind]];
+}
+
 function categorizedErrorLine(error: SchedulerError): string {
-  const icon = SEVERITY_ICON[ERROR_KIND_SEVERITY[error.kind]];
   const label = ERROR_KIND_LABEL[error.kind];
-  return `${icon} [${label}] ${escapeSignalMarkdown(error.message)}`;
+  return `[${label}] ${escapeSignalMarkdown(error.message)}`;
 }
 
 // Trailing comma-segments that identify the regiona and country rather than the suburb
@@ -112,7 +115,7 @@ export function formatSearchFailingMessage(
 ): string {
   const escapedName = escapeSignalMarkdown(savedSearchName);
   return dedupeErrors(errors)
-    .map((error) => `${escapedName}: ${categorizedErrorLine(error)}`)
+    .map((error) => `${severityIcon(error)} ${escapedName}: ${categorizedErrorLine(error)}`)
     .join('\n');
 }
 
@@ -147,6 +150,8 @@ export function formatAlertSetupFailedMessage(
   const escapedName = escapeSignalMarkdown(savedSearchName);
   return [
     `⚠️ Couldn't set up alerts for "${escapedName}":`,
-    ...dedupeErrors(errors).map((error) => `- ${categorizedErrorLine(error)}`),
+    ...dedupeErrors(errors).map(
+      (error) => `- ${severityIcon(error)} ${categorizedErrorLine(error)}`
+    ),
   ].join('\n');
 }
