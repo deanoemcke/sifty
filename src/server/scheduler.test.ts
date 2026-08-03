@@ -12,9 +12,13 @@ vi.mock('./ai', async (importOriginal) => {
   return { ...actual, aiJSON: vi.fn(), getAIConfig: vi.fn() };
 });
 vi.mock('./imageAttachment', () => ({ fetchListingImageAttachmentAsync: vi.fn() }));
+vi.mock('./connectivity', () => ({
+  checkInternetConnectivityAsync: vi.fn().mockResolvedValue(true),
+}));
 
 import { aiJSON, getAIConfig } from './ai';
 import { hashFingerprintParts } from './alerts';
+import { checkInternetConnectivityAsync } from './connectivity';
 import {
   initSchema,
   stmtClearSearch,
@@ -35,7 +39,6 @@ import {
   determineExitCode,
   FAILURE_REALERT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
-  normalizeScrapeErrorReason,
   runImmediatePopulationRunAsync,
   runSchedulerAsync as runSchedulerAsyncUngated,
   SCRAPE_ERROR_REASON_MAX_LENGTH,
@@ -138,7 +141,7 @@ function makeHangingRecipe(): Recipe {
 // detectLoginWallAsync's caller in facebook.ts, which embeds however many
 // listings had loaded before the wall appeared — that count varies from run
 // to run for what is otherwise the same underlying failure, which is exactly
-// what normalizeScrapeErrorReason (scheduler.ts) exists to see through.
+// what normalizeScrapeErrorReason (schedulerErrorText.ts) exists to see through.
 function makeLoginWalledRecipe(recipeName: string, listings: Listing[]): Recipe {
   return {
     name: recipeName,
@@ -176,6 +179,7 @@ beforeEach(() => {
   vi.mocked(aiJSON).mockReset();
   vi.mocked(getAIConfig).mockReset();
   vi.mocked(fetchListingImageAttachmentAsync).mockReset().mockResolvedValue(undefined);
+  vi.mocked(checkInternetConnectivityAsync).mockReset().mockResolvedValue(true);
 });
 
 describe('runSchedulerAsync', () => {
@@ -643,6 +647,40 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(summary.searches[0].errors.length).toBeGreaterThan(0);
+  });
+
+  it('skips the entire scrape loop and records a single error when there is no internet connectivity', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, {
+      urls: ['https://a.example.com/search', 'https://b.example.com/search'],
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([]));
+    // Complete the population run first, so the offline run below is a
+    // steady-state run rather than a still-populating one — keeps this
+    // test isolated to the connectivity-skip behaviour, not the unrelated
+    // population-run-incomplete error that fires whenever any scrape
+    // failure occurs before the baseline is ever established.
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+    vi.mocked(getRecipeForUrl).mockClear();
+
+    vi.mocked(checkInternetConnectivityAsync).mockResolvedValue(false);
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    // Neither URL was ever attempted — the outage is detected once, up
+    // front, rather than letting each URL fail independently.
+    expect(getRecipeForUrl).not.toHaveBeenCalled();
+    expect(summary.searches[0].errors).toEqual([
+      { kind: 'scrape', message: 'Network unreachable — skipped this run' },
+    ]);
   });
 
   it('a saved search whose row causes a synchronous throw does not prevent other saved searches from being processed on a later run', async () => {
@@ -1620,6 +1658,38 @@ describe('runSchedulerAsync', () => {
     expect(detail.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   });
 
+  it('truncates a multi-line scrape-failure reason at the first newline, not by a flat character count', async () => {
+    // Mirrors Playwright's real page.goto failure shape: an informative
+    // first line, then a verbose multi-line "Call log" trailer. A flat
+    // character-count slice keeps however much of the trailer happens to
+    // fit — which varies with the URL's own length even for the identical
+    // underlying failure (this is what let 4 net::ERR_INTERNET_DISCONNECTED
+    // failures for one saved search render as 4 different-looking alert
+    // lines instead of collapsing to one). Cutting at the first newline
+    // instead drops the trailer entirely, deterministically.
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const reason =
+      'page.goto: net::ERR_INTERNET_DISCONNECTED at https://example.com/search\nCall log:\n  - navigating to "https://example.com/search", waiting until "load"';
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFailingRecipeWithReason('facebook', reason));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    const message = sendNotificationAsync.mock.calls[0][0] as string;
+    // escapeSignalMarkdown strips underscores from the outbound text (an
+    // existing, unrelated behaviour — visible here as ERR_INTERNET_DISCONNECTED
+    // rendering without its underscores), so match on the escaped form.
+    expect(message).toContain(
+      'page.goto: net::ERRINTERNETDISCONNECTED at https://example.com/search'
+    );
+    expect(message).not.toContain('Call log');
+  });
+
   it('suppresses a repeat login-wall alert even though the listing count embedded in the message differs between runs', async () => {
     // Mirrors facebook.ts's real login-wall message, which reports however
     // many listings had loaded before the wall appeared — a count that
@@ -2285,31 +2355,6 @@ describe('triggerImmediatePopulationRunAsync', () => {
     expect(stmtGetSavedSearch(db).get(searchBId)?.last_run_at).toBeNull();
 
     logSpy.mockRestore();
-  });
-});
-
-describe('normalizeScrapeErrorReason', () => {
-  it('collapses reasons that differ only by an embedded count to the same key', () => {
-    const a =
-      'Login wall detected — only 3 listings loaded. Set the FB_COOKIES environment variable to get full results.';
-    const b =
-      'Login wall detected — only 47 listings loaded. Set the FB_COOKIES environment variable to get full results.';
-
-    expect(normalizeScrapeErrorReason(a)).toBe(normalizeScrapeErrorReason(b));
-  });
-
-  it('collapses reasons that differ only by an embedded URL to the same key', () => {
-    const a = 'Quick search for https://facebook.com/marketplace/search-a timed out after 30000ms';
-    const b = 'Quick search for https://facebook.com/marketplace/search-b timed out after 30000ms';
-
-    expect(normalizeScrapeErrorReason(a)).toBe(normalizeScrapeErrorReason(b));
-  });
-
-  it('does not collapse genuinely different failure categories', () => {
-    const loginWall = 'Login wall detected — only 3 listings loaded.';
-    const rateLimited = 'Rate limited by Facebook';
-
-    expect(normalizeScrapeErrorReason(loginWall)).not.toBe(normalizeScrapeErrorReason(rateLimited));
   });
 });
 

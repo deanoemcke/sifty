@@ -4,6 +4,7 @@
 import { formatListingPrice } from '../lib/priceFormat';
 import type { Listing } from '../lib/recipes/base';
 import type { SchedulerError, SchedulerErrorKind } from './scheduler';
+import { normalizeScrapeErrorReason } from './schedulerErrorText';
 
 // Which subsystem produced the error (shown in the alert so a failure can be
 // triaged without digging into logs) and how urgently it needs attention.
@@ -36,12 +37,17 @@ const SEVERITY_ICON: Record<ErrorSeverity, string> = {
   medium: '🟡',
 };
 
-// De-dupes on the (kind, message) pair rather than message alone — two
-// different subsystems could in principle produce the same text.
+// De-dupes on the (kind, normalized-message) pair rather than kind+message
+// alone — two different subsystems could in principle produce the same
+// text, and two errors describing the identical root cause (e.g. a total
+// network outage) but different URLs must still collapse to one line
+// rather than one per URL. Keys on normalizeScrapeErrorReason's output —
+// the same normalization scheduler.ts already trusts for its own
+// "same failure as last run" comparison — rather than the raw message.
 function dedupeErrors(errors: SchedulerError[]): SchedulerError[] {
   const seen = new Set<string>();
   return errors.filter((error) => {
-    const key = `${error.kind}:${error.message}`;
+    const key = `${error.kind}:${normalizeScrapeErrorReason(error.message)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

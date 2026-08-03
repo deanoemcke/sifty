@@ -151,6 +151,28 @@ describe('formatSearchFailingMessage', () => {
     ]);
   });
 
+  it('collapses errors that describe the same underlying failure but differ only by URL', () => {
+    // Mirrors a real case: a total network outage makes every URL in a
+    // saved search fail identically ("net::ERR_INTERNET_DISCONNECTED"), but
+    // each message embeds its own URL — without root-cause normalization
+    // these would never collapse, and a search with N URLs would produce N
+    // near-identical alert lines for one single underlying cause.
+    const message = formatSearchFailingMessage('My search', [
+      {
+        kind: 'scrape',
+        message:
+          'Discarded 0 untrusted listing(s) from https://a.example.com/search?condition=used: page.goto: net::ERRINTERNETDISCONNECTED at https://a.example.com/search?condition=used',
+      },
+      {
+        kind: 'scrape',
+        message:
+          'Discarded 0 untrusted listing(s) from https://b.example.com/search?condition=new: page.goto: net::ERRINTERNETDISCONNECTED at https://b.example.com/search?condition=new',
+      },
+    ]);
+
+    expect(message.split('\n')).toHaveLength(1);
+  });
+
   it('does not dedupe the same message across different error kinds', () => {
     const message = formatSearchFailingMessage('My search', [
       { kind: 'scrape', message: 'timed out' },
