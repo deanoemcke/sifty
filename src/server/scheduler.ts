@@ -178,16 +178,22 @@ function parseStoredFailureDetail(detail: string | null): { kind: string; messag
 export const SCRAPE_ERROR_REASON_MAX_LENGTH = 200;
 
 // Caught/emitted errors from a real page.goto failure (Playwright) are often
-// multi-line: an informative first line, then a verbose "Call log" trailer.
-// Cutting at the first newline before applying the length cap drops that
-// trailer entirely, rather than keeping however much of it happens to fit —
-// a flat character-count slice lands at a different point in the trailer
-// depending on the failing URL's own length, so the identical underlying
-// failure (e.g. a total network outage) ends up looking different across a
-// saved search's own URLs and never collapses in the outbound alert (see
-// dedupeErrors in signalMessage.ts, which keys on this normalized text).
-function truncateScrapeReason(raw: string): string {
-  return raw.split('\n')[0].slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
+// multi-line: an informative first line, then a verbose "Call log" trailer,
+// and that first line often ends with "at <url>". Alerts are meant to read
+// as "which search, what went wrong" — the specific URL isn't actionable
+// from a phone notification, and once multiple URLs fail identically they'd
+// otherwise show whichever one happened to survive dedupeErrors' collapse,
+// which reads as "only this one URL failed" even when the whole search did.
+// Stripped here, at capture, rather than only at display time, so
+// last_run_detail and the outbound alert always show the same clean text.
+function sanitizeScrapeReason(raw: string): string {
+  return raw
+    .split('\n')[0]
+    .replace(/\s+at\s+https?:\/\/\S+/gi, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
 }
 
 // Bound on the *aggregated* failure text — summary.errors joined together —
@@ -393,7 +399,7 @@ async function processSavedSearchAsync(
     for (const url of urls) {
       const recipe = getRecipeForUrl(url);
       if (!recipe) {
-        summary.errors.push({ kind: 'scrape', message: `No recipe found for URL: ${url}` });
+        summary.errors.push({ kind: 'scrape', message: 'No recipe found for this URL' });
         continue;
       }
       let latestErrorMessage: string | undefined;
@@ -414,12 +420,12 @@ async function processSavedSearchAsync(
           // rendered DOM listings have been processed by the MutationObserver
           // injection. Those listings are not trustworthy and must never reach
           // AI filtering or notification.
-          const reason = truncateScrapeReason(
+          const reason = sanitizeScrapeReason(
             latestErrorMessage ?? 'did not complete successfully'
           );
           summary.errors.push({
             kind: 'scrape',
-            message: `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`,
+            message: `Discarded ${listings.length} untrusted listing(s): ${reason}`,
           });
           scrapeFailureReasons.push(reason);
           continue;
@@ -427,10 +433,10 @@ async function processSavedSearchAsync(
         for (const listing of listings)
           listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
       } catch (err) {
-        const reason = truncateScrapeReason((err as Error).message);
+        const reason = sanitizeScrapeReason((err as Error).message);
         summary.errors.push({
           kind: 'scrape',
-          message: `Quick search failed for ${url}: ${reason}`,
+          message: `Quick search failed: ${reason}`,
         });
         scrapeFailureReasons.push(reason);
       }

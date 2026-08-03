@@ -1274,7 +1274,7 @@ describe('runSchedulerAsync', () => {
     // previous (population) run succeeded, so recordSavedSearchRunStatusAndAlertAsync alerts.
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      `FB search: 🟠 [Scrape] Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
+      'FB search: 🟠 [Scrape] Discarded 1 untrusted listing(s): Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].listingsFoundCount).toBe(0);
@@ -1354,7 +1354,7 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     expect(sendNotificationAsync.mock.calls[0][0]).toBe(
-      `TM search: 🟠 [Scrape] Discarded 1 untrusted listing(s) from ${SEARCH_URL}: Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.`
+      'TM search: 🟠 [Scrape] Discarded 1 untrusted listing(s): Login wall detected — only 1 listing loaded. Set the FBCOOKIES environment variable to get full results.'
     );
     expect(summary.searches[0].notifiedCount).toBe(0);
     expect(summary.searches[0].errors.some((error) => error.message.includes('Discarded'))).toBe(
@@ -1596,7 +1596,7 @@ describe('runSchedulerAsync', () => {
     // flow uncapped into last_run_detail or an outbound Signal payload.
     const db = freshDb();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
-    const overlongReason = `Login wall detected — ${'x'.repeat(50)} listings loaded, url=https://facebook.com/marketplace/${'y'.repeat(200)}`;
+    const overlongReason = `Login wall detected — ${'x'.repeat(250)} listings loaded`;
     expect(overlongReason.length).toBeGreaterThan(SCRAPE_ERROR_REASON_MAX_LENGTH);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeFailingRecipeWithReason('facebook', overlongReason)
@@ -1658,15 +1658,16 @@ describe('runSchedulerAsync', () => {
     expect(detail.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   });
 
-  it('truncates a multi-line scrape-failure reason at the first newline, not by a flat character count', async () => {
+  it('truncates a multi-line scrape-failure reason at the first newline and strips the embedded URL', async () => {
     // Mirrors Playwright's real page.goto failure shape: an informative
-    // first line, then a verbose multi-line "Call log" trailer. A flat
-    // character-count slice keeps however much of the trailer happens to
-    // fit — which varies with the URL's own length even for the identical
-    // underlying failure (this is what let 4 net::ERR_INTERNET_DISCONNECTED
-    // failures for one saved search render as 4 different-looking alert
-    // lines instead of collapsing to one). Cutting at the first newline
-    // instead drops the trailer entirely, deterministically.
+    // first line ending "at <url>", then a verbose multi-line "Call log"
+    // trailer. A flat character-count slice keeps however much of the
+    // trailer happens to fit — which varies with the URL's own length even
+    // for the identical underlying failure (this is what let 4
+    // net::ERR_INTERNET_DISCONNECTED failures for one saved search render as
+    // 4 different-looking alert lines instead of collapsing to one). The
+    // URL itself is also stripped: a phone alert should read as "which
+    // search, what went wrong," not repeat a URL the reader can't act on.
     const db = freshDb();
     insertAlertSearch(db, { name: 'FB search' });
     const reason =
@@ -1684,9 +1685,8 @@ describe('runSchedulerAsync', () => {
     // escapeSignalMarkdown strips underscores from the outbound text (an
     // existing, unrelated behaviour — visible here as ERR_INTERNET_DISCONNECTED
     // rendering without its underscores), so match on the escaped form.
-    expect(message).toContain(
-      'page.goto: net::ERRINTERNETDISCONNECTED at https://example.com/search'
-    );
+    expect(message).toContain('page.goto: net::ERRINTERNETDISCONNECTED');
+    expect(message).not.toContain('https://example.com/search');
     expect(message).not.toContain('Call log');
   });
 
