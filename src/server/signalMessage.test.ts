@@ -111,20 +111,20 @@ describe('escapeSignalMarkdown', () => {
 });
 
 describe('formatSearchFailingMessage', () => {
-  it('formats a single error as "<name>: <severity icon> [<category>] <error>"', () => {
+  it('formats a single error as "<severity icon> <name>: [<category>] <error>"', () => {
     const message = formatSearchFailingMessage('My search', [
       { kind: 'scrape', message: 'Facebook requires login.' },
     ]);
 
-    expect(message).toBe('My search: 🟠 [Scrape] Facebook requires login.');
+    expect(message).toBe('🟠 My search: [Scrape] Facebook requires login.');
   });
 
   it('labels each error kind with its own category and severity icon', () => {
     expect(
       formatSearchFailingMessage('S', [{ kind: 'ai-filter', message: 'AI parse error' }])
-    ).toBe('S: 🟡 [AI Filter] AI parse error');
+    ).toBe('🟡 S: [AI Filter] AI parse error');
     expect(formatSearchFailingMessage('S', [{ kind: 'unhandled', message: 'boom' }])).toBe(
-      'S: 🔴 [Unhandled] boom'
+      '🔴 S: [Unhandled] boom'
     );
   });
 
@@ -146,9 +146,31 @@ describe('formatSearchFailingMessage', () => {
     ]);
 
     expect(message.split('\n')).toEqual([
-      'My search: 🟠 [Scrape] reason A',
-      'My search: 🟠 [Scrape] reason B',
+      '🟠 My search: [Scrape] reason A',
+      '🟠 My search: [Scrape] reason B',
     ]);
+  });
+
+  it('collapses errors that describe the same underlying failure but differ only by URL', () => {
+    // Mirrors a real case: a total network outage makes every URL in a
+    // saved search fail identically ("net::ERR_INTERNET_DISCONNECTED"), but
+    // each message embeds its own URL — without root-cause normalization
+    // these would never collapse, and a search with N URLs would produce N
+    // near-identical alert lines for one single underlying cause.
+    const message = formatSearchFailingMessage('My search', [
+      {
+        kind: 'scrape',
+        message:
+          'Discarded 0 untrusted listing(s) from https://a.example.com/search?condition=used: page.goto: net::ERRINTERNETDISCONNECTED at https://a.example.com/search?condition=used',
+      },
+      {
+        kind: 'scrape',
+        message:
+          'Discarded 0 untrusted listing(s) from https://b.example.com/search?condition=new: page.goto: net::ERRINTERNETDISCONNECTED at https://b.example.com/search?condition=new',
+      },
+    ]);
+
+    expect(message.split('\n')).toHaveLength(1);
   });
 
   it('does not dedupe the same message across different error kinds', () => {
@@ -158,8 +180,8 @@ describe('formatSearchFailingMessage', () => {
     ]);
 
     expect(message.split('\n')).toEqual([
-      'My search: 🟠 [Scrape] timed out',
-      'My search: 🟡 [AI Filter] timed out',
+      '🟠 My search: [Scrape] timed out',
+      '🟡 My search: [AI Filter] timed out',
     ]);
   });
 

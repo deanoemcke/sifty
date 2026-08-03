@@ -7,6 +7,7 @@
 
 import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
+import { checkInternetConnectivityAsync } from './connectivity';
 import {
   type SavedSearchRow,
   stmtClearAlertSetupNotificationPending,
@@ -24,6 +25,7 @@ import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
 import { logQuickSearchEvent } from './quickSearchLogging';
 import { getRecipeForUrl } from './recipes/registry';
+import { normalizeScrapeErrorReason } from './schedulerErrorText';
 import {
   acquireSchedulerLock,
   DEFAULT_SCHEDULER_LOCK_PATH,
@@ -93,20 +95,6 @@ export const MAX_SEARCHES_PER_TICK = 5;
 // doesn't go silent forever between the initial alert and its eventual fix,
 // while still not re-sending every single tick.
 export const FAILURE_REALERT_MS = 12 * 60 * 60 * 1000;
-
-// Collapses a failure reason down to a stable comparison key by stripping
-// content that varies run-to-run for the same underlying failure — e.g.
-// Facebook's login-wall message embeds however many listings loaded before
-// the wall appeared, and a scrape-timeout message embeds the specific URL.
-// Without this, "the same failure as last run" (what
-// recordSavedSearchRunStatusAndAlertAsync checks before suppressing a
-// re-alert) rarely produces two identical raw strings, so it would never
-// actually recognize a repeat. This only affects that comparison — the raw,
-// un-normalized reason is still what's shown in full via
-// formatSearchFailingMessage and recorded in summary.errors/last_run_detail.
-export function normalizeScrapeErrorReason(reason: string): string {
-  return reason.replace(/https?:\/\/\S+/g, '<url>').replace(/\d+/g, '#');
-}
 
 // Builds an order-independent comparison key from a run's individual errors,
 // for the "is this the same failure as last run" check in
@@ -189,6 +177,25 @@ function parseStoredFailureDetail(detail: string | null): { kind: string; messag
 // for AI parse-error messages in ai.ts.
 export const SCRAPE_ERROR_REASON_MAX_LENGTH = 200;
 
+// Caught/emitted errors from a real page.goto failure (Playwright) are often
+// multi-line: an informative first line, then a verbose "Call log" trailer,
+// and that first line often ends with "at <url>". Alerts are meant to read
+// as "which search, what went wrong" — the specific URL isn't actionable
+// from a phone notification, and once multiple URLs fail identically they'd
+// otherwise show whichever one happened to survive dedupeErrors' collapse,
+// which reads as "only this one URL failed" even when the whole search did.
+// Stripped here, at capture, rather than only at display time, so
+// last_run_detail and the outbound alert always show the same clean text.
+function sanitizeScrapeReason(raw: string): string {
+  return raw
+    .split('\n')[0]
+    .replace(/\s+at\s+https?:\/\/\S+/gi, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
+}
+
 // Bound on the *aggregated* failure text — summary.errors joined together —
 // applied in recordSavedSearchRunStatusAndAlertAsync just before it reaches
 // last_run_detail or the outbound Signal alert. Unlike
@@ -233,6 +240,7 @@ export type SchedulerDeps = {
   now?: () => number;
   targetIntervalMs?: number;
   maxSearchesPerTick?: number;
+  checkConnectivityAsync?: () => Promise<boolean>;
 };
 
 // 'notify' covers both per-listing alert sends (notifyNewListingsAsync) and
@@ -339,7 +347,7 @@ async function processSavedSearchAsync(
   row: SavedSearchRow,
   deps: Required<SchedulerDeps>
 ): Promise<SavedSearchRunSummary> {
-  const { database, cooldownStore, now } = deps;
+  const { database, cooldownStore, now, checkConnectivityAsync } = deps;
   const urls = parseSavedSearchUrls(row);
   const aiFilterPrompt = row.ai_filter?.trim() ? row.ai_filter : null;
 
@@ -377,47 +385,61 @@ async function processSavedSearchAsync(
   // tick. The individual reasons also land in summary.errors, which is what
   // recordSavedSearchRunStatusAndAlertAsync (below) alerts on.
   const scrapeFailureReasons: string[] = [];
-  for (const url of urls) {
-    const recipe = getRecipeForUrl(url);
-    if (!recipe) {
-      summary.errors.push({ kind: 'scrape', message: `No recipe found for URL: ${url}` });
-      continue;
-    }
-    let latestErrorMessage: string | undefined;
-    try {
-      const { listings, didCompleteSuccessfully } = await withTimeoutAsync(
-        runQuickSearchForUrlAsync(url, recipe, database, (event) => {
-          if (event.type === 'error') latestErrorMessage = event.message;
-          logQuickSearchEvent(recipe.name, event);
-        }),
-        SCRAPE_TIMEOUT_MS,
-        `Quick search for ${url}`
-      );
-      if (!didCompleteSuccessfully) {
-        // A recipe that returns without ever reaching `{type:'complete'}` (a
-        // login wall, a block, a mid-scrape failure) may still have pushed
-        // some `listing` events before it detected the failure — e.g.
-        // facebook.ts's detectLoginWallAsync fires only after already-
-        // rendered DOM listings have been processed by the MutationObserver
-        // injection. Those listings are not trustworthy and must never reach
-        // AI filtering or notification.
-        const reason = (latestErrorMessage ?? 'did not complete successfully').slice(
-          0,
-          SCRAPE_ERROR_REASON_MAX_LENGTH
-        );
-        summary.errors.push({
-          kind: 'scrape',
-          message: `Discarded ${listings.length} untrusted listing(s) from ${url}: ${reason}`,
-        });
-        scrapeFailureReasons.push(reason);
+  // Checked once, up front, rather than letting every URL below fail
+  // independently for the identical reason — a total outage would otherwise
+  // burn a full SCRAPE_TIMEOUT_MS per URL only to arrive at the same
+  // "network unreachable" conclusion N times over.
+  const isOnline = await checkConnectivityAsync();
+  if (!isOnline) {
+    const reason = 'Network unreachable — skipped this run';
+    console.warn(`[scheduler] "${row.name}": skipping — no internet connectivity`);
+    summary.errors.push({ kind: 'scrape', message: reason });
+    scrapeFailureReasons.push(reason);
+  } else {
+    for (const url of urls) {
+      const recipe = getRecipeForUrl(url);
+      if (!recipe) {
+        summary.errors.push({ kind: 'scrape', message: 'No recipe found for this URL' });
         continue;
       }
-      for (const listing of listings)
-        listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
-    } catch (err) {
-      const reason = (err as Error).message.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
-      summary.errors.push({ kind: 'scrape', message: `Quick search failed for ${url}: ${reason}` });
-      scrapeFailureReasons.push(reason);
+      let latestErrorMessage: string | undefined;
+      try {
+        const { listings, didCompleteSuccessfully } = await withTimeoutAsync(
+          runQuickSearchForUrlAsync(url, recipe, database, (event) => {
+            if (event.type === 'error') latestErrorMessage = event.message;
+            logQuickSearchEvent(recipe.name, event);
+          }),
+          SCRAPE_TIMEOUT_MS,
+          `Quick search for ${url}`
+        );
+        if (!didCompleteSuccessfully) {
+          // A recipe that returns without ever reaching `{type:'complete'}` (a
+          // login wall, a block, a mid-scrape failure) may still have pushed
+          // some `listing` events before it detected the failure — e.g.
+          // facebook.ts's detectLoginWallAsync fires only after already-
+          // rendered DOM listings have been processed by the MutationObserver
+          // injection. Those listings are not trustworthy and must never reach
+          // AI filtering or notification.
+          const reason = sanitizeScrapeReason(
+            latestErrorMessage ?? 'did not complete successfully'
+          );
+          summary.errors.push({
+            kind: 'scrape',
+            message: `Discarded ${listings.length} untrusted listing(s): ${reason}`,
+          });
+          scrapeFailureReasons.push(reason);
+          continue;
+        }
+        for (const listing of listings)
+          listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
+      } catch (err) {
+        const reason = sanitizeScrapeReason((err as Error).message);
+        summary.errors.push({
+          kind: 'scrape',
+          message: `Quick search failed: ${reason}`,
+        });
+        scrapeFailureReasons.push(reason);
+      }
     }
   }
 
@@ -697,6 +719,7 @@ export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerS
     now: () => Date.now(),
     targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
     maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
+    checkConnectivityAsync: checkInternetConnectivityAsync,
     ...deps,
   };
   const cutoff = resolvedDeps.now() - resolvedDeps.targetIntervalMs;
@@ -728,6 +751,7 @@ export type ImmediatePopulationRunDeps = {
   database: Database.Database;
   cooldownStore: ProviderCooldownStore;
   sendNotificationAsync?: SchedulerNotifier;
+  checkConnectivityAsync?: () => Promise<boolean>;
 };
 
 // Forces a fresh, silent population pass for one specific saved search,
@@ -763,6 +787,7 @@ export async function runImmediatePopulationRunAsync(
       database: deps.database,
       cooldownStore: deps.cooldownStore,
       sendNotificationAsync: deps.sendNotificationAsync ?? sendSignalNotificationAsync,
+      checkConnectivityAsync: deps.checkConnectivityAsync ?? checkInternetConnectivityAsync,
       now: () => Date.now(),
       targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
       maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
