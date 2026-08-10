@@ -125,6 +125,21 @@ export function formatSearchRecoveredMessage(savedSearchName: string): string {
   return `✅ ${escapeSignalMarkdown(savedSearchName)} is working again`;
 }
 
+// Application-wide counterpart to formatSearchFailingMessage — sent once,
+// covering every affected saved search at once, instead of once per search
+// (see reconcileFacebookCookiesSitewideAlertAsync in scheduler.ts, which
+// dedupes this exact scenario across saved searches).
+export function formatFacebookCookiesFailingMessage(): string {
+  return '🟠 Facebook login required — set FB_COOKIES to restore all Facebook-based searches.';
+}
+
+// Application-wide counterpart to formatSearchRecoveredMessage — sent once
+// when the shared Facebook-cookies failure clears, instead of once per
+// affected saved search.
+export function formatFacebookCookiesRecoveredMessage(): string {
+  return '✅ Facebook login is working again';
+}
+
 // Sent once, right when a saved search's alert finishes being set up — i.e.
 // the immediate, silent population run triggered by turning the alert
 // checkbox on (or editing an already alert-on search) completes

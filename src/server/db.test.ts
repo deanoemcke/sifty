@@ -16,6 +16,7 @@ import {
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearchByName,
   stmtGetSearch,
+  stmtGetSitewideAlertState,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtInsertSavedSearch,
@@ -23,6 +24,7 @@ import {
   stmtSetSearch,
   stmtUpdateSavedSearch,
   stmtUpdateSavedSearchLastRunAt,
+  stmtUpsertSitewideAlertState,
 } from './db';
 
 function columnNames(db: Database.Database, table: string): string[] {
@@ -48,6 +50,7 @@ describe('initSchema', () => {
     expect(columnNames(db, 'saved_searches')).toContain('id');
     expect(columnNames(db, 'trademe_categories')).toContain('slug');
     expect(columnNames(db, 'alerted_listings')).toContain('listing_hash');
+    expect(columnNames(db, 'sitewide_alert_state')).toContain('cause');
   });
 
   it('saved_searches has discover_inputs column, not filters', () => {
@@ -401,6 +404,46 @@ describe('alerted_listings statements', () => {
       stmtInsertAlertedListing(db).run('search-1', 'hash-a', 2000);
     }).not.toThrow();
     expect(stmtCountAlertsForSavedSearch(db).get('search-1')?.n).toBe(1);
+  });
+});
+
+describe('sitewide_alert_state statements', () => {
+  function freshDb(): Database.Database {
+    const db = new Database(':memory:');
+    initSchema(db);
+    return db;
+  }
+
+  it('reports no state for a cause that has never been recorded', () => {
+    const db = freshDb();
+    expect(stmtGetSitewideAlertState(db).get('facebook-cookies')).toBeUndefined();
+  });
+
+  it('round-trips an inserted state', () => {
+    const db = freshDb();
+    stmtUpsertSitewideAlertState(db).run('facebook-cookies', 1, 5000);
+    expect(stmtGetSitewideAlertState(db).get('facebook-cookies')).toEqual({
+      cause: 'facebook-cookies',
+      is_active: 1,
+      last_alerted_at: 5000,
+    });
+  });
+
+  it('overwrites the existing row for the same cause rather than inserting a second one', () => {
+    const db = freshDb();
+    stmtUpsertSitewideAlertState(db).run('facebook-cookies', 1, 5000);
+    stmtUpsertSitewideAlertState(db).run('facebook-cookies', 0, null);
+    expect(stmtGetSitewideAlertState(db).get('facebook-cookies')).toEqual({
+      cause: 'facebook-cookies',
+      is_active: 0,
+      last_alerted_at: null,
+    });
+  });
+
+  it('keeps state for different causes independent', () => {
+    const db = freshDb();
+    stmtUpsertSitewideAlertState(db).run('facebook-cookies', 1, 5000);
+    expect(stmtGetSitewideAlertState(db).get('other-cause')).toBeUndefined();
   });
 });
 

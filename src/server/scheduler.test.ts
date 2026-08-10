@@ -24,6 +24,7 @@ import {
   stmtClearSearch,
   stmtCountAlertsForSavedSearch,
   stmtGetSavedSearch,
+  stmtGetSitewideAlertState,
   stmtInsertSavedSearch,
   stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
@@ -31,12 +32,14 @@ import {
   stmtUpdateSavedSearchRunStatus,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
+import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
   buildFailureComparisonKey,
   determineExitCode,
+  FACEBOOK_COOKIES_CAUSE,
   FAILURE_REALERT_MS,
   NOTIFY_LOOP_TIMEOUT_MS,
   runImmediatePopulationRunAsync,
@@ -48,6 +51,10 @@ import {
   STATUS_ALERT_TIMEOUT_MS,
   triggerImmediatePopulationRunAsync,
 } from './scheduler';
+import {
+  formatFacebookCookiesFailingMessage,
+  formatFacebookCookiesRecoveredMessage,
+} from './signalMessage';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -168,6 +175,33 @@ function makeFailingRecipeWithReason(recipeName: string, reason: string): Recipe
     extractImplicitFilters: () => [],
     quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
       onEvent({ type: 'error', message: reason });
+    },
+    deepSearchAsync: async () => {},
+    computeAlertFingerprint: stubComputeAlertFingerprint,
+  };
+}
+
+// Same recipe as makeStubRecipe, but under a caller-chosen name — needed for
+// tests asserting on which recipe(s) a run touched (summary.touchedRecipeNames),
+// since getRecipeForUrl is mocked directly and ignores the URL/hostname
+// matching a real recipe would do.
+function makeNamedStubRecipe(recipeName: string, listings: Listing[]): Recipe {
+  return { ...makeStubRecipe(listings), name: recipeName };
+}
+
+// Mirrors the exact message facebook.ts's parseFbCookies/detectLoginWallAsync
+// emit for a missing/expired FB_COOKIES condition (see LOGIN_REQUIRED_MESSAGE) —
+// distinct from makeLoginWalledRecipe's synthetic "Login wall detected —
+// only N listing(s) loaded..." text, which intentionally does NOT match the
+// real message so those pre-existing tests stay unaffected by the sitewide
+// Facebook-cookies alert added below.
+function makeFacebookCookieFailureRecipe(): Recipe {
+  return {
+    name: 'facebook',
+    matches: () => true,
+    extractImplicitFilters: () => [],
+    quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
+      onEvent({ type: 'error', message: LOGIN_REQUIRED_MESSAGE });
     },
     deepSearchAsync: async () => {},
     computeAlertFingerprint: stubComputeAlertFingerprint,
@@ -1596,6 +1630,176 @@ describe('runSchedulerAsync', () => {
     expect(stmtGetSavedSearch(db).get('search-ok')?.last_run_succeeded).toBe(1);
   });
 
+  it("collapses duplicate Facebook-cookie failures across multiple saved searches into a single sitewide alert, suppressing each search's own per-search alert", async () => {
+    const db = freshDb();
+    insertAlertSearch(db, {
+      id: 'search-a',
+      name: 'Search A',
+      urls: ['https://facebook.com/marketplace/a'],
+    });
+    insertAlertSearch(db, {
+      id: 'search-b',
+      name: 'Search B',
+      urls: ['https://facebook.com/marketplace/b'],
+    });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // both population runs — establishes non-population history for each
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatFacebookCookiesFailingMessage());
+  });
+
+  it('still sends a per-search alert for a search with a mix of a Facebook-cookie failure and an unrelated scrape error, excluding only the Facebook-cookie line', async () => {
+    const db = freshDb();
+    const fbUrl = 'https://facebook.com/marketplace/search';
+    const unknownUrl = 'https://unknown-site.example.com/search';
+    insertAlertSearch(db, { name: 'Mixed search', urls: [fbUrl, unknownUrl] });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockImplementation((url: string) =>
+      url === fbUrl ? makeFacebookCookieFailureRecipe() : null
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2); // sitewide alert + this search's own alert
+    const messages = sendNotificationAsync.mock.calls.map(([message]) => message);
+    expect(messages).toContainEqual(formatFacebookCookiesFailingMessage());
+    const perSearchMessage = messages.find(
+      (message) => message !== formatFacebookCookiesFailingMessage()
+    );
+    expect(perSearchMessage).toContain('No recipe found for this URL');
+    expect(perSearchMessage).not.toContain('Facebook requires login');
+  });
+
+  it('suppresses a repeat sitewide alert within 12h while still failing, and re-sends once the window elapses', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    const baseTime = Date.now();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime,
+    });
+    stmtClearSearch(db).run();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + FAILURE_REALERT_MS - 1,
+    });
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    stmtClearSearch(db).run();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + FAILURE_REALERT_MS,
+    });
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends a single sitewide recovery alert when a Facebook-touching search succeeds again, suppressing that search's own per-search recovery ping", async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, {
+      name: 'FB search',
+      urls: ['https://facebook.com/marketplace/search'],
+    });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    stmtClearSearch(db).run();
+
+    // Re-scrapes the same already-alerted seed listing (no genuinely new
+    // listing) so the only expected send is the recovery alert itself, not
+    // an unrelated per-listing notification.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatFacebookCookiesRecoveredMessage());
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(0);
+  });
+
+  it('does not touch the sitewide Facebook-cookies state for an unrelated recipe failure', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'TM search' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeFailingRecipeWithReason('trademe', 'Some other scrape problem')
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)).toBeUndefined();
+  });
+
   it('caps an overlong scrape-failure reason before it flows into the outbound Signal alert or last_run_detail', async () => {
     // Matches the existing 200-char precedent in ai.ts (AI parse-error
     // messages) — an unusually long or malformed error message must not
@@ -2432,6 +2636,7 @@ describe('determineExitCode', () => {
       notifiedCount: 0,
       populatedCount: 0,
       errors,
+      touchedRecipeNames: new Set(),
     };
   }
 

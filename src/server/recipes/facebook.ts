@@ -62,7 +62,12 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
 // ── Browser context ───────────────────────────────────────────────────────────
 
-const LOGIN_REQUIRED_MESSAGE = 'Facebook requires login. Set FB_COOKIES environment variable.';
+// Exported so scheduler.ts can recognize this specific failure across every
+// saved search that hits it — see isFacebookCookieFailure there, which
+// collapses what would otherwise be one duplicate alert per affected saved
+// search into a single application-wide alert.
+export const LOGIN_REQUIRED_MESSAGE =
+  'Facebook requires login. Set FB_COOKIES environment variable.';
 
 export class MissingFacebookCookiesError extends Error {
   constructor(reason: string) {
