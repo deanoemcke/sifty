@@ -7,6 +7,8 @@ import {
   formatAlertSetupSuccessMessage,
   formatFacebookCookiesFailingMessage,
   formatFacebookCookiesRecoveredMessage,
+  formatNetworkUnreachableFailingMessage,
+  formatNetworkUnreachableRecoveredMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
 } from './signalMessage';
@@ -235,6 +237,25 @@ describe('formatFacebookCookiesRecoveredMessage', () => {
     const message = formatFacebookCookiesRecoveredMessage();
 
     expect(message).toContain('Facebook');
+    expect(message).toContain('working again');
+  });
+});
+
+describe('formatNetworkUnreachableFailingMessage', () => {
+  it('mentions network unreachable and that every saved search is affected', () => {
+    const message = formatNetworkUnreachableFailingMessage();
+
+    expect(message).toMatch(/network/i);
+    expect(message).toMatch(/unreachable/i);
+    expect(message).toMatch(/every|all/i);
+  });
+});
+
+describe('formatNetworkUnreachableRecoveredMessage', () => {
+  it('reports connectivity working again', () => {
+    const message = formatNetworkUnreachableRecoveredMessage();
+
+    expect(message).toMatch(/network|connectivity/i);
     expect(message).toContain('working again');
   });
 });

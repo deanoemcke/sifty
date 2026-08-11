@@ -41,6 +41,7 @@ import {
   determineExitCode,
   FACEBOOK_COOKIES_CAUSE,
   FAILURE_REALERT_MS,
+  NETWORK_UNREACHABLE_CAUSE,
   NOTIFY_LOOP_TIMEOUT_MS,
   runImmediatePopulationRunAsync,
   runSchedulerAsync as runSchedulerAsyncUngated,
@@ -54,6 +55,8 @@ import {
 import {
   formatFacebookCookiesFailingMessage,
   formatFacebookCookiesRecoveredMessage,
+  formatNetworkUnreachableFailingMessage,
+  formatNetworkUnreachableRecoveredMessage,
 } from './signalMessage';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
@@ -1798,6 +1801,84 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)).toBeUndefined();
+  });
+
+  it("collapses duplicate network-unreachable failures across multiple saved searches into a single sitewide alert, suppressing each search's own per-search alert", async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // both population runs — establishes non-population history for each
+    stmtClearSearch(db).run();
+
+    vi.mocked(checkInternetConnectivityAsync).mockResolvedValue(false);
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatNetworkUnreachableFailingMessage());
+  });
+
+  it("sends a single sitewide recovery alert when connectivity returns, suppressing each search's own per-search recovery ping", async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'Some search' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(checkInternetConnectivityAsync).mockResolvedValue(false);
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(NETWORK_UNREACHABLE_CAUSE)?.is_active).toBe(1);
+    stmtClearSearch(db).run();
+
+    vi.mocked(checkInternetConnectivityAsync).mockResolvedValue(true);
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatNetworkUnreachableRecoveredMessage());
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
+    expect(stmtGetSitewideAlertState(db).get(NETWORK_UNREACHABLE_CAUSE)?.is_active).toBe(0);
+  });
+
+  it('keeps the Facebook-cookies and network-unreachable sitewide states independent of one another', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    expect(stmtGetSitewideAlertState(db).get(NETWORK_UNREACHABLE_CAUSE)).toBeUndefined();
   });
 
   it('caps an overlong scrape-failure reason before it flows into the outbound Signal alert or last_run_detail', async () => {

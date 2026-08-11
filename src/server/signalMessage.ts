@@ -140,6 +140,21 @@ export function formatFacebookCookiesRecoveredMessage(): string {
   return '✅ Facebook login is working again';
 }
 
+// Application-wide counterpart to formatSearchFailingMessage for a total
+// connectivity outage — every alert-enabled saved search independently
+// skips its scrape for the identical reason on the same tick, so this
+// collapses that into one alert instead of one per search (see
+// reconcileSitewideAlertAsync in scheduler.ts).
+export function formatNetworkUnreachableFailingMessage(): string {
+  return '🟠 Network unreachable — skipped this run for every alert-enabled saved search.';
+}
+
+// Application-wide counterpart to formatSearchRecoveredMessage — sent once
+// when connectivity returns, instead of once per affected saved search.
+export function formatNetworkUnreachableRecoveredMessage(): string {
+  return '✅ Network connectivity is working again';
+}
+
 // Sent once, right when a saved search's alert finishes being set up — i.e.
 // the immediate, silent population run triggered by turning the alert
 // checkbox on (or editing an already alert-on search) completes
