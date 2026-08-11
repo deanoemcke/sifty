@@ -38,6 +38,7 @@ import {
   AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
   buildFailureComparisonKey,
+  DETAIL_LINE_MAX_LENGTH,
   determineExitCode,
   FACEBOOK_COOKIES_CAUSE,
   FAILURE_REALERT_MS,
@@ -1786,6 +1787,69 @@ describe('runSchedulerAsync', () => {
     expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(0);
   });
 
+  it("does not let the aggregated last_run_detail truncation cut a Facebook-cookie failure line in half, so a search's own recovery ping stays suppressed", async () => {
+    // Regression test for finding 3 of the PR #64 review: `detail` used to be
+    // built by joining every health-error line and THEN slicing the whole
+    // blob to AGGREGATED_FAILURE_DETAIL_MAX_LENGTH. A saved search with
+    // enough per-URL Facebook-cookie failures lets that aggregate cut land
+    // inside a line instead of on a line boundary, corrupting the persisted
+    // last_run_detail so its final line no longer contains the full
+    // LOGIN_REQUIRED_MESSAGE substring isSitewideCoveredFailure needs.
+    const facebookLine = `scrape:Discarded 0 untrusted listing(s): ${LOGIN_REQUIRED_MESSAGE}`;
+    const urlCount = 20;
+    // Sanity checks: joining `urlCount` identical lines crosses the aggregate
+    // cap partway through the last line (not exactly on a newline boundary),
+    // and `urlCount - 1` lines alone stay under it — i.e. this really
+    // exercises a mid-line cut of the *last* line, not a clean drop of whole
+    // lines.
+    const joinedLength = urlCount * facebookLine.length + (urlCount - 1);
+    const priorLinesLength = (urlCount - 1) * facebookLine.length + (urlCount - 2);
+    expect(joinedLength).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(priorLinesLength).toBeLessThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+
+    const urls = Array.from(
+      { length: urlCount },
+      (_, i) => `https://facebook.com/marketplace/search-${i}`
+    );
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search', urls });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(0);
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // Only the shared sitewide recovery alert should go out — this search's
+    // previous failure was entirely sitewide-covered, so its own recovery
+    // ping must stay suppressed even though last_run_detail's final line was
+    // truncated.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatFacebookCookiesRecoveredMessage());
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
+  });
+
   it('does not send a false sitewide recovery alert when a Facebook-touching search fails for an unrelated (non-cookie) reason while the sitewide alert is active', async () => {
     const db = freshDb();
     insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });
@@ -1953,13 +2017,19 @@ describe('runSchedulerAsync', () => {
     expect(detail).toContain(overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH));
   });
 
-  it('caps the aggregated error text across multiple failures before it flows into the outbound Signal alert or last_run_detail', async () => {
+  it('caps the aggregated error text across multiple failures before it flows into the outbound Signal alert, but preserves every full line in last_run_detail', async () => {
     // A single overlong reason is already bounded at capture
     // (SCRAPE_ERROR_REASON_MAX_LENGTH), but summary.errors was designed as an
     // internal diagnostic list, not an external payload — nothing previously
     // bounded the *aggregate* once several such per-URL failures (each
-    // already individually capped) are joined together for last_run_detail
-    // and the outbound Signal message.
+    // already individually capped) are joined together for the outbound
+    // Signal message. last_run_detail is deliberately different: it's capped
+    // per line (DETAIL_LINE_MAX_LENGTH), not as a joined blob, precisely so a
+    // saved search with many failures never has one of its lines corrupted by
+    // a cut that belongs to a different line — see that constant's comment.
+    // So unlike the outbound message, last_run_detail's total length here is
+    // allowed to exceed the old aggregate figure, as long as every individual
+    // line survives intact.
     const urls = Array.from(
       { length: 12 },
       (_, i) => `https://facebook.com/marketplace/search-${i}`
@@ -1979,7 +2049,7 @@ describe('runSchedulerAsync', () => {
     });
 
     // Sanity check: joining all 12 per-URL failures uncapped would comfortably
-    // exceed the aggregate cap, so this test actually exercises the new bound.
+    // exceed the old aggregate cap, so this test actually exercises the bound.
     expect(urls.length * reason.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
@@ -1987,7 +2057,14 @@ describe('runSchedulerAsync', () => {
     expect(message.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
     const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail as string;
-    expect(detail.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    // Every one of the 12 identical reason lines survives whole — none was
+    // partially cut off by a blob-level slice — even though the resulting
+    // total comfortably exceeds the old aggregate cap.
+    expect(detail.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(detail.split(reason).length - 1).toBe(urls.length);
+    for (const line of detail.split('\n')) {
+      expect(line.length).toBeLessThanOrEqual(DETAIL_LINE_MAX_LENGTH);
+    }
   });
 
   it('truncates a multi-line scrape-failure reason at the first newline and strips the embedded URL', async () => {
