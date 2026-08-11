@@ -273,10 +273,11 @@ export type SavedSearchRunSummary = {
   notifiedCount: number;
   populatedCount: number;
   errors: SchedulerError[];
-  // Which recipe(s) this run actually invoked, regardless of outcome — used
-  // by reconcileSitewideAlertAsync to tell "this search succeeded because it
-  // doesn't use Facebook at all" apart from "this search succeeded and its
-  // success is real evidence Facebook is working".
+  // Which recipe(s) this run actually invoked, regardless of outcome. Not
+  // itself evidence of Facebook cookie health — a recipe can be invoked and
+  // then fail for a reason unrelated to cookies — see
+  // facebookCookieHealthChecked below for the flag reconcileSitewideAlertAsync
+  // actually uses for that cause.
   touchedRecipeNames: Set<string>;
   // Whether this run's own connectivity check (see processSavedSearchAsync)
   // found the network reachable — undefined when the run never got that far
@@ -284,6 +285,15 @@ export type SavedSearchRunSummary = {
   // catch block), which reconcileSitewideAlertAsync must not mistake for
   // "connectivity is fine": only a run that actually checked is evidence.
   wasOnline?: boolean;
+  // True only when a Facebook attempt this run either completed successfully
+  // or explicitly hit the cookie/login-wall failure (isFacebookCookieFailure)
+  // — i.e. actually reached a point that speaks to cookie health, not merely
+  // "the recipe ran". A Facebook attempt that fails for an unrelated reason
+  // (timeout, crash, a non-cookie scrape error) leaves this unset: that run
+  // genuinely doesn't know whether cookies are healthy, so it must count as
+  // neither failure nor recovery evidence for the sitewide cause. Mirrors
+  // wasOnline's pattern above.
+  facebookCookieHealthChecked?: boolean;
 };
 
 // The two recognized application-wide failure causes today — see
@@ -482,22 +492,35 @@ async function processSavedSearchAsync(
           const reason = sanitizeScrapeReason(
             latestErrorMessage ?? 'did not complete successfully'
           );
-          summary.errors.push({
+          const scrapeError: SchedulerError = {
             kind: 'scrape',
             message: `Discarded ${listings.length} untrusted listing(s): ${reason}`,
-          });
+          };
+          summary.errors.push(scrapeError);
           scrapeFailureReasons.push(reason);
+          // A confirmed cookie/login-wall failure is just as much evidence of
+          // this run's cookie state as a clean success below — only a failure
+          // that says nothing about cookies (a timeout, a DOM break, etc.)
+          // must leave facebookCookieHealthChecked unset.
+          if (recipe.name === 'facebook' && isFacebookCookieFailure(scrapeError)) {
+            summary.facebookCookieHealthChecked = true;
+          }
           continue;
         }
         for (const listing of listings)
           listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
+        if (recipe.name === 'facebook') summary.facebookCookieHealthChecked = true;
       } catch (err) {
         const reason = sanitizeScrapeReason((err as Error).message);
-        summary.errors.push({
+        const scrapeError: SchedulerError = {
           kind: 'scrape',
           message: `Quick search failed: ${reason}`,
-        });
+        };
+        summary.errors.push(scrapeError);
         scrapeFailureReasons.push(reason);
+        if (recipe.name === 'facebook' && isFacebookCookieFailure(scrapeError)) {
+          summary.facebookCookieHealthChecked = true;
+        }
       }
     }
   }
@@ -765,11 +788,10 @@ async function recordSavedSearchRunStatusAndAlertAsync(
   // never produces both — an offline run never reaches the per-URL loop
   // that could hit a Facebook-cookie failure), so both are always checked.
   const facebookCookieFailureNow = healthErrors.some(isFacebookCookieFailure);
-  const touchedFacebookRecipe = summary.touchedRecipeNames.has('facebook');
   await reconcileSitewideAlertAsync(
     FACEBOOK_COOKIES_CAUSE,
     facebookCookieFailureNow,
-    touchedFacebookRecipe,
+    summary.facebookCookieHealthChecked === true,
     formatFacebookCookiesFailingMessage,
     formatFacebookCookiesRecoveredMessage,
     summary,

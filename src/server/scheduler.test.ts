@@ -1786,6 +1786,47 @@ describe('runSchedulerAsync', () => {
     expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(0);
   });
 
+  it('does not send a false sitewide recovery alert when a Facebook-touching search fails for an unrelated (non-cookie) reason while the sitewide alert is active', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    stmtClearSearch(db).run();
+
+    // This run touches the Facebook recipe but fails for a reason that has
+    // nothing to do with cookies — the run's own outcome says nothing about
+    // whether the login wall has cleared, so it must not be read as recovery
+    // evidence.
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeFailingRecipeWithReason('facebook', 'Some unrelated timeout')
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    const sentMessages = sendNotificationAsync.mock.calls.map((call) => call[0]);
+    expect(sentMessages).not.toContain(formatFacebookCookiesRecoveredMessage());
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+  });
+
   it('does not touch the sitewide Facebook-cookies state for an unrelated recipe failure', async () => {
     const db = freshDb();
     insertAlertSearch(db, { name: 'TM search' });
