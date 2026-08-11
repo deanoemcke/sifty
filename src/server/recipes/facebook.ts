@@ -62,7 +62,12 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
 // ── Browser context ───────────────────────────────────────────────────────────
 
-const LOGIN_REQUIRED_MESSAGE = 'Facebook requires login. Set FB_COOKIES environment variable.';
+// Exported so scheduler.ts can recognize this specific failure across every
+// saved search that hits it — see isFacebookCookieFailure there, which
+// collapses what would otherwise be one duplicate alert per affected saved
+// search into a single application-wide alert.
+export const LOGIN_REQUIRED_MESSAGE =
+  'Facebook requires login. Set FB_COOKIES environment variable.';
 
 export class MissingFacebookCookiesError extends Error {
   constructor(reason: string) {
@@ -206,6 +211,21 @@ export async function detectLoginWallAsync(page: Page): Promise<boolean> {
   if (isLoginWallUrl(page.url())) return true;
   const { domMatch, textSnippet } = await evaluateLoginWallSignals(page);
   return domMatch || isLoginWallText(textSnippet);
+}
+
+// Every login-wall detection site must emit its error through this helper
+// rather than building its own message — isFacebookCookieFailure (scheduler.ts)
+// recognizes a cookie failure by substring-matching LOGIN_REQUIRED_MESSAGE, so a
+// call site that phrases its own wording is invisible to the sitewide
+// Facebook-cookies alert even though it's the same root cause. `detail` may add
+// context (e.g. how many listings were collected before the wall appeared) —
+// it's appended after the canonical message, not in place of it, so the
+// substring match still hits.
+function emitLoginWallError(onEvent: (event: QuickSearchEvent) => void, detail?: string): void {
+  onEvent({
+    type: 'error',
+    message: detail ? `${LOGIN_REQUIRED_MESSAGE} ${detail}` : LOGIN_REQUIRED_MESSAGE,
+  });
 }
 
 // ── Empty-results detection ─────────────────────────────────────────────────
@@ -528,7 +548,7 @@ async function runQuickSearchAsync(
     // page loads, so this catches it well before the 15s listings-selector wait below
     // would otherwise be needed to notice the same thing.
     if (await detectLoginWallAsync(page)) {
-      onEvent({ type: 'error', message: LOGIN_REQUIRED_MESSAGE });
+      emitLoginWallError(onEvent);
       return;
     }
 
@@ -536,7 +556,7 @@ async function runQuickSearchAsync(
 
     if (initialSearchState !== 'listings') {
       if (await detectLoginWallAsync(page)) {
-        onEvent({ type: 'error', message: LOGIN_REQUIRED_MESSAGE });
+        emitLoginWallError(onEvent);
         return;
       }
       if (initialSearchState === 'empty') {
@@ -607,10 +627,10 @@ async function runQuickSearchAsync(
 
     if (loginWallDetected) {
       console.log(`[facebook] login wall detected — only ${counter.total} listings available`);
-      onEvent({
-        type: 'error',
-        message: `Login wall detected — only ${counter.total} listing${counter.total !== 1 ? 's' : ''} loaded. Set the FB_COOKIES environment variable to get full results.`,
-      });
+      emitLoginWallError(
+        onEvent,
+        `Only ${counter.total} listing${counter.total !== 1 ? 's' : ''} loaded before the wall appeared.`
+      );
       return;
     }
 

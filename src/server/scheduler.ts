@@ -14,16 +14,19 @@ import {
   stmtCountDueAlertEnabledSavedSearches,
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearch,
+  stmtGetSitewideAlertState,
   stmtHasAlertedListing,
   stmtInsertAlertedListing,
   stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
   stmtUpdateSavedSearchLastRunAt,
   stmtUpdateSavedSearchRunStatus,
+  stmtUpsertSitewideAlertState,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
 import { logQuickSearchEvent } from './quickSearchLogging';
+import { facebookRecipe, LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import { normalizeScrapeErrorReason } from './schedulerErrorText';
 import {
@@ -41,6 +44,10 @@ import {
   formatAlertMessage,
   formatAlertSetupFailedMessage,
   formatAlertSetupSuccessMessage,
+  formatFacebookCookiesFailingMessage,
+  formatFacebookCookiesRecoveredMessage,
+  formatNetworkUnreachableFailingMessage,
+  formatNetworkUnreachableRecoveredMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
 } from './signalMessage';
@@ -198,16 +205,35 @@ function sanitizeScrapeReason(raw: string): string {
 
 // Bound on the *aggregated* failure text — summary.errors joined together —
 // applied in recordSavedSearchRunStatusAndAlertAsync just before it reaches
-// last_run_detail or the outbound Signal alert. Unlike
-// SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at each individual
-// summary.errors.push() call site (notification-send failures and AI-filter
-// error messages aren't capped there), so without this second, coarser bound
-// the aggregate could still grow unbounded even though each scrape-failure
-// reason on its own is already bounded. Sized as a multiple of
-// SCRAPE_ERROR_REASON_MAX_LENGTH so a run with several already-capped
-// scrape-failure reasons still fits, rather than being an independent value
-// to keep in sync by hand.
+// the outbound Signal alert (last_run_detail uses DETAIL_LINE_MAX_LENGTH
+// below instead — see its comment for why the two can't share one blob-level
+// bound). Unlike SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at
+// each individual summary.errors.push() call site (notification-send
+// failures and AI-filter error messages aren't capped there), so without
+// this second, coarser bound the aggregate could still grow unbounded even
+// though each scrape-failure reason on its own is already bounded. Sized as
+// a multiple of SCRAPE_ERROR_REASON_MAX_LENGTH so a run with several
+// already-capped scrape-failure reasons still fits, rather than being an
+// independent value to keep in sync by hand.
 export const AGGREGATED_FAILURE_DETAIL_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
+
+// Bound on a single persisted last_run_detail line ("${kind}:${message}"),
+// applied to each line individually before joining — not to the joined blob
+// as a whole (contrast AGGREGATED_FAILURE_DETAIL_MAX_LENGTH above, which is
+// still a blob-level bound, but only for the outbound Signal alert, which
+// never gets read back and substring-matched). A blob-level slice on
+// last_run_detail can land mid-line, and for a saved search with enough
+// failures that a Facebook-cookie or network-unreachable line lands late in
+// the join, that cut can sever the exact substring (e.g.
+// LOGIN_REQUIRED_MESSAGE) isSitewideCoveredFailure needs on the next run's
+// round-trip read of last_run_detail — silently turning a sitewide-covered
+// failure into an uncovered one and triggering a redundant per-search
+// recovery ping. Reuses AGGREGATED_FAILURE_DETAIL_MAX_LENGTH's value as a
+// generous per-line ceiling: every already-bounded scrape-failure line
+// (SCRAPE_ERROR_REASON_MAX_LENGTH reason plus its small wrapper text) sits
+// comfortably under it, so in practice this only ever bounds the otherwise-
+// unbounded ai-filter/unhandled message kinds, never a legitimate short line.
+export const DETAIL_LINE_MAX_LENGTH = AGGREGATED_FAILURE_DETAIL_MAX_LENGTH;
 
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
@@ -266,7 +292,60 @@ export type SavedSearchRunSummary = {
   notifiedCount: number;
   populatedCount: number;
   errors: SchedulerError[];
+  // Which recipe(s) this run actually invoked, regardless of outcome. Not
+  // itself evidence of Facebook cookie health — a recipe can be invoked and
+  // then fail for a reason unrelated to cookies — see
+  // facebookCookieHealthChecked below for the flag reconcileSitewideAlertAsync
+  // actually uses for that cause.
+  touchedRecipeNames: Set<string>;
+  // Whether this run's own connectivity check (see processSavedSearchAsync)
+  // found the network reachable — undefined when the run never got that far
+  // (e.g. a synchronous throw before the check, see runOneSavedSearchAsync's
+  // catch block), which reconcileSitewideAlertAsync must not mistake for
+  // "connectivity is fine": only a run that actually checked is evidence.
+  wasOnline?: boolean;
+  // True only when a Facebook attempt this run either completed successfully
+  // or explicitly hit the cookie/login-wall failure (isFacebookCookieFailure)
+  // — i.e. actually reached a point that speaks to cookie health, not merely
+  // "the recipe ran". A Facebook attempt that fails for an unrelated reason
+  // (timeout, crash, a non-cookie scrape error) leaves this unset: that run
+  // genuinely doesn't know whether cookies are healthy, so it must count as
+  // neither failure nor recovery evidence for the sitewide cause. Mirrors
+  // wasOnline's pattern above.
+  facebookCookieHealthChecked?: boolean;
 };
+
+// The two recognized application-wide failure causes today — see
+// reconcileSitewideAlertAsync below. Not a generic multi-cause registry: the
+// table they're persisted in (sitewide_alert_state) is cause-keyed so a
+// third cause wouldn't need a schema change, but the detection/formatting
+// code stays specific to each cause rather than a pluggable framework.
+export const FACEBOOK_COOKIES_CAUSE = 'facebook-cookies';
+export const NETWORK_UNREACHABLE_CAUSE = 'network-unreachable';
+
+// Shared with the error-push site in processSavedSearchAsync below, so
+// isNetworkUnreachableFailure can recognize it without duplicating the string.
+const NETWORK_UNREACHABLE_MESSAGE = 'Network unreachable — skipped this run';
+
+// Typed against the same widened { kind: string; message: string } shape as
+// buildFailureComparisonKey above, not SchedulerError itself, so it can be
+// applied to both live SchedulerError values and parseStoredFailureDetail's
+// output (persisted failure lines, parsed back with a string kind).
+function isFacebookCookieFailure(error: { kind: string; message: string }): boolean {
+  return error.kind === 'scrape' && error.message.includes(LOGIN_REQUIRED_MESSAGE);
+}
+
+function isNetworkUnreachableFailure(error: { kind: string; message: string }): boolean {
+  return error.kind === 'scrape' && error.message === NETWORK_UNREACHABLE_MESSAGE;
+}
+
+// Any error already covered by one of the sitewide alerts above — used to
+// keep a per-search alert from repeating a line the sitewide alert already
+// sent, and to recognize when a search's *entire* previous failure was
+// sitewide-covered (so its own recovery ping can be suppressed too).
+function isSitewideCoveredFailure(error: { kind: string; message: string }): boolean {
+  return isFacebookCookieFailure(error) || isNetworkUnreachableFailure(error);
+}
 
 export type SchedulerSummary = {
   searches: SavedSearchRunSummary[];
@@ -376,6 +455,7 @@ async function processSavedSearchAsync(
     notifiedCount: 0,
     populatedCount: 0,
     errors: [],
+    touchedRecipeNames: new Set(),
   };
 
   console.log(
@@ -397,11 +477,11 @@ async function processSavedSearchAsync(
   // burn a full SCRAPE_TIMEOUT_MS per URL only to arrive at the same
   // "network unreachable" conclusion N times over.
   const isOnline = await checkConnectivityAsync();
+  summary.wasOnline = isOnline;
   if (!isOnline) {
-    const reason = 'Network unreachable — skipped this run';
     console.warn(`[scheduler] "${row.name}": skipping — no internet connectivity`);
-    summary.errors.push({ kind: 'scrape', message: reason });
-    scrapeFailureReasons.push(reason);
+    summary.errors.push({ kind: 'scrape', message: NETWORK_UNREACHABLE_MESSAGE });
+    scrapeFailureReasons.push(NETWORK_UNREACHABLE_MESSAGE);
   } else {
     for (const url of urls) {
       const recipe = getRecipeForUrl(url);
@@ -409,6 +489,7 @@ async function processSavedSearchAsync(
         summary.errors.push({ kind: 'scrape', message: 'No recipe found for this URL' });
         continue;
       }
+      summary.touchedRecipeNames.add(recipe.name);
       let latestErrorMessage: string | undefined;
       try {
         const { listings, didCompleteSuccessfully } = await withTimeoutAsync(
@@ -430,22 +511,35 @@ async function processSavedSearchAsync(
           const reason = sanitizeScrapeReason(
             latestErrorMessage ?? 'did not complete successfully'
           );
-          summary.errors.push({
+          const scrapeError: SchedulerError = {
             kind: 'scrape',
             message: `Discarded ${listings.length} untrusted listing(s): ${reason}`,
-          });
+          };
+          summary.errors.push(scrapeError);
           scrapeFailureReasons.push(reason);
+          // A confirmed cookie/login-wall failure is just as much evidence of
+          // this run's cookie state as a clean success below — only a failure
+          // that says nothing about cookies (a timeout, a DOM break, etc.)
+          // must leave facebookCookieHealthChecked unset.
+          if (recipe.name === facebookRecipe.name && isFacebookCookieFailure(scrapeError)) {
+            summary.facebookCookieHealthChecked = true;
+          }
           continue;
         }
         for (const listing of listings)
           listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
+        if (recipe.name === facebookRecipe.name) summary.facebookCookieHealthChecked = true;
       } catch (err) {
         const reason = sanitizeScrapeReason((err as Error).message);
-        summary.errors.push({
+        const scrapeError: SchedulerError = {
           kind: 'scrape',
           message: `Quick search failed: ${reason}`,
-        });
+        };
+        summary.errors.push(scrapeError);
         scrapeFailureReasons.push(reason);
+        if (recipe.name === facebookRecipe.name && isFacebookCookieFailure(scrapeError)) {
+          summary.facebookCookieHealthChecked = true;
+        }
       }
     }
   }
@@ -578,6 +672,63 @@ async function sendAlertSafelyAsync(
   }
 }
 
+// Shared by reconcileSitewideAlertAsync and
+// recordSavedSearchRunStatusAndAlertAsync — both re-alert a standing failure
+// only after FAILURE_REALERT_MS has passed since it was last alerted, so a
+// persisting issue doesn't go silent indefinitely without paging on every run.
+function isWithinReAlertWindow(
+  isConditionActive: boolean,
+  lastAlertedAt: number | null,
+  now: number
+): boolean {
+  return isConditionActive && lastAlertedAt != null && now - lastAlertedAt < FAILURE_REALERT_MS;
+}
+
+// Coordinates a single, shared application-wide alert (one per `cause`)
+// across every saved search a failure of that cause could affect, using the
+// sitewide_alert_state row for that cause as the coordination point.
+// runSchedulerAsync processes due searches strictly sequentially (no
+// concurrency), so this row is a safe single source of truth: the first
+// failing search in a tick (or a later tick, since the row persists)
+// flips/confirms it active and sends; every other affected search — same
+// tick or a later one, within FAILURE_REALERT_MS — sees it already active
+// and sends nothing. Same symmetry for recovery.
+//
+// `hasHealthEvidence` (not just "no failure now") is what makes a success
+// count as real recovery evidence — a search this cause couldn't possibly
+// have affected (e.g. one that never uses Facebook) trivially has no
+// failure of that cause every run, and must never be mistaken for proof the
+// cause has cleared. Callers pass true only when this run's own outcome
+// actually speaks to the cause's current state one way or the other.
+async function reconcileSitewideAlertAsync(
+  cause: string,
+  hasFailureNow: boolean,
+  hasHealthEvidence: boolean,
+  formatFailingMessage: () => string,
+  formatRecoveredMessage: () => string,
+  summary: SavedSearchRunSummary,
+  deps: Required<SchedulerDeps>
+): Promise<void> {
+  if (!hasFailureNow && !hasHealthEvidence) return;
+
+  const state = stmtGetSitewideAlertState(deps.database).get(cause);
+  const isCurrentlyActive = state?.is_active === 1;
+
+  if (hasFailureNow) {
+    if (isWithinReAlertWindow(isCurrentlyActive, state?.last_alerted_at ?? null, deps.now())) {
+      return;
+    }
+    await sendAlertSafelyAsync(formatFailingMessage(), summary, deps);
+    stmtUpsertSitewideAlertState(deps.database).run(cause, 1, deps.now());
+    return;
+  }
+
+  if (isCurrentlyActive) {
+    await sendAlertSafelyAsync(formatRecoveredMessage(), summary, deps);
+    stmtUpsertSitewideAlertState(deps.database).run(cause, 0, null);
+  }
+}
+
 // Single choke point for "did this saved search's run succeed or fail, and
 // does that change from last time warrant a Signal alert" — covers every
 // failure mode processSavedSearchAsync can produce, plus the catch-all
@@ -642,12 +793,46 @@ async function recordSavedSearchRunStatusAndAlertAsync(
   // parseStoredFailureDetail above) so a later run's "same failure as last
   // run" comparison can see a kind change, not just message text — see
   // buildFailureComparisonKey's comment for why that matters.
+  //
+  // Each `${kind}:${message}` line is capped individually (DETAIL_LINE_MAX_LENGTH)
+  // before joining — not by slicing the joined blob as a whole. See that
+  // constant's comment for why a blob-level slice risks corrupting a later
+  // run's sitewide-coverage substring match.
   const detail = succeeded
     ? null
     : healthErrors
-        .map((error) => `${error.kind}:${error.message}`)
-        .join('\n')
-        .slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+        .map((error) => `${error.kind}:${error.message}`.slice(0, DETAIL_LINE_MAX_LENGTH))
+        .join('\n');
+
+  // Reconciles the shared sitewide alerts using this run as evidence, before
+  // this search's own alert decision below — see reconcileSitewideAlertAsync
+  // for why this collapses what would otherwise be one duplicate alert per
+  // affected saved search. The two causes are independent (a search's run
+  // never produces both — an offline run never reaches the per-URL loop
+  // that could hit a Facebook-cookie failure), so both are always checked.
+  const facebookCookieFailureNow = healthErrors.some(isFacebookCookieFailure);
+  await reconcileSitewideAlertAsync(
+    FACEBOOK_COOKIES_CAUSE,
+    facebookCookieFailureNow,
+    summary.facebookCookieHealthChecked === true,
+    formatFacebookCookiesFailingMessage,
+    formatFacebookCookiesRecoveredMessage,
+    summary,
+    deps
+  );
+  const networkUnreachableFailureNow = healthErrors.some(isNetworkUnreachableFailure);
+  await reconcileSitewideAlertAsync(
+    NETWORK_UNREACHABLE_CAUSE,
+    networkUnreachableFailureNow,
+    summary.wasOnline !== undefined,
+    formatNetworkUnreachableFailingMessage,
+    formatNetworkUnreachableRecoveredMessage,
+    summary,
+    deps
+  );
+  // Everything not already covered by a sitewide alert above — used below so
+  // this search's own alert never repeats a line a sitewide alert just sent.
+  const searchScopedHealthErrors = healthErrors.filter((error) => !isSitewideCoveredFailure(error));
 
   if (succeeded) {
     if (isSetupMoment) {
@@ -657,7 +842,15 @@ async function recordSavedSearchRunStatusAndAlertAsync(
         deps
       );
     } else if (row.last_run_succeeded === 0) {
-      await sendAlertSafelyAsync(formatSearchRecoveredMessage(row.name), summary, deps);
+      // Only send this search's own recovery ping if its previous failure
+      // wasn't entirely sitewide-covered — that edge is already covered by
+      // the sitewide recovery alert(s) sent above.
+      const previousErrors = parseStoredFailureDetail(row.last_run_detail);
+      const wasPurelySitewideCoveredFailure =
+        previousErrors.length > 0 && previousErrors.every(isSitewideCoveredFailure);
+      if (!wasPurelySitewideCoveredFailure) {
+        await sendAlertSafelyAsync(formatSearchRecoveredMessage(row.name), summary, deps);
+      }
     }
     stmtUpdateSavedSearchRunStatus(deps.database).run(1, null, null, row.id);
     return;
@@ -667,12 +860,22 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     row.last_run_succeeded === 0 &&
     buildFailureComparisonKey(parseStoredFailureDetail(row.last_run_detail)) ===
       buildFailureComparisonKey(healthErrors);
-  const isWithinReAlertWindow =
-    isSameFailureAsLastRun &&
-    row.last_failure_alerted_at !== null &&
-    deps.now() - row.last_failure_alerted_at < FAILURE_REALERT_MS;
+  const isWithinPerSearchReAlertWindow = isWithinReAlertWindow(
+    isSameFailureAsLastRun,
+    row.last_failure_alerted_at,
+    deps.now()
+  );
 
-  if (isWithinReAlertWindow) {
+  // Every current health error for this search is already covered by a
+  // sitewide alert above, so skip the redundant per-search send but still
+  // persist state/detail (keep the prior last_failure_alerted_at rather than
+  // advancing it, since no per-search alert actually went out). Setup
+  // confirmations are exempt — a user who just turned alerts on for this
+  // search needs to know *their* setup didn't complete, even though the
+  // cause is application-wide.
+  const isSitewideCoveredMoment = !isSetupMoment && searchScopedHealthErrors.length === 0;
+
+  if (isWithinPerSearchReAlertWindow || isSitewideCoveredMoment) {
     stmtUpdateSavedSearchRunStatus(deps.database).run(
       0,
       detail,
@@ -685,7 +888,7 @@ async function recordSavedSearchRunStatusAndAlertAsync(
   const failingMessage = (
     isSetupMoment
       ? formatAlertSetupFailedMessage(row.name, healthErrors)
-      : formatSearchFailingMessage(row.name, healthErrors)
+      : formatSearchFailingMessage(row.name, searchScopedHealthErrors)
   ).slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
   await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);
@@ -714,6 +917,7 @@ async function runOneSavedSearchAsync(
       notifiedCount: 0,
       populatedCount: 0,
       errors: [{ kind: 'unhandled', message: `Unhandled error: ${(err as Error).message}` }],
+      touchedRecipeNames: new Set(),
     };
   }
   await recordSavedSearchRunStatusAndAlertAsync(row, summary, deps);
@@ -832,6 +1036,7 @@ export async function runImmediatePopulationRunAsync(
           notifiedCount: 0,
           populatedCount: 0,
           errors: [{ kind: 'unhandled', message: `Unhandled error: ${(err as Error).message}` }],
+          touchedRecipeNames: new Set(),
         },
         resolvedDeps,
         { isImmediateSetupRun: true }

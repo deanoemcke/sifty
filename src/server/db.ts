@@ -47,6 +47,11 @@ export function initSchema(database: Database.Database): void {
       created_at       INTEGER NOT NULL,
       PRIMARY KEY (saved_search_id, listing_hash)
     );
+    CREATE TABLE IF NOT EXISTS sitewide_alert_state (
+      cause           TEXT PRIMARY KEY,
+      is_active       INTEGER NOT NULL DEFAULT 0,
+      last_alerted_at INTEGER
+    );
   `);
 
   // Superseded by the per-saved-search last_run_succeeded/last_run_detail/
@@ -220,6 +225,11 @@ export type CategoryEmbeddingCoverageRow = { total: number; embedded: number };
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
 export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
+export type SitewideAlertStateRow = {
+  cause: string;
+  is_active: number;
+  last_alerted_at: number | null;
+};
 
 // ── Statement accessors ───────────────────────────────────────────────────────
 // Each function prepares the statement fresh against the live db instance.
@@ -376,6 +386,22 @@ export function stmtInsertAlertedListing(database: Database.Database) {
 export function stmtUpdateSavedSearchRunStatus(database: Database.Database) {
   return database.prepare(
     'UPDATE saved_searches SET last_run_succeeded = ?, last_run_detail = ?, last_failure_alerted_at = ? WHERE id = ?'
+  );
+}
+// Tracks whether a single application-wide failure cause (e.g. the shared
+// Facebook-cookies login requirement) is currently active, independent of
+// any one saved search — see reconcileSitewideAlertAsync in scheduler.ts,
+// which uses this row as the coordination point that lets N
+// affected saved searches collapse into exactly one failure/recovery alert.
+export function stmtGetSitewideAlertState(database: Database.Database) {
+  return database.prepare<[string], SitewideAlertStateRow>(
+    'SELECT cause, is_active, last_alerted_at FROM sitewide_alert_state WHERE cause = ?'
+  );
+}
+export function stmtUpsertSitewideAlertState(database: Database.Database) {
+  return database.prepare(
+    'INSERT INTO sitewide_alert_state (cause, is_active, last_alerted_at) VALUES (?, ?, ?) ' +
+      'ON CONFLICT(cause) DO UPDATE SET is_active = excluded.is_active, last_alerted_at = excluded.last_alerted_at'
   );
 }
 export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {

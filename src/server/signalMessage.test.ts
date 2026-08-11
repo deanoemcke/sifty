@@ -5,6 +5,10 @@ import {
   formatAlertMessage,
   formatAlertSetupFailedMessage,
   formatAlertSetupSuccessMessage,
+  formatFacebookCookiesFailingMessage,
+  formatFacebookCookiesRecoveredMessage,
+  formatNetworkUnreachableFailingMessage,
+  formatNetworkUnreachableRecoveredMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
 } from './signalMessage';
@@ -215,6 +219,44 @@ describe('formatSearchRecoveredMessage', () => {
     const message = formatSearchRecoveredMessage('**Sneaky** search');
 
     expect(message).not.toMatch(/[*_`~]/);
+  });
+});
+
+describe('formatFacebookCookiesFailingMessage', () => {
+  it('mentions Facebook login and that it affects every Facebook-based search', () => {
+    const message = formatFacebookCookiesFailingMessage();
+
+    expect(message).toContain('Facebook');
+    expect(message).toMatch(/login/i);
+    expect(message).toMatch(/every|all/i);
+  });
+});
+
+describe('formatFacebookCookiesRecoveredMessage', () => {
+  it('reports Facebook login working again', () => {
+    const message = formatFacebookCookiesRecoveredMessage();
+
+    expect(message).toContain('Facebook');
+    expect(message).toContain('working again');
+  });
+});
+
+describe('formatNetworkUnreachableFailingMessage', () => {
+  it('mentions network unreachable and that every saved search is affected', () => {
+    const message = formatNetworkUnreachableFailingMessage();
+
+    expect(message).toMatch(/network/i);
+    expect(message).toMatch(/unreachable/i);
+    expect(message).toMatch(/every|all/i);
+  });
+});
+
+describe('formatNetworkUnreachableRecoveredMessage', () => {
+  it('reports connectivity working again', () => {
+    const message = formatNetworkUnreachableRecoveredMessage();
+
+    expect(message).toMatch(/network|connectivity/i);
+    expect(message).toContain('working again');
   });
 });
 

@@ -23,6 +23,7 @@ import {
   isEmptyResultsText,
   isLoginWallText,
   isLoginWallUrl,
+  LOGIN_REQUIRED_MESSAGE,
   MissingFacebookCookiesError,
   parseFacebookPriceLines,
   parseFbCookies,
@@ -115,6 +116,13 @@ const LISTINGS_SELECTOR_IN_TEST = 'a[href*="/marketplace/item/"]';
 type FacebookPageOptions = {
   url?: string;
   domLoginWall?: boolean;
+  // Number of login-wall checks (evaluateLoginWallSignals calls) that must
+  // return "no wall" before domMatch flips true — simulates a wall that only
+  // renders asynchronously, appearing on a later re-check rather than the
+  // very first one (mirrors the real comment at facebook.ts's mid-scroll
+  // re-check). Defaults to 0 when domLoginWall is true (matches immediately)
+  // or Infinity when domLoginWall is false (never matches).
+  loginWallDetectionCallsBeforeMatch?: number;
   textSnippet?: string;
   listingsSelectorTimesOut?: boolean;
   listingsAppearOnRetry?: boolean;
@@ -158,6 +166,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
       const {
         url = 'https://www.facebook.com/marketplace/search?query=lamp',
         domLoginWall = false,
+        loginWallDetectionCallsBeforeMatch = domLoginWall ? 0 : Number.POSITIVE_INFINITY,
         textSnippet = '',
         listingsSelectorTimesOut = false,
         listingsAppearOnRetry = false,
@@ -173,6 +182,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
       const wheelCalls = { count: 0 };
       const listingsSelectorAttemptCounts = { count: 0 };
       const waitForTimeoutCalls: number[] = [];
+      const loginWallCheckCounts = { count: 0 };
 
       return {
         goto: async () => {},
@@ -214,7 +224,9 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
         },
         evaluate: async (fn: (...args: unknown[]) => unknown) => {
           if (fn.toString().includes('login_popup_cta_form')) {
-            return { domMatch: domLoginWall, textSnippet };
+            loginWallCheckCounts.count++;
+            const domMatch = loginWallCheckCounts.count > loginWallDetectionCallsBeforeMatch;
+            return { domMatch, textSnippet };
           }
           if (fn.toString().includes('shellRendered')) {
             return { shellRendered, bodyText };
@@ -2014,6 +2026,29 @@ describe('facebookRecipe.quickSearchAsync', () => {
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'error' }));
     // Normal listings flow ran: the scroll loop drove the page.
     expect(page.wheelCalls.count).toBeGreaterThan(0);
+  });
+
+  // Regression test for the mid-scroll re-check (after the MutationObserver is
+  // injected, once listings have already started rendering): this site used to
+  // emit its own differently-worded message instead of LOGIN_REQUIRED_MESSAGE,
+  // so scheduler.ts's isFacebookCookieFailure (a substring match against
+  // LOGIN_REQUIRED_MESSAGE) never recognized a login wall hit via this path as
+  // a cookie failure — invisible to the sitewide Facebook-cookies alert.
+  it('emits a message containing the canonical login-required text when the login wall only appears after listings start rendering (mid-scroll re-check)', async () => {
+    const page = makeFacebookPage({
+      listingsSelectorTimesOut: false,
+      loginWallDetectionCallsBeforeMatch: 1,
+    });
+    resetPageQueue(page);
+
+    const events: Array<{ type: string; message?: string }> = [];
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=lamp',
+      (event) => events.push(event)
+    );
+
+    const errorEvent = events.find((event) => event.type === 'error');
+    expect(errorEvent?.message).toContain(LOGIN_REQUIRED_MESSAGE);
   });
 
   it('prefers late-rendering listings over an early empty-state marker (grace re-check)', async () => {

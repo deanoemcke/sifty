@@ -24,6 +24,7 @@ import {
   stmtClearSearch,
   stmtCountAlertsForSavedSearch,
   stmtGetSavedSearch,
+  stmtGetSitewideAlertState,
   stmtInsertSavedSearch,
   stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
@@ -31,13 +32,17 @@ import {
   stmtUpdateSavedSearchRunStatus,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
+import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
   buildFailureComparisonKey,
+  DETAIL_LINE_MAX_LENGTH,
   determineExitCode,
+  FACEBOOK_COOKIES_CAUSE,
   FAILURE_REALERT_MS,
+  NETWORK_UNREACHABLE_CAUSE,
   NOTIFY_LOOP_TIMEOUT_MS,
   runImmediatePopulationRunAsync,
   runSchedulerAsync as runSchedulerAsyncUngated,
@@ -48,6 +53,12 @@ import {
   STATUS_ALERT_TIMEOUT_MS,
   triggerImmediatePopulationRunAsync,
 } from './scheduler';
+import {
+  formatFacebookCookiesFailingMessage,
+  formatFacebookCookiesRecoveredMessage,
+  formatNetworkUnreachableFailingMessage,
+  formatNetworkUnreachableRecoveredMessage,
+} from './signalMessage';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -168,6 +179,33 @@ function makeFailingRecipeWithReason(recipeName: string, reason: string): Recipe
     extractImplicitFilters: () => [],
     quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
       onEvent({ type: 'error', message: reason });
+    },
+    deepSearchAsync: async () => {},
+    computeAlertFingerprint: stubComputeAlertFingerprint,
+  };
+}
+
+// Same recipe as makeStubRecipe, but under a caller-chosen name — needed for
+// tests asserting on which recipe(s) a run touched (summary.touchedRecipeNames),
+// since getRecipeForUrl is mocked directly and ignores the URL/hostname
+// matching a real recipe would do.
+function makeNamedStubRecipe(recipeName: string, listings: Listing[]): Recipe {
+  return { ...makeStubRecipe(listings), name: recipeName };
+}
+
+// Mirrors the exact message facebook.ts's parseFbCookies/detectLoginWallAsync
+// emit for a missing/expired FB_COOKIES condition (see LOGIN_REQUIRED_MESSAGE) —
+// distinct from makeLoginWalledRecipe's synthetic "Login wall detected —
+// only N listing(s) loaded..." text, which intentionally does NOT match the
+// real message so those pre-existing tests stay unaffected by the sitewide
+// Facebook-cookies alert added below.
+function makeFacebookCookieFailureRecipe(): Recipe {
+  return {
+    name: 'facebook',
+    matches: () => true,
+    extractImplicitFilters: () => [],
+    quickSearchAsync: async (_url: string, onEvent: (event: QuickSearchEvent) => void) => {
+      onEvent({ type: 'error', message: LOGIN_REQUIRED_MESSAGE });
     },
     deepSearchAsync: async () => {},
     computeAlertFingerprint: stubComputeAlertFingerprint,
@@ -1596,6 +1634,358 @@ describe('runSchedulerAsync', () => {
     expect(stmtGetSavedSearch(db).get('search-ok')?.last_run_succeeded).toBe(1);
   });
 
+  it("collapses duplicate Facebook-cookie failures across multiple saved searches into a single sitewide alert, suppressing each search's own per-search alert", async () => {
+    const db = freshDb();
+    insertAlertSearch(db, {
+      id: 'search-a',
+      name: 'Search A',
+      urls: ['https://facebook.com/marketplace/a'],
+    });
+    insertAlertSearch(db, {
+      id: 'search-b',
+      name: 'Search B',
+      urls: ['https://facebook.com/marketplace/b'],
+    });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // both population runs — establishes non-population history for each
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatFacebookCookiesFailingMessage());
+  });
+
+  it('still sends a per-search alert for a search with a mix of a Facebook-cookie failure and an unrelated scrape error, excluding only the Facebook-cookie line', async () => {
+    const db = freshDb();
+    const fbUrl = 'https://facebook.com/marketplace/search';
+    const unknownUrl = 'https://unknown-site.example.com/search';
+    insertAlertSearch(db, { name: 'Mixed search', urls: [fbUrl, unknownUrl] });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockImplementation((url: string) =>
+      url === fbUrl ? makeFacebookCookieFailureRecipe() : null
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2); // sitewide alert + this search's own alert
+    const messages = sendNotificationAsync.mock.calls.map(([message]) => message);
+    expect(messages).toContainEqual(formatFacebookCookiesFailingMessage());
+    const perSearchMessage = messages.find(
+      (message) => message !== formatFacebookCookiesFailingMessage()
+    );
+    expect(perSearchMessage).toContain('No recipe found for this URL');
+    expect(perSearchMessage).not.toContain('Facebook requires login');
+  });
+
+  it('suppresses a repeat sitewide alert within 12h while still failing, and re-sends once the window elapses', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+    const baseTime = Date.now();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime,
+    });
+    stmtClearSearch(db).run();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + FAILURE_REALERT_MS - 1,
+    });
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    stmtClearSearch(db).run();
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      now: () => baseTime + FAILURE_REALERT_MS,
+    });
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends a single sitewide recovery alert when a Facebook-touching search succeeds again, suppressing that search's own per-search recovery ping", async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, {
+      name: 'FB search',
+      urls: ['https://facebook.com/marketplace/search'],
+    });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    stmtClearSearch(db).run();
+
+    // Re-scrapes the same already-alerted seed listing (no genuinely new
+    // listing) so the only expected send is the recovery alert itself, not
+    // an unrelated per-listing notification.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatFacebookCookiesRecoveredMessage());
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(0);
+  });
+
+  it("does not let the aggregated last_run_detail truncation cut a Facebook-cookie failure line in half, so a search's own recovery ping stays suppressed", async () => {
+    // Regression test for finding 3 of the PR #64 review: `detail` used to be
+    // built by joining every health-error line and THEN slicing the whole
+    // blob to AGGREGATED_FAILURE_DETAIL_MAX_LENGTH. A saved search with
+    // enough per-URL Facebook-cookie failures lets that aggregate cut land
+    // inside a line instead of on a line boundary, corrupting the persisted
+    // last_run_detail so its final line no longer contains the full
+    // LOGIN_REQUIRED_MESSAGE substring isSitewideCoveredFailure needs.
+    const facebookLine = `scrape:Discarded 0 untrusted listing(s): ${LOGIN_REQUIRED_MESSAGE}`;
+    const urlCount = 20;
+    // Sanity checks: joining `urlCount` identical lines crosses the aggregate
+    // cap partway through the last line (not exactly on a newline boundary),
+    // and `urlCount - 1` lines alone stay under it — i.e. this really
+    // exercises a mid-line cut of the *last* line, not a clean drop of whole
+    // lines.
+    const joinedLength = urlCount * facebookLine.length + (urlCount - 1);
+    const priorLinesLength = (urlCount - 1) * facebookLine.length + (urlCount - 2);
+    expect(joinedLength).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(priorLinesLength).toBeLessThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+
+    const urls = Array.from(
+      { length: urlCount },
+      (_, i) => `https://facebook.com/marketplace/search-${i}`
+    );
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'FB search', urls });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(0);
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // Only the shared sitewide recovery alert should go out — this search's
+    // previous failure was entirely sitewide-covered, so its own recovery
+    // ping must stay suppressed even though last_run_detail's final line was
+    // truncated.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatFacebookCookiesRecoveredMessage());
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
+  });
+
+  it('does not send a false sitewide recovery alert when a Facebook-touching search fails for an unrelated (non-cookie) reason while the sitewide alert is active', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    stmtClearSearch(db).run();
+
+    // This run touches the Facebook recipe but fails for a reason that has
+    // nothing to do with cookies — the run's own outcome says nothing about
+    // whether the login wall has cleared, so it must not be read as recovery
+    // evidence.
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeFailingRecipeWithReason('facebook', 'Some unrelated timeout')
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    const sentMessages = sendNotificationAsync.mock.calls.map((call) => call[0]);
+    expect(sentMessages).not.toContain(formatFacebookCookiesRecoveredMessage());
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+  });
+
+  it('does not touch the sitewide Facebook-cookies state for an unrelated recipe failure', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'TM search' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeFailingRecipeWithReason('trademe', 'Some other scrape problem')
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)).toBeUndefined();
+  });
+
+  it("collapses duplicate network-unreachable failures across multiple saved searches into a single sitewide alert, suppressing each search's own per-search alert", async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // both population runs — establishes non-population history for each
+    stmtClearSearch(db).run();
+
+    vi.mocked(checkInternetConnectivityAsync).mockResolvedValue(false);
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatNetworkUnreachableFailingMessage());
+  });
+
+  it("sends a single sitewide recovery alert when connectivity returns, suppressing each search's own per-search recovery ping", async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { name: 'Some search' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    vi.mocked(checkInternetConnectivityAsync).mockResolvedValue(false);
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(stmtGetSitewideAlertState(db).get(NETWORK_UNREACHABLE_CAUSE)?.is_active).toBe(1);
+    stmtClearSearch(db).run();
+
+    vi.mocked(checkInternetConnectivityAsync).mockResolvedValue(true);
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(formatNetworkUnreachableRecoveredMessage());
+    expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
+    expect(stmtGetSitewideAlertState(db).get(NETWORK_UNREACHABLE_CAUSE)?.is_active).toBe(0);
+  });
+
+  it('keeps the Facebook-cookies and network-unreachable sitewide states independent of one another', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(stmtGetSitewideAlertState(db).get(FACEBOOK_COOKIES_CAUSE)?.is_active).toBe(1);
+    expect(stmtGetSitewideAlertState(db).get(NETWORK_UNREACHABLE_CAUSE)).toBeUndefined();
+  });
+
   it('caps an overlong scrape-failure reason before it flows into the outbound Signal alert or last_run_detail', async () => {
     // Matches the existing 200-char precedent in ai.ts (AI parse-error
     // messages) — an unusually long or malformed error message must not
@@ -1627,13 +2017,19 @@ describe('runSchedulerAsync', () => {
     expect(detail).toContain(overlongReason.slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH));
   });
 
-  it('caps the aggregated error text across multiple failures before it flows into the outbound Signal alert or last_run_detail', async () => {
+  it('caps the aggregated error text across multiple failures before it flows into the outbound Signal alert, but preserves every full line in last_run_detail', async () => {
     // A single overlong reason is already bounded at capture
     // (SCRAPE_ERROR_REASON_MAX_LENGTH), but summary.errors was designed as an
     // internal diagnostic list, not an external payload — nothing previously
     // bounded the *aggregate* once several such per-URL failures (each
-    // already individually capped) are joined together for last_run_detail
-    // and the outbound Signal message.
+    // already individually capped) are joined together for the outbound
+    // Signal message. last_run_detail is deliberately different: it's capped
+    // per line (DETAIL_LINE_MAX_LENGTH), not as a joined blob, precisely so a
+    // saved search with many failures never has one of its lines corrupted by
+    // a cut that belongs to a different line — see that constant's comment.
+    // So unlike the outbound message, last_run_detail's total length here is
+    // allowed to exceed the old aggregate figure, as long as every individual
+    // line survives intact.
     const urls = Array.from(
       { length: 12 },
       (_, i) => `https://facebook.com/marketplace/search-${i}`
@@ -1653,7 +2049,7 @@ describe('runSchedulerAsync', () => {
     });
 
     // Sanity check: joining all 12 per-URL failures uncapped would comfortably
-    // exceed the aggregate cap, so this test actually exercises the new bound.
+    // exceed the old aggregate cap, so this test actually exercises the bound.
     expect(urls.length * reason.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
@@ -1661,7 +2057,14 @@ describe('runSchedulerAsync', () => {
     expect(message.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
 
     const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail as string;
-    expect(detail.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    // Every one of the 12 identical reason lines survives whole — none was
+    // partially cut off by a blob-level slice — even though the resulting
+    // total comfortably exceeds the old aggregate cap.
+    expect(detail.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(detail.split(reason).length - 1).toBe(urls.length);
+    for (const line of detail.split('\n')) {
+      expect(line.length).toBeLessThanOrEqual(DETAIL_LINE_MAX_LENGTH);
+    }
   });
 
   it('truncates a multi-line scrape-failure reason at the first newline and strips the embedded URL', async () => {
@@ -2432,6 +2835,7 @@ describe('determineExitCode', () => {
       notifiedCount: 0,
       populatedCount: 0,
       errors,
+      touchedRecipeNames: new Set(),
     };
   }
 
