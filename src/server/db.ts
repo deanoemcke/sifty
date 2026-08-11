@@ -390,8 +390,8 @@ export function stmtUpdateSavedSearchRunStatus(database: Database.Database) {
 }
 // Tracks whether a single application-wide failure cause (e.g. the shared
 // Facebook-cookies login requirement) is currently active, independent of
-// any one saved search — see reconcileFacebookCookiesSitewideAlertAsync in
-// scheduler.ts, which uses this row as the coordination point that lets N
+// any one saved search — see reconcileSitewideAlertAsync in scheduler.ts,
+// which uses this row as the coordination point that lets N
 // affected saved searches collapse into exactly one failure/recovery alert.
 export function stmtGetSitewideAlertState(database: Database.Database) {
   return database.prepare<[string], SitewideAlertStateRow>(

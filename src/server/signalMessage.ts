@@ -127,8 +127,8 @@ export function formatSearchRecoveredMessage(savedSearchName: string): string {
 
 // Application-wide counterpart to formatSearchFailingMessage — sent once,
 // covering every affected saved search at once, instead of once per search
-// (see reconcileFacebookCookiesSitewideAlertAsync in scheduler.ts, which
-// dedupes this exact scenario across saved searches).
+// (see reconcileSitewideAlertAsync in scheduler.ts, which dedupes this exact
+// scenario across saved searches).
 export function formatFacebookCookiesFailingMessage(): string {
   return '🟠 Facebook login required — set FB_COOKIES to restore all Facebook-based searches.';
 }

@@ -630,6 +630,18 @@ async function sendAlertSafelyAsync(
   }
 }
 
+// Shared by reconcileSitewideAlertAsync and
+// recordSavedSearchRunStatusAndAlertAsync — both re-alert a standing failure
+// only after FAILURE_REALERT_MS has passed since it was last alerted, so a
+// persisting issue doesn't go silent indefinitely without paging on every run.
+function isWithinReAlertWindow(
+  isConditionActive: boolean,
+  lastAlertedAt: number | null,
+  now: number
+): boolean {
+  return isConditionActive && lastAlertedAt != null && now - lastAlertedAt < FAILURE_REALERT_MS;
+}
+
 // Coordinates a single, shared application-wide alert (one per `cause`)
 // across every saved search a failure of that cause could affect, using the
 // sitewide_alert_state row for that cause as the coordination point.
@@ -661,11 +673,9 @@ async function reconcileSitewideAlertAsync(
   const isCurrentlyActive = state?.is_active === 1;
 
   if (hasFailureNow) {
-    const isWithinReAlertWindow =
-      isCurrentlyActive &&
-      state?.last_alerted_at != null &&
-      deps.now() - state.last_alerted_at < FAILURE_REALERT_MS;
-    if (isWithinReAlertWindow) return;
+    if (isWithinReAlertWindow(isCurrentlyActive, state?.last_alerted_at ?? null, deps.now())) {
+      return;
+    }
     await sendAlertSafelyAsync(formatFailingMessage(), summary, deps);
     stmtUpsertSitewideAlertState(deps.database).run(cause, 1, deps.now());
     return;
@@ -805,30 +815,22 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     row.last_run_succeeded === 0 &&
     buildFailureComparisonKey(parseStoredFailureDetail(row.last_run_detail)) ===
       buildFailureComparisonKey(healthErrors);
-  const isWithinReAlertWindow =
-    isSameFailureAsLastRun &&
-    row.last_failure_alerted_at !== null &&
-    deps.now() - row.last_failure_alerted_at < FAILURE_REALERT_MS;
-
-  if (isWithinReAlertWindow) {
-    stmtUpdateSavedSearchRunStatus(deps.database).run(
-      0,
-      detail,
-      row.last_failure_alerted_at,
-      row.id
-    );
-    return;
-  }
+  const isWithinPerSearchReAlertWindow = isWithinReAlertWindow(
+    isSameFailureAsLastRun,
+    row.last_failure_alerted_at,
+    deps.now()
+  );
 
   // Every current health error for this search is already covered by a
   // sitewide alert above, so skip the redundant per-search send but still
-  // persist state/detail (mirrors the re-alert-window branch above: keep the
-  // prior last_failure_alerted_at rather than advancing it, since no
-  // per-search alert actually went out).
-  // Setup confirmations are exempt — a user who just turned alerts on for
-  // this search needs to know *their* setup didn't complete, even though
-  // the cause is application-wide.
-  if (!isSetupMoment && searchScopedHealthErrors.length === 0) {
+  // persist state/detail (keep the prior last_failure_alerted_at rather than
+  // advancing it, since no per-search alert actually went out). Setup
+  // confirmations are exempt — a user who just turned alerts on for this
+  // search needs to know *their* setup didn't complete, even though the
+  // cause is application-wide.
+  const isSitewideCoveredMoment = !isSetupMoment && searchScopedHealthErrors.length === 0;
+
+  if (isWithinPerSearchReAlertWindow || isSitewideCoveredMoment) {
     stmtUpdateSavedSearchRunStatus(deps.database).run(
       0,
       detail,
