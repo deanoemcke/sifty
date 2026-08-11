@@ -1,8 +1,5 @@
 # Sifty Notes
 
-## Feature Ideas
-- add deep search hires images?
-
 ## Exploratory
 - ai filtering of images
 - integrating with Browser Use
