@@ -26,7 +26,7 @@ import {
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
 import { logQuickSearchEvent } from './quickSearchLogging';
-import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
+import { facebookRecipe, LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import { normalizeScrapeErrorReason } from './schedulerErrorText';
 import {
@@ -502,14 +502,14 @@ async function processSavedSearchAsync(
           // this run's cookie state as a clean success below — only a failure
           // that says nothing about cookies (a timeout, a DOM break, etc.)
           // must leave facebookCookieHealthChecked unset.
-          if (recipe.name === 'facebook' && isFacebookCookieFailure(scrapeError)) {
+          if (recipe.name === facebookRecipe.name && isFacebookCookieFailure(scrapeError)) {
             summary.facebookCookieHealthChecked = true;
           }
           continue;
         }
         for (const listing of listings)
           listingsByHash.set(recipe.computeAlertFingerprint(listing), listing);
-        if (recipe.name === 'facebook') summary.facebookCookieHealthChecked = true;
+        if (recipe.name === facebookRecipe.name) summary.facebookCookieHealthChecked = true;
       } catch (err) {
         const reason = sanitizeScrapeReason((err as Error).message);
         const scrapeError: SchedulerError = {
@@ -518,7 +518,7 @@ async function processSavedSearchAsync(
         };
         summary.errors.push(scrapeError);
         scrapeFailureReasons.push(reason);
-        if (recipe.name === 'facebook' && isFacebookCookieFailure(scrapeError)) {
+        if (recipe.name === facebookRecipe.name && isFacebookCookieFailure(scrapeError)) {
           summary.facebookCookieHealthChecked = true;
         }
       }
