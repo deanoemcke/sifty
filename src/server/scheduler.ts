@@ -569,13 +569,16 @@ async function processSavedSearchAsync(
     // an edited ai_filter naturally invalidates every previously cached
     // verdict for this search, since stmtUpsertAiFilterVerdict always
     // overwrites prompt_hash on the next fresh score.
-    const passedUrls = new Set<string>();
+    // Keyed by content hash, not URL — two candidates in the same batch can
+    // share a URL while differing in content (e.g. re-scraped mid-tick), and
+    // a URL-keyed set would let one candidate's pass/fail leak onto the other.
+    const passedHashes = new Set<string>();
     const cacheHitHashes: string[] = [];
     const cacheMissEntries: [string, Listing][] = [];
     for (const [hash, listing] of candidates) {
       const cached = stmtGetAiFilterVerdict(database).get(row.id, hash);
       if (cached && cached.prompt_hash === promptHash) {
-        if (cached.passed) passedUrls.add(listing.url);
+        if (cached.passed) passedHashes.add(hash);
         cacheHitHashes.push(hash);
       } else {
         cacheMissEntries.push([hash, listing]);
@@ -616,20 +619,26 @@ async function processSavedSearchAsync(
         });
         results = [];
       }
-      const freshResultsByUrl = new Map<string, FilterResultEntry>();
-      for (const result of results) freshResultsByUrl.set(result.url, result);
+      // Joined back to `cacheMissEntries` by array position, not by URL:
+      // `aiFilterListings` (and so `results[i].index`) is built from
+      // `cacheMissEntries` in the same order, so position is a stable 1:1
+      // key even when two entries share a URL but have different hashes —
+      // a URL-keyed join would let one candidate's verdict silently
+      // overwrite the other's in `freshResultsByUrl`.
+      const freshResultsByIndex = new Map<number, FilterResultEntry>();
+      for (const result of results) freshResultsByIndex.set(result.index, result);
 
       // Only a listing the AI filter actually returned a result for gets
       // cached — a batch that errored or timed out contributes nothing to
-      // `freshResultsByUrl`, so those listings stay uncached and are retried
-      // next tick instead of being permanently (and wrongly) treated as
-      // rejected.
+      // `freshResultsByIndex`, so those listings stay uncached and are
+      // retried next tick instead of being permanently (and wrongly) treated
+      // as rejected.
       const scoredAt = now();
       const upsertAiFilterVerdicts = database.transaction((entries: [string, Listing][]) => {
-        for (const [hash, listing] of entries) {
-          const result = freshResultsByUrl.get(listing.url);
-          if (!result) continue;
-          if (result.pass) passedUrls.add(result.url);
+        entries.forEach(([hash], index) => {
+          const result = freshResultsByIndex.get(index);
+          if (!result) return;
+          if (result.pass) passedHashes.add(hash);
           stmtUpsertAiFilterVerdict(database).run(
             row.id,
             hash,
@@ -640,13 +649,13 @@ async function processSavedSearchAsync(
             scoredAt,
             scoredAt
           );
-        }
+        });
       });
       upsertAiFilterVerdicts(cacheMissEntries);
     }
 
     const beforeCount = candidates.length;
-    candidates = candidates.filter(([, listing]) => passedUrls.has(listing.url));
+    candidates = candidates.filter(([hash]) => passedHashes.has(hash));
     summary.aiFilteredOutCount = beforeCount - candidates.length;
     console.log(
       `[scheduler] "${row.name}": AI filter passed ${candidates.length}/${beforeCount} listing(s) ` +

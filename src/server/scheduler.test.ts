@@ -700,6 +700,68 @@ describe('runSchedulerAsync', () => {
     expect(aiJSON).toHaveBeenCalledTimes(1);
   });
 
+  it('does not swap AI verdicts between two same-tick candidates that share a URL but have different content hashes', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    // Two genuinely new candidates share a URL (e.g. the same physical
+    // listing scraped via two of the search's URLs, or edited mid-tick) but
+    // differ in content, so they get different hashes and are both cache
+    // misses sent to the AI filter in the same batch. Before the fix, both
+    // were joined back to their fresh verdict by `.url`, so the second
+    // result overwrote the first in a url-keyed map and both candidates
+    // ended up with the same (wrong, for one of them) verdict.
+    const sharedUrl = 'https://example.com/shared';
+    const passListing = makeListing({
+      title: 'Gaming laptop',
+      url: sharedUrl,
+      description: 'v1',
+    });
+    const failListing = makeListing({
+      title: 'Random chair',
+      url: sharedUrl,
+      description: 'v2',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([seedListing, passListing, failListing])
+    );
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: {
+        results: [
+          { index: 1, pass: true, reason: null, relevance: 8 },
+          { index: 2, pass: false, reason: 'not a laptop', relevance: 1 },
+        ],
+      },
+    });
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // Only the passing listing should notify — the rejected one, despite
+    // sharing a URL with it, must not ride along on its verdict.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Gaming laptop');
+
+    // The persisted verdict for each hash must match that listing's own
+    // outcome, not the other candidate's.
+    const passHash = stubComputeAlertFingerprint(passListing);
+    const failHash = stubComputeAlertFingerprint(failListing);
+    const rows = db
+      .prepare('SELECT listing_hash, passed FROM ai_filter_verdicts WHERE listing_hash IN (?, ?)')
+      .all(passHash, failHash) as { listing_hash: string; passed: number }[];
+    const passedByHash = new Map(rows.map((row) => [row.listing_hash, row.passed]));
+    expect(passedByHash.get(passHash)).toBe(1);
+    expect(passedByHash.get(failHash)).toBe(0);
+  });
+
   it('does not cache a verdict when the AI filter call fails, so the listing is retried next run', async () => {
     const db = freshDb();
     insertAlertSearch(db, { aiFilter: 'laptop' });
