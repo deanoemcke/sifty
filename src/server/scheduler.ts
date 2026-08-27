@@ -10,7 +10,6 @@ import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import { hashFingerprintParts } from './alerts';
 import { checkInternetConnectivityAsync } from './connectivity';
 import {
-  type AiFilterVerdictRow,
   type SavedSearchRow,
   stmtClearAlertSetupNotificationPending,
   stmtCountDueAlertEnabledSavedSearches,
@@ -570,20 +569,27 @@ async function processSavedSearchAsync(
     // an edited ai_filter naturally invalidates every previously cached
     // verdict for this search, since stmtUpsertAiFilterVerdict always
     // overwrites prompt_hash on the next fresh score.
-    const cacheHitEntries: Array<{ hash: string; listing: Listing; verdict: AiFilterVerdictRow }> =
-      [];
+    const passedUrls = new Set<string>();
+    const cacheHitHashes: string[] = [];
     const cacheMissEntries: [string, Listing][] = [];
     for (const [hash, listing] of candidates) {
       const cached = stmtGetAiFilterVerdict(database).get(row.id, hash);
       if (cached && cached.prompt_hash === promptHash) {
-        cacheHitEntries.push({ hash, listing, verdict: cached });
-        stmtTouchAiFilterVerdict(database).run(now(), row.id, hash);
+        if (cached.passed) passedUrls.add(listing.url);
+        cacheHitHashes.push(hash);
       } else {
         cacheMissEntries.push([hash, listing]);
       }
     }
 
-    const freshResultsByUrl = new Map<string, FilterResultEntry>();
+    if (cacheHitHashes.length > 0) {
+      const touchedAt = now();
+      const touchAiFilterVerdicts = database.transaction((hashes: string[]) => {
+        for (const hash of hashes) stmtTouchAiFilterVerdict(database).run(touchedAt, row.id, hash);
+      });
+      touchAiFilterVerdicts(cacheHitHashes);
+    }
+
     if (cacheMissEntries.length > 0) {
       const aiFilterListings = cacheMissEntries.map(([, listing]) => toAiFilterListing(listing));
       let results: FilterResultEntry[];
@@ -610,42 +616,41 @@ async function processSavedSearchAsync(
         });
         results = [];
       }
+      const freshResultsByUrl = new Map<string, FilterResultEntry>();
       for (const result of results) freshResultsByUrl.set(result.url, result);
 
       // Only a listing the AI filter actually returned a result for gets
       // cached — a batch that errored or timed out contributes nothing to
-      // `results`, so those listings stay uncached and are retried next tick
-      // instead of being permanently (and wrongly) treated as rejected.
+      // `freshResultsByUrl`, so those listings stay uncached and are retried
+      // next tick instead of being permanently (and wrongly) treated as
+      // rejected.
       const scoredAt = now();
-      for (const [hash, listing] of cacheMissEntries) {
-        const result = freshResultsByUrl.get(listing.url);
-        if (!result) continue;
-        stmtUpsertAiFilterVerdict(database).run(
-          row.id,
-          hash,
-          promptHash,
-          result.pass ? 1 : 0,
-          result.relevance,
-          result.reason,
-          scoredAt,
-          scoredAt
-        );
-      }
+      const upsertAiFilterVerdicts = database.transaction((entries: [string, Listing][]) => {
+        for (const [hash, listing] of entries) {
+          const result = freshResultsByUrl.get(listing.url);
+          if (!result) continue;
+          if (result.pass) passedUrls.add(result.url);
+          stmtUpsertAiFilterVerdict(database).run(
+            row.id,
+            hash,
+            promptHash,
+            result.pass ? 1 : 0,
+            result.relevance,
+            result.reason,
+            scoredAt,
+            scoredAt
+          );
+        }
+      });
+      upsertAiFilterVerdicts(cacheMissEntries);
     }
 
-    const passedUrls = new Set<string>();
-    for (const { listing, verdict } of cacheHitEntries) {
-      if (verdict.passed) passedUrls.add(listing.url);
-    }
-    for (const result of freshResultsByUrl.values()) {
-      if (result.pass) passedUrls.add(result.url);
-    }
     const beforeCount = candidates.length;
     candidates = candidates.filter(([, listing]) => passedUrls.has(listing.url));
     summary.aiFilteredOutCount = beforeCount - candidates.length;
     console.log(
       `[scheduler] "${row.name}": AI filter passed ${candidates.length}/${beforeCount} listing(s) ` +
-        `(${cacheHitEntries.length} cached, ${cacheMissEntries.length} sent to AI)`
+        `(${cacheHitHashes.length} cached, ${cacheMissEntries.length} sent to AI)`
     );
   }
 
