@@ -409,8 +409,11 @@ export function stmtGetAiFilterVerdict(database: Database.Database) {
 }
 // prompt_hash is overwritten (not appended) on conflict so there is exactly
 // one current verdict per (saved_search_id, listing_hash) — an edited
-// ai_filter prompt naturally invalidates the previous verdict next time it's
-// read, without needing a separate cache-clear at the prompt-edit call site.
+// ai_filter prompt, or an upgraded/switched AI model or provider (both fold
+// into the hash callers store here — see processSavedSearchAsync's
+// verdictCacheKey in scheduler.ts), naturally invalidates the previous
+// verdict next time it's read, without needing a separate cache-clear at the
+// prompt-edit (or model-change) call site.
 export function stmtUpsertAiFilterVerdict(database: Database.Database) {
   return database.prepare(
     'INSERT INTO ai_filter_verdicts (saved_search_id, listing_hash, prompt_hash, passed, relevance, reason, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +

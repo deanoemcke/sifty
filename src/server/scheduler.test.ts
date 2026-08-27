@@ -672,6 +672,70 @@ describe('runSchedulerAsync', () => {
     expect(aiJSON).toHaveBeenCalledTimes(1);
   });
 
+  it('re-scores a cached listing after the configured AI model changes', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    // Same content, same prompt — only the resolved model changed (e.g. an
+    // upgrade) since the verdict was cached. The stale verdict reflects the
+    // old model's opinion, not what the currently configured model would
+    // say, so it must not be served from cache.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    vi.mocked(getAIConfig).mockReturnValue({
+      url: 'a',
+      model: 'a-newer-model',
+      apiKey: 'k',
+      providerKey: 'a',
+      cooldownStore: STUB_COOLDOWN_STORE,
+    });
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 5 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-scores a cached listing after the configured AI provider changes', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    // Same content, same prompt, same model name — only the provider
+    // switched (e.g. AI_PROVIDER env var changed). A same-named model from a
+    // different provider is not guaranteed to judge the same way, so the
+    // cached verdict must not be reused across providers either.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    vi.mocked(getAIConfig).mockReturnValue({
+      url: 'b',
+      model: 'm',
+      apiKey: 'k',
+      providerKey: 'b',
+      cooldownStore: STUB_COOLDOWN_STORE,
+    });
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 5 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+  });
+
   it('re-scores a listing whose content hash changes even though the URL is the same', async () => {
     const db = freshDb();
     insertAlertSearch(db, { aiFilter: 'laptop' });
