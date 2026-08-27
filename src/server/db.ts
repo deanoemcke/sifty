@@ -52,6 +52,17 @@ export function initSchema(database: Database.Database): void {
       is_active       INTEGER NOT NULL DEFAULT 0,
       last_alerted_at INTEGER
     );
+    CREATE TABLE IF NOT EXISTS ai_filter_verdicts (
+      saved_search_id TEXT NOT NULL,
+      listing_hash     TEXT NOT NULL,
+      prompt_hash      TEXT NOT NULL,
+      passed           INTEGER NOT NULL,
+      relevance        INTEGER NOT NULL,
+      reason           TEXT,
+      created_at       INTEGER NOT NULL,
+      last_seen_at     INTEGER NOT NULL,
+      PRIMARY KEY (saved_search_id, listing_hash)
+    );
   `);
 
   // Superseded by the per-saved-search last_run_succeeded/last_run_detail/
@@ -225,6 +236,14 @@ export type CategoryEmbeddingCoverageRow = { total: number; embedded: number };
 export type CategoryLegacyPathRow = { legacy_path: string };
 export type CountRow = { n: number };
 export type AlertedListingRow = { saved_search_id: string; listing_hash: string };
+export type AiFilterVerdictRow = {
+  saved_search_id: string;
+  listing_hash: string;
+  prompt_hash: string;
+  passed: number;
+  relevance: number;
+  reason: string | null;
+};
 export type SitewideAlertStateRow = {
   cause: string;
   is_active: number;
@@ -378,6 +397,37 @@ export function stmtInsertAlertedListing(database: Database.Database) {
   return database.prepare(
     'INSERT OR IGNORE INTO alerted_listings (saved_search_id, listing_hash, created_at) VALUES (?, ?, ?)'
   );
+}
+// Caches a listing's AI-filter verdict per saved search so an unchanged
+// listing (same computeAlertFingerprint hash) isn't re-sent to the LLM on
+// every scheduler tick — see processSavedSearchAsync (scheduler.ts), which
+// only calls runAiFilterBatchesAsync for listings this lookup misses.
+export function stmtGetAiFilterVerdict(database: Database.Database) {
+  return database.prepare<[string, string], AiFilterVerdictRow>(
+    'SELECT saved_search_id, listing_hash, prompt_hash, passed, relevance, reason FROM ai_filter_verdicts WHERE saved_search_id = ? AND listing_hash = ?'
+  );
+}
+// prompt_hash is overwritten (not appended) on conflict so there is exactly
+// one current verdict per (saved_search_id, listing_hash) — an edited
+// ai_filter prompt naturally invalidates the previous verdict next time it's
+// read, without needing a separate cache-clear at the prompt-edit call site.
+export function stmtUpsertAiFilterVerdict(database: Database.Database) {
+  return database.prepare(
+    'INSERT INTO ai_filter_verdicts (saved_search_id, listing_hash, prompt_hash, passed, relevance, reason, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(saved_search_id, listing_hash) DO UPDATE SET ' +
+      'prompt_hash = excluded.prompt_hash, passed = excluded.passed, relevance = excluded.relevance, reason = excluded.reason, created_at = excluded.created_at, last_seen_at = excluded.last_seen_at'
+  );
+}
+// Bumped on every cache hit (not just on a fresh AI call) so expiry tracks
+// "not seen in any scrape for N days," not "first scored N days ago" — a
+// still-active listing that keeps hitting the cache must never age out.
+export function stmtTouchAiFilterVerdict(database: Database.Database) {
+  return database.prepare<[number, string, string]>(
+    'UPDATE ai_filter_verdicts SET last_seen_at = ? WHERE saved_search_id = ? AND listing_hash = ?'
+  );
+}
+export function stmtPruneStaleAiFilterVerdicts(database: Database.Database) {
+  return database.prepare<[number]>('DELETE FROM ai_filter_verdicts WHERE last_seen_at < ?');
 }
 // Persists the outcome of a saved search's most recent scheduled run —
 // last_failure_alerted_at only changes when a failure alert is actually sent
