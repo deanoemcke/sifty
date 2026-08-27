@@ -110,7 +110,7 @@ describe('runAiFilterBatchesAsync', () => {
     );
 
     expect(results).toEqual([
-      { url: 'https://example.com/1', pass: true, reason: null, relevance: 7 },
+      { index: 0, url: 'https://example.com/1', pass: true, reason: null, relevance: 7 },
     ]);
   });
 
@@ -130,7 +130,7 @@ describe('runAiFilterBatchesAsync', () => {
     );
 
     expect(onBatchResult).toHaveBeenCalledWith([
-      { url: 'https://example.com/1', pass: true, reason: null, relevance: 7 },
+      { index: 0, url: 'https://example.com/1', pass: true, reason: null, relevance: 7 },
     ]);
   });
 
@@ -207,5 +207,30 @@ describe('runAiFilterBatchesAsync', () => {
 
     expect(onBatchError).toHaveBeenCalledWith('boom');
     expect(results).toHaveLength(1);
+  });
+
+  it('reports a global array position for a result in the second batch, not a per-batch-local one', async () => {
+    vi.mocked(getAIConfig).mockReturnValue(CONFIG_A);
+    // Both batches report their result as local index 1 (the LLM numbers
+    // each batch's listings from 1) — the second batch's result must still
+    // resolve to global position 50 (offset 50 + local index 1 - 1), the
+    // stable key callers use to join a result back to their own candidate
+    // list, so it isn't confused with the first batch's position 0.
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({
+        kind: 'ok',
+        value: { results: [{ index: 1, pass: true, reason: null, relevance: 7 }] },
+      })
+      .mockResolvedValueOnce({
+        kind: 'ok',
+        value: { results: [{ index: 1, pass: false, reason: 'nope', relevance: 2 }] },
+      });
+
+    // BATCH_SIZE is 50 — 51 listings forces a second batch.
+    const listings = Array.from({ length: 51 }, (_, i) => makeListing(`https://example.com/${i}`));
+    const results = await runAiFilterBatchesAsync(listings, 'laptop', STUB_COOLDOWN_STORE);
+
+    const indexes = results.map((result) => result.index).sort((a, b) => a - b);
+    expect(indexes).toEqual([0, 50]);
   });
 });

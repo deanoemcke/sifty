@@ -28,6 +28,7 @@ import {
   stmtInsertSavedSearch,
   stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
+  stmtUpdateSavedSearch,
   stmtUpdateSavedSearchLastRunAt,
   stmtUpdateSavedSearchRunStatus,
 } from './db';
@@ -36,7 +37,9 @@ import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
+  AI_FILTER_REASON_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
+  AI_FILTER_VERDICT_MAX_AGE_MS,
   buildFailureComparisonKey,
   DETAIL_LINE_MAX_LENGTH,
   determineExitCode,
@@ -129,6 +132,36 @@ function makeStubRecipe(listings: Listing[]): Recipe {
     deepSearchAsync: async () => {},
     computeAlertFingerprint: stubComputeAlertFingerprint,
   };
+}
+
+// Runs the scheduler once with `listing` as the sole candidate and a passing
+// AI-filter verdict, then clears the alerted-listings ledger — used by the
+// ai_filter_verdicts cache tests below to seed a cached verdict before their
+// actual second-run assertion.
+async function seedCachedVerdictAsync(
+  db: Database.Database,
+  listing: Listing,
+  now?: () => number
+): Promise<void> {
+  vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([listing]));
+  vi.mocked(getAIConfig).mockReturnValue({
+    url: 'a',
+    model: 'm',
+    apiKey: 'k',
+    providerKey: 'a',
+    cooldownStore: STUB_COOLDOWN_STORE,
+  });
+  vi.mocked(aiJSON).mockResolvedValue({
+    kind: 'ok',
+    value: { results: [{ index: 1, pass: true, reason: null, relevance: 5 }] },
+  });
+  await runSchedulerAsync({
+    database: db,
+    cooldownStore: STUB_COOLDOWN_STORE,
+    sendNotificationAsync: vi.fn(),
+    ...(now ? { now } : {}),
+  });
+  stmtClearSearch(db).run();
 }
 
 // Simulates a recipe stuck on a login wall / hung socket / unresolved
@@ -479,14 +512,15 @@ describe('runSchedulerAsync', () => {
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([seedListing, passListing, failListing])
     );
-    // Candidate order this run is [seedListing, passListing, failListing] — indices 1-3.
+    // seedListing is now a cache hit from the first run (same content, same
+    // prompt), so only passListing and failListing are sent to the AI filter
+    // this run — batch indices 1-2, not 1-3.
     vi.mocked(aiJSON).mockResolvedValue({
       kind: 'ok',
       value: {
         results: [
-          { index: 1, pass: true, reason: null, relevance: 5 },
-          { index: 2, pass: true, reason: null, relevance: 8 },
-          { index: 3, pass: false, reason: 'not a laptop', relevance: 1 },
+          { index: 1, pass: true, reason: null, relevance: 8 },
+          { index: 2, pass: false, reason: 'not a laptop', relevance: 1 },
         ],
       },
     });
@@ -540,6 +574,421 @@ describe('runSchedulerAsync', () => {
     });
 
     expect(vi.mocked(aiJSON).mock.calls[0][3]).toContain('| Category: Computers/Laptops');
+  });
+
+  it('does not call the AI filter again for a listing whose content and prompt are unchanged', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    // Second run: seedListing is unchanged (cache hit), newListing is genuinely
+    // new (cache miss) — only the miss should reach the AI filter.
+    const newListing = makeListing({ title: 'Gaming laptop', url: 'https://example.com/new' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 8 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+    stmtClearSearch(db).run();
+
+    // Third run: both listings unchanged now — neither is a cache miss.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, newListing]));
+    vi.mocked(aiJSON).mockClear();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(aiJSON).not.toHaveBeenCalled();
+  });
+
+  it('does not re-send an AI-rejected listing to the AI filter on the next run', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    const rejectedListing = makeListing({
+      title: 'Random chair',
+      url: 'https://example.com/rejected',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, rejectedListing]));
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: false, reason: 'not a laptop', relevance: 1 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+    stmtClearSearch(db).run();
+
+    // Third run: the rejected listing still appears, unchanged — this is the
+    // regression case: before caching, a rejected listing is never recorded
+    // as alerted, so it was resubmitted to the AI filter on every tick.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, rejectedListing]));
+    vi.mocked(aiJSON).mockClear();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).not.toHaveBeenCalled();
+  });
+
+  it('re-scores a cached listing after the saved search prompt is edited', async () => {
+    const db = freshDb();
+    const searchId = insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    stmtUpdateSavedSearch(db).run(
+      'My search',
+      JSON.stringify([SEARCH_URL]),
+      null,
+      'bicycle',
+      searchId
+    );
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    vi.mocked(aiJSON).mockClear();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-scores a cached listing after the configured AI model changes', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    // Same content, same prompt — only the resolved model changed (e.g. an
+    // upgrade) since the verdict was cached. The stale verdict reflects the
+    // old model's opinion, not what the currently configured model would
+    // say, so it must not be served from cache.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    vi.mocked(getAIConfig).mockReturnValue({
+      url: 'a',
+      model: 'a-newer-model',
+      apiKey: 'k',
+      providerKey: 'a',
+      cooldownStore: STUB_COOLDOWN_STORE,
+    });
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 5 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-scores a cached listing after the configured AI provider changes', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    // Same content, same prompt, same model name — only the provider
+    // switched (e.g. AI_PROVIDER env var changed). A same-named model from a
+    // different provider is not guaranteed to judge the same way, so the
+    // cached verdict must not be reused across providers either.
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    vi.mocked(getAIConfig).mockReturnValue({
+      url: 'b',
+      model: 'm',
+      apiKey: 'k',
+      providerKey: 'b',
+      cooldownStore: STUB_COOLDOWN_STORE,
+    });
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 5 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-scores a listing whose content hash changes even though the URL is the same', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const original = makeListing({
+      title: 'Old title',
+      url: 'https://example.com/x',
+      location: 'Wellington',
+      description: 'desc',
+    });
+    await seedCachedVerdictAsync(db, original);
+
+    const edited = makeListing({
+      title: 'New title',
+      url: 'https://example.com/x',
+      location: 'Wellington',
+      description: 'desc',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([edited]));
+    vi.mocked(aiJSON).mockClear();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not swap AI verdicts between two same-tick candidates that share a URL but have different content hashes', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    // Two genuinely new candidates share a URL (e.g. the same physical
+    // listing scraped via two of the search's URLs, or edited mid-tick) but
+    // differ in content, so they get different hashes and are both cache
+    // misses sent to the AI filter in the same batch. Before the fix, both
+    // were joined back to their fresh verdict by `.url`, so the second
+    // result overwrote the first in a url-keyed map and both candidates
+    // ended up with the same (wrong, for one of them) verdict.
+    const sharedUrl = 'https://example.com/shared';
+    const passListing = makeListing({
+      title: 'Gaming laptop',
+      url: sharedUrl,
+      description: 'v1',
+    });
+    const failListing = makeListing({
+      title: 'Random chair',
+      url: sharedUrl,
+      description: 'v2',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([seedListing, passListing, failListing])
+    );
+    vi.mocked(aiJSON).mockClear();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: {
+        results: [
+          { index: 1, pass: true, reason: null, relevance: 8 },
+          { index: 2, pass: false, reason: 'not a laptop', relevance: 1 },
+        ],
+      },
+    });
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    // Only the passing listing should notify — the rejected one, despite
+    // sharing a URL with it, must not ride along on its verdict.
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toContain('Gaming laptop');
+
+    // The persisted verdict for each hash must match that listing's own
+    // outcome, not the other candidate's.
+    const passHash = stubComputeAlertFingerprint(passListing);
+    const failHash = stubComputeAlertFingerprint(failListing);
+    const rows = db
+      .prepare('SELECT listing_hash, passed FROM ai_filter_verdicts WHERE listing_hash IN (?, ?)')
+      .all(passHash, failHash) as { listing_hash: string; passed: number }[];
+    const passedByHash = new Map(rows.map((row) => [row.listing_hash, row.passed]));
+    expect(passedByHash.get(passHash)).toBe(1);
+    expect(passedByHash.get(failHash)).toBe(0);
+  });
+
+  it('caps an overlong AI-filter reason before persisting it', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const listing = makeListing({ title: 'Gaming laptop', url: 'https://example.com/verbose' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([listing]));
+    vi.mocked(getAIConfig).mockReturnValue({
+      url: 'a',
+      model: 'm',
+      apiKey: 'k',
+      providerKey: 'a',
+      cooldownStore: STUB_COOLDOWN_STORE,
+    });
+    const overlongReason = 'x'.repeat(AI_FILTER_REASON_MAX_LENGTH + 50);
+    expect(overlongReason.length).toBeGreaterThan(AI_FILTER_REASON_MAX_LENGTH);
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: overlongReason, relevance: 5 }] },
+    });
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    const row = db
+      .prepare<[string], { reason: string | null }>(
+        'SELECT reason FROM ai_filter_verdicts WHERE listing_hash = ?'
+      )
+      .get(stubComputeAlertFingerprint(listing));
+    expect(row?.reason).toBe(overlongReason.slice(0, AI_FILTER_REASON_MAX_LENGTH));
+    expect(row?.reason?.length).toBe(AI_FILTER_REASON_MAX_LENGTH);
+  });
+
+  it('does not cache a verdict when the AI filter call fails, so the listing is retried next run', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    await seedCachedVerdictAsync(db, seedListing);
+
+    const flaky = makeListing({ title: 'Gaming laptop', url: 'https://example.com/flaky' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, flaky]));
+    vi.mocked(aiJSON).mockReset();
+    vi.mocked(aiJSON).mockRejectedValueOnce(new Error('boom'));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    const cachedRow = db
+      .prepare('SELECT * FROM ai_filter_verdicts WHERE listing_hash = ?')
+      .get(stubComputeAlertFingerprint(flaky));
+    expect(cachedRow).toBeUndefined();
+    stmtClearSearch(db).run();
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, flaky]));
+    vi.mocked(aiJSON).mockReset();
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: null, relevance: 8 }] },
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(aiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes last_seen_at on a cache hit without changing created_at', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    const firstRunAt = 1_000_000;
+    await seedCachedVerdictAsync(db, seedListing, () => firstRunAt);
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    vi.mocked(aiJSON).mockClear();
+    const secondRunAt = firstRunAt + 1000;
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now: () => secondRunAt,
+    });
+
+    expect(aiJSON).not.toHaveBeenCalled();
+    const row = db
+      .prepare<[string], { created_at: number; last_seen_at: number }>(
+        'SELECT created_at, last_seen_at FROM ai_filter_verdicts WHERE listing_hash = ?'
+      )
+      .get(stubComputeAlertFingerprint(seedListing));
+    expect(row?.created_at).toBe(firstRunAt);
+    expect(row?.last_seen_at).toBe(secondRunAt);
+  });
+
+  it('prunes ai_filter_verdicts rows not seen in over 90 days, keeping recent ones', async () => {
+    const db = freshDb();
+    const now = 10_000_000_000;
+    const insertVerdict = db.prepare(
+      'INSERT INTO ai_filter_verdicts (saved_search_id, listing_hash, prompt_hash, passed, relevance, reason, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    insertVerdict.run(
+      'search-1',
+      'stale-hash',
+      'prompt-hash',
+      1,
+      5,
+      null,
+      now - AI_FILTER_VERDICT_MAX_AGE_MS - 1000,
+      now - AI_FILTER_VERDICT_MAX_AGE_MS - 1000
+    );
+    insertVerdict.run('search-1', 'fresh-hash', 'prompt-hash', 1, 5, null, now - 1000, now - 1000);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now: () => now,
+    });
+
+    const rows = db
+      .prepare<[], { listing_hash: string }>('SELECT listing_hash FROM ai_filter_verdicts')
+      .all();
+    expect(rows.map((r) => r.listing_hash)).toEqual(['fresh-hash']);
+  });
+
+  it('never prunes a verdict for a listing that keeps appearing in scrapes more often than the expiry window', async () => {
+    const db = freshDb();
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+
+    let currentTime = 10_000_000_000;
+    await seedCachedVerdictAsync(db, seedListing, () => currentTime);
+
+    // Five more runs spaced 30 days apart (well under the 90-day expiry
+    // window) — total elapsed time far exceeds 90 days, but the listing is
+    // touched (cache hit) every run, so it must never be pruned.
+    for (let i = 0; i < 5; i++) {
+      stmtClearSearch(db).run();
+      currentTime += THIRTY_DAYS_MS;
+      vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+      await runSchedulerAsync({
+        database: db,
+        cooldownStore: STUB_COOLDOWN_STORE,
+        sendNotificationAsync: vi.fn(),
+        now: () => currentTime,
+      });
+    }
+
+    expect(currentTime - 10_000_000_000).toBeGreaterThan(AI_FILTER_VERDICT_MAX_AGE_MS);
+    const row = db
+      .prepare<[string], { listing_hash: string }>(
+        'SELECT listing_hash FROM ai_filter_verdicts WHERE listing_hash = ?'
+      )
+      .get(stubComputeAlertFingerprint(seedListing));
+    expect(row).toBeDefined();
+    // Only ever scored once (the first run) — confirms it stayed a cache hit throughout.
+    expect(aiJSON).toHaveBeenCalledTimes(1);
   });
 
   it('does not record an alert when the notification send fails, so it is retried next run', async () => {

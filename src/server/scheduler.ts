@@ -7,11 +7,14 @@
 
 import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
+import { getAIConfig } from './ai';
+import { hashFingerprintParts } from './alerts';
 import { checkInternetConnectivityAsync } from './connectivity';
 import {
   type SavedSearchRow,
   stmtClearAlertSetupNotificationPending,
   stmtCountDueAlertEnabledSavedSearches,
+  stmtGetAiFilterVerdict,
   stmtGetDueAlertEnabledSavedSearches,
   stmtGetSavedSearch,
   stmtGetSitewideAlertState,
@@ -19,8 +22,11 @@ import {
   stmtInsertAlertedListing,
   stmtMarkAlertSetupNotificationPending,
   stmtMarkPopulationRunComplete,
+  stmtPruneStaleAiFilterVerdicts,
+  stmtTouchAiFilterVerdict,
   stmtUpdateSavedSearchLastRunAt,
   stmtUpdateSavedSearchRunStatus,
+  stmtUpsertAiFilterVerdict,
   stmtUpsertSitewideAlertState,
 } from './db';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
@@ -88,6 +94,13 @@ export const STATUS_ALERT_TIMEOUT_MS = 30_000;
 // stays well below it — nothing keeps that plist value and this constant in
 // sync automatically.
 export const TARGET_INTERVAL_MINUTES = 240;
+
+// How long an ai_filter_verdicts row can go untouched before it's pruned.
+// last_seen_at is refreshed on every cache hit (not just when freshly
+// scored), so a row only ever crosses this cutoff once its listing has
+// genuinely stopped appearing in any scrape for this search — a
+// still-active listing that keeps hitting the cache never ages out.
+export const AI_FILTER_VERDICT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 // Cap on how many due searches to process in a single tick, so a large
 // backlog (e.g. many searches added at once) can't turn one tick into an
@@ -234,6 +247,15 @@ export const AGGREGATED_FAILURE_DETAIL_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENG
 // comfortably under it, so in practice this only ever bounds the otherwise-
 // unbounded ai-filter/unhandled message kinds, never a legitimate short line.
 export const DETAIL_LINE_MAX_LENGTH = AGGREGATED_FAILURE_DETAIL_MAX_LENGTH;
+
+// Bound on the AI filter's LLM-authored `reason` text before it's persisted
+// to ai_filter_verdicts, applied at the point of caching — like every other
+// LLM/scrape-derived text in this file (SCRAPE_ERROR_REASON_MAX_LENGTH
+// above), it's untrusted output with no inherent size limit, and this column
+// is written on every fresh AI-filter score and kept for up to
+// AI_FILTER_VERDICT_MAX_AGE_MS. Reuses SCRAPE_ERROR_REASON_MAX_LENGTH's value
+// rather than an independent constant, matching that precedent.
+export const AI_FILTER_REASON_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH;
 
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
@@ -551,37 +573,141 @@ async function processSavedSearchAsync(
   summary.soldSkippedCount = listingsByHash.size - candidates.length;
 
   if (aiFilterPrompt && candidates.length > 0) {
-    const aiFilterListings = candidates.map(([, listing]) => toAiFilterListing(listing));
-    let results: FilterResultEntry[];
+    // Resolved once here, up front — even on a tick where every candidate
+    // below turns out to be a cache hit — rather than left to
+    // runAiFilterBatchesAsync to resolve lazily only on a cache miss. The
+    // cache's invariant is "same content + same scoring function ⇒ same
+    // verdict": the scoring function includes which model/provider judged
+    // it, not just the prompt text, so that identity has to feed the cache
+    // key below regardless of whether this tick calls the AI at all.
+    let aiConfig: ReturnType<typeof getAIConfig> | undefined;
     try {
-      results = await withTimeoutAsync(
-        runAiFilterBatchesAsync(
-          aiFilterListings,
-          aiFilterPrompt,
-          cooldownStore,
-          undefined,
-          (message) => summary.errors.push({ kind: 'ai-filter', message: `AI filter: ${message}` })
-        ),
-        AI_FILTER_TIMEOUT_MS,
-        'AI filter batch run'
-      );
+      aiConfig = getAIConfig(cooldownStore);
     } catch (err) {
-      // Mirrors the per-batch error path in runAiFilterBatchesAsync: none of
-      // these candidates are treated as having passed, so nothing is
-      // notified on unverified AI judgement rather than risking false alerts.
+      // No provider is available at all this tick. Without a resolved
+      // model/provider identity the cache key can't even be computed, so —
+      // mirroring the AI-filter-timeout catch below — every candidate here
+      // is treated as unverified rather than guessing at a cache key or
+      // silently falling back to serving a stale verdict.
       summary.errors.push({
         kind: 'ai-filter',
-        message: `AI filter timed out: ${(err as Error).message}`,
+        message: `AI filter: ${(err as Error).message}`,
       });
-      results = [];
     }
-    const passedUrls = new Set(results.filter((result) => result.pass).map((result) => result.url));
-    const beforeCount = candidates.length;
-    candidates = candidates.filter(([, listing]) => passedUrls.has(listing.url));
-    summary.aiFilteredOutCount = beforeCount - candidates.length;
-    console.log(
-      `[scheduler] "${row.name}": AI filter passed ${candidates.length}/${beforeCount} listing(s)`
-    );
+
+    if (aiConfig) {
+      // A verdict is reusable only if it was recorded under this exact
+      // prompt AND this exact model/provider — an edited ai_filter prompt,
+      // or an upgraded/switched AI model, naturally invalidates every
+      // previously cached verdict for this search, since
+      // stmtUpsertAiFilterVerdict always overwrites the stored prompt_hash
+      // (which now folds in the model/provider identity too) on the next
+      // fresh score.
+      // Keyed by content hash, not URL — two candidates in the same batch can
+      // share a URL while differing in content (e.g. re-scraped mid-tick), and
+      // a URL-keyed set would let one candidate's pass/fail leak onto the other.
+      const verdictCacheKey = hashFingerprintParts([
+        aiFilterPrompt,
+        aiConfig.model,
+        aiConfig.providerKey,
+      ]);
+      const passedHashes = new Set<string>();
+      const cacheHitHashes: string[] = [];
+      const cacheMissEntries: [string, Listing][] = [];
+      for (const [hash, listing] of candidates) {
+        const cached = stmtGetAiFilterVerdict(database).get(row.id, hash);
+        if (cached && cached.prompt_hash === verdictCacheKey) {
+          if (cached.passed) passedHashes.add(hash);
+          cacheHitHashes.push(hash);
+        } else {
+          cacheMissEntries.push([hash, listing]);
+        }
+      }
+
+      if (cacheHitHashes.length > 0) {
+        const touchedAt = now();
+        const touchAiFilterVerdicts = database.transaction((hashes: string[]) => {
+          for (const hash of hashes)
+            stmtTouchAiFilterVerdict(database).run(touchedAt, row.id, hash);
+        });
+        touchAiFilterVerdicts(cacheHitHashes);
+      }
+
+      if (cacheMissEntries.length > 0) {
+        const aiFilterListings = cacheMissEntries.map(([, listing]) => toAiFilterListing(listing));
+        let results: FilterResultEntry[];
+        try {
+          results = await withTimeoutAsync(
+            runAiFilterBatchesAsync(
+              aiFilterListings,
+              aiFilterPrompt,
+              cooldownStore,
+              undefined,
+              (message) =>
+                summary.errors.push({ kind: 'ai-filter', message: `AI filter: ${message}` })
+            ),
+            AI_FILTER_TIMEOUT_MS,
+            'AI filter batch run'
+          );
+        } catch (err) {
+          // Mirrors the per-batch error path in runAiFilterBatchesAsync: none of
+          // these candidates are treated as having passed, so nothing is
+          // notified on unverified AI judgement rather than risking false alerts.
+          summary.errors.push({
+            kind: 'ai-filter',
+            message: `AI filter timed out: ${(err as Error).message}`,
+          });
+          results = [];
+        }
+        // Joined back to `cacheMissEntries` by array position, not by URL:
+        // `aiFilterListings` (and so `results[i].index`) is built from
+        // `cacheMissEntries` in the same order, so position is a stable 1:1
+        // key even when two entries share a URL but have different hashes —
+        // a URL-keyed join would let one candidate's verdict silently
+        // overwrite the other's in `freshResultsByUrl`.
+        const freshResultsByIndex = new Map<number, FilterResultEntry>();
+        for (const result of results) freshResultsByIndex.set(result.index, result);
+
+        // Only a listing the AI filter actually returned a result for gets
+        // cached — a batch that errored or timed out contributes nothing to
+        // `freshResultsByIndex`, so those listings stay uncached and are
+        // retried next tick instead of being permanently (and wrongly) treated
+        // as rejected.
+        const scoredAt = now();
+        const upsertAiFilterVerdicts = database.transaction((entries: [string, Listing][]) => {
+          entries.forEach(([hash], index) => {
+            const result = freshResultsByIndex.get(index);
+            if (!result) return;
+            if (result.pass) passedHashes.add(hash);
+            stmtUpsertAiFilterVerdict(database).run(
+              row.id,
+              hash,
+              verdictCacheKey,
+              result.pass ? 1 : 0,
+              result.relevance,
+              result.reason ? result.reason.slice(0, AI_FILTER_REASON_MAX_LENGTH) : null,
+              scoredAt,
+              scoredAt
+            );
+          });
+        });
+        upsertAiFilterVerdicts(cacheMissEntries);
+      }
+
+      const beforeCount = candidates.length;
+      candidates = candidates.filter(([hash]) => passedHashes.has(hash));
+      summary.aiFilteredOutCount = beforeCount - candidates.length;
+      console.log(
+        `[scheduler] "${row.name}": AI filter passed ${candidates.length}/${beforeCount} listing(s) ` +
+          `(${cacheHitHashes.length} cached, ${cacheMissEntries.length} sent to AI)`
+      );
+    } else {
+      // No AI config could be resolved (see the catch above) — treat every
+      // candidate as filtered out rather than notifying on unverified
+      // judgement.
+      summary.aiFilteredOutCount = candidates.length;
+      candidates = [];
+    }
   }
 
   if (summary.isPopulationRun) {
@@ -933,7 +1059,19 @@ export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerS
     checkConnectivityAsync: checkInternetConnectivityAsync,
     ...deps,
   };
-  const cutoff = resolvedDeps.now() - resolvedDeps.targetIntervalMs;
+  // Single now() read reused below — besides giving both cutoffs a
+  // consistent instant, this keeps runSchedulerAsync's own now() call count
+  // at one, matching callers (e.g. tests) that inject a now() with call-count-
+  // dependent behavior.
+  const nowMs = resolvedDeps.now();
+
+  // Runs every tick regardless of whether any search is due — a DELETE on a
+  // table bounded to tens of thousands of rows at most is negligible, and
+  // this is the only place expiry gets a chance to run for a search that
+  // never becomes due again (e.g. its alerts got turned off).
+  stmtPruneStaleAiFilterVerdicts(resolvedDeps.database).run(nowMs - AI_FILTER_VERDICT_MAX_AGE_MS);
+
+  const cutoff = nowMs - resolvedDeps.targetIntervalMs;
   // Counted before processing: once a row's last_run_at is updated below it
   // no longer counts as due, so this needs to capture the full backlog size
   // up front rather than what's left afterward.

@@ -200,7 +200,7 @@ describe('handleAiFilter', () => {
 
     expect(response.events).toContainEqual({
       type: 'result',
-      results: [{ url: 'https://example.com/1', pass: true, reason: null, relevance: 7 }],
+      results: [{ index: 0, url: 'https://example.com/1', pass: true, reason: null, relevance: 7 }],
     });
   });
 
@@ -234,8 +234,8 @@ describe('handleAiFilter', () => {
     expect(response.events).toContainEqual({
       type: 'result',
       results: [
-        { url: 'https://example.com/1', pass: true, reason: null, relevance: 9 },
-        { url: 'https://example.com/2', pass: false, reason: 'wrong type', relevance: 0 },
+        { index: 0, url: 'https://example.com/1', pass: true, reason: null, relevance: 9 },
+        { index: 1, url: 'https://example.com/2', pass: false, reason: 'wrong type', relevance: 0 },
       ],
     });
   });
@@ -269,7 +269,7 @@ describe('handleAiFilter', () => {
 
     expect(response.events).toContainEqual({
       type: 'result',
-      results: [{ url: 'https://example.com/2', pass: true, reason: null, relevance: 5 }],
+      results: [{ index: 1, url: 'https://example.com/2', pass: true, reason: null, relevance: 5 }],
     });
   });
 
@@ -302,7 +302,7 @@ describe('handleAiFilter', () => {
 
     expect(response.events).toContainEqual({
       type: 'result',
-      results: [{ url: 'https://example.com/2', pass: true, reason: null, relevance: 5 }],
+      results: [{ index: 1, url: 'https://example.com/2', pass: true, reason: null, relevance: 5 }],
     });
   });
 });

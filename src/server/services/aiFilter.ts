@@ -53,6 +53,13 @@ export type AiFilterListing = {
 };
 
 export type FilterResultEntry = {
+  // Position of the source listing in the `listings` array passed to
+  // runAiFilterBatchesAsync (0-based, batch offset already folded in) — the
+  // stable join key back to a caller's own candidate list. `url` alone isn't
+  // unique enough for that: two candidates in the same batch can share a URL
+  // while differing in content (e.g. re-scraped mid-tick), and a url-keyed
+  // join would let one candidate's verdict silently overwrite the other's.
+  index: number;
   url: string;
   pass: boolean;
   reason: string | null;
@@ -74,13 +81,13 @@ export async function runAiFilterBatchesAsync(
   const allResults: FilterResultEntry[] = [];
   let rejectedCount = 0;
 
-  const batches: AiFilterListing[][] = [];
+  const batches: { offset: number; listings: AiFilterListing[] }[] = [];
   for (let offset = 0; offset < listings.length; offset += BATCH_SIZE) {
-    batches.push(listings.slice(offset, offset + BATCH_SIZE));
+    batches.push({ offset, listings: listings.slice(offset, offset + BATCH_SIZE) });
   }
 
   await Promise.all(
-    batches.map((batch) =>
+    batches.map(({ offset, listings: batch }) =>
       queue.add(async () => {
         const numbered = batch
           .map(
@@ -114,6 +121,7 @@ export async function runAiFilterBatchesAsync(
           const results = parsed
             .filter(isValidFilterResultEntry)
             .map((resultItem) => ({
+              index: offset + resultItem.index - 1,
               url: batch[resultItem.index - 1]?.url ?? '',
               pass: resultItem.pass,
               reason: resultItem.reason ?? null,
