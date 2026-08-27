@@ -248,6 +248,15 @@ export const AGGREGATED_FAILURE_DETAIL_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENG
 // unbounded ai-filter/unhandled message kinds, never a legitimate short line.
 export const DETAIL_LINE_MAX_LENGTH = AGGREGATED_FAILURE_DETAIL_MAX_LENGTH;
 
+// Bound on the AI filter's LLM-authored `reason` text before it's persisted
+// to ai_filter_verdicts, applied at the point of caching — like every other
+// LLM/scrape-derived text in this file (SCRAPE_ERROR_REASON_MAX_LENGTH
+// above), it's untrusted output with no inherent size limit, and this column
+// is written on every fresh AI-filter score and kept for up to
+// AI_FILTER_VERDICT_MAX_AGE_MS. Reuses SCRAPE_ERROR_REASON_MAX_LENGTH's value
+// rather than an independent constant, matching that precedent.
+export const AI_FILTER_REASON_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH;
+
 async function withTimeoutAsync<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -676,7 +685,7 @@ async function processSavedSearchAsync(
               verdictCacheKey,
               result.pass ? 1 : 0,
               result.relevance,
-              result.reason,
+              result.reason ? result.reason.slice(0, AI_FILTER_REASON_MAX_LENGTH) : null,
               scoredAt,
               scoredAt
             );

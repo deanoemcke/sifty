@@ -37,6 +37,7 @@ import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
+  AI_FILTER_REASON_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
   AI_FILTER_VERDICT_MAX_AGE_MS,
   buildFailureComparisonKey,
@@ -824,6 +825,40 @@ describe('runSchedulerAsync', () => {
     const passedByHash = new Map(rows.map((row) => [row.listing_hash, row.passed]));
     expect(passedByHash.get(passHash)).toBe(1);
     expect(passedByHash.get(failHash)).toBe(0);
+  });
+
+  it('caps an overlong AI-filter reason before persisting it', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { aiFilter: 'laptop' });
+    const listing = makeListing({ title: 'Gaming laptop', url: 'https://example.com/verbose' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([listing]));
+    vi.mocked(getAIConfig).mockReturnValue({
+      url: 'a',
+      model: 'm',
+      apiKey: 'k',
+      providerKey: 'a',
+      cooldownStore: STUB_COOLDOWN_STORE,
+    });
+    const overlongReason = 'x'.repeat(AI_FILTER_REASON_MAX_LENGTH + 50);
+    expect(overlongReason.length).toBeGreaterThan(AI_FILTER_REASON_MAX_LENGTH);
+    vi.mocked(aiJSON).mockResolvedValue({
+      kind: 'ok',
+      value: { results: [{ index: 1, pass: true, reason: overlongReason, relevance: 5 }] },
+    });
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    const row = db
+      .prepare<[string], { reason: string | null }>(
+        'SELECT reason FROM ai_filter_verdicts WHERE listing_hash = ?'
+      )
+      .get(stubComputeAlertFingerprint(listing));
+    expect(row?.reason).toBe(overlongReason.slice(0, AI_FILTER_REASON_MAX_LENGTH));
+    expect(row?.reason?.length).toBe(AI_FILTER_REASON_MAX_LENGTH);
   });
 
   it('does not cache a verdict when the AI filter call fails, so the listing is retried next run', async () => {
