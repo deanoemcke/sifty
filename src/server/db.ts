@@ -415,7 +415,7 @@ export function stmtGetAiFilterVerdict(database: Database.Database) {
 // verdict next time it's read, without needing a separate cache-clear at the
 // prompt-edit (or model-change) call site.
 export function stmtUpsertAiFilterVerdict(database: Database.Database) {
-  return database.prepare(
+  return database.prepare<[string, string, string, number, number, string | null, number, number]>(
     'INSERT INTO ai_filter_verdicts (saved_search_id, listing_hash, prompt_hash, passed, relevance, reason, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
       'ON CONFLICT(saved_search_id, listing_hash) DO UPDATE SET ' +
       'prompt_hash = excluded.prompt_hash, passed = excluded.passed, relevance = excluded.relevance, reason = excluded.reason, created_at = excluded.created_at, last_seen_at = excluded.last_seen_at'
