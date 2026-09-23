@@ -1866,14 +1866,14 @@ describe('classifyInitialSearchStateAsync', () => {
     expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
   });
 
-  it('returns "blocked" when both waits time out and the shell never renders', async () => {
+  it('returns "timedOut" when both waits time out and the body never rendered any text', async () => {
     const page = makeClassifyPageStub({
       listingsSelectorTimesOut: true,
       emptyStateAppears: false,
       shellRendered: false,
       bodyText: '',
     });
-    expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
+    expect(await classifyInitialSearchStateAsync(page)).toBe('timedOut');
   });
 });
 
@@ -1923,7 +1923,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
     expect(page.waitForSelectorCalls).toHaveLength(0);
   });
 
-  it('falls back to the generic no-listings message when there is no login wall', async () => {
+  it('reports a timeout error when the page never renders any body text', async () => {
     const page = makeFacebookPage({
       domLoginWall: false,
       listingsSelectorTimesOut: true,
@@ -1939,8 +1939,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message:
-        'No listings found. Facebook may be blocking access or the search returned no results.',
+      message: 'Facebook timed out loading the search results.',
     });
     expect(page.waitForSelectorCalls.length).toBeGreaterThan(0);
   });

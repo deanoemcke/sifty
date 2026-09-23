@@ -1776,6 +1776,35 @@ describe('runSchedulerAsync', () => {
     expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(0);
   });
 
+  it('omits the "Discarded N untrusted listing(s)" wrapper when a recipe fails before collecting any listings', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { name: 'FB search' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    }); // population run — establishes non-population history
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeFailingRecipeWithReason('facebook', 'Facebook timed out loading the search results.')
+    );
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(sendNotificationAsync.mock.calls[0][0]).toBe(
+      '🟠 FB search: [Scrape] Facebook timed out loading the search results.'
+    );
+  });
+
   it('still notifies for a trademe listing on the same saved search when a facebook URL in it fails', async () => {
     const db = freshDb();
     const fbUrl = 'https://facebook.com/marketplace/search';

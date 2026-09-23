@@ -535,7 +535,10 @@ async function processSavedSearchAsync(
           );
           const scrapeError: SchedulerError = {
             kind: 'scrape',
-            message: `Discarded ${listings.length} untrusted listing(s): ${reason}`,
+            message:
+              listings.length > 0
+                ? `Discarded ${listings.length} untrusted listing(s): ${reason}`
+                : reason,
           };
           summary.errors.push(scrapeError);
           scrapeFailureReasons.push(reason);

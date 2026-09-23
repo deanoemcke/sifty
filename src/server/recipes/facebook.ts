@@ -414,7 +414,7 @@ export function processRawListing(
 
 // ── Initial search state classification ───────────────────────────────────────
 
-export type InitialSearchOutcome = 'listings' | 'empty' | 'blocked';
+export type InitialSearchOutcome = 'listings' | 'empty' | 'blocked' | 'timedOut';
 
 // Races listings-appear vs. empty-state vs. neither, then resolves the outcome
 // down to a single tri-state result. Pure classification — no events, no login
@@ -465,6 +465,12 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
     const { shellRendered, bodyText } = await evaluateEmptyStateSignals(page);
     if (shellRendered && isEmptyResultsText(bodyText)) {
       outcome = 'empty';
+    } else if (bodyText.trim().length === 0) {
+      // No listings selector, no empty-state marker, and no page text at all —
+      // the page never finished rendering rather than showing recognizable
+      // (if unexpected) content. Distinguished from 'blocked' below because
+      // it points at a render timeout, not necessarily active blocking.
+      outcome = 'timedOut';
     } else {
       console.log(
         `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.slice(0, 300)}`
@@ -562,6 +568,13 @@ async function runQuickSearchAsync(
       if (initialSearchState === 'empty') {
         console.log('[facebook] empty results — the search genuinely matched no listings');
         onEvent({ type: 'complete' });
+        return;
+      }
+      if (initialSearchState === 'timedOut') {
+        onEvent({
+          type: 'error',
+          message: 'Facebook timed out loading the search results.',
+        });
         return;
       }
       onEvent({
