@@ -1985,7 +1985,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'error' }));
   });
 
-  it('still reports the blocking error when the shell renders without the empty-state marker', async () => {
+  it('still reports a timeout error when the shell renders without the empty-state marker', async () => {
     const page = makeFacebookPage({
       listingsSelectorTimesOut: true,
       emptyStateAppears: false,
@@ -2002,8 +2002,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message:
-        'No listings found. Facebook may be blocking access or the search returned no results.',
+      message: 'Facebook timed out loading the search results.',
     });
     expect(events).not.toContainEqual({ type: 'complete' });
   });

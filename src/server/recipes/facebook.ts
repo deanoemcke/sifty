@@ -467,11 +467,15 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
       outcome = 'empty';
     } else if (bodyText.trim().length === 0) {
       // No listings selector, no empty-state marker, and no page text at all —
-      // the page never finished rendering rather than showing recognizable
-      // (if unexpected) content. Distinguished from 'blocked' below because
-      // it points at a render timeout, not necessarily active blocking.
+      // the page never finished rendering.
       outcome = 'timedOut';
     } else {
+      // Some page chrome rendered (e.g. the filter sidebar) but neither listings
+      // nor the empty-state sentence did — logged for diagnostics, but reported
+      // to the caller the same way as the fully-empty case above: every
+      // occurrence inspected so far looked like a slow results-pane load, not
+      // an actual Facebook restriction (those surface via detectLoginWallAsync
+      // instead), so 'blocked' isn't given a more alarming message than 'timedOut'.
       console.log(
         `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.slice(0, 300)}`
       );
@@ -570,17 +574,9 @@ async function runQuickSearchAsync(
         onEvent({ type: 'complete' });
         return;
       }
-      if (initialSearchState === 'timedOut') {
-        onEvent({
-          type: 'error',
-          message: 'Facebook timed out loading the search results.',
-        });
-        return;
-      }
       onEvent({
         type: 'error',
-        message:
-          'No listings found. Facebook may be blocking access or the search returned no results.',
+        message: 'Facebook timed out loading the search results.',
       });
       return;
     }
