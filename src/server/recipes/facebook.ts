@@ -416,6 +416,13 @@ export function processRawListing(
 
 export type InitialSearchOutcome = 'listings' | 'empty' | 'blocked' | 'timedOut';
 
+// Production logs show a slice of otherwise-genuine searches render only the
+// page header (e.g. the notification bell) before either race loser times
+// out — the Marketplace route mount is apparently slower than 15s for some
+// fraction of headless loads. Bumped from 15000 to give that mount more room
+// before giving up; revisit against the scheduler log's failure rate.
+export const INITIAL_RENDER_TIMEOUT_MS = 20000;
+
 // Races listings-appear vs. empty-state vs. neither, then resolves the outcome
 // down to a single tri-state result. Pure classification — no events, no login
 // wall handling (that stays in the caller, which already has its own tested
@@ -427,7 +434,7 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
   // absorbed — and rejects only when both time out ('none').
   const firstSignal = await Promise.any([
     page
-      .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: 15000 })
+      .waitForSelector(LISTING_ANCHOR_SELECTOR, { timeout: INITIAL_RENDER_TIMEOUT_MS })
       .then(() => 'listings' as const),
     page
       .waitForFunction(
@@ -438,10 +445,10 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
         },
         { phrases: EMPTY_RESULTS_PHRASES, shellSelector: MARKETPLACE_SHELL_SELECTOR },
         // polling: 500 — the default 'raf' mode would re-read body.innerText
-        // (forcing a layout pass) every animation frame for the full 15s even
+        // (forcing a layout pass) every animation frame for the full budget even
         // after losing the Promise.any race; the empty-state marker is static
         // once rendered, so 500ms granularity costs nothing.
-        { timeout: 15000, polling: 500 }
+        { timeout: INITIAL_RENDER_TIMEOUT_MS, polling: 500 }
       )
       .then(() => 'empty' as const),
   ]).catch(() => 'none' as const);

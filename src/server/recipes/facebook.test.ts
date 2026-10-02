@@ -19,6 +19,7 @@ import {
   type FacebookDetailsCardData,
   facebookRecipe,
   fetchFacebookListingDetailAsync,
+  INITIAL_RENDER_TIMEOUT_MS,
   installNameShim,
   isEmptyResultsText,
   isLoginWallText,
@@ -1874,6 +1875,28 @@ describe('classifyInitialSearchStateAsync', () => {
       bodyText: '',
     });
     expect(await classifyInitialSearchStateAsync(page)).toBe('timedOut');
+  });
+
+  it('races the listings and empty-state waits against the increased render timeout budget', async () => {
+    const seenTimeouts: number[] = [];
+    const page = {
+      url: () => 'https://www.facebook.com/marketplace/search?query=lamp',
+      waitForSelector: async (_selector: string, options: { timeout: number }) => {
+        seenTimeouts.push(options.timeout);
+        throw new Error('timeout');
+      },
+      waitForFunction: async (_fn: unknown, _arg: unknown, options: { timeout: number }) => {
+        seenTimeouts.push(options.timeout);
+        throw new Error('timeout');
+      },
+      evaluate: async () => ({ shellRendered: false, bodyText: '' }),
+      // biome-ignore lint/suspicious/noExplicitAny: minimal duck-typed Page stub for unit testing
+    } as any;
+
+    await classifyInitialSearchStateAsync(page);
+
+    expect(seenTimeouts).toEqual([INITIAL_RENDER_TIMEOUT_MS, INITIAL_RENDER_TIMEOUT_MS]);
+    expect(INITIAL_RENDER_TIMEOUT_MS).toBeGreaterThan(15000);
   });
 
   it('logs the body snippet starting from its first non-whitespace character, not from raw leading padding', async () => {
