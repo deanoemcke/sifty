@@ -418,10 +418,11 @@ export type InitialSearchOutcome = 'listings' | 'empty' | 'blocked' | 'timedOut'
 
 // Production logs show a slice of otherwise-genuine searches render only the
 // page header (e.g. the notification bell) before either race loser times
-// out — the Marketplace route mount is apparently slower than 15s for some
-// fraction of headless loads. Bumped from 15000 to give that mount more room
-// before giving up; revisit against the scheduler log's failure rate.
-export const INITIAL_RENDER_TIMEOUT_MS = 20000;
+// out, classifying as 'blocked'. A live retest of a failing URL confirmed
+// this isn't a render-speed problem — it reliably loads fine on an immediate
+// second attempt — so the fix is retrying 'blocked' once (see
+// classifyWithBlockedRetryAsync below), not a longer budget here.
+export const INITIAL_RENDER_TIMEOUT_MS = 15000;
 
 // Races listings-appear vs. empty-state vs. neither, then resolves the outcome
 // down to a single tri-state result. Pure classification — no events, no login
@@ -500,6 +501,22 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
   return outcome;
 }
 
+// A live retest of a 'blocked' production URL reloaded cleanly on the very next
+// attempt, and 'timedOut' is the same underlying stall (see INITIAL_RENDER_TIMEOUT_MS
+// above) — neither has ever shown recognizable block content, only an unfinished
+// render. Retried once each for exactly that reason. 'empty' and 'listings' are
+// genuine outcomes, not stalls, so they're returned as-is. A deliberate restriction
+// (a login wall) is excluded entirely: the caller checks detectLoginWallAsync before
+// this function runs at all, so neither outcome here represents one.
+export async function classifyWithRenderStallRetryAsync(page: Page): Promise<InitialSearchOutcome> {
+  const outcome = await classifyInitialSearchStateAsync(page);
+  if (outcome !== 'blocked' && outcome !== 'timedOut') return outcome;
+
+  console.log(`[facebook] classified as ${outcome} — retrying once before giving up`);
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+  return classifyInitialSearchStateAsync(page);
+}
+
 // ── Quick search ──────────────────────────────────────────────────────────────
 
 async function quickSearchAsync(
@@ -573,7 +590,7 @@ async function runQuickSearchAsync(
       return;
     }
 
-    const initialSearchState = await classifyInitialSearchStateAsync(page);
+    const initialSearchState = await classifyWithRenderStallRetryAsync(page);
 
     if (initialSearchState !== 'listings') {
       if (await detectLoginWallAsync(page)) {
