@@ -1865,14 +1865,14 @@ describe('classifyInitialSearchStateAsync', () => {
     expect(await classifyInitialSearchStateAsync(page)).toBe('empty');
   });
 
-  it('returns "blocked" when both waits time out and the shell renders without the empty-state sentence', async () => {
+  it('returns "timedOut" when both waits time out and the shell renders without the empty-state sentence', async () => {
     const page = makeClassifyPageStub({
       listingsSelectorTimesOut: true,
       emptyStateAppears: false,
       shellRendered: true,
       bodyText: 'Marketplace\nSearch results\nFilters',
     });
-    expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
+    expect(await classifyInitialSearchStateAsync(page)).toBe('timedOut');
   });
 
   it('returns "timedOut" when both waits time out and the body never rendered any text', async () => {
@@ -1929,10 +1929,10 @@ describe('classifyInitialSearchStateAsync', () => {
 describe('classifyWithRenderStallRetryAsync', () => {
   // Each attempt reuses classifyInitialSearchStateAsync's own stub shape; reload()
   // advances to the next attempt's behaviour, so a stub built from two option sets
-  // simulates "stalled on load, listings after reload". Both 'blocked' and
-  // 'timedOut' get retried here — detectLoginWallAsync is the only signal in this
-  // file for a genuine, deliberate restriction, and it's checked separately
-  // (and excluded from retry) by the caller before either outcome is reached.
+  // simulates "stalled on load, listings after reload". detectLoginWallAsync is
+  // the only signal in this file for a genuine, deliberate restriction, and it's
+  // checked separately (and excluded from retry) by the caller before 'timedOut'
+  // is ever reached.
   function makeRetryPageStub(attempts: ClassifyPageStubOptions[]) {
     const stubs = attempts.map((options) => makeClassifyPageStub(options));
     let current = 0;
@@ -1958,21 +1958,6 @@ describe('classifyWithRenderStallRetryAsync', () => {
     };
   }
 
-  it('retries once and returns the recovered outcome when the first attempt is blocked', async () => {
-    const { page, reloadCalls } = makeRetryPageStub([
-      {
-        listingsSelectorTimesOut: true,
-        emptyStateAppears: false,
-        shellRendered: true,
-        bodyText: 'Marketplace\nSearch results\nFilters',
-      },
-      { listingsSelectorTimesOut: false },
-    ]);
-
-    expect(await classifyWithRenderStallRetryAsync(page)).toBe('listings');
-    expect(reloadCalls.count).toBe(1);
-  });
-
   it('retries once and returns the recovered outcome when the first attempt times out', async () => {
     const { page, reloadCalls } = makeRetryPageStub([
       {
@@ -1985,19 +1970,6 @@ describe('classifyWithRenderStallRetryAsync', () => {
     ]);
 
     expect(await classifyWithRenderStallRetryAsync(page)).toBe('listings');
-    expect(reloadCalls.count).toBe(1);
-  });
-
-  it('gives up after one retry if the reloaded page is still blocked', async () => {
-    const blockedOptions: ClassifyPageStubOptions = {
-      listingsSelectorTimesOut: true,
-      emptyStateAppears: false,
-      shellRendered: true,
-      bodyText: 'Marketplace\nSearch results\nFilters',
-    };
-    const { page, reloadCalls } = makeRetryPageStub([blockedOptions, blockedOptions]);
-
-    expect(await classifyWithRenderStallRetryAsync(page)).toBe('blocked');
     expect(reloadCalls.count).toBe(1);
   });
 

@@ -414,14 +414,14 @@ export function processRawListing(
 
 // ── Initial search state classification ───────────────────────────────────────
 
-export type InitialSearchOutcome = 'listings' | 'empty' | 'blocked' | 'timedOut';
+export type InitialSearchOutcome = 'listings' | 'empty' | 'timedOut';
 
 // Production logs show a slice of otherwise-genuine searches render only the
 // page header (e.g. the notification bell) before either race loser times
-// out, classifying as 'blocked'. A live retest of a failing URL confirmed
-// this isn't a render-speed problem — it reliably loads fine on an immediate
-// second attempt — so the fix is retrying 'blocked' once (see
-// classifyWithBlockedRetryAsync below), not a longer budget here.
+// out. A live retest of a failing URL confirmed this isn't a render-speed
+// problem — it reliably loads fine on an immediate second attempt — so the
+// fix is retrying once (see classifyWithRenderStallRetryAsync below), not a
+// longer budget here.
 export const INITIAL_RENDER_TIMEOUT_MS = 15000;
 
 // Races listings-appear vs. empty-state vs. neither, then resolves the outcome
@@ -469,29 +469,24 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
   } else {
     // Both waits timed out — re-check once on the settled page: covers the
     // marker rendering exactly as both waits timed out, and supplies the body
-    // snippet for diagnostics if this turns out to be a genuine block.
+    // snippet for diagnostics below.
     const { shellRendered, bodyText } = await evaluateEmptyStateSignals(page);
     if (shellRendered && isEmptyResultsText(bodyText)) {
       outcome = 'empty';
-    } else if (bodyText.trim().length === 0) {
-      // No listings selector, no empty-state marker, and no page text at all —
-      // the page never finished rendering.
-      outcome = 'timedOut';
     } else {
-      // Some page chrome rendered (e.g. the filter sidebar) but neither listings
-      // nor the empty-state sentence did — logged for diagnostics, but reported
-      // to the caller the same way as the fully-empty case above: every
-      // occurrence inspected so far looked like a slow results-pane load, not
-      // an actual Facebook restriction (those surface via detectLoginWallAsync
-      // instead), so 'blocked' isn't given a more alarming message than 'timedOut'.
-      // Trimmed before slicing — leading whitespace/NBSP padding (e.g. a
-      // loading skeleton) can run past 300 characters on its own, which would
-      // otherwise log a blank-looking snippet even though trim().length > 0
-      // is exactly what routed this case here instead of to 'timedOut'.
+      // No listings selector and no empty-state marker — classified as a render
+      // timeout regardless of whatever else rendered (e.g. page chrome like the
+      // filter sidebar). Every occurrence inspected so far looked like a stalled
+      // results-pane load, never a recognizable Facebook restriction (those
+      // surface via detectLoginWallAsync instead) — there's no reliable signal
+      // here to distinguish a genuine block from this, so it isn't given its own
+      // outcome until one actually turns up. Logged (trimmed before slicing —
+      // leading whitespace/NBSP padding from a loading skeleton can run past 300
+      // characters on its own) so a future genuine block would still show up here.
       console.log(
         `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.trim().slice(0, 300)}`
       );
-      outcome = 'blocked';
+      outcome = 'timedOut';
     }
   }
 
@@ -501,16 +496,15 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
   return outcome;
 }
 
-// A live retest of a 'blocked' production URL reloaded cleanly on the very next
-// attempt, and 'timedOut' is the same underlying stall (see INITIAL_RENDER_TIMEOUT_MS
-// above) — neither has ever shown recognizable block content, only an unfinished
-// render. Retried once each for exactly that reason. 'empty' and 'listings' are
-// genuine outcomes, not stalls, so they're returned as-is. A deliberate restriction
-// (a login wall) is excluded entirely: the caller checks detectLoginWallAsync before
-// this function runs at all, so neither outcome here represents one.
+// A live retest of a 'timedOut' production URL reloaded cleanly on the very
+// next attempt (see INITIAL_RENDER_TIMEOUT_MS above) — retried once for
+// exactly that reason. 'empty' and 'listings' are genuine outcomes, not
+// stalls, so they're returned as-is. A deliberate restriction (a login wall)
+// is excluded entirely: the caller checks detectLoginWallAsync before this
+// function runs at all, so 'timedOut' never represents one.
 export async function classifyWithRenderStallRetryAsync(page: Page): Promise<InitialSearchOutcome> {
   const outcome = await classifyInitialSearchStateAsync(page);
-  if (outcome !== 'blocked' && outcome !== 'timedOut') return outcome;
+  if (outcome !== 'timedOut') return outcome;
 
   console.log(`[facebook] classified as ${outcome} — retrying once before giving up`);
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
