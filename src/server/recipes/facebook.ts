@@ -476,8 +476,12 @@ export async function classifyInitialSearchStateAsync(page: Page): Promise<Initi
       // occurrence inspected so far looked like a slow results-pane load, not
       // an actual Facebook restriction (those surface via detectLoginWallAsync
       // instead), so 'blocked' isn't given a more alarming message than 'timedOut'.
+      // Trimmed before slicing — leading whitespace/NBSP padding (e.g. a
+      // loading skeleton) can run past 300 characters on its own, which would
+      // otherwise log a blank-looking snippet even though trim().length > 0
+      // is exactly what routed this case here instead of to 'timedOut'.
       console.log(
-        `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.slice(0, 300)}`
+        `[facebook] no listings and no empty-state marker — body snippet: ${bodyText.trim().slice(0, 300)}`
       );
       outcome = 'blocked';
     }

@@ -1875,6 +1875,24 @@ describe('classifyInitialSearchStateAsync', () => {
     });
     expect(await classifyInitialSearchStateAsync(page)).toBe('timedOut');
   });
+
+  it('logs the body snippet starting from its first non-whitespace character, not from raw leading padding', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      // 300+ chars of leading NBSP padding pushes the real content past the
+      // old raw slice(0, 300) window, so an untrimmed snippet would log as
+      // blank even though the page plainly rendered something.
+      bodyText: `${' '.repeat(310)}unexpected interstitial heading`,
+    });
+    await classifyInitialSearchStateAsync(page);
+    const loggedSnippetCall = logSpy.mock.calls.find((call) =>
+      String(call[0]).includes('body snippet')
+    );
+    expect(loggedSnippetCall?.[0]).toContain('unexpected interstitial heading');
+  });
 });
 
 // ── quickSearchAsync (login wall paths) ───────────────────────────────────────
