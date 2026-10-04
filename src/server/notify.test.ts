@@ -43,6 +43,34 @@ describe('sendSignalNotificationAsync', () => {
     await expect(sendSignalNotificationAsync('hello')).rejects.toThrow();
   });
 
+  it("includes the proxy's error text in the thrown error", async () => {
+    const proxyErrorBody = JSON.stringify({
+      ok: false,
+      error: 'signal daemon error: Failed to send message',
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(proxyErrorBody, { status: 400, statusText: 'Bad Request' })
+      ) as unknown as typeof fetch;
+
+    await expect(sendSignalNotificationAsync('hello')).rejects.toThrow(
+      /400 Bad Request.*signal daemon error: Failed to send message/
+    );
+  });
+
+  it('truncates an oversized error body rather than echoing all of it', async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('x'.repeat(10_000), { status: 502, statusText: 'Bad Gateway' })
+      ) as unknown as typeof fetch;
+
+    const thrown = await sendSignalNotificationAsync('hello').catch((err: Error) => err);
+
+    expect((thrown as Error).message.length).toBeLessThan(1_000);
+  });
+
   it('includes the image field in the body when an image option is given', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     global.fetch = fetchMock as unknown as typeof fetch;
