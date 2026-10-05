@@ -3,6 +3,7 @@
 
 const NOTIFY_URL = 'http://127.0.0.1:8091/notify';
 const NOTIFY_TIMEOUT_MS = 10_000;
+const MAX_ERROR_DETAIL_LENGTH = 500;
 
 export type SignalNotificationOptions = {
   image?: string;
@@ -33,6 +34,25 @@ export async function sendSignalNotificationAsync(
   }
 
   if (!response.ok) {
-    throw new Error(`Signal notification failed: ${response.status} ${response.statusText}`);
+    const errorDetail = await readErrorDetailAsync(response);
+    throw new Error(
+      `Signal notification failed: ${response.status} ${response.statusText}${errorDetail}`
+    );
   }
+}
+
+// The proxy collapses every downstream failure (e.g. a signal-cli attachment
+// error) into a bare 400, with the real reason only in the response body —
+// without it the log gives no clue why a send failed.
+async function readErrorDetailAsync(response: Response): Promise<string> {
+  let body: string;
+  try {
+    body = (await response.text()).trim();
+  } catch {
+    return '';
+  }
+  if (!body) return '';
+  const truncatedBody =
+    body.length > MAX_ERROR_DETAIL_LENGTH ? `${body.slice(0, MAX_ERROR_DETAIL_LENGTH)}…` : body;
+  return ` — ${truncatedBody}`;
 }
