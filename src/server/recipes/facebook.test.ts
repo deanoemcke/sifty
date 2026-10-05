@@ -11,6 +11,7 @@ import {
   buildFacebookSearchQueryAsync,
   buildFacebookUrl,
   classifyInitialSearchStateAsync,
+  classifyWithRenderStallRetryAsync,
   deriveFacebookDescriptionAndLocation,
   detectLoginWallAsync,
   extractFacebookDetailsCardData,
@@ -19,6 +20,7 @@ import {
   type FacebookDetailsCardData,
   facebookRecipe,
   fetchFacebookListingDetailAsync,
+  INITIAL_RENDER_TIMEOUT_MS,
   installNameShim,
   isEmptyResultsText,
   isLoginWallText,
@@ -186,6 +188,11 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
 
       return {
         goto: async () => {},
+        // No-op: this stub's state is fixed per test (keyed on call count via
+        // listingsSelectorAttemptCounts, not on reload), so classifyWithRenderStallRetryAsync's
+        // reload-and-reclassify retry sees the same outcome both times unless a test
+        // opts into listingsAppearOnRetry.
+        reload: async () => {},
         url: () => url,
         addInitScript: async () => {},
         exposeFunction: async () => {},
@@ -1787,43 +1794,45 @@ describe('isEmptyResultsText', () => {
 // `waitForFunction`, `evaluate`, `url`), so these tests exercise the
 // classification seam directly instead of paying the full quickSearchAsync
 // mock-browser harness for every new signal combination.
+type ClassifyPageStubOptions = {
+  listingsSelectorTimesOut?: boolean;
+  listingsAppearOnRetry?: boolean;
+  emptyStateAppears?: boolean;
+  shellRendered?: boolean;
+  bodyText?: string;
+};
+
+// Shared by classifyInitialSearchStateAsync and classifyWithRenderStallRetryAsync's
+// test suites below — both exercise the same Page surface.
+function makeClassifyPageStub(options: ClassifyPageStubOptions = {}) {
+  const {
+    listingsSelectorTimesOut = false,
+    listingsAppearOnRetry = false,
+    emptyStateAppears = false,
+    shellRendered = false,
+    bodyText = '',
+  } = options;
+
+  const listingsSelectorAttemptCounts = { count: 0 };
+
+  return {
+    url: () => 'https://www.facebook.com/marketplace/search?query=lamp',
+    waitForSelector: async (selector: string) => {
+      if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
+      listingsSelectorAttemptCounts.count++;
+      const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
+      if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
+        throw new Error('timeout');
+    },
+    waitForFunction: async () => {
+      if (!emptyStateAppears) throw new Error('timeout');
+    },
+    evaluate: async () => ({ shellRendered, bodyText }),
+    // biome-ignore lint/suspicious/noExplicitAny: minimal duck-typed Page stub for unit testing
+  } as any;
+}
+
 describe('classifyInitialSearchStateAsync', () => {
-  type ClassifyPageStubOptions = {
-    listingsSelectorTimesOut?: boolean;
-    listingsAppearOnRetry?: boolean;
-    emptyStateAppears?: boolean;
-    shellRendered?: boolean;
-    bodyText?: string;
-  };
-
-  function makeClassifyPageStub(options: ClassifyPageStubOptions = {}) {
-    const {
-      listingsSelectorTimesOut = false,
-      listingsAppearOnRetry = false,
-      emptyStateAppears = false,
-      shellRendered = false,
-      bodyText = '',
-    } = options;
-
-    const listingsSelectorAttemptCounts = { count: 0 };
-
-    return {
-      url: () => 'https://www.facebook.com/marketplace/search?query=lamp',
-      waitForSelector: async (selector: string) => {
-        if (selector !== LISTINGS_SELECTOR_IN_TEST) return;
-        listingsSelectorAttemptCounts.count++;
-        const isRetryAttempt = listingsSelectorAttemptCounts.count > 1;
-        if (listingsSelectorTimesOut && !(listingsAppearOnRetry && isRetryAttempt))
-          throw new Error('timeout');
-      },
-      waitForFunction: async () => {
-        if (!emptyStateAppears) throw new Error('timeout');
-      },
-      evaluate: async () => ({ shellRendered, bodyText }),
-      // biome-ignore lint/suspicious/noExplicitAny: minimal duck-typed Page stub for unit testing
-    } as any;
-  }
-
   it('returns "listings" when the listings selector resolves first', async () => {
     const page = makeClassifyPageStub({ listingsSelectorTimesOut: false });
     expect(await classifyInitialSearchStateAsync(page)).toBe('listings');
@@ -1856,14 +1865,14 @@ describe('classifyInitialSearchStateAsync', () => {
     expect(await classifyInitialSearchStateAsync(page)).toBe('empty');
   });
 
-  it('returns "blocked" when both waits time out and the shell renders without the empty-state sentence', async () => {
+  it('returns "timedOut" when both waits time out and the shell renders without the empty-state sentence', async () => {
     const page = makeClassifyPageStub({
       listingsSelectorTimesOut: true,
       emptyStateAppears: false,
       shellRendered: true,
       bodyText: 'Marketplace\nSearch results\nFilters',
     });
-    expect(await classifyInitialSearchStateAsync(page)).toBe('blocked');
+    expect(await classifyInitialSearchStateAsync(page)).toBe('timedOut');
   });
 
   it('returns "timedOut" when both waits time out and the body never rendered any text', async () => {
@@ -1874,6 +1883,121 @@ describe('classifyInitialSearchStateAsync', () => {
       bodyText: '',
     });
     expect(await classifyInitialSearchStateAsync(page)).toBe('timedOut');
+  });
+
+  it('races the listings and empty-state waits against the 15s render timeout budget', async () => {
+    const seenTimeouts: number[] = [];
+    const page = {
+      url: () => 'https://www.facebook.com/marketplace/search?query=lamp',
+      waitForSelector: async (_selector: string, options: { timeout: number }) => {
+        seenTimeouts.push(options.timeout);
+        throw new Error('timeout');
+      },
+      waitForFunction: async (_fn: unknown, _arg: unknown, options: { timeout: number }) => {
+        seenTimeouts.push(options.timeout);
+        throw new Error('timeout');
+      },
+      evaluate: async () => ({ shellRendered: false, bodyText: '' }),
+      // biome-ignore lint/suspicious/noExplicitAny: minimal duck-typed Page stub for unit testing
+    } as any;
+
+    await classifyInitialSearchStateAsync(page);
+
+    expect(seenTimeouts).toEqual([INITIAL_RENDER_TIMEOUT_MS, INITIAL_RENDER_TIMEOUT_MS]);
+    expect(INITIAL_RENDER_TIMEOUT_MS).toBe(15000);
+  });
+
+  it('logs the body snippet starting from its first non-whitespace character, not from raw leading padding', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const page = makeClassifyPageStub({
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: true,
+      // 300+ chars of leading NBSP padding pushes the real content past the
+      // old raw slice(0, 300) window, so an untrimmed snippet would log as
+      // blank even though the page plainly rendered something.
+      bodyText: `${' '.repeat(310)}unexpected interstitial heading`,
+    });
+    await classifyInitialSearchStateAsync(page);
+    const loggedSnippetCall = logSpy.mock.calls.find((call) =>
+      String(call[0]).includes('body snippet')
+    );
+    expect(loggedSnippetCall?.[0]).toContain('unexpected interstitial heading');
+  });
+});
+
+describe('classifyWithRenderStallRetryAsync', () => {
+  // Each attempt reuses classifyInitialSearchStateAsync's own stub shape; reload()
+  // advances to the next attempt's behaviour, so a stub built from two option sets
+  // simulates "stalled on load, listings after reload". detectLoginWallAsync is
+  // the only signal in this file for a genuine, deliberate restriction, and it's
+  // checked separately (and excluded from retry) by the caller before 'timedOut'
+  // is ever reached.
+  function makeRetryPageStub(attempts: ClassifyPageStubOptions[]) {
+    const stubs = attempts.map((options) => makeClassifyPageStub(options));
+    let current = 0;
+    const reloadCalls = { count: 0 };
+    return {
+      get page() {
+        return {
+          url: () => stubs[current].url(),
+          waitForSelector: (...args: Parameters<(typeof stubs)[number]['waitForSelector']>) =>
+            stubs[current].waitForSelector(...args),
+          waitForFunction: (...args: Parameters<(typeof stubs)[number]['waitForFunction']>) =>
+            stubs[current].waitForFunction(...args),
+          evaluate: (...args: Parameters<(typeof stubs)[number]['evaluate']>) =>
+            stubs[current].evaluate(...args),
+          reload: async () => {
+            reloadCalls.count++;
+            current = Math.min(current + 1, stubs.length - 1);
+          },
+          // biome-ignore lint/suspicious/noExplicitAny: minimal duck-typed Page stub for unit testing
+        } as any;
+      },
+      reloadCalls,
+    };
+  }
+
+  it('retries once and returns the recovered outcome when the first attempt times out', async () => {
+    const { page, reloadCalls } = makeRetryPageStub([
+      {
+        listingsSelectorTimesOut: true,
+        emptyStateAppears: false,
+        shellRendered: false,
+        bodyText: '',
+      },
+      { listingsSelectorTimesOut: false },
+    ]);
+
+    expect(await classifyWithRenderStallRetryAsync(page)).toBe('listings');
+    expect(reloadCalls.count).toBe(1);
+  });
+
+  it('gives up after one retry if the reloaded page still times out', async () => {
+    const timedOutOptions: ClassifyPageStubOptions = {
+      listingsSelectorTimesOut: true,
+      emptyStateAppears: false,
+      shellRendered: false,
+      bodyText: '',
+    };
+    const { page, reloadCalls } = makeRetryPageStub([timedOutOptions, timedOutOptions]);
+
+    expect(await classifyWithRenderStallRetryAsync(page)).toBe('timedOut');
+    expect(reloadCalls.count).toBe(1);
+  });
+
+  it('does not retry when listings or empty are found on the first attempt', async () => {
+    const { page: listingsPage, reloadCalls: listingsReloads } = makeRetryPageStub([
+      { listingsSelectorTimesOut: false },
+    ]);
+    expect(await classifyWithRenderStallRetryAsync(listingsPage)).toBe('listings');
+    expect(listingsReloads.count).toBe(0);
+
+    const { page: emptyPage, reloadCalls: emptyReloads } = makeRetryPageStub([
+      { listingsSelectorTimesOut: true, emptyStateAppears: true },
+    ]);
+    expect(await classifyWithRenderStallRetryAsync(emptyPage)).toBe('empty');
+    expect(emptyReloads.count).toBe(0);
   });
 });
 
