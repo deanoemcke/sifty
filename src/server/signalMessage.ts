@@ -6,16 +6,6 @@ import type { Listing } from '../lib/recipes/base';
 import type { SchedulerError, SchedulerErrorKind } from './scheduler';
 import { normalizeScrapeErrorReason } from './schedulerErrorText';
 
-// Which subsystem produced the error (shown in the alert so a failure can be
-// triaged without digging into logs) and how urgently it needs attention.
-// `unhandled` is an unanticipated code path — something is actually broken.
-// `scrape` means this run found nothing at all for a URL. `ai-filter` means
-// listings did come in but couldn't be judged, so nothing from them was
-// notified. `notify` is a text-delivery hiccup (retried next run) and
-// `notify-image` a lost thumbnail whose text alert still went out (not
-// retried). Neither reaches these formatters in practice — see
-// recordSavedSearchRunStatusAndAlertAsync's healthErrors filter — but both are
-// covered here for type exhaustiveness.
 const ERROR_KIND_LABEL: Record<SchedulerErrorKind, string> = {
   scrape: 'Scrape',
   'ai-filter': 'AI Filter',
@@ -77,12 +67,6 @@ function stripLocationSuffix(location: string): string {
 
 const TRUNCATION_MARKER = '…';
 
-// The proxy rejects over-long messages by encoded size, so a JS `.slice()`
-// (UTF-16 code units) can still overshoot once emoji or CJK text is involved.
-// Walks whole code points so a multi-byte character is never split. When the
-// text is cut, a trailing "…" (counted within maxBytes) signals that lines
-// were dropped, so a truncated alert never reads as the complete picture.
-// A cap too small to hold the marker drops it rather than exceed maxBytes.
 export function truncateToByteLength(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
   const markerBytes = Buffer.byteLength(TRUNCATION_MARKER, 'utf8');

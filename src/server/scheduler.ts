@@ -218,34 +218,15 @@ function sanitizeScrapeReason(raw: string): string {
     .slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
 }
 
-// Bound on the outbound Signal failure alert, measured in UTF-8 bytes (the
-// proxy limits encoded size; see truncateToByteLength), applied in
-// recordSavedSearchRunStatusAndAlertAsync just before the alert is sent.
-// Unlike SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at each
-// individual summary.errors.push() call site (notification-send failures and
-// AI-filter error messages aren't capped there), so without this second,
-// coarser bound the aggregate could still grow unbounded even though each
-// scrape-failure reason on its own is already bounded. Sized as a multiple of
-// SCRAPE_ERROR_REASON_MAX_LENGTH so a run with several already-capped
-// ASCII scrape-failure reasons still fits; multi-byte text fits fewer.
-export const ALERT_MESSAGE_MAX_BYTES = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
+const CAPPED_SCRAPE_REASONS_HEADROOM = 10;
+export const ALERT_MESSAGE_MAX_BYTES =
+  SCRAPE_ERROR_REASON_MAX_LENGTH * CAPPED_SCRAPE_REASONS_HEADROOM;
+export const DETAIL_LINE_MAX_LENGTH =
+  SCRAPE_ERROR_REASON_MAX_LENGTH * CAPPED_SCRAPE_REASONS_HEADROOM;
 
-// Bound on a single persisted last_run_detail line ("${kind}:${message}"), in
-// UTF-16 characters (applied with .slice()), to each line individually before
-// joining — not to the joined blob as a whole. A blob-level slice on
-// last_run_detail can land mid-line, and for a saved search with enough
-// failures that a Facebook-cookie or network-unreachable line lands late in
-// the join, that cut can sever the exact substring (e.g.
-// LOGIN_REQUIRED_MESSAGE) isSitewideCoveredFailure needs on the next run's
-// round-trip read of last_run_detail — silently turning a sitewide-covered
-// failure into an uncovered one and triggering a redundant per-search
-// recovery ping. A generous per-line ceiling: every already-bounded
-// scrape-failure line (SCRAPE_ERROR_REASON_MAX_LENGTH reason plus its small
-// wrapper text) sits comfortably under it, so in practice this only ever
-// bounds the otherwise-unbounded ai-filter/unhandled message kinds, never a
-// legitimate short line. Independent of ALERT_MESSAGE_MAX_BYTES: different
-// unit, different consumer.
-export const DETAIL_LINE_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
+function formatStoredDetailLine(error: SchedulerError): string {
+  return `${error.kind}:${error.message}`.slice(0, DETAIL_LINE_MAX_LENGTH);
+}
 
 // Bound on the AI filter's LLM-authored `reason` text before it's persisted
 // to ai_filter_verdicts, applied at the point of caching — like every other
@@ -290,16 +271,9 @@ export type SchedulerDeps = {
   checkConnectivityAsync?: () => Promise<boolean>;
 };
 
-// 'notify' covers both per-listing text alert sends (notifyNewListingsAsync)
-// and the status alert send itself (sendAlertSafelyAsync) — both are Signal
-// delivery failures, not evidence the saved search's own scrape/filter is
-// broken. A failed text send is retried next run (the listing isn't marked
-// alerted). 'notify-image' is a lost thumbnail whose text alert still went
-// out: the listing is marked alerted, so the image is never retried. Both are
-// excluded from recordSavedSearchRunStatusAndAlertAsync's health/alerting
-// decision, but only 'notify' counts toward the exit-2 systemic-outage check
-// in determineExitCode — a lost thumbnail alone never pages.
 export type SchedulerErrorKind = 'scrape' | 'ai-filter' | 'notify' | 'notify-image' | 'unhandled';
+
+const DELIVERY_ERROR_KINDS: ReadonlySet<SchedulerErrorKind> = new Set(['notify', 'notify-image']);
 
 export type SchedulerError = {
   kind: SchedulerErrorKind;
@@ -404,13 +378,8 @@ async function notifyNewListingsAsync(
       console.log(`[scheduler] "${row.name}": sending Signal notification for "${listing.title}"`);
       const image = await fetchListingImageAttachmentAsync(listing.thumbnailUrl);
       const message = formatAlertMessage(listing);
-      // Sent as two separate messages, not one combined image+caption send:
-      // the Signal client renders a combined send's caption at the width of
-      // a fixed, cropped image thumbnail box rather than the chat's full
-      // bubble width, which visibly cramps the caption regardless of its
-      // own length. A broken/oversized thumbnail must never sink the whole
-      // alert (mirrors imageAttachment.ts's own stated invariant), so a
-      // failed image send doesn't stop the text message.
+      // Not one combined send: the Signal client renders a combined send's
+      // caption at a fixed cropped-thumbnail width, cramping it.
       if (image !== undefined) {
         try {
           await sendNotificationAsync('', { image });
@@ -918,31 +887,13 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     stmtClearAlertSetupNotificationPending(deps.database).run(row.id);
   }
 
-  // Notify-kind errors (a flaky Signal send) are excluded from health: they
-  // mean delivery hiccuped, not that this saved search's scrape/filter is
-  // broken, and don't need a failure alert of their own (see
-  // notifyNewListingsAsync/sendAlertSafelyAsync). A failed text send is
-  // retried next run; a lost thumbnail ('notify-image') is not — the text
-  // still went out, so the listing is marked alerted — but it isn't worth a
-  // status alert either.
-  const healthErrors = summary.errors.filter(
-    (error) => error.kind !== 'notify' && error.kind !== 'notify-image'
-  );
+  const healthErrors = summary.errors.filter((error) => !DELIVERY_ERROR_KINDS.has(error.kind));
   const succeeded = healthErrors.length === 0;
   // Persists `kind` alongside `message` per line (parsed back by
   // parseStoredFailureDetail above) so a later run's "same failure as last
   // run" comparison can see a kind change, not just message text — see
   // buildFailureComparisonKey's comment for why that matters.
-  //
-  // Each `${kind}:${message}` line is capped individually (DETAIL_LINE_MAX_LENGTH)
-  // before joining — not by slicing the joined blob as a whole. See that
-  // constant's comment for why a blob-level slice risks corrupting a later
-  // run's sitewide-coverage substring match.
-  const detail = succeeded
-    ? null
-    : healthErrors
-        .map((error) => `${error.kind}:${error.message}`.slice(0, DETAIL_LINE_MAX_LENGTH))
-        .join('\n');
+  const detail = succeeded ? null : healthErrors.map(formatStoredDetailLine).join('\n');
 
   // Reconciles the shared sitewide alerts using this run as evidence, before
   // this search's own alert decision below — see reconcileSitewideAlertAsync
@@ -1217,8 +1168,7 @@ export function triggerImmediatePopulationRunAsync(
   });
 }
 
-// A single search hitting a notify error (text sends only — lost thumbnails
-// are 'notify-image' and never count here) is just as likely to be one flaky
+// A single search hitting a notify error is just as likely to be one flaky
 // send as anything systemic — recordSavedSearchRunStatusAndAlertAsync already
 // excludes that from health. But several independent searches hitting a
 // notify error in the very same tick is a much stronger signal that Signal
