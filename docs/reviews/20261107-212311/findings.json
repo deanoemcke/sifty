@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261107-212311",
+  "round": 1,
+  "findings": [
+    {
+      "id": "R1-F001",
+      "title": "Failed image-only sends now trigger the exit-2 'systemic Signal outage' path even when every text alert was delivered",
+      "claim": "The image-send catch in notifyNewListingsAsync pushes a kind:'notify' error, and determineExitCode returns 2 once two searches each have a notify error. Two searches that each lose one thumbnail therefore page as a systemic Signal/notification outage although all text alerts went out, and a single lost thumbnail turns exit 0 into exit 1. The exit-2 contract documented on MIN_SEARCHES_FOR_SYSTEMIC_NOTIFY_FAILURE and in scripts/scheduler.ts no longer matches what triggers it, and no test pins the exit code. A distinct error kind (e.g. 'notify-image') counted for exit 1 but not exit 2 is the suggested alternative.",
+      "severity": "major",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "generic-correctness",
+        "informed-data-tests",
+        "informed-design",
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 421
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Two alert-enabled searches each lose a thumbnail (image-only send rejects with 400, text send resolves). Both searches report notifiedCount 1, yet determineExitCode(summary) returns 2 instead of 0, so a lost thumbnail pages as a systemic Signal outage.",
+        "reference": "repro/R1-F001.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "c34ba5d65097fc0c62200558c722f16c388b931f"
+      }
+    },
+    {
+      "id": "R1-F002",
+      "title": "AGGREGATED_FAILURE_DETAIL_MAX_LENGTH is a UTF-8 byte cap at one use and a UTF-16 character cap at another",
+      "claim": "The constant keeps its ...MAX_LENGTH name and is defined as SCRAPE_ERROR_REASON_MAX_LENGTH * 10 (characters), but the outbound alert now applies it as bytes via truncateToByteLength, while DETAIL_LINE_MAX_LENGTH aliases it and is applied with .slice() as characters for last_run_detail. One name carries two units, the only signal is an edited comment that is garbled (two adjacent parentheticals), and a change to one use will silently disagree with the other. The '10 reasons fit' sizing rationale also no longer holds for CJK or emoji text. Suggested: rename the alert cap to a _BYTES constant and give the stored-detail limit its own constant.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "informed-data-tests",
+        "informed-design",
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 233
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Line 233 defines the constant from a character-based multiple; ~line 1026 passes it to truncateToByteLength; line 251 aliases DETAIL_LINE_MAX_LENGTH and ~938 applies it with .slice(). The comment at 222-223 reads '...(the proxy limits encoded size; see truncateToByteLength) (last_run_detail uses DETAIL_LINE_MAX_LENGTH' with a broken nested parenthesis.\nVerifier: Unit mismatch confirmed in code: AGGREGATED_FAILURE_DETAIL_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH*10 (2000), passed to truncateToByteLength (bytes) at scheduler.ts:1022-1026, while DETAIL_LINE_MAX_LENGTH aliases it and is applied with .slice() (characters). The 'garbled adjacent parentheticals' part does not hold at HEAD: the comment at 220-226 reads cleanly ('measured in UTF-8 bytes (see truncateToByteLength). last_run_detail uses DETAIL_LINE_MAX_LENGTH below'). Naming/unit-sharing argument stands; it is a design issue, not a failing test."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "bc72f5b490f59a43626614ad1fc07d76a679efdd"
+      }
+    },
+    {
+      "id": "R1-F003",
+      "title": "Byte truncation of the failure alert drops trailing errors with no marker, possibly including the critical one",
+      "claim": "truncateToByteLength cuts the alert at the byte cap with no ellipsis or truncation marker, and the cut falls on whichever lines were pushed last (dedupeErrors does not sort by severity). A late 'unhandled' critical line can vanish with no sign that anything was cut. The scheduler test asserts only the length bound, not what is kept.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 1026
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "formatSearchFailingMessage with four distinct 200-char CJK scrape errors then an 'unhandled' error exceeds 2000 bytes; truncateToByteLength(..., 2000) returns text with no 'Unhandled' line and no trailing ellipsis/marker, so the critical line is dropped silently.",
+        "reference": "repro/R1-F003.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "bc72f5b490f59a43626614ad1fc07d76a679efdd"
+      }
+    },
+    {
+      "id": "R1-F004",
+      "title": "The size cap is applied at a single call site, not at the send boundary",
+      "claim": "The proxy limit applies to every message sent through sendSignalNotificationAsync, but truncateToByteLength is called only for search-failing and setup-failed alerts in recordSavedSearchRunStatusAndAlertAsync. Per-listing alerts (formatAlertMessage with listing.title), sitewide and recovery alerts via sendAlertSafelyAsync reach the proxy uncapped, so the same 400 can recur. The helper sits in the formatter module while the constraint belongs to the delivery boundary. Suggested: one cap in notify.ts or sendAlertSafelyAsync.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "informed-design",
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 1024
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Scheduler run with a new listing whose title is 2000 emoji: the message passed to sendNotificationAsync is 8045 bytes, far above the 2000-byte cap used for failure alerts. truncateToByteLength has a single call site (scheduler.ts:1022), so per-listing alerts reach the notifier uncapped.",
+        "reference": "repro/R1-F004.patch"
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Recommended deferral: real Signal limit and unit unconfirmed, or effect is cosmetic or log-only"
+      }
+    },
+    {
+      "id": "R1-F005",
+      "title": "The byte-length rationale for the cap is asserted without a source",
+      "claim": "truncateToByteLength's comment states that the proxy rejects over-long messages by encoded size, but no limit constant or reference to the proxy contract exists in the repo, so a reader cannot tell whether 2000 bytes is the real limit or the old character number reused. The author's summary confirms the inference is unverified (bytes vs graphemes vs chars). If the proxy counts characters the cap over-truncates.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/server/signalMessage.ts",
+        "line": 75
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "No proxy limit constant or documentation is referenced in the repo. Evidence that would settle it: the proxy's documented or actual message size limit and unit.\nVerifier: No proxy size limit or unit is documented or referenced anywhere in the repo (grep of notify.ts, signalMessage.ts and docs found none). Settling it needs the proxy's actual limit and unit, which can only be checked against the live proxy."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Recommended deferral: real Signal limit and unit unconfirmed, or effect is cosmetic or log-only"
+      }
+    },
+    {
+      "id": "R1-F006",
+      "title": "truncateToByteLength is code-point-safe but can split grapheme clusters; edge inputs untested",
+      "claim": "Cutting at a code-point boundary can leave a dangling ZWJ or a lone regional indicator, so the test title 'never splits a multi-byte character' overstates the guarantee. Inputs with ZWJ sequences, flags, zero or negative maxBytes have no tests.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests"
+      ],
+      "location": {
+        "file": "src/server/signalMessage.ts",
+        "line": 75
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "truncateToByteLength('👨‍👩‍👧', 7) returns the man emoji followed by a trailing ZWJ (U+200D), a dangling joiner. Note the finding's example maxBytes of 11 actually yields man+ZWJ+woman (7 bytes gives the dangling case). Zero and negative maxBytes both return '' (that part is fine, and passes in the patch).",
+        "reference": "repro/R1-F006.patch"
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Recommended deferral: real Signal limit and unit unconfirmed, or effect is cosmetic or log-only"
+      }
+    },
+    {
+      "id": "R1-F007",
+      "title": "Recorded image-failure errors are uncapped and can double up per listing",
+      "claim": "Each failed thumbnail pushes an uncapped message (now possibly containing the proxy error body), so a sustained image outage adds one error entry per new listing, and a listing whose image and text both fail records two notify errors.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 421
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "With 3 new listings with thumbnails and a notifier that always rejects, summary.errors has 6 entries (image error plus text error per listing), exceeding one per listing. A 5000-char proxy error produces a recorded message of 5053 characters, uncapped. Both assertions fail. Impact is limited to log volume since notify errors are excluded from last_run_detail and alerts.",
+        "reference": "repro/R1-F007.patch"
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Recommended deferral: real Signal limit and unit unconfirmed, or effect is cosmetic or log-only"
+      }
+    },
+    {
+      "id": "R1-F008",
+      "title": "Comments still describe 'notify' errors as retried next run, which is false for a lost image",
+      "claim": "Comments at scheduler.ts:296-300 (SchedulerErrorKind), ~920-923 ('already retried next run without needing a failure alert') and signalMessage.ts:14-17 ('delivery hiccup that retries on its own next run') were not updated. A failed image is recorded under kind 'notify', but the text still goes out and the listing is marked alerted, so the next run skips it and the thumbnail is never retried or reported by a status alert.",
+      "severity": "minor",
+      "classification": "docs-code-drift",
+      "sources": [
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 296
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Image send rejects once, text send succeeds; after clearing the search cache and running again, no image is re-sent (1 image send total, expected 2 if retried). The listing is marked alerted after the text succeeds, so the lost thumbnail is never retried, contradicting the comments at scheduler.ts:296-300 and ~920 and signalMessage.ts:14-17.",
+        "reference": "repro/R1-F008.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "c34ba5d65097fc0c62200558c722f16c388b931f"
+      }
+    },
+    {
+      "id": "R1-F009",
+      "title": "New image-failure test repeats the seed-clear-rescrape setup of its neighbours",
+      "claim": "The new test copies about fifteen lines of setup (seed a listing, run once, clear the cache, rescrape with a new listing) from at least three sibling image-send tests. A shared helper would remove the repetition.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/scheduler.test.ts",
+        "line": 1684
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Identical setup in neighbouring tests. Simplify skipped the refactor because the sibling tests are outside the diff.\nVerifier: Style/duplication finding. Confirmed the new test at scheduler.test.ts:~1684 repeats the seed, clearSearch, rescrape setup used by its neighbours (the 'stmtClearSearch(db).run(); // force a fresh scrape' line appears 22 times in the file). A helper would remove the repetition; no failing test applies."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "Recommended rejection: out of scope, pre-existing, or the suggestion does not work"
+      }
+    },
+    {
+      "id": "R1-F010",
+      "title": "Byte-cap scheduler test builds twelve distinct URLs and CJK reasons",
+      "claim": "The byte-cap test creates twelve URLs and a distinct CJK reason per failure. Simplify suggested a single URL but checked and rejected it: one reason is capped at 200 characters (about 600 bytes), so one URL stays under the 2000-byte cap and the test would pass without the fix. The multi-URL setup is therefore needed.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/scheduler.test.ts",
+        "line": 2586
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "SCRAPE_ERROR_REASON_MAX_LENGTH is 200, so a single failing URL cannot exceed the 2000-byte cap. The reviewer rejected its own simplification.\nVerifier: The finding is self-refuting. I removed the truncation in scheduler.ts and ran the byte-cap test with 1 URL instead of 12: it passes (one 200-char CJK reason is about 600 bytes, under the cap), so the test would not exercise the fix. With 12 URLs and truncation removed it fails (7616 > 2000). The multi-URL setup is necessary."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "Recommended rejection: out of scope, pre-existing, or the suggestion does not work"
+      }
+    },
+    {
+      "id": "R1-F011",
+      "title": "Proxy error body in notify.ts is cut by UTF-16 units and can split a surrogate pair",
+      "claim": "readErrorDetailAsync cuts the proxy's error body with body.slice(0, MAX_ERROR_DETAIL_LENGTH), which can split an emoji and leave a broken character in a log line. The new code-point-safe truncateToByteLength is not reused there.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/notify.ts",
+        "line": 55
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Mocked fetch returns a 400 whose body is 499 'x' then an emoji then 'tail'. The thrown error message contains a lone high surrogate at the cut because readErrorDetailAsync uses body.slice(0, 500). Pre-existing code on main (outside this branch's diff); impact is cosmetic (log text only).",
+        "reference": "repro/R1-F011.patch"
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "Recommended rejection: out of scope, pre-existing, or the suggestion does not work"
+      }
+    },
+    {
+      "id": "R1-F012",
+      "title": "tsc --noEmit fails on imageAttachment.test.ts (Uint8Array not assignable to BodyInit)",
+      "claim": "Type-checking the project reports TS2345 at src/server/imageAttachment.test.ts:9, so tsc is not clean even though biome check and vitest pass. It is outside the files touched by this fix.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "implementer"
+      ],
+      "location": {
+        "file": "src/server/imageAttachment.test.ts",
+        "line": 9
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "npx tsc --noEmit prints: src/server/imageAttachment.test.ts(9,23): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit | null | undefined'. Not part of npm run check, so it is not caught by the gate."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "88fe03c976511f8356eb1d5130028086bfe94ece"
+      }
+    },
+    {
+      "id": "R1-F013",
+      "title": "truncateToByteLength can return more bytes than maxBytes when maxBytes is under 3",
+      "claim": "The new marker path reserves 3 bytes for the ellipsis without checking that maxBytes can hold it, so a cut with maxBytes below 3 returns the 3-byte marker alone, exceeding the cap. The previous implementation never exceeded maxBytes. Only the constant 2000 is passed today, so it is latent.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "fix-check"
+      ],
+      "location": {
+        "file": "src/server/signalMessage.ts",
+        "line": 85
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "truncateToByteLength('abcdef', 2): byteLength 6 > 2, contentBudgetBytes = 2 - 3 = -1, loop breaks immediately, endIndex 0, returns '…' (3 bytes) which is > 2. Before the fix it returned ''."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "42f51f35835e21d673d5c1f40a63480a4d9dff5c"
+      }
+    }
+  ]
+}

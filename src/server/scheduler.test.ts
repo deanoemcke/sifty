@@ -36,10 +36,10 @@ import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
-  AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_REASON_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
   AI_FILTER_VERDICT_MAX_AGE_MS,
+  ALERT_MESSAGE_MAX_BYTES,
   buildFailureComparisonKey,
   DETAIL_LINE_MAX_LENGTH,
   determineExitCode,
@@ -1681,6 +1681,43 @@ describe('runSchedulerAsync', () => {
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
   });
 
+  it('records a failed image-only send as a notify-image error so a sustained image outage is visible', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/thumb.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Signal notification failed: 400 Bad Request'));
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(summary.searches[0].errors).toEqual([
+      {
+        kind: 'notify-image',
+        message: expect.stringContaining('400 Bad Request'),
+      },
+    ]);
+  });
+
   it('does not retry when the notifier rejects a message that never had an image attached', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);
@@ -2266,24 +2303,12 @@ describe('runSchedulerAsync', () => {
   });
 
   it("does not let the aggregated last_run_detail truncation cut a Facebook-cookie failure line in half, so a search's own recovery ping stays suppressed", async () => {
-    // Regression test for finding 3 of the PR #64 review: `detail` used to be
-    // built by joining every health-error line and THEN slicing the whole
-    // blob to AGGREGATED_FAILURE_DETAIL_MAX_LENGTH. A saved search with
-    // enough per-URL Facebook-cookie failures lets that aggregate cut land
-    // inside a line instead of on a line boundary, corrupting the persisted
-    // last_run_detail so its final line no longer contains the full
-    // LOGIN_REQUIRED_MESSAGE substring isSitewideCoveredFailure needs.
     const facebookLine = `scrape:Discarded 0 untrusted listing(s): ${LOGIN_REQUIRED_MESSAGE}`;
     const urlCount = 20;
-    // Sanity checks: joining `urlCount` identical lines crosses the aggregate
-    // cap partway through the last line (not exactly on a newline boundary),
-    // and `urlCount - 1` lines alone stay under it — i.e. this really
-    // exercises a mid-line cut of the *last* line, not a clean drop of whole
-    // lines.
     const joinedLength = urlCount * facebookLine.length + (urlCount - 1);
     const priorLinesLength = (urlCount - 1) * facebookLine.length + (urlCount - 2);
-    expect(joinedLength).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
-    expect(priorLinesLength).toBeLessThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(joinedLength).toBeGreaterThan(DETAIL_LINE_MAX_LENGTH);
+    expect(priorLinesLength).toBeLessThan(DETAIL_LINE_MAX_LENGTH);
 
     const urls = Array.from(
       { length: urlCount },
@@ -2496,18 +2521,6 @@ describe('runSchedulerAsync', () => {
   });
 
   it('caps the aggregated error text across multiple failures before it flows into the outbound Signal alert, but preserves every full line in last_run_detail', async () => {
-    // A single overlong reason is already bounded at capture
-    // (SCRAPE_ERROR_REASON_MAX_LENGTH), but summary.errors was designed as an
-    // internal diagnostic list, not an external payload — nothing previously
-    // bounded the *aggregate* once several such per-URL failures (each
-    // already individually capped) are joined together for the outbound
-    // Signal message. last_run_detail is deliberately different: it's capped
-    // per line (DETAIL_LINE_MAX_LENGTH), not as a joined blob, precisely so a
-    // saved search with many failures never has one of its lines corrupted by
-    // a cut that belongs to a different line — see that constant's comment.
-    // So unlike the outbound message, last_run_detail's total length here is
-    // allowed to exceed the old aggregate figure, as long as every individual
-    // line survives intact.
     const urls = Array.from(
       { length: 12 },
       (_, i) => `https://facebook.com/marketplace/search-${i}`
@@ -2526,23 +2539,45 @@ describe('runSchedulerAsync', () => {
       sendNotificationAsync,
     });
 
-    // Sanity check: joining all 12 per-URL failures uncapped would comfortably
-    // exceed the old aggregate cap, so this test actually exercises the bound.
-    expect(urls.length * reason.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(urls.length * reason.length).toBeGreaterThan(ALERT_MESSAGE_MAX_BYTES);
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     const message = sendNotificationAsync.mock.calls[0][0] as string;
-    expect(message.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(message.length).toBeLessThanOrEqual(ALERT_MESSAGE_MAX_BYTES);
 
     const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail as string;
-    // Every one of the 12 identical reason lines survives whole — none was
-    // partially cut off by a blob-level slice — even though the resulting
-    // total comfortably exceeds the old aggregate cap.
-    expect(detail.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(detail.length).toBeGreaterThan(DETAIL_LINE_MAX_LENGTH);
     expect(detail.split(reason).length - 1).toBe(urls.length);
     for (const line of detail.split('\n')) {
       expect(line.length).toBeLessThanOrEqual(DETAIL_LINE_MAX_LENGTH);
     }
+  });
+
+  it('caps the outbound failure alert by UTF-8 byte length, not just JS string length', async () => {
+    const urls = Array.from(
+      { length: 12 },
+      (_, i) => `https://facebook.com/marketplace/search-${i}`
+    );
+    const db = freshDb();
+    insertAlertSearch(db, { urls });
+    let failureIndex = 0;
+    vi.mocked(getRecipeForUrl).mockImplementation(() => {
+      const distinctMultiByteReason = String.fromCodePoint(0x4e00 + failureIndex++).repeat(
+        SCRAPE_ERROR_REASON_MAX_LENGTH
+      );
+      return makeFailingRecipeWithReason('facebook', distinctMultiByteReason);
+    });
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    const message = sendNotificationAsync.mock.calls[0][0] as string;
+    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(ALERT_MESSAGE_MAX_BYTES);
   });
 
   it('truncates a multi-line scrape-failure reason at the first newline and strips the embedded URL', async () => {
@@ -3336,6 +3371,17 @@ describe('determineExitCode', () => {
     expect(determineExitCode(summary)).toBe(1);
   });
 
+  it('returns 1, not 2, when image-notify errors hit multiple searches — lost thumbnails are not a systemic outage', () => {
+    const imageError = { kind: 'notify-image' as const, message: 'Image notification failed' };
+    const summary: SchedulerSummary = {
+      searches: [
+        { ...makeSearchSummary([imageError]), savedSearchId: 'search-a' },
+        { ...makeSearchSummary([imageError]), savedSearchId: 'search-b' },
+      ],
+    };
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
   it('returns 2 when notify errors hit multiple searches in the same tick — likely a systemic outage', () => {
     const summary: SchedulerSummary = {
       searches: [
@@ -3350,5 +3396,87 @@ describe('determineExitCode', () => {
       ],
     };
     expect(determineExitCode(summary)).toBe(2);
+  });
+});
+
+describe('lost thumbnails (image-only send failures)', () => {
+  it('exits 1, not the systemic-outage 2, when every text alert was delivered and only thumbnails were lost across two searches', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-1', name: 'One' });
+    insertAlertSearch(db, { id: 'search-2', name: 'Two' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 10,
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 10,
+    });
+    stmtClearSearch(db).run();
+
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/thumb.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi.fn(async (_message: string, options?: { image?: string }) => {
+      if (options?.image) throw new Error('Signal notification failed: 400 Bad Request');
+    });
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      maxSearchesPerTick: 10,
+    });
+
+    expect(summary.searches.map((s) => s.notifiedCount)).toEqual([1, 1]);
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
+  it('does not retry a lost thumbnail on the next run — the text alert marks the listing alerted', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/t.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('400 Bad Request'))
+      .mockResolvedValue(undefined);
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+    stmtClearSearch(db).run();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    const imageSends = sendNotificationAsync.mock.calls.filter((call) => call[1]?.image);
+    expect(imageSends).toHaveLength(1);
   });
 });

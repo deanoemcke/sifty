@@ -1,0 +1,52 @@
+diff --git a/src/server/scheduler.test.ts b/src/server/scheduler.test.ts
+index 3e2e88b..a889f36 100644
+--- a/src/server/scheduler.test.ts
++++ b/src/server/scheduler.test.ts
+@@ -3418,3 +3418,47 @@ describe('determineExitCode', () => {
+     expect(determineExitCode(summary)).toBe(2);
+   });
+ });
++
++describe('verify R1-F001', () => {
++  it('exits 0 when every text alert was delivered and only thumbnails were lost across two searches', async () => {
++    const db = freshDb();
++    insertAlertSearch(db, { id: 'search-1', name: 'One' });
++    insertAlertSearch(db, { id: 'search-2', name: 'Two' });
++    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
++    await runSchedulerAsync({
++      database: db,
++      cooldownStore: STUB_COOLDOWN_STORE,
++      sendNotificationAsync: vi.fn(),
++      maxSearchesPerTick: 10,
++    });
++    await runSchedulerAsync({
++      database: db,
++      cooldownStore: STUB_COOLDOWN_STORE,
++      sendNotificationAsync: vi.fn(),
++      maxSearchesPerTick: 10,
++    });
++    stmtClearSearch(db).run();
++
++    const listing = makeListing({
++      title: 'Chair',
++      url: 'https://example.com/1',
++      thumbnailUrl: 'https://example.com/thumb.jpg',
++    });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
++    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
++    const sendNotificationAsync = vi.fn(async (_message: string, options?: { image?: string }) => {
++      if (options?.image) throw new Error('Signal notification failed: 400 Bad Request');
++    });
++
++    const summary = await runSchedulerAsync({
++      database: db,
++      cooldownStore: STUB_COOLDOWN_STORE,
++      sendNotificationAsync,
++      maxSearchesPerTick: 10,
++    });
++
++    expect(summary.searches.map((s) => s.notifiedCount)).toEqual([1, 1]);
++    expect(determineExitCode(summary)).toBe(0);
++  });
++});

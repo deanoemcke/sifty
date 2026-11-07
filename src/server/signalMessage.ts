@@ -6,19 +6,11 @@ import type { Listing } from '../lib/recipes/base';
 import type { SchedulerError, SchedulerErrorKind } from './scheduler';
 import { normalizeScrapeErrorReason } from './schedulerErrorText';
 
-// Which subsystem produced the error (shown in the alert so a failure can be
-// triaged without digging into logs) and how urgently it needs attention.
-// `unhandled` is an unanticipated code path — something is actually broken.
-// `scrape` means this run found nothing at all for a URL. `ai-filter` means
-// listings did come in but couldn't be judged, so nothing from them was
-// notified. `notify` is a delivery hiccup that retries on its own next run
-// (and in practice never reaches these formatters — see
-// recordSavedSearchRunStatusAndAlertAsync's healthErrors filter — but is
-// covered here for type exhaustiveness).
 const ERROR_KIND_LABEL: Record<SchedulerErrorKind, string> = {
   scrape: 'Scrape',
   'ai-filter': 'AI Filter',
   notify: 'Notify',
+  'notify-image': 'Notify image',
   unhandled: 'Unhandled',
 };
 
@@ -29,6 +21,7 @@ const ERROR_KIND_SEVERITY: Record<SchedulerErrorKind, ErrorSeverity> = {
   scrape: 'high',
   'ai-filter': 'medium',
   notify: 'medium',
+  'notify-image': 'medium',
 };
 
 const SEVERITY_ICON: Record<ErrorSeverity, string> = {
@@ -70,6 +63,24 @@ function stripLocationSuffix(location: string): string {
     return location;
   }
   return location.slice(0, firstCommaIndex).trim();
+}
+
+const TRUNCATION_MARKER = '…';
+
+export function truncateToByteLength(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  const markerBytes = Buffer.byteLength(TRUNCATION_MARKER, 'utf8');
+  const marker = maxBytes >= markerBytes ? TRUNCATION_MARKER : '';
+  const contentBudgetBytes = maxBytes - Buffer.byteLength(marker, 'utf8');
+  let byteCount = 0;
+  let endIndex = 0;
+  for (const character of text) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (byteCount + characterBytes > contentBudgetBytes) break;
+    byteCount += characterBytes;
+    endIndex += character.length;
+  }
+  return text.slice(0, endIndex) + marker;
 }
 
 // Strips the four characters the Signal proxy's regex-based markdown

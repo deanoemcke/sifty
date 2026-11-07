@@ -1,0 +1,26 @@
+diff --git a/src/server/scheduler.test.ts b/src/server/scheduler.test.ts
+index 3e2e88b..388fe2b 100644
+--- a/src/server/scheduler.test.ts
++++ b/src/server/scheduler.test.ts
+@@ -3418,3 +3418,21 @@ describe('determineExitCode', () => {
+     expect(determineExitCode(summary)).toBe(2);
+   });
+ });
++
++describe('verify R1-F004', () => {
++  it('caps a per-listing alert with an enormous emoji title at the proxy byte limit', async () => {
++    const db = freshDb();
++    const searchId = insertAlertSearch(db);
++    const seedListing = makeListing({ title: "Existing", url: "https://example.com/existing" });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
++    await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() });
++    stmtClearSearch(db).run();
++    const listing = makeListing({ title: '🔴'.repeat(2000), url: 'https://example.com/1' });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
++    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
++    await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync });
++    expect(searchId).toBeDefined();
++    const message = sendNotificationAsync.mock.calls[0][0] as string;
++    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
++  });
++});

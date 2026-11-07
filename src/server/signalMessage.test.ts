@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeListing } from '../lib/testFixtures';
+import type { SchedulerError } from './scheduler';
 import {
   escapeSignalMarkdown,
   formatAlertMessage,
@@ -11,7 +12,64 @@ import {
   formatNetworkUnreachableRecoveredMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
+  truncateToByteLength,
 } from './signalMessage';
+
+describe('truncateToByteLength', () => {
+  it('returns text unchanged when it already fits', () => {
+    expect(truncateToByteLength('hello', 10)).toBe('hello');
+  });
+
+  it('caps the UTF-8 byte length even when JS string length is under the cap', () => {
+    const emojiHeavyText = '🔴'.repeat(1000);
+    expect(emojiHeavyText.length).toBe(2000);
+
+    const truncated = truncateToByteLength(emojiHeavyText, 2000);
+
+    expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(2000);
+    expect(truncated).toBe(`${'🔴'.repeat(499)}…`);
+  });
+
+  it('marks a cut with a trailing ellipsis that still fits within the cap', () => {
+    const truncated = truncateToByteLength('a'.repeat(50), 10);
+
+    expect(truncated).toBe(`${'a'.repeat(7)}…`);
+    expect(Buffer.byteLength(truncated, 'utf8')).toBe(10);
+  });
+
+  it('adds no marker when the text exactly fits', () => {
+    expect(truncateToByteLength('abcd', 4)).toBe('abcd');
+  });
+
+  it('never exceeds a cap too small to hold the marker', () => {
+    expect(truncateToByteLength('abcdef', 2)).toBe('ab');
+    expect(truncateToByteLength('abcdef', 0)).toBe('');
+  });
+
+  it('never splits a multi-byte character', () => {
+    const truncated = truncateToByteLength('ab🔴cd', 6);
+
+    expect(truncated).toBe('ab…');
+    expect(truncated).not.toContain('�');
+  });
+});
+
+describe('failure alert truncation', () => {
+  it('marks the truncation when an over-long failure alert drops trailing errors', () => {
+    const errors: SchedulerError[] = [0, 1, 2, 3].map((index) => ({
+      kind: 'scrape' as const,
+      message: String.fromCodePoint(0x4e00 + index).repeat(200),
+    }));
+    errors.push({ kind: 'unhandled', message: 'Unhandled error: boom' });
+    const full = formatSearchFailingMessage('Search', errors);
+    expect(Buffer.byteLength(full, 'utf8')).toBeGreaterThan(2000);
+
+    const truncated = truncateToByteLength(full, 2000);
+
+    expect(truncated.endsWith('…')).toBe(true);
+    expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(2000);
+  });
+});
 
 describe('formatAlertMessage', () => {
   it('composes a bold title, then a location/price line, then the url — no saved search name or source', () => {
