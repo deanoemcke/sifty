@@ -11,14 +11,16 @@ import { normalizeScrapeErrorReason } from './schedulerErrorText';
 // `unhandled` is an unanticipated code path — something is actually broken.
 // `scrape` means this run found nothing at all for a URL. `ai-filter` means
 // listings did come in but couldn't be judged, so nothing from them was
-// notified. `notify` is a delivery hiccup that retries on its own next run
-// (and in practice never reaches these formatters — see
-// recordSavedSearchRunStatusAndAlertAsync's healthErrors filter — but is
-// covered here for type exhaustiveness).
+// notified. `notify` is a text-delivery hiccup (retried next run) and
+// `notify-image` a lost thumbnail whose text alert still went out (not
+// retried). Neither reaches these formatters in practice — see
+// recordSavedSearchRunStatusAndAlertAsync's healthErrors filter — but both are
+// covered here for type exhaustiveness.
 const ERROR_KIND_LABEL: Record<SchedulerErrorKind, string> = {
   scrape: 'Scrape',
   'ai-filter': 'AI Filter',
   notify: 'Notify',
+  'notify-image': 'Notify image',
   unhandled: 'Unhandled',
 };
 
@@ -29,6 +31,7 @@ const ERROR_KIND_SEVERITY: Record<SchedulerErrorKind, ErrorSeverity> = {
   scrape: 'high',
   'ai-filter': 'medium',
   notify: 'medium',
+  'notify-image': 'medium',
 };
 
 const SEVERITY_ICON: Record<ErrorSeverity, string> = {

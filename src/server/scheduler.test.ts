@@ -1681,7 +1681,7 @@ describe('runSchedulerAsync', () => {
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
   });
 
-  it('records a failed image-only send as a notify error so a sustained image outage is visible', async () => {
+  it('records a failed image-only send as a notify-image error so a sustained image outage is visible', async () => {
     const db = freshDb();
     insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -1712,7 +1712,7 @@ describe('runSchedulerAsync', () => {
 
     expect(summary.searches[0].errors).toEqual([
       {
-        kind: 'notify',
+        kind: 'notify-image',
         message: expect.stringContaining('400 Bad Request'),
       },
     ]);
@@ -3402,6 +3402,17 @@ describe('determineExitCode', () => {
     expect(determineExitCode(summary)).toBe(1);
   });
 
+  it('returns 1, not 2, when image-notify errors hit multiple searches — lost thumbnails are not a systemic outage', () => {
+    const imageError = { kind: 'notify-image' as const, message: 'Image notification failed' };
+    const summary: SchedulerSummary = {
+      searches: [
+        { ...makeSearchSummary([imageError]), savedSearchId: 'search-a' },
+        { ...makeSearchSummary([imageError]), savedSearchId: 'search-b' },
+      ],
+    };
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
   it('returns 2 when notify errors hit multiple searches in the same tick — likely a systemic outage', () => {
     const summary: SchedulerSummary = {
       searches: [
@@ -3416,5 +3427,87 @@ describe('determineExitCode', () => {
       ],
     };
     expect(determineExitCode(summary)).toBe(2);
+  });
+});
+
+describe('lost thumbnails (image-only send failures)', () => {
+  it('exits 1, not the systemic-outage 2, when every text alert was delivered and only thumbnails were lost across two searches', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-1', name: 'One' });
+    insertAlertSearch(db, { id: 'search-2', name: 'Two' });
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 10,
+    });
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 10,
+    });
+    stmtClearSearch(db).run();
+
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/thumb.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi.fn(async (_message: string, options?: { image?: string }) => {
+      if (options?.image) throw new Error('Signal notification failed: 400 Bad Request');
+    });
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+      maxSearchesPerTick: 10,
+    });
+
+    expect(summary.searches.map((s) => s.notifiedCount)).toEqual([1, 1]);
+    expect(determineExitCode(summary)).toBe(1);
+  });
+
+  it('does not retry a lost thumbnail on the next run — the text alert marks the listing alerted', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run();
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/t.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('400 Bad Request'))
+      .mockResolvedValue(undefined);
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+    stmtClearSearch(db).run();
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    const imageSends = sendNotificationAsync.mock.calls.filter((call) => call[1]?.image);
+    expect(imageSends).toHaveLength(1);
   });
 });

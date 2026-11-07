@@ -161,6 +161,7 @@ const KNOWN_SCHEDULER_ERROR_KINDS: readonly SchedulerErrorKind[] = [
   'scrape',
   'ai-filter',
   'notify',
+  'notify-image',
   'unhandled',
 ];
 
@@ -293,12 +294,16 @@ export type SchedulerDeps = {
   checkConnectivityAsync?: () => Promise<boolean>;
 };
 
-// 'notify' covers both per-listing alert sends (notifyNewListingsAsync) and
-// the status alert send itself (sendAlertSafelyAsync) — both are Signal
+// 'notify' covers both per-listing text alert sends (notifyNewListingsAsync)
+// and the status alert send itself (sendAlertSafelyAsync) — both are Signal
 // delivery failures, not evidence the saved search's own scrape/filter is
-// broken, so recordSavedSearchRunStatusAndAlertAsync below excludes this kind
-// from its health/alerting decision.
-export type SchedulerErrorKind = 'scrape' | 'ai-filter' | 'notify' | 'unhandled';
+// broken. A failed text send is retried next run (the listing isn't marked
+// alerted). 'notify-image' is a lost thumbnail whose text alert still went
+// out: the listing is marked alerted, so the image is never retried. Both are
+// excluded from recordSavedSearchRunStatusAndAlertAsync's health/alerting
+// decision, but only 'notify' counts toward the exit-2 systemic-outage check
+// in determineExitCode — a lost thumbnail alone never pages.
+export type SchedulerErrorKind = 'scrape' | 'ai-filter' | 'notify' | 'notify-image' | 'unhandled';
 
 export type SchedulerError = {
   kind: SchedulerErrorKind;
@@ -417,7 +422,7 @@ async function notifyNewListingsAsync(
           const reason = (err as Error).message;
           console.warn(`[scheduler] image notification failed for ${listing.url}: ${reason}`);
           summary.errors.push({
-            kind: 'notify',
+            kind: 'notify-image',
             message: `Image notification failed for ${listing.url}: ${reason}`,
           });
         }
@@ -919,9 +924,14 @@ async function recordSavedSearchRunStatusAndAlertAsync(
 
   // Notify-kind errors (a flaky Signal send) are excluded from health: they
   // mean delivery hiccuped, not that this saved search's scrape/filter is
-  // broken, and are already retried next run without needing a failure
-  // alert of their own (see notifyNewListingsAsync/sendAlertSafelyAsync).
-  const healthErrors = summary.errors.filter((error) => error.kind !== 'notify');
+  // broken, and don't need a failure alert of their own (see
+  // notifyNewListingsAsync/sendAlertSafelyAsync). A failed text send is
+  // retried next run; a lost thumbnail ('notify-image') is not — the text
+  // still went out, so the listing is marked alerted — but it isn't worth a
+  // status alert either.
+  const healthErrors = summary.errors.filter(
+    (error) => error.kind !== 'notify' && error.kind !== 'notify-image'
+  );
   const succeeded = healthErrors.length === 0;
   // Persists `kind` alongside `message` per line (parsed back by
   // parseStoredFailureDetail above) so a later run's "same failure as last
@@ -1211,7 +1221,8 @@ export function triggerImmediatePopulationRunAsync(
   });
 }
 
-// A single search hitting a notify error is just as likely to be one flaky
+// A single search hitting a notify error (text sends only — lost thumbnails
+// are 'notify-image' and never count here) is just as likely to be one flaky
 // send as anything systemic — recordSavedSearchRunStatusAndAlertAsync already
 // excludes that from health. But several independent searches hitting a
 // notify error in the very same tick is a much stronger signal that Signal
