@@ -5,7 +5,7 @@ import {
   MAX_IMAGE_BYTES,
 } from './imageAttachment';
 
-function jsonResponse(body: Uint8Array, contentType: string, status = 200): Response {
+function jsonResponse(body: Uint8Array<ArrayBuffer>, contentType: string, status = 200): Response {
   return new Response(body, { status, headers: { 'content-type': contentType } });
 }
 
