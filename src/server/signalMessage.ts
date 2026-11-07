@@ -82,9 +82,12 @@ const TRUNCATION_MARKER = '…';
 // Walks whole code points so a multi-byte character is never split. When the
 // text is cut, a trailing "…" (counted within maxBytes) signals that lines
 // were dropped, so a truncated alert never reads as the complete picture.
+// A cap too small to hold the marker drops it rather than exceed maxBytes.
 export function truncateToByteLength(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
-  const contentBudgetBytes = maxBytes - Buffer.byteLength(TRUNCATION_MARKER, 'utf8');
+  const markerBytes = Buffer.byteLength(TRUNCATION_MARKER, 'utf8');
+  const marker = maxBytes >= markerBytes ? TRUNCATION_MARKER : '';
+  const contentBudgetBytes = maxBytes - Buffer.byteLength(marker, 'utf8');
   let byteCount = 0;
   let endIndex = 0;
   for (const character of text) {
@@ -93,7 +96,7 @@ export function truncateToByteLength(text: string, maxBytes: number): string {
     byteCount += characterBytes;
     endIndex += character.length;
   }
-  return text.slice(0, endIndex) + TRUNCATION_MARKER;
+  return text.slice(0, endIndex) + marker;
 }
 
 // Strips the four characters the Signal proxy's regex-based markdown

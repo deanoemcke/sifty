@@ -41,6 +41,11 @@ describe('truncateToByteLength', () => {
     expect(truncateToByteLength('abcd', 4)).toBe('abcd');
   });
 
+  it('never exceeds a cap too small to hold the marker', () => {
+    expect(truncateToByteLength('abcdef', 2)).toBe('ab');
+    expect(truncateToByteLength('abcdef', 0)).toBe('');
+  });
+
   it('never splits a multi-byte character', () => {
     const truncated = truncateToByteLength('ab🔴cd', 6);
 
