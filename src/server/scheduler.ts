@@ -219,10 +219,10 @@ function sanitizeScrapeReason(raw: string): string {
 
 // Bound on the *aggregated* failure text — summary.errors joined together —
 // applied in recordSavedSearchRunStatusAndAlertAsync just before it reaches
-// the outbound Signal alert, measured in UTF-8 bytes there (the proxy limits
-// encoded size; see truncateToByteLength) (last_run_detail uses DETAIL_LINE_MAX_LENGTH
-// below instead — see its comment for why the two can't share one blob-level
-// bound). Unlike SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at
+// the outbound Signal alert. There it is measured in UTF-8 bytes (see
+// truncateToByteLength). last_run_detail uses DETAIL_LINE_MAX_LENGTH below
+// instead — see its comment for why the two can't share one blob-level
+// bound. Unlike SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at
 // each individual summary.errors.push() call site (notification-send
 // failures and AI-filter error messages aren't capped there), so without
 // this second, coarser bound the aggregate could still grow unbounded even
@@ -409,18 +409,16 @@ async function notifyNewListingsAsync(
       // bubble width, which visibly cramps the caption regardless of its
       // own length. A broken/oversized thumbnail must never sink the whole
       // alert (mirrors imageAttachment.ts's own stated invariant), so a
-      // failed image send doesn't stop the text message — but it is recorded
-      // so a sustained image-only outage still reaches determineExitCode.
+      // failed image send doesn't stop the text message.
       if (image !== undefined) {
         try {
           await sendNotificationAsync('', { image });
         } catch (err) {
-          console.warn(
-            `[scheduler] image notification failed for ${listing.url}: ${(err as Error).message}`
-          );
+          const reason = (err as Error).message;
+          console.warn(`[scheduler] image notification failed for ${listing.url}: ${reason}`);
           summary.errors.push({
             kind: 'notify',
-            message: `Image notification failed for ${listing.url}: ${(err as Error).message}`,
+            message: `Image notification failed for ${listing.url}: ${reason}`,
           });
         }
       }

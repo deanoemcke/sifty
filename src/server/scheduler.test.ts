@@ -1702,8 +1702,7 @@ describe('runSchedulerAsync', () => {
     vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
     const sendNotificationAsync = vi
       .fn()
-      .mockRejectedValueOnce(new Error('Signal notification failed: 400 Bad Request'))
-      .mockResolvedValueOnce(undefined);
+      .mockRejectedValueOnce(new Error('Signal notification failed: 400 Bad Request'));
 
     const summary = await runSchedulerAsync({
       database: db,
