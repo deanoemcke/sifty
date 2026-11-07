@@ -218,38 +218,34 @@ function sanitizeScrapeReason(raw: string): string {
     .slice(0, SCRAPE_ERROR_REASON_MAX_LENGTH);
 }
 
-// Bound on the *aggregated* failure text — summary.errors joined together —
-// applied in recordSavedSearchRunStatusAndAlertAsync just before it reaches
-// the outbound Signal alert. There it is measured in UTF-8 bytes (see
-// truncateToByteLength). last_run_detail uses DETAIL_LINE_MAX_LENGTH below
-// instead — see its comment for why the two can't share one blob-level
-// bound. Unlike SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at
-// each individual summary.errors.push() call site (notification-send
-// failures and AI-filter error messages aren't capped there), so without
-// this second, coarser bound the aggregate could still grow unbounded even
-// though each scrape-failure reason on its own is already bounded. Sized as
-// a multiple of SCRAPE_ERROR_REASON_MAX_LENGTH so a run with several
-// already-capped scrape-failure reasons still fits, rather than being an
-// independent value to keep in sync by hand.
-export const AGGREGATED_FAILURE_DETAIL_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
+// Bound on the outbound Signal failure alert, measured in UTF-8 bytes (the
+// proxy limits encoded size; see truncateToByteLength), applied in
+// recordSavedSearchRunStatusAndAlertAsync just before the alert is sent.
+// Unlike SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at each
+// individual summary.errors.push() call site (notification-send failures and
+// AI-filter error messages aren't capped there), so without this second,
+// coarser bound the aggregate could still grow unbounded even though each
+// scrape-failure reason on its own is already bounded. Sized as a multiple of
+// SCRAPE_ERROR_REASON_MAX_LENGTH so a run with several already-capped
+// ASCII scrape-failure reasons still fits; multi-byte text fits fewer.
+export const ALERT_MESSAGE_MAX_BYTES = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
 
-// Bound on a single persisted last_run_detail line ("${kind}:${message}"),
-// applied to each line individually before joining — not to the joined blob
-// as a whole (contrast AGGREGATED_FAILURE_DETAIL_MAX_LENGTH above, which is
-// still a blob-level bound, but only for the outbound Signal alert, which
-// never gets read back and substring-matched). A blob-level slice on
+// Bound on a single persisted last_run_detail line ("${kind}:${message}"), in
+// UTF-16 characters (applied with .slice()), to each line individually before
+// joining — not to the joined blob as a whole. A blob-level slice on
 // last_run_detail can land mid-line, and for a saved search with enough
 // failures that a Facebook-cookie or network-unreachable line lands late in
 // the join, that cut can sever the exact substring (e.g.
 // LOGIN_REQUIRED_MESSAGE) isSitewideCoveredFailure needs on the next run's
 // round-trip read of last_run_detail — silently turning a sitewide-covered
 // failure into an uncovered one and triggering a redundant per-search
-// recovery ping. Reuses AGGREGATED_FAILURE_DETAIL_MAX_LENGTH's value as a
-// generous per-line ceiling: every already-bounded scrape-failure line
-// (SCRAPE_ERROR_REASON_MAX_LENGTH reason plus its small wrapper text) sits
-// comfortably under it, so in practice this only ever bounds the otherwise-
-// unbounded ai-filter/unhandled message kinds, never a legitimate short line.
-export const DETAIL_LINE_MAX_LENGTH = AGGREGATED_FAILURE_DETAIL_MAX_LENGTH;
+// recovery ping. A generous per-line ceiling: every already-bounded
+// scrape-failure line (SCRAPE_ERROR_REASON_MAX_LENGTH reason plus its small
+// wrapper text) sits comfortably under it, so in practice this only ever
+// bounds the otherwise-unbounded ai-filter/unhandled message kinds, never a
+// legitimate short line. Independent of ALERT_MESSAGE_MAX_BYTES: different
+// unit, different consumer.
+export const DETAIL_LINE_MAX_LENGTH = SCRAPE_ERROR_REASON_MAX_LENGTH * 10;
 
 // Bound on the AI filter's LLM-authored `reason` text before it's persisted
 // to ai_filter_verdicts, applied at the point of caching — like every other
@@ -1033,7 +1029,7 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     isSetupMoment
       ? formatAlertSetupFailedMessage(row.name, healthErrors)
       : formatSearchFailingMessage(row.name, searchScopedHealthErrors),
-    AGGREGATED_FAILURE_DETAIL_MAX_LENGTH
+    ALERT_MESSAGE_MAX_BYTES
   );
   await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);

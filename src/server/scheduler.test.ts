@@ -36,10 +36,10 @@ import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
-  AGGREGATED_FAILURE_DETAIL_MAX_LENGTH,
   AI_FILTER_REASON_MAX_LENGTH,
   AI_FILTER_TIMEOUT_MS,
   AI_FILTER_VERDICT_MAX_AGE_MS,
+  ALERT_MESSAGE_MAX_BYTES,
   buildFailureComparisonKey,
   DETAIL_LINE_MAX_LENGTH,
   determineExitCode,
@@ -2305,7 +2305,7 @@ describe('runSchedulerAsync', () => {
   it("does not let the aggregated last_run_detail truncation cut a Facebook-cookie failure line in half, so a search's own recovery ping stays suppressed", async () => {
     // Regression test for finding 3 of the PR #64 review: `detail` used to be
     // built by joining every health-error line and THEN slicing the whole
-    // blob to AGGREGATED_FAILURE_DETAIL_MAX_LENGTH. A saved search with
+    // blob to DETAIL_LINE_MAX_LENGTH. A saved search with
     // enough per-URL Facebook-cookie failures lets that aggregate cut land
     // inside a line instead of on a line boundary, corrupting the persisted
     // last_run_detail so its final line no longer contains the full
@@ -2319,8 +2319,8 @@ describe('runSchedulerAsync', () => {
     // lines.
     const joinedLength = urlCount * facebookLine.length + (urlCount - 1);
     const priorLinesLength = (urlCount - 1) * facebookLine.length + (urlCount - 2);
-    expect(joinedLength).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
-    expect(priorLinesLength).toBeLessThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(joinedLength).toBeGreaterThan(DETAIL_LINE_MAX_LENGTH);
+    expect(priorLinesLength).toBeLessThan(DETAIL_LINE_MAX_LENGTH);
 
     const urls = Array.from(
       { length: urlCount },
@@ -2565,17 +2565,17 @@ describe('runSchedulerAsync', () => {
 
     // Sanity check: joining all 12 per-URL failures uncapped would comfortably
     // exceed the old aggregate cap, so this test actually exercises the bound.
-    expect(urls.length * reason.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(urls.length * reason.length).toBeGreaterThan(ALERT_MESSAGE_MAX_BYTES);
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     const message = sendNotificationAsync.mock.calls[0][0] as string;
-    expect(message.length).toBeLessThanOrEqual(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(message.length).toBeLessThanOrEqual(ALERT_MESSAGE_MAX_BYTES);
 
     const detail = stmtGetSavedSearch(db).get(searchId)?.last_run_detail as string;
     // Every one of the 12 identical reason lines survives whole — none was
     // partially cut off by a blob-level slice — even though the resulting
     // total comfortably exceeds the old aggregate cap.
-    expect(detail.length).toBeGreaterThan(AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+    expect(detail.length).toBeGreaterThan(DETAIL_LINE_MAX_LENGTH);
     expect(detail.split(reason).length - 1).toBe(urls.length);
     for (const line of detail.split('\n')) {
       expect(line.length).toBeLessThanOrEqual(DETAIL_LINE_MAX_LENGTH);
@@ -2606,9 +2606,7 @@ describe('runSchedulerAsync', () => {
 
     expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
     const message = sendNotificationAsync.mock.calls[0][0] as string;
-    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(
-      AGGREGATED_FAILURE_DETAIL_MAX_LENGTH
-    );
+    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(ALERT_MESSAGE_MAX_BYTES);
   });
 
   it('truncates a multi-line scrape-failure reason at the first newline and strips the embedded URL', async () => {

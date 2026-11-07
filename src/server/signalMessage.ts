@@ -75,19 +75,25 @@ function stripLocationSuffix(location: string): string {
   return location.slice(0, firstCommaIndex).trim();
 }
 
+const TRUNCATION_MARKER = '…';
+
 // The proxy rejects over-long messages by encoded size, so a JS `.slice()`
 // (UTF-16 code units) can still overshoot once emoji or CJK text is involved.
-// Walks whole code points so a multi-byte character is never split.
+// Walks whole code points so a multi-byte character is never split. When the
+// text is cut, a trailing "…" (counted within maxBytes) signals that lines
+// were dropped, so a truncated alert never reads as the complete picture.
 export function truncateToByteLength(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  const contentBudgetBytes = maxBytes - Buffer.byteLength(TRUNCATION_MARKER, 'utf8');
   let byteCount = 0;
   let endIndex = 0;
   for (const character of text) {
     const characterBytes = Buffer.byteLength(character, 'utf8');
-    if (byteCount + characterBytes > maxBytes) break;
+    if (byteCount + characterBytes > contentBudgetBytes) break;
     byteCount += characterBytes;
     endIndex += character.length;
   }
-  return text.slice(0, endIndex);
+  return text.slice(0, endIndex) + TRUNCATION_MARKER;
 }
 
 // Strips the four characters the Signal proxy's regex-based markdown
