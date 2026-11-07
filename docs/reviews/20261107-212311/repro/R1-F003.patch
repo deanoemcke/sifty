@@ -1,0 +1,31 @@
+diff --git a/src/server/signalMessage.test.ts b/src/server/signalMessage.test.ts
+index 094b244..75cedf6 100644
+--- a/src/server/signalMessage.test.ts
++++ b/src/server/signalMessage.test.ts
+@@ -1,5 +1,6 @@
+ import { describe, expect, it } from 'vitest';
+ import { makeListing } from '../lib/testFixtures';
++import type { SchedulerError } from './scheduler';
+ import {
+   escapeSignalMarkdown,
+   formatAlertMessage,
+@@ -349,3 +350,19 @@ describe('formatAlertSetupFailedMessage', () => {
+     expect(message).toContain('contains asterisks and underscores');
+   });
+ });
++
++describe('verify R1-F003', () => {
++  it('keeps the critical unhandled line, or marks the truncation, when a failure alert exceeds the byte cap', () => {
++    const errors: SchedulerError[] = [0, 1, 2, 3].map((index) => ({
++      kind: 'scrape' as const,
++      message: String.fromCodePoint(0x4e00 + index).repeat(200),
++    }));
++    errors.push({ kind: 'unhandled', message: 'Unhandled error: boom' });
++    const full = formatSearchFailingMessage('Search', errors);
++    expect(Buffer.byteLength(full, 'utf8')).toBeGreaterThan(2000);
++
++    const truncated = truncateToByteLength(full, 2000);
++
++    expect(truncated.includes('Unhandled') || truncated.endsWith('…')).toBe(true);
++  });
++});

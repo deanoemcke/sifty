@@ -1,0 +1,33 @@
+diff --git a/src/server/scheduler.test.ts b/src/server/scheduler.test.ts
+index 3e2e88b..8f94b5b 100644
+--- a/src/server/scheduler.test.ts
++++ b/src/server/scheduler.test.ts
+@@ -3418,3 +3418,28 @@ describe('determineExitCode', () => {
+     expect(determineExitCode(summary)).toBe(2);
+   });
+ });
++
++describe('verify R1-F008', () => {
++  it('retries a lost thumbnail on the next run (what the notify-kind comments claim)', async () => {
++    const db = freshDb();
++    const searchId = insertAlertSearch(db);
++    const seedListing = makeListing({ title: "Existing", url: "https://example.com/existing" });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
++    await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() });
++    stmtClearSearch(db).run();
++    const listing = makeListing({ title: 'Chair', url: 'https://example.com/1', thumbnailUrl: 'https://example.com/t.jpg' });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
++    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
++    const sendNotificationAsync = vi
++      .fn()
++      .mockRejectedValueOnce(new Error('400 Bad Request'))
++      .mockResolvedValue(undefined);
++    await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync });
++    expect(searchId).toBeDefined();
++    expect(sendNotificationAsync).toHaveBeenCalledTimes(2);
++    stmtClearSearch(db).run();
++    await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync });
++    const imageSends = sendNotificationAsync.mock.calls.filter((call) => call[1]?.image);
++    expect(imageSends.length).toBe(2);
++  });
++});

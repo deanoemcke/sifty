@@ -1,0 +1,21 @@
+diff --git a/src/server/signalMessage.test.ts b/src/server/signalMessage.test.ts
+index 094b244..0aaf92e 100644
+--- a/src/server/signalMessage.test.ts
++++ b/src/server/signalMessage.test.ts
+@@ -349,3 +349,16 @@ describe('formatAlertSetupFailedMessage', () => {
+     expect(message).toContain('contains asterisks and underscores');
+   });
+ });
++
++describe('verify R1-F006', () => {
++  it('does not leave a dangling zero-width joiner at the cut', () => {
++    const family = '👨‍👩‍👧';
++    const truncated = truncateToByteLength(family, 7);
++    expect(truncated.endsWith('‍')).toBe(false);
++  });
++
++  it('handles zero and negative maxBytes', () => {
++    expect(truncateToByteLength('abc', 0)).toBe('');
++    expect(truncateToByteLength('abc', -5)).toBe('');
++  });
++});

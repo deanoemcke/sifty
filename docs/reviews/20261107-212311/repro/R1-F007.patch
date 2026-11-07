@@ -1,0 +1,44 @@
+diff --git a/src/server/scheduler.test.ts b/src/server/scheduler.test.ts
+index 3e2e88b..8bd3c29 100644
+--- a/src/server/scheduler.test.ts
++++ b/src/server/scheduler.test.ts
+@@ -3418,3 +3418,39 @@ describe('determineExitCode', () => {
+     expect(determineExitCode(summary)).toBe(2);
+   });
+ });
++
++describe('verify R1-F007', () => {
++  it('records at most one notify error per listing when image and text sends both fail', async () => {
++    const db = freshDb();
++    const searchId = insertAlertSearch(db);
++    const seedListing = makeListing({ title: "Existing", url: "https://example.com/existing" });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
++    await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() });
++    stmtClearSearch(db).run();
++    const listings = [1, 2, 3].map((n) =>
++      makeListing({ title: 'Chair ' + n, url: 'https://example.com/' + n, thumbnailUrl: 'https://example.com/t' + n + '.jpg' })
++    );
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, ...listings]));
++    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
++    const sendNotificationAsync = vi.fn().mockRejectedValue(new Error('Signal notification failed: 400 Bad Request'));
++    const summary = await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync });
++    expect(searchId).toBeDefined();
++    expect(summary.searches[0].errors.length).toBeLessThanOrEqual(listings.length);
++  });
++
++  it('bounds the length of a recorded image-failure message', async () => {
++    const db = freshDb();
++    const searchId = insertAlertSearch(db);
++    const seedListing = makeListing({ title: "Existing", url: "https://example.com/existing" });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
++    await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() });
++    stmtClearSearch(db).run();
++    const listing = makeListing({ title: 'Chair', url: 'https://example.com/1', thumbnailUrl: 'https://example.com/t.jpg' });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
++    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
++    const sendNotificationAsync = vi.fn().mockRejectedValueOnce(new Error('x'.repeat(5000)));
++    const summary = await runSchedulerAsync({ database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync });
++    expect(searchId).toBeDefined();
++    expect(summary.searches[0].errors[0].message.length).toBeLessThanOrEqual(1000);
++  });
++});

@@ -1,0 +1,292 @@
+{
+  "groups": [
+    {
+      "headline": "A lost thumbnail can be reported as a Signal outage",
+      "plainSummary": "If two searches each fail to send one thumbnail, the run is reported as a total Signal outage. Every text alert in that run was actually delivered.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It causes a false page for a harmless problem, and the change is small. It also breaks the meaning of the outage code that this branch's own work relies on."
+      },
+      "ifAccepted": "A failed thumbnail is recorded as its own kind of problem. It still shows up as a minor warning, but it no longer counts towards the 'Signal is down' code. This is better than changing the outage rule itself, because the rule stays simple and a real outage is still caught by text failures.",
+      "ifLeftAlone": "Someone gets paged for a Signal outage when only pictures failed. One lost thumbnail also turns a clean run into a warning run.",
+      "howLikely": "Uncommon. It needs thumbnails to fail in at least two searches in the same run, which is what happens in a picture-only outage.",
+      "members": [
+        {
+          "findingId": "R1-F001",
+          "plainSummary": "A failed picture send is counted the same as a failed text send when deciding whether Signal is down."
+        }
+      ]
+    },
+    {
+      "headline": "Comments still say a failed picture is retried next run",
+      "plainSummary": "Several comments say a failed notification is tried again next run. That is not true for a lost thumbnail: the text goes out, the listing counts as alerted, and the picture is never retried.",
+      "fixSize": "Comment edits in two places.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The comments now mislead anyone reading the code. Fixing them costs almost nothing, and it is best done together with the thumbnail error change."
+      },
+      "ifAccepted": "The comments say that a lost thumbnail is recorded but never retried, and that the text alert still goes out.",
+      "ifLeftAlone": "A future reader will believe thumbnails are retried and may build on that wrong idea.",
+      "howLikely": "Certain to mislead anyone who reads it, but it affects no running behaviour.",
+      "members": [
+        {
+          "findingId": "R1-F008",
+          "plainSummary": "The comments describing 'notify' errors as retried next run are now wrong for a lost thumbnail."
+        }
+      ]
+    },
+    {
+      "headline": "The failure alert can silently drop its most serious line",
+      "plainSummary": "When a failure alert is too long, it is cut off with no sign that anything is missing. The cut removes the last lines, which can include the most serious error.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A silent cut that can hide a critical error is a real gap, and adding a visible marker is cheap."
+      },
+      "ifAccepted": "When the alert is cut, it ends with a clear 'cut short' mark that still fits inside the size limit. This is simpler than re-sorting the errors by seriousness, and it tells the reader something is missing.",
+      "ifLeftAlone": "A long alert can arrive without its most serious line and nothing shows that it was shortened.",
+      "howLikely": "Rare. It needs several long error messages for one search, typically in non-English text.",
+      "members": [
+        {
+          "findingId": "R1-F003",
+          "plainSummary": "The cut-off has no marker, so the missing lines cannot be noticed."
+        }
+      ]
+    },
+    {
+      "headline": "One size setting means two different things",
+      "plainSummary": "A single size setting is counted in bytes when the alert is sent and in characters when the same text is saved. A later edit to one use will quietly disagree with the other.",
+      "fixSize": "A few lines in one file, with no change in behaviour.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The two units differ for emoji and non-English text, and the fix is a rename plus one new setting."
+      },
+      "ifAccepted": "The alert gets its own byte-based setting. The saved text gets its own character-based setting. Each name says its unit.",
+      "ifLeftAlone": "Nothing breaks today. The next person to change the size will probably change one use and miss the other.",
+      "howLikely": "Low today. It would only bite when someone edits the setting later.",
+      "members": [
+        {
+          "findingId": "R1-F002",
+          "plainSummary": "The same setting is used as bytes in one place and as characters in another."
+        }
+      ]
+    },
+    {
+      "headline": "Only some alerts have a size limit",
+      "plainSummary": "Only the failure alerts are shortened to fit the Signal size limit. New-listing alerts, site-wide alerts and recovery alerts are sent at any length, so the same rejection can happen to them.",
+      "fixSize": "A few lines in the sending code, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The real limit has never been confirmed, so a wider cap would rest on a guess. The outage that prompted this work was not caused by size.",
+        "reopenIf": "The real Signal limit and its unit are confirmed, or a long listing title is seen causing a rejected alert."
+      },
+      "ifAccepted": "One size limit would apply to every message at the point where it is sent, and the call in the failure code would be removed. That is better than capping each alert type, because new alert types would be covered automatically.",
+      "ifLeftAlone": "An unusually long listing title, such as thousands of emoji, could still be rejected and that alert would be lost.",
+      "howLikely": "Rare. Listing titles from the marketplaces are normally short.",
+      "members": [
+        {
+          "findingId": "R1-F004",
+          "plainSummary": "The size cap sits in one caller rather than where every message is sent."
+        }
+      ]
+    },
+    {
+      "headline": "Cutting text can leave half an emoji",
+      "plainSummary": "When the alert is cut, a family or flag emoji can be left with a stray joining mark at the end. The text shows a slightly wrong symbol.",
+      "fixSize": "A few lines in one place, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The effect is an odd-looking symbol at the end of an alert that was already cut, and a full fix needs a text-splitting rule that is bigger than the problem.",
+        "reopenIf": "Someone sees a broken symbol in a real alert, or a simple built-in way to cut at whole symbols is wanted for other reasons."
+      },
+      "ifAccepted": "The cut would drop any trailing joining mark so no half-built emoji is left. The test names would also stop claiming more than they prove.",
+      "ifLeftAlone": "A cut alert may end in a slightly wrong symbol. The text is otherwise intact and still delivered.",
+      "howLikely": "Rare. It needs an alert long enough to be cut that also ends in a joined emoji.",
+      "members": [
+        {
+          "findingId": "R1-F006",
+          "plainSummary": "The cut works on single characters, so joined emoji can be split and the edge cases have no tests."
+        }
+      ]
+    },
+    {
+      "headline": "Failed thumbnails are logged without a length limit",
+      "plainSummary": "Each failed thumbnail adds a log entry, and a listing whose picture and text both fail adds two. The entries can carry a long error message from the Signal service.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "These entries only affect the run log. They do not reach alerts or the saved run summary.",
+        "reopenIf": "The run log grows noticeably during a long thumbnail outage."
+      },
+      "ifAccepted": "Thumbnail failure messages would be shortened before being recorded. The two-entries-per-listing case would be left as it is, because it is harmless.",
+      "ifLeftAlone": "A long picture outage produces a longer log. Nothing else changes.",
+      "howLikely": "Only during a sustained picture outage, and it costs log space rather than correctness.",
+      "members": [
+        {
+          "findingId": "R1-F007",
+          "plainSummary": "Failed-thumbnail log entries are not shortened and can double up for one listing."
+        }
+      ]
+    },
+    {
+      "headline": "Tidy repeated test setup",
+      "plainSummary": "The new thumbnail test repeats about fifteen lines of setup that several nearby tests also repeat.",
+      "fixSize": "Several tests in one file would change.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The same setup appears about twenty times in the file. Tidying only the new test would not help, and a wider tidy is outside this change.",
+        "reopenIf": "The test file is being reorganised, or someone is already adding another test with the same setup."
+      },
+      "ifAccepted": "A shared helper would hold the setup and the tests would call it.",
+      "ifLeftAlone": "The test file stays as repetitive as it already is. Nothing breaks.",
+      "howLikely": "No effect on behaviour. It is only a maintenance cost.",
+      "members": [
+        {
+          "findingId": "R1-F009",
+          "plainSummary": "The new test copies setup from its neighbours."
+        }
+      ]
+    },
+    {
+      "headline": "Proxy error text can be cut through an emoji",
+      "plainSummary": "The error text returned by the Signal service is shortened by simple length. That can split an emoji and leave a broken character in a log line.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The code was already on the main branch before this change. It only touches a log line, and the cut would have to land exactly on an emoji.",
+        "reopenIf": "Broken characters in error logs cause real trouble, for example when logs are parsed by another tool."
+      },
+      "ifAccepted": "The error text would be shortened with the new safe cut so no emoji is broken.",
+      "ifLeftAlone": "A log line occasionally shows a broken character at the end of a long error.",
+      "howLikely": "Very rare. The error text is normally plain English and the cut must fall on an emoji.",
+      "members": [
+        {
+          "findingId": "R1-F011",
+          "plainSummary": "The error text from the Signal service is cut by raw length and can split an emoji."
+        }
+      ]
+    },
+    {
+      "headline": "The 2000-byte limit has never been checked against the real service",
+      "plainSummary": "The comment says the service limits size in bytes, but nothing in the project proves that. If it actually counts characters, alerts are cut shorter than they need to be.",
+      "fixSize": "A comment or one setting, once the real limit is known.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "It can only be settled by checking the live Signal service. Cutting by bytes is the safe direction, since it never sends too much.",
+        "reopenIf": "Someone checks the Signal service's real limit, or alerts are seen being cut when they did not need to be."
+      },
+      "ifAccepted": "The real limit and its unit would be confirmed and written down, and the setting adjusted if needed.",
+      "ifLeftAlone": "Alerts may be cut a bit shorter than necessary. They are never sent too long because of this.",
+      "howLikely": "Only matters for alerts near the limit, which are rare.",
+      "members": [
+        {
+          "findingId": "R1-F005",
+          "plainSummary": "The size rule has no source and may be counting the wrong unit."
+        }
+      ]
+    },
+    {
+      "headline": "Shrink the byte-cap test to one search",
+      "plainSummary": "A suggestion to make the byte-cap test simpler by using one failing search instead of twelve. The suggestion does not work.",
+      "fixSize": "No change.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The check showed a single failing search is too short to reach the cap, so the test would pass even without the fix.",
+        "reopenIf": "The cap is lowered or each reason is allowed to be much longer."
+      },
+      "ifAccepted": "The test would use one failing search and would stop proving that the cap works.",
+      "ifLeftAlone": "The test keeps twelve searches, which it needs.",
+      "howLikely": "Not applicable. Nothing is broken.",
+      "members": [
+        {
+          "findingId": "R1-F010",
+          "plainSummary": "A suggested simplification that the reviewer's own check showed would make the test useless."
+        }
+      ]
+    },
+    {
+      "headline": "The size-cutting helper can return text longer than the limit it was given",
+      "plainSummary": "When the helper that shortens long alerts is given a very small limit (under 3 bytes), it hands back just the three-byte ellipsis mark, which is bigger than the limit. The old version never did this.",
+      "fixSize": "A line or two in one place, plus one test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It is a small slip introduced by the last fix, and the fix is a couple of lines. Leaving it means the helper quietly breaks its own promise."
+      },
+      "ifAccepted": "When the limit is too small to hold the ellipsis mark, the helper returns an empty result, as it did before the last fix. A test covers a limit of 0, 1 and 2.",
+      "ifLeftAlone": "Nothing visible today. The only limit used in the app is 2000 bytes. A future caller with a tiny limit would get text over its limit and could hit the same rejection from the Signal proxy.",
+      "howLikely": "Never today, because no code passes a limit that small.",
+      "members": [
+        {
+          "findingId": "R1-F013",
+          "plainSummary": "A limit under 3 bytes returns the 3-byte ellipsis alone, which exceeds the limit."
+        }
+      ]
+    },
+    {
+      "headline": "The type check fails on one test file",
+      "plainSummary": "Running the project's type check reports one error in a test file for image fetching. The normal checks and tests pass, so nothing flags it.",
+      "fixSize": "One line in one test file.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It is a real error with a one-line fix, and a clean type check makes later real errors easier to spot. It already existed before this branch, so it is fine to land as its own small commit."
+      },
+      "ifAccepted": "The test file's helper wraps its bytes in a form the type check accepts. The type check then passes with no errors. The test behaves the same.",
+      "ifLeftAlone": "The type check keeps reporting one error. Nobody sees it unless they run that check by hand, since the normal check script does not include it.",
+      "howLikely": "It shows every time someone runs the type check by hand. It has no effect on the running app.",
+      "members": [
+        {
+          "findingId": "R1-F012",
+          "plainSummary": "The type check rejects the raw bytes a test file passes to a response, which stops the check ending clean."
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F001",
+        "R1-F008"
+      ],
+      "plainSummary": "If thumbnail failures get their own error kind, the comments in R1-F008 should describe that kind. Do them in the same pass."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F001",
+        "R1-F007"
+      ],
+      "plainSummary": "R1-F007 is about the log entries that R1-F001 re-labels. If R1-F001 is done, R1-F007 only concerns how long those entries can be."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F002",
+        "R1-F004"
+      ],
+      "plainSummary": "If R1-F004 later moves the cap to the sending code, it would bring its own byte setting and R1-F002's rename would be partly overtaken."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F004",
+        "R1-F005"
+      ],
+      "plainSummary": "R1-F004 widens a cap whose limit and unit R1-F005 says are unconfirmed. Settle R1-F005 first."
+    }
+  ]
+}

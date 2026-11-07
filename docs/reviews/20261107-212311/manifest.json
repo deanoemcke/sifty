@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261107-212311",
+  "round": 1,
+  "branch": "fix/signal-notify-reliability",
+  "baseRef": "origin/main",
+  "baseSha": "2f2d85576ddfdf6afebe29eecc261743a1125cd6",
+  "headSha": "028f2c0ae9423d48a60c63397bf0c8d4c1839d2b",
+  "headPrNumber": 70,
+  "stackPrNumbers": [
+    70
+  ],
+  "isDeepRequested": false,
+  "mode": "full",
+  "reviewers": [
+    {
+      "id": "blind",
+      "status": "complete"
+    },
+    {
+      "id": "informed-design",
+      "status": "complete"
+    },
+    {
+      "id": "informed-data-tests",
+      "status": "complete"
+    },
+    {
+      "id": "generic-correctness",
+      "status": "complete"
+    }
+  ],
+  "phase": "done"
+}

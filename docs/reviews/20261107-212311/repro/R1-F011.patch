@@ -1,0 +1,20 @@
+diff --git a/src/server/notify.test.ts b/src/server/notify.test.ts
+index 549ac60..f3dec63 100644
+--- a/src/server/notify.test.ts
++++ b/src/server/notify.test.ts
+@@ -86,3 +86,15 @@ describe('sendSignalNotificationAsync', () => {
+     });
+   });
+ });
++
++describe('verify R1-F011', () => {
++  it('does not split a surrogate pair when cutting the proxy error body', async () => {
++    process.env.OPENCLAW_BEARER_TOKEN = 'test-token';
++    const body = 'x'.repeat(499) + '🔴' + 'tail';
++    global.fetch = vi
++      .fn()
++      .mockResolvedValue(new Response(body, { status: 400, statusText: 'Bad Request' })) as unknown as typeof fetch;
++    const error = await sendSignalNotificationAsync('hello').catch((e: Error) => e);
++    expect((error as Error).message).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
++  });
++});
