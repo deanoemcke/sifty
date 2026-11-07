@@ -72,6 +72,21 @@ function stripLocationSuffix(location: string): string {
   return location.slice(0, firstCommaIndex).trim();
 }
 
+// The proxy rejects over-long messages by encoded size, so a JS `.slice()`
+// (UTF-16 code units) can still overshoot once emoji or CJK text is involved.
+// Walks whole code points so a multi-byte character is never split.
+export function truncateToByteLength(text: string, maxBytes: number): string {
+  let byteCount = 0;
+  let endIndex = 0;
+  for (const character of text) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (byteCount + characterBytes > maxBytes) break;
+    byteCount += characterBytes;
+    endIndex += character.length;
+  }
+  return text.slice(0, endIndex);
+}
+
 // Strips the four characters the Signal proxy's regex-based markdown
 // converter treats as style markers (**, _..._, `...`, ~~). Inserting an
 // invisible character next to a marker only defeats markers that require

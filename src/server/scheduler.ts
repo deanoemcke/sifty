@@ -56,6 +56,7 @@ import {
   formatNetworkUnreachableRecoveredMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
+  truncateToByteLength,
 } from './signalMessage';
 
 // Upper bound on a single URL's quick search. The scheduler runs unattended
@@ -218,7 +219,8 @@ function sanitizeScrapeReason(raw: string): string {
 
 // Bound on the *aggregated* failure text — summary.errors joined together —
 // applied in recordSavedSearchRunStatusAndAlertAsync just before it reaches
-// the outbound Signal alert (last_run_detail uses DETAIL_LINE_MAX_LENGTH
+// the outbound Signal alert, measured in UTF-8 bytes there (the proxy limits
+// encoded size; see truncateToByteLength) (last_run_detail uses DETAIL_LINE_MAX_LENGTH
 // below instead — see its comment for why the two can't share one blob-level
 // bound). Unlike SCRAPE_ERROR_REASON_MAX_LENGTH above, this isn't applied at
 // each individual summary.errors.push() call site (notification-send
@@ -407,7 +409,8 @@ async function notifyNewListingsAsync(
       // bubble width, which visibly cramps the caption regardless of its
       // own length. A broken/oversized thumbnail must never sink the whole
       // alert (mirrors imageAttachment.ts's own stated invariant), so a
-      // failed image send is swallowed — only the text message is required.
+      // failed image send doesn't stop the text message — but it is recorded
+      // so a sustained image-only outage still reaches determineExitCode.
       if (image !== undefined) {
         try {
           await sendNotificationAsync('', { image });
@@ -415,6 +418,10 @@ async function notifyNewListingsAsync(
           console.warn(
             `[scheduler] image notification failed for ${listing.url}: ${(err as Error).message}`
           );
+          summary.errors.push({
+            kind: 'notify',
+            message: `Image notification failed for ${listing.url}: ${(err as Error).message}`,
+          });
         }
       }
       await sendNotificationAsync(message);
@@ -1014,11 +1021,12 @@ async function recordSavedSearchRunStatusAndAlertAsync(
     return;
   }
 
-  const failingMessage = (
+  const failingMessage = truncateToByteLength(
     isSetupMoment
       ? formatAlertSetupFailedMessage(row.name, healthErrors)
-      : formatSearchFailingMessage(row.name, searchScopedHealthErrors)
-  ).slice(0, AGGREGATED_FAILURE_DETAIL_MAX_LENGTH);
+      : formatSearchFailingMessage(row.name, searchScopedHealthErrors),
+    AGGREGATED_FAILURE_DETAIL_MAX_LENGTH
+  );
   await sendAlertSafelyAsync(failingMessage, summary, deps);
   stmtUpdateSavedSearchRunStatus(deps.database).run(0, detail, deps.now(), row.id);
 }

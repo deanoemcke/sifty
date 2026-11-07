@@ -1681,6 +1681,44 @@ describe('runSchedulerAsync', () => {
     expect(stmtCountAlertsForSavedSearch(db).get(searchId)?.n).toBe(2);
   });
 
+  it('records a failed image-only send as a notify error so a sustained image outage is visible', async () => {
+    const db = freshDb();
+    insertAlertSearch(db);
+    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+    stmtClearSearch(db).run(); // force a fresh scrape instead of serving the first run's cache
+
+    const listing = makeListing({
+      title: 'Chair',
+      url: 'https://example.com/1',
+      thumbnailUrl: 'https://example.com/thumb.jpg',
+    });
+    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing, listing]));
+    vi.mocked(fetchListingImageAttachmentAsync).mockResolvedValue('data:image/jpeg;base64,abc');
+    const sendNotificationAsync = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Signal notification failed: 400 Bad Request'))
+      .mockResolvedValueOnce(undefined);
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(summary.searches[0].errors).toEqual([
+      {
+        kind: 'notify',
+        message: expect.stringContaining('400 Bad Request'),
+      },
+    ]);
+  });
+
   it('does not retry when the notifier rejects a message that never had an image attached', async () => {
     const db = freshDb();
     const searchId = insertAlertSearch(db);
@@ -2543,6 +2581,35 @@ describe('runSchedulerAsync', () => {
     for (const line of detail.split('\n')) {
       expect(line.length).toBeLessThanOrEqual(DETAIL_LINE_MAX_LENGTH);
     }
+  });
+
+  it('caps the outbound failure alert by UTF-8 byte length, not just JS string length', async () => {
+    const urls = Array.from(
+      { length: 12 },
+      (_, i) => `https://facebook.com/marketplace/search-${i}`
+    );
+    const db = freshDb();
+    insertAlertSearch(db, { urls });
+    let failureIndex = 0;
+    vi.mocked(getRecipeForUrl).mockImplementation(() => {
+      const distinctMultiByteReason = String.fromCodePoint(0x4e00 + failureIndex++).repeat(
+        SCRAPE_ERROR_REASON_MAX_LENGTH
+      );
+      return makeFailingRecipeWithReason('facebook', distinctMultiByteReason);
+    });
+    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
+
+    await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync,
+    });
+
+    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
+    const message = sendNotificationAsync.mock.calls[0][0] as string;
+    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(
+      AGGREGATED_FAILURE_DETAIL_MAX_LENGTH
+    );
   });
 
   it('truncates a multi-line scrape-failure reason at the first newline and strips the embedded URL', async () => {

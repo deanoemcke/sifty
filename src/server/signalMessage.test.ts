@@ -11,7 +11,31 @@ import {
   formatNetworkUnreachableRecoveredMessage,
   formatSearchFailingMessage,
   formatSearchRecoveredMessage,
+  truncateToByteLength,
 } from './signalMessage';
+
+describe('truncateToByteLength', () => {
+  it('returns text unchanged when it already fits', () => {
+    expect(truncateToByteLength('hello', 10)).toBe('hello');
+  });
+
+  it('caps the UTF-8 byte length even when JS string length is under the cap', () => {
+    const emojiHeavyText = '🔴'.repeat(1000);
+    expect(emojiHeavyText.length).toBe(2000);
+
+    const truncated = truncateToByteLength(emojiHeavyText, 2000);
+
+    expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(2000);
+    expect(truncated).toBe('🔴'.repeat(500));
+  });
+
+  it('never splits a multi-byte character', () => {
+    const truncated = truncateToByteLength('ab🔴cd', 4);
+
+    expect(truncated).toBe('ab');
+    expect(truncated).not.toContain('�');
+  });
+});
 
 describe('formatAlertMessage', () => {
   it('composes a bold title, then a location/price line, then the url — no saved search name or source', () => {
