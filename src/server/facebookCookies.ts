@@ -150,28 +150,59 @@ export type FacebookCookieStatus =
   | {
       isSynced: true;
       syncedAtMs: number;
+      // false when loading would throw, or no unexpired login cookie remains:
+      // the stored set exists but Facebook scraping cannot use it.
+      isLoginUsable: false;
+      unusableReason: string;
+    }
+  | {
+      isSynced: true;
+      syncedAtMs: number;
+      isLoginUsable: true;
+      // Unexpired cookies only, the same set loadFacebookCookies returns.
       cookieCount: number;
       // When the session ends: the earliest expiry among the login cookies.
-      // null when they are session cookies (no expiry) or absent.
+      // null when any login cookie is a session cookie, since the session then
+      // ends at an unknown time (a persistent sibling is only an upper bound).
       loginExpiryMs: number | null;
     };
 
 // Metadata only — cookie values never leave this module through the status.
+// Judged by the same rules as loadFacebookCookies (expired cookies dropped), plus
+// the unexpired-login-cookie rule saveFacebookCookies enforces, so a caller can
+// tell a usable login from a dead one without attempting a scrape.
 export function getFacebookCookieStatus(database: Database.Database): FacebookCookieStatus {
   const row = stmtGetFacebookCookies(database).get();
   if (!row) return { isSynced: false };
 
-  const storedCookies = JSON.parse(row.cookies_json) as RawFacebookCookie[];
-  const loginExpiriesSeconds = storedCookies
+  let unexpiredCookies: RawFacebookCookie[];
+  try {
+    unexpiredCookies = parseFbCookies(row.cookies_json);
+    requireLoginCookie(unexpiredCookies);
+  } catch (error) {
+    if (!(error instanceof MissingFacebookCookiesError)) throw error;
+    return {
+      isSynced: true,
+      syncedAtMs: row.synced_at,
+      isLoginUsable: false,
+      unusableReason: error.message,
+    };
+  }
+
+  const loginExpiriesSeconds = unexpiredCookies
     .filter((cookie) => LOGIN_COOKIE_NAMES.has(String(cookie.name)))
-    .map(cookieExpirySeconds)
-    .filter((expirySeconds) => expirySeconds !== undefined);
+    .map(cookieExpirySeconds);
+  const hasSessionLoginCookie = loginExpiriesSeconds.some(
+    (expirySeconds) => expirySeconds === undefined
+  );
 
   return {
     isSynced: true,
     syncedAtMs: row.synced_at,
-    cookieCount: storedCookies.length,
-    loginExpiryMs:
-      loginExpiriesSeconds.length > 0 ? Math.min(...loginExpiriesSeconds) * 1000 : null,
+    isLoginUsable: true,
+    cookieCount: unexpiredCookies.length,
+    loginExpiryMs: hasSessionLoginCookie
+      ? null
+      : Math.min(...(loginExpiriesSeconds as number[])) * 1000,
   };
 }

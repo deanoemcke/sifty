@@ -5,6 +5,7 @@ import {
   getFacebookCookieStatus,
   getStoredFacebookCookiesJson,
   InvalidFacebookCookiePayloadError,
+  loadFacebookCookies,
   MissingFacebookCookiesError,
   parseFbCookies,
   saveFacebookCookies,
@@ -180,6 +181,7 @@ describe('getFacebookCookieStatus', () => {
     expect(getFacebookCookieStatus(database)).toEqual({
       isSynced: true,
       syncedAtMs: Date.parse('2026-11-24T09:00:00Z'),
+      isLoginUsable: true,
       cookieCount: 4,
       loginExpiryMs: Date.parse('2027-01-10T00:00:00Z'),
     });
@@ -195,7 +197,97 @@ describe('getFacebookCookieStatus', () => {
       ])
     );
 
-    expect(getFacebookCookieStatus(database)).toMatchObject({ loginExpiryMs: null });
+    expect(getFacebookCookieStatus(database)).toMatchObject({
+      isLoginUsable: true,
+      loginExpiryMs: null,
+    });
+  });
+
+  it('reports no login expiry when only some login cookies are session cookies, since the session end is unknown', () => {
+    const database = freshDb();
+    saveFacebookCookies(
+      database,
+      JSON.stringify([
+        { name: 'c_user', value: '1', expirationDate: Date.now() / 1000 + 3600 },
+        { name: 'xs', value: '2' },
+      ])
+    );
+
+    expect(getFacebookCookieStatus(database)).toMatchObject({
+      isLoginUsable: true,
+      loginExpiryMs: null,
+    });
+  });
+
+  it('reports an unusable login once the stored cookies have expired, matching what loading would do', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
+    const database = freshDb();
+    saveFacebookCookies(
+      database,
+      JSON.stringify([
+        { name: 'c_user', value: '1', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
+        { name: 'xs', value: '2', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
+      ])
+    );
+    vi.setSystemTime(new Date('2026-11-24T11:00:00Z'));
+
+    expect(() => loadFacebookCookies(database)).toThrow(MissingFacebookCookiesError);
+    expect(getFacebookCookieStatus(database)).toMatchObject({
+      isSynced: true,
+      isLoginUsable: false,
+      syncedAtMs: Date.parse('2026-11-24T09:00:00Z'),
+      unusableReason: expect.stringContaining('expired'),
+    });
+  });
+
+  it('counts only unexpired cookies and ignores an expired login cookie when reporting the expiry', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
+    const database = freshDb();
+    saveFacebookCookies(
+      database,
+      JSON.stringify([
+        { name: 'c_user', value: '1', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
+        { name: 'xs', value: '2', expirationDate: Date.parse('2027-01-10T00:00:00Z') / 1000 },
+      ])
+    );
+    vi.setSystemTime(new Date('2026-11-24T11:00:00Z'));
+
+    expect(getFacebookCookieStatus(database)).toMatchObject({
+      isLoginUsable: true,
+      cookieCount: 1,
+      loginExpiryMs: Date.parse('2027-01-10T00:00:00Z'),
+    });
+  });
+
+  it('reports an unusable login when only non-login cookies remain unexpired', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
+    const database = freshDb();
+    saveFacebookCookies(
+      database,
+      JSON.stringify([
+        { name: 'xs', value: '2', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
+        { name: 'wd', value: '3' },
+      ])
+    );
+    vi.setSystemTime(new Date('2026-11-24T11:00:00Z'));
+
+    expect(getFacebookCookieStatus(database)).toMatchObject({
+      isSynced: true,
+      isLoginUsable: false,
+    });
+  });
+
+  it('reports an unusable login, rather than throwing, when the stored cookies are corrupt', () => {
+    const database = freshDb();
+    database
+      .prepare('INSERT INTO facebook_cookies (id, cookies_json, synced_at) VALUES (1, ?, ?)')
+      .run('oops', 1);
+
+    expect(getFacebookCookieStatus(database)).toMatchObject({
+      isSynced: true,
+      isLoginUsable: false,
+      syncedAtMs: 1,
+    });
   });
 
   it('never includes cookie values', () => {
