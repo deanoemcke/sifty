@@ -1,7 +1,8 @@
 import type { FacebookCookieStatus } from '../server/facebookCookies';
 import { formatDuration, pluralise } from './formatDuration';
 
-export type StatusTone = 'ok' | 'warning' | 'problem';
+// 'neutral' is for a state that is intended, such as a service parked off.
+export type StatusTone = 'ok' | 'warning' | 'problem' | 'neutral';
 
 export type CookieStatusView = {
   tone: StatusTone;
