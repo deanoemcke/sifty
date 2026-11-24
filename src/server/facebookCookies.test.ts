@@ -122,7 +122,7 @@ describe('getFacebookCookieStatus', () => {
     expect(getFacebookCookieStatus(freshDb())).toEqual({ isSynced: false });
   });
 
-  it('reports when cookies were synced, how many, and the earliest expiry among them', () => {
+  it('reports when cookies were synced, how many, and when the login cookies expire', () => {
     vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
     const database = freshDb();
     saveFacebookCookies(
@@ -130,23 +130,31 @@ describe('getFacebookCookieStatus', () => {
       JSON.stringify([
         { name: 'c_user', value: '1', expirationDate: Date.parse('2027-02-14T00:00:00Z') / 1000 },
         { name: 'xs', value: '2', expires: Date.parse('2027-01-10T00:00:00Z') / 1000 },
-        { name: 'presence', value: '3' },
+        { name: 'wd', value: '3', expirationDate: Date.parse('2026-12-01T00:00:00Z') / 1000 },
+        { name: 'presence', value: '4' },
       ])
     );
 
+    // `wd` expires sooner than either login cookie but doesn't end the session.
     expect(getFacebookCookieStatus(database)).toEqual({
       isSynced: true,
       syncedAtMs: Date.parse('2026-11-24T09:00:00Z'),
-      cookieCount: 3,
-      earliestExpiryMs: Date.parse('2027-01-10T00:00:00Z'),
+      cookieCount: 4,
+      loginExpiryMs: Date.parse('2027-01-10T00:00:00Z'),
     });
   });
 
-  it('reports no earliest expiry when every cookie is a session cookie', () => {
+  it('reports no login expiry when the login cookies are session cookies or missing', () => {
     const database = freshDb();
-    saveFacebookCookies(database, JSON.stringify([{ name: 'presence', value: '3' }]));
+    saveFacebookCookies(
+      database,
+      JSON.stringify([
+        { name: 'xs', value: '2' },
+        { name: 'wd', value: '3', expirationDate: Date.now() / 1000 + 3600 },
+      ])
+    );
 
-    expect(getFacebookCookieStatus(database)).toMatchObject({ earliestExpiryMs: null });
+    expect(getFacebookCookieStatus(database)).toMatchObject({ loginExpiryMs: null });
   });
 
   it('never includes cookie values', () => {

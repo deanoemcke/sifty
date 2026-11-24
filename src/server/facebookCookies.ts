@@ -87,13 +87,19 @@ export function getStoredFacebookCookiesJson(database: Database.Database): strin
     .get()?.cookies_json;
 }
 
+// Facebook's other cookies (wd, presence, dpr, …) are short-lived or cosmetic and
+// rotate constantly; only these two decide whether the login is still valid.
+const LOGIN_COOKIE_NAMES: ReadonlySet<string> = new Set(['c_user', 'xs']);
+
 export type FacebookCookieStatus =
   | { isSynced: false }
   | {
       isSynced: true;
       syncedAtMs: number;
       cookieCount: number;
-      earliestExpiryMs: number | null;
+      // When the session ends: the earliest expiry among the login cookies.
+      // null when they are session cookies (no expiry) or absent.
+      loginExpiryMs: number | null;
     };
 
 // Metadata only — cookie values never leave this module through the status.
@@ -106,7 +112,8 @@ export function getFacebookCookieStatus(database: Database.Database): FacebookCo
   if (!row) return { isSynced: false };
 
   const storedCookies = JSON.parse(row.cookies_json) as RawFacebookCookie[];
-  const expiriesSeconds = storedCookies
+  const loginExpiriesSeconds = storedCookies
+    .filter((cookie) => LOGIN_COOKIE_NAMES.has(String(cookie.name)))
     .map(cookieExpirySeconds)
     .filter((expirySeconds) => expirySeconds !== undefined);
 
@@ -114,7 +121,8 @@ export function getFacebookCookieStatus(database: Database.Database): FacebookCo
     isSynced: true,
     syncedAtMs: row.synced_at,
     cookieCount: storedCookies.length,
-    earliestExpiryMs: expiriesSeconds.length > 0 ? Math.min(...expiriesSeconds) * 1000 : null,
+    loginExpiryMs:
+      loginExpiriesSeconds.length > 0 ? Math.min(...loginExpiriesSeconds) * 1000 : null,
   };
 }
 
