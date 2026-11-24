@@ -93,6 +93,10 @@ p {
   color: var(--problem);
 }
 
+.tone-neutral {
+  color: var(--muted);
+}
+
 button {
   margin-top: 8px;
   padding: 6px 14px;
@@ -179,4 +183,35 @@ select {
   font: 12px/1.4 ui-monospace, 'SF Mono', Menlo, monospace;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.services {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.service {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.service:first-child {
+  border-top: 0;
+}
+
+.service-name {
+  font-weight: 600;
+}
+
+.service-detail {
+  grid-column: 1 / -1;
+}
+
+.service-actions button {
+  margin: 0 0 0 8px;
 }

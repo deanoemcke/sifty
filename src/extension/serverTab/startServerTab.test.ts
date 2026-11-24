@@ -34,6 +34,20 @@ const DEFAULT_REPLIES: Record<string, unknown> = {
     ],
   },
   tailLog: { ok: true, isLogFilePresent: true, logLines: ['first line', 'second line'] },
+  getServices: {
+    ok: true,
+    servicesByName: {
+      webapp: { isInstalled: true, isLoaded: true, isRunning: true, isEnabled: true, pid: 4242 },
+      ngrok: { isInstalled: false, isLoaded: false, isRunning: false, isEnabled: true, pid: null },
+      scheduler: {
+        isInstalled: true,
+        isLoaded: false,
+        isRunning: false,
+        isEnabled: false,
+        pid: null,
+      },
+    },
+  },
 };
 
 // A stand-in for the `chrome` global: answers native messages from a table,
@@ -388,5 +402,88 @@ describe('startServerTab — logs', () => {
 
     expect(root.querySelector('[data-section="logs"] script')).toBeNull();
     expect(sectionText('logs')).toContain('<script>boom()</script>');
+  });
+});
+
+function serviceRow(serviceName: string): HTMLElement {
+  const row = root.querySelector<HTMLElement>(
+    `[data-section="services"] [data-service="${serviceName}"]`
+  );
+  if (!row) throw new Error(`No row for ${serviceName}`);
+  return row;
+}
+
+describe('startServerTab — services', () => {
+  it('shows each service with its state', async () => {
+    await openTab();
+
+    expect(serviceRow('webapp').textContent).toContain('Webapp (dev server)');
+    expect(serviceRow('webapp').textContent).toContain('Running (pid 4242)');
+    expect(serviceRow('scheduler').textContent).toContain('Off');
+    expect(serviceRow('ngrok').textContent).toContain('Not installed');
+    expect(serviceRow('ngrok').textContent).toContain('npm run services:install');
+  });
+
+  it('offers only the actions that make sense for each state', async () => {
+    await openTab();
+
+    const actionsOf = (name: string) =>
+      [...serviceRow(name).querySelectorAll<HTMLElement>('button')].map(
+        (button) => button.dataset.action
+      );
+    expect(actionsOf('webapp')).toEqual(['restart', 'stop']);
+    expect(actionsOf('scheduler')).toEqual(['start']);
+    expect(actionsOf('ngrok')).toEqual([]);
+  });
+
+  it('sends the chosen action to the host, then shows the service as it now is', async () => {
+    let isSchedulerRunning = false;
+    const fake = makeFakeChrome({
+      replies: {
+        getServices: () => ({
+          ok: true,
+          servicesByName: {
+            scheduler: {
+              isInstalled: true,
+              isLoaded: isSchedulerRunning,
+              isRunning: isSchedulerRunning,
+              isEnabled: isSchedulerRunning,
+              pid: isSchedulerRunning ? 777 : null,
+            },
+          },
+        }),
+        controlService: () => {
+          isSchedulerRunning = true;
+          return { ok: true, serviceName: 'scheduler', state: {} };
+        },
+      },
+    });
+    await openTab(fake);
+
+    await click('[data-service="scheduler"] button[data-action="start"]');
+
+    expect(fake.requests).toContainEqual({
+      type: 'controlService',
+      serviceName: 'scheduler',
+      action: 'start',
+    });
+    expect(serviceRow('scheduler').textContent).toContain('Running (pid 777)');
+  });
+
+  it("shows the host's message when an action fails, keeping the service as it was", async () => {
+    const fake = makeFakeChrome({
+      replies: {
+        controlService: {
+          ok: false,
+          error: 'launchctl bootstrap failed (exit 5): Input/output error',
+        },
+      },
+    });
+    await openTab(fake);
+
+    await click('[data-service="webapp"] button[data-action="restart"]');
+
+    expect(sectionText('services')).toContain('Input/output error');
+    expect(serviceRow('webapp').textContent).toContain('Running (pid 4242)');
   });
 });

@@ -1,6 +1,7 @@
 // Typed requests to the native host, with replies checked at the boundary.
 
-import type { RunHistoryEntry } from '../../nativeHost/handleMessage';
+import type { ServiceAction } from '../../nativeHost/controlService';
+import type { InstalledServiceState, RunHistoryEntry } from '../../nativeHost/handleMessage';
 import { NATIVE_HOST_NAME } from '../../nativeHost/hostName';
 import type { FacebookCookieStatus } from '../../server/facebookCookies';
 import type { SchedulerSettings } from '../../server/settings';
@@ -31,6 +32,8 @@ export type HostClient = {
   getRunHistory(): Promise<RunHistoryEntry[]>;
   updateSettings(changes: SchedulerSettings): Promise<SchedulerSettings>;
   tailLog(logName: string, lineCount: number): Promise<LogTail>;
+  getServices(): Promise<Record<string, InstalledServiceState>>;
+  controlService(serviceName: string, action: ServiceAction): Promise<void>;
 };
 
 type ReplyRecord = Record<string, unknown>;
@@ -85,6 +88,16 @@ export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostCli
     async updateSettings(changes) {
       const reply = await requestAsync({ type: 'updateSettings', changes });
       return requireField(reply, 'settings', isObject) as SchedulerSettings;
+    },
+    async getServices() {
+      const reply = await requestAsync({ type: 'getServices' });
+      return requireField(reply, 'servicesByName', isObject) as Record<
+        string,
+        InstalledServiceState
+      >;
+    },
+    async controlService(serviceName, action) {
+      await requestAsync({ type: 'controlService', serviceName, action });
     },
     async tailLog(logName, lineCount) {
       const reply = await requestAsync({ type: 'tailLog', logName, lineCount });
