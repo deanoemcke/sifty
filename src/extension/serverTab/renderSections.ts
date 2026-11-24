@@ -28,14 +28,27 @@ function renderCookieView(view: CookieStatusView): Node[] {
   ];
 }
 
+export type CookiesSectionActions = {
+  syncMessage: string | undefined;
+  onSyncNow: () => void;
+};
+
 export function renderCookiesSection(
   container: HTMLElement,
   status: FacebookCookieStatus | undefined,
-  nowMs: number
+  nowMs: number,
+  actions: CookiesSectionActions
 ): void {
+  const syncButton = createElement('button', { text: 'Sync now' });
+  syncButton.addEventListener('click', actions.onSyncNow);
+
   container.replaceChildren(
     createElement('h2', { text: 'Facebook cookies' }),
-    ...(status ? renderCookieView(describeCookieStatus(status, nowMs)) : [])
+    ...(status ? renderCookieView(describeCookieStatus(status, nowMs)) : []),
+    syncButton,
+    ...(actions.syncMessage
+      ? [createElement('p', { text: actions.syncMessage, className: 'detail sync-message' })]
+      : [])
   );
 }
 

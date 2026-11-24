@@ -73,7 +73,7 @@ export async function syncFacebookCookiesAsync(chromeApi: ChromeApi): Promise<Co
   }
 }
 
-function describeOutcome(outcome: CookieSyncOutcome): string {
+export function describeSyncOutcome(outcome: CookieSyncOutcome): string {
   switch (outcome.kind) {
     case 'synced':
       return `Cookie sync succeeded: sent ${outcome.cookieCount} Facebook cookies`;
@@ -90,7 +90,7 @@ export function startCookieSync(chromeApi: ChromeApi, options: { log: (message: 
   const scheduler = createCookieSyncScheduler({
     waitMs: COOKIE_SYNC_WAIT_MS,
     syncAsync: async () => {
-      options.log(describeOutcome(await syncFacebookCookiesAsync(chromeApi)));
+      options.log(describeSyncOutcome(await syncFacebookCookiesAsync(chromeApi)));
     },
     onSyncError: (error) => options.log(`Cookie sync failed unexpectedly: ${describeError(error)}`),
   });

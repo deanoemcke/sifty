@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BrowserCookie } from '../cookieSync';
 import type { ChromeApi } from '../startCookieSync';
 import { startServerTab } from './startServerTab';
 
@@ -41,6 +42,7 @@ function makeFakeChrome(
   options: {
     replies?: Record<string, unknown | ((request: HostRequest) => unknown)>;
     hostUnreachableError?: Error;
+    browserCookies?: BrowserCookie[];
   } = {}
 ) {
   const replies = { ...DEFAULT_REPLIES, ...options.replies };
@@ -54,7 +56,10 @@ function makeFakeChrome(
   });
 
   const chromeApi: ChromeApi = {
-    cookies: { getAll: async () => [], onChanged: { addListener: () => {} } },
+    cookies: {
+      getAll: async () => options.browserCookies ?? [],
+      onChanged: { addListener: () => {} },
+    },
     runtime: {
       sendNativeMessage,
       onStartup: { addListener: () => {} },
@@ -242,5 +247,144 @@ describe('startServerTab — scheduler settings', () => {
 
     expect(sectionText('settings')).toContain('database is locked');
     expect(settingsInput('targetIntervalMinutes').value).toBe('60');
+  });
+});
+
+const LOGGED_IN_COOKIE: BrowserCookie = {
+  name: 'xs',
+  value: 'session',
+  domain: '.facebook.com',
+  path: '/',
+  secure: true,
+  httpOnly: true,
+  sameSite: 'no_restriction',
+  hostOnly: false,
+  session: false,
+  storeId: '0',
+  expirationDate: 1_900_000_000,
+};
+
+async function click(selector: string): Promise<void> {
+  const element = root.querySelector<HTMLElement>(selector);
+  if (!element) throw new Error(`Nothing matches ${selector}`);
+  element.click();
+  await vi.advanceTimersByTimeAsync(0);
+}
+
+describe('startServerTab — Sync now', () => {
+  it('syncs the browser cookies to the host, says so, and refreshes the cookie health', async () => {
+    const fake = makeFakeChrome({
+      browserCookies: [LOGGED_IN_COOKIE],
+      replies: { syncCookies: { ok: true, cookies: { isSynced: true } } },
+    });
+    await openTab(fake);
+    const statusRequestsBefore = fake.requests.filter((r) => r.type === 'getStatus').length;
+
+    await click('[data-section="cookies"] button');
+
+    expect(fake.requests.some((request) => request.type === 'syncCookies')).toBe(true);
+    expect(sectionText('cookies')).toContain('Cookie sync succeeded: sent 1 Facebook cookies');
+    expect(fake.requests.filter((r) => r.type === 'getStatus').length).toBe(
+      statusRequestsBefore + 1
+    );
+  });
+
+  it('explains when Chrome has no Facebook cookies to sync', async () => {
+    await openTab(makeFakeChrome({ browserCookies: [] }));
+
+    await click('[data-section="cookies"] button');
+
+    expect(sectionText('cookies')).toContain('no Facebook cookies');
+  });
+});
+
+describe('startServerTab — refreshing', () => {
+  it('refreshes status and run history on a timer without touching what is typed in the form', async () => {
+    const fake = await openTab();
+    settingsInput('targetIntervalMinutes').value = '75';
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(fake.requests.filter((request) => request.type === 'getStatus')).toHaveLength(2);
+    expect(fake.requests.filter((request) => request.type === 'getRunHistory')).toHaveLength(2);
+    expect(settingsInput('targetIntervalMinutes').value).toBe('75');
+  });
+
+  it('shows the host error when a refresh fails, and recovers when the host comes back', async () => {
+    let isHostUp = true;
+    const fake = makeFakeChrome({
+      replies: {
+        getStatus: (): unknown => {
+          if (!isHostUp) throw new Error('host exited');
+          return DEFAULT_REPLIES.getStatus;
+        },
+      },
+    });
+    await openTab(fake);
+
+    isHostUp = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(root.querySelector('[data-section="host-error"]')?.textContent).toContain('host exited');
+
+    isHostUp = true;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(root.querySelector<HTMLElement>('[data-section="host-error"]')?.hidden).toBe(true);
+  });
+});
+
+describe('startServerTab — logs', () => {
+  function logSelect(): HTMLSelectElement {
+    const select = root.querySelector<HTMLSelectElement>('[data-section="logs"] select');
+    if (!select) throw new Error('No log selector');
+    return select;
+  }
+
+  it('offers the readable logs and shows the last 200 lines of the scheduler log first', async () => {
+    const fake = await openTab();
+
+    expect([...logSelect().options].map((option) => option.value)).toEqual([
+      'scheduler',
+      'scheduler-launchd',
+      'native-host',
+    ]);
+    expect(logSelect().value).toBe('scheduler');
+    expect(fake.requests).toContainEqual({ type: 'tailLog', logName: 'scheduler', lineCount: 200 });
+    expect(sectionText('logs')).toContain('first line');
+    expect(sectionText('logs')).toContain('second line');
+  });
+
+  it('loads another log when it is chosen', async () => {
+    const fake = await openTab();
+
+    logSelect().value = 'native-host';
+    logSelect().dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fake.requests).toContainEqual({
+      type: 'tailLog',
+      logName: 'native-host',
+      lineCount: 200,
+    });
+  });
+
+  it('says so when the log file does not exist yet', async () => {
+    await openTab(
+      makeFakeChrome({ replies: { tailLog: { ok: true, isLogFilePresent: false, logLines: [] } } })
+    );
+
+    expect(sectionText('logs')).toContain('No log file yet');
+  });
+
+  it('shows log lines as text, never as markup', async () => {
+    await openTab(
+      makeFakeChrome({
+        replies: {
+          tailLog: { ok: true, isLogFilePresent: true, logLines: ['<script>boom()</script>'] },
+        },
+      })
+    );
+
+    expect(root.querySelector('[data-section="logs"] script')).toBeNull();
+    expect(sectionText('logs')).toContain('<script>boom()</script>');
   });
 });
