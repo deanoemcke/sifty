@@ -4,6 +4,7 @@ import { initSchema } from './db';
 import {
   getFacebookCookieStatus,
   getStoredFacebookCookiesJson,
+  InvalidFacebookCookiePayloadError,
   MissingFacebookCookiesError,
   parseFbCookies,
   saveFacebookCookies,
@@ -35,21 +36,25 @@ describe('facebook cookie store', () => {
   });
 
   it.each([
-    ['malformed JSON', '{not json'],
-    ['an empty array', '[]'],
+    ['malformed JSON', '{not json', InvalidFacebookCookiePayloadError],
+    ['an empty array', '[]', InvalidFacebookCookiePayloadError],
+    ['a non-array', '{"name":"c_user"}', InvalidFacebookCookiePayloadError],
     [
       'only expired cookies',
       JSON.stringify([{ name: 'c_user', value: '1', expirationDate: 1000 }]),
+      MissingFacebookCookiesError,
     ],
-  ])('rejects %s and keeps the previously saved cookies', (_description, badCookiesJson) => {
+  ])('rejects %s and keeps the previously saved cookies', (_description, badCookiesJson, errorClass) => {
     const database = freshDb();
     const goodCookiesJson = JSON.stringify([{ name: 'c_user', value: 'good' }]);
     saveFacebookCookies(database, goodCookiesJson);
 
-    expect(() => saveFacebookCookies(database, badCookiesJson)).toThrow(
-      MissingFacebookCookiesError
-    );
+    expect(() => saveFacebookCookies(database, badCookiesJson)).toThrow(errorClass);
     expect(getStoredFacebookCookiesJson(database)).toBe(goodCookiesJson);
+  });
+
+  it('reports a rejected sync payload without asking the user to log in', () => {
+    expect(() => saveFacebookCookies(freshDb(), '{not json')).not.toThrow(/log in/i);
   });
 
   it('stores only the unexpired cookies', () => {
@@ -74,12 +79,30 @@ describe('facebook cookie store', () => {
       value: 'x',
     }));
 
+    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(tooManyCookies))).toThrow(
+      InvalidFacebookCookiePayloadError
+    );
     expect(() => saveFacebookCookies(freshDb(), JSON.stringify(tooManyCookies))).toThrow(/200/);
+  });
+
+  it('applies the cookie count cap to the payload, not to what survives the expiry filter', () => {
+    const cookies = Array.from({ length: 250 }, (_, index) => ({
+      name: index === 0 ? 'c_user' : `cookie${index}`,
+      value: 'x',
+      ...(index >= 190 ? { expirationDate: 1000 } : {}),
+    }));
+
+    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(cookies))).toThrow(
+      InvalidFacebookCookiePayloadError
+    );
   });
 
   it('rejects a cookie payload larger than 64 KiB', () => {
     const oversizedCookies = [{ name: 'c_user', value: 'x'.repeat(64 * 1024) }];
 
+    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(oversizedCookies))).toThrow(
+      InvalidFacebookCookiePayloadError
+    );
     expect(() => saveFacebookCookies(freshDb(), JSON.stringify(oversizedCookies))).toThrow(
       /64 KiB/
     );

@@ -24,26 +24,40 @@ export function cookieExpirySeconds(cookie: RawFacebookCookie): number | undefin
   return undefined;
 }
 
-// Parses a JSON array of cookies (as synced from Chrome by the Sifty Server
-// extension). Validated up front so a missing/malformed/expired cookie set fails
-// immediately, before any browser is launched or network request made, instead
-// of only surfacing after a full, doomed scrape attempt.
-export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCookie[] {
-  if (!cookiesJson) throw new MissingFacebookCookiesError();
+// Thrown when a payload offered for storing is itself unusable (too big, too
+// many cookies, not a JSON array). That is a fault in the sync, not in the user's
+// Facebook login, so it deliberately does not carry LOGIN_REQUIRED_MESSAGE.
+export class InvalidFacebookCookiePayloadError extends Error {
+  constructor(reason: string) {
+    super(`Facebook cookie payload rejected. ${reason}`);
+    this.name = 'InvalidFacebookCookiePayloadError';
+  }
+}
 
+const MAX_COOKIE_PAYLOAD_BYTES = 64 * 1024;
+const MAX_COOKIE_COUNT = 200;
+
+function parseCookieArray(
+  cookiesJson: string,
+  createError: (reason: string) => Error
+): RawFacebookCookie[] {
   let raw: unknown;
   try {
     raw = JSON.parse(cookiesJson);
   } catch {
-    throw new MissingFacebookCookiesError('The cookies are not valid JSON.');
+    throw createError('The cookies are not valid JSON.');
   }
 
   if (!Array.isArray(raw) || raw.length === 0) {
-    throw new MissingFacebookCookiesError('The cookies must be a non-empty JSON array.');
+    throw createError('The cookies must be a non-empty JSON array.');
   }
 
+  return raw as RawFacebookCookie[];
+}
+
+function requireUnexpiredCookies(cookies: RawFacebookCookie[]): RawFacebookCookie[] {
   const nowSeconds = Date.now() / 1000;
-  const unexpired = (raw as RawFacebookCookie[]).filter((cookie) => {
+  const unexpired = cookies.filter((cookie) => {
     const expiry = cookieExpirySeconds(cookie);
     return expiry === undefined || expiry > nowSeconds;
   });
@@ -55,22 +69,40 @@ export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCook
   return unexpired;
 }
 
-const MAX_COOKIE_PAYLOAD_BYTES = 64 * 1024;
-const MAX_COOKIE_COUNT = 200;
+// Parses a JSON array of cookies (as synced from Chrome by the Sifty Server
+// extension). Validated up front so a missing/malformed/expired cookie set fails
+// immediately, before any browser is launched or network request made, instead
+// of only surfacing after a full, doomed scrape attempt.
+export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCookie[] {
+  if (!cookiesJson) throw new MissingFacebookCookiesError();
+
+  return requireUnexpiredCookies(
+    parseCookieArray(cookiesJson, (reason) => new MissingFacebookCookiesError(reason))
+  );
+}
 
 // Cookies arrive from outside the process (the browser extension), so size and
-// count are capped before parsing, and the set is fully validated before it
-// replaces what's stored — a rejected sync leaves the previous cookies in use.
+// count are capped on the payload as received (before the expiry filter), and the
+// set is fully validated before it replaces what's stored — a rejected sync
+// leaves the previous cookies in use. Structurally unusable payloads throw
+// InvalidFacebookCookiePayloadError; a payload whose cookies have all expired
+// throws MissingFacebookCookiesError, since the user needs to log in again.
 // One row (id = 1): the newest set replaces the previous one wholesale, so there
 // is never a mix of old and new cookies.
 export function saveFacebookCookies(database: Database.Database, cookiesJson: string): void {
   if (Buffer.byteLength(cookiesJson, 'utf8') > MAX_COOKIE_PAYLOAD_BYTES) {
-    throw new Error('Facebook cookie payload is larger than 64 KiB.');
+    throw new InvalidFacebookCookiePayloadError('The payload is larger than 64 KiB.');
   }
-  const unexpiredCookies = parseFbCookies(cookiesJson);
-  if (unexpiredCookies.length > MAX_COOKIE_COUNT) {
-    throw new Error(`Facebook cookie set has more than ${MAX_COOKIE_COUNT} cookies.`);
+  const payloadCookies = parseCookieArray(
+    cookiesJson,
+    (reason) => new InvalidFacebookCookiePayloadError(reason)
+  );
+  if (payloadCookies.length > MAX_COOKIE_COUNT) {
+    throw new InvalidFacebookCookiePayloadError(
+      `The set has more than ${MAX_COOKIE_COUNT} cookies.`
+    );
   }
+  const unexpiredCookies = requireUnexpiredCookies(payloadCookies);
 
   stmtUpsertFacebookCookies(database).run(JSON.stringify(unexpiredCookies), Date.now());
 }
