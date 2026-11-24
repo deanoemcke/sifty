@@ -86,6 +86,20 @@ describe('startCookieSync', () => {
     ]);
   });
 
+  it('logs each successful sync with how many cookies were sent', async () => {
+    const fake = makeFakeChrome({
+      browserCookies: [makeBrowserCookie(), makeBrowserCookie({ name: 'c_user', httpOnly: false })],
+    });
+    const log = vi.fn();
+    startCookieSync(fake.chromeApi, { log });
+
+    fake.listenersByEvent.startup[0]();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith('Cookie sync succeeded: sent 2 Facebook cookies');
+  });
+
   it('ignores a change to a cookie from another site', async () => {
     const fake = makeFakeChrome({});
     startCookieSync(fake.chromeApi, { log: vi.fn() });

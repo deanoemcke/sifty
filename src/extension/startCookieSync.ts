@@ -28,7 +28,7 @@ export type ChromeApi = {
 };
 
 export type CookieSyncOutcome =
-  | { kind: 'synced' }
+  | { kind: 'synced'; cookieCount: number }
   | { kind: 'no-facebook-cookies' }
   | { kind: 'host-rejected'; error: string }
   | { kind: 'host-unreachable'; error: string };
@@ -45,9 +45,9 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function interpretHostReply(reply: unknown): CookieSyncOutcome {
+function interpretHostReply(reply: unknown, sentCookieCount: number): CookieSyncOutcome {
   if (typeof reply === 'object' && reply !== null && 'ok' in reply) {
-    if (reply.ok === true) return { kind: 'synced' };
+    if (reply.ok === true) return { kind: 'synced', cookieCount: sentCookieCount };
     if ('error' in reply && typeof reply.error === 'string') {
       return { kind: 'host-rejected', error: reply.error };
     }
@@ -67,16 +67,16 @@ export async function syncFacebookCookiesAsync(chromeApi: ChromeApi): Promise<Co
       type: 'syncCookies',
       cookiesJson: JSON.stringify(syncableCookies),
     });
-    return interpretHostReply(reply);
+    return interpretHostReply(reply, syncableCookies.length);
   } catch (error) {
     return { kind: 'host-unreachable', error: describeError(error) };
   }
 }
 
-function describeProblem(outcome: CookieSyncOutcome): string | undefined {
+function describeOutcome(outcome: CookieSyncOutcome): string {
   switch (outcome.kind) {
     case 'synced':
-      return undefined;
+      return `Cookie sync succeeded: sent ${outcome.cookieCount} Facebook cookies`;
     case 'no-facebook-cookies':
       return 'Cookie sync skipped: no Facebook cookies in this browser (not logged in?)';
     case 'host-rejected':
@@ -90,8 +90,7 @@ export function startCookieSync(chromeApi: ChromeApi, options: { log: (message: 
   const scheduler = createCookieSyncScheduler({
     waitMs: COOKIE_SYNC_WAIT_MS,
     syncAsync: async () => {
-      const problem = describeProblem(await syncFacebookCookiesAsync(chromeApi));
-      if (problem) options.log(problem);
+      options.log(describeOutcome(await syncFacebookCookiesAsync(chromeApi)));
     },
     onSyncError: (error) => options.log(`Cookie sync failed unexpectedly: ${describeError(error)}`),
   });
