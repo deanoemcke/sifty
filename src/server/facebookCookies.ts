@@ -125,9 +125,3 @@ export function getFacebookCookieStatus(database: Database.Database): FacebookCo
       loginExpiriesSeconds.length > 0 ? Math.min(...loginExpiriesSeconds) * 1000 : null,
   };
 }
-
-// Temporary fallback to FB_COOKIES until the extension's cookie sync is in
-// use; once it is, the env var is removed and the database is the only source.
-export function resolveFacebookCookiesJson(database: Database.Database): string | undefined {
-  return getStoredFacebookCookiesJson(database) ?? process.env.FB_COOKIES;
-}

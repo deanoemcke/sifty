@@ -19,10 +19,10 @@ import { getSharedBrowserAsync } from '../browserPool';
 import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
 import { getDb } from '../db';
 import {
+  getStoredFacebookCookiesJson,
   LOGIN_REQUIRED_MESSAGE,
   parseFbCookies,
   type RawFacebookCookie,
-  resolveFacebookCookiesJson,
 } from '../facebookCookies';
 import { getRegions, type RegionEntry } from '../services/regions';
 
@@ -508,7 +508,7 @@ async function runQuickSearchAsync(
     // Validate the Facebook cookies before touching the shared browser pool — a missing/
     // expired/malformed cookie config should fail fast without paying for a
     // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(resolveFacebookCookiesJson(getDb()));
+    const cookies = parseFbCookies(getStoredFacebookCookiesJson(getDb()));
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     context = await createFbContext(checkout.browser, cookies);
@@ -986,7 +986,7 @@ async function deepSearchAsync(
     // Validate the Facebook cookies before touching the shared browser pool — a missing/
     // expired/malformed cookie config should fail fast without paying for a
     // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(resolveFacebookCookiesJson(getDb()));
+    const cookies = parseFbCookies(getStoredFacebookCookiesJson(getDb()));
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     const activeContext = await createFbContext(checkout.browser, cookies);

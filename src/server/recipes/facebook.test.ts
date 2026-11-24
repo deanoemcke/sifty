@@ -1997,15 +1997,16 @@ describe('facebookRecipe.quickSearchAsync', () => {
   beforeEach(() => {
     resetPageQueue();
     launchTracker.reset();
-    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('fails fast on invalid FB_COOKIES without ever acquiring a shared browser', async () => {
-    vi.stubEnv('FB_COOKIES', undefined);
+  it('fails fast when no cookies have been synced, ignoring any FB_COOKIES, without acquiring a shared browser', async () => {
+    getTestDatabase().exec('DELETE FROM facebook_cookies');
+    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
 
     const events: unknown[] = [];
     await facebookRecipe.quickSearchAsync(
@@ -2018,19 +2019,6 @@ describe('facebookRecipe.quickSearchAsync', () => {
       message: 'Facebook requires login. Set FB_COOKIES environment variable.',
     });
     expect(launchTracker.count).toBe(0);
-  });
-
-  it('uses cookies saved in the database when FB_COOKIES is not set', async () => {
-    vi.stubEnv('FB_COOKIES', undefined);
-    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
-    resetPageQueue(makeFacebookPage({ domLoginWall: true }));
-
-    await facebookRecipe.quickSearchAsync(
-      'https://www.facebook.com/marketplace/search?query=lamp',
-      () => {}
-    );
-
-    expect(launchTracker.count).toBe(1);
   });
 
   it('emits the login-required error immediately and never waits on the listings selector', async () => {
@@ -2209,7 +2197,7 @@ describe('facebookRecipe.quickSearchAsync — domain concurrency limiting', () =
     resetPageQueue();
     browserSessionTracker.reset();
     enqueuedUrls.length = 0;
-    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
   });
 
   afterEach(() => {
@@ -2252,15 +2240,16 @@ describe('facebookRecipe.deepSearchAsync', () => {
   beforeEach(() => {
     resetPageQueue();
     launchTracker.reset();
-    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('fails fast on invalid FB_COOKIES without ever acquiring a shared browser', async () => {
-    vi.stubEnv('FB_COOKIES', undefined);
+  it('fails fast when no cookies have been synced, ignoring any FB_COOKIES, without acquiring a shared browser', async () => {
+    getTestDatabase().exec('DELETE FROM facebook_cookies');
+    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
 
     const listing = buildFacebookListing(
       'https://www.facebook.com/marketplace/item/1/',
@@ -2278,23 +2267,6 @@ describe('facebookRecipe.deepSearchAsync', () => {
       message: 'Facebook requires login. Set FB_COOKIES environment variable.',
     });
     expect(launchTracker.count).toBe(0);
-  });
-
-  it('uses cookies saved in the database when FB_COOKIES is not set', async () => {
-    vi.stubEnv('FB_COOKIES', undefined);
-    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
-    resetPageQueue(makeFacebookPage({ domLoginWall: true }));
-    const listing = buildFacebookListing(
-      'https://www.facebook.com/marketplace/item/1/',
-      undefined,
-      'Chair',
-      50,
-      'Auckland'
-    );
-
-    await facebookRecipe.deepSearchAsync([listing], () => {});
-
-    expect(launchTracker.count).toBe(1);
   });
 
   it('reports a detail-error for a login-walled listing without aborting the rest of the batch', async () => {
