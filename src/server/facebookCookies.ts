@@ -1,6 +1,7 @@
 // Server-side only — Facebook session cookies: parsing, validation and storage.
 
 import type Database from 'better-sqlite3';
+import { stmtGetFacebookCookies, stmtUpsertFacebookCookies } from './db';
 
 // Exported so scheduler.ts can recognize this specific failure across every
 // saved search that hits it — see isFacebookCookieFailure there, which
@@ -9,7 +10,7 @@ import type Database from 'better-sqlite3';
 export const LOGIN_REQUIRED_MESSAGE = 'Facebook requires login. Log in to Facebook in Chrome.';
 
 export class MissingFacebookCookiesError extends Error {
-  constructor(reason: string) {
+  constructor(reason?: string) {
     super(reason ? `${LOGIN_REQUIRED_MESSAGE} ${reason}` : LOGIN_REQUIRED_MESSAGE);
     this.name = 'MissingFacebookCookiesError';
   }
@@ -17,7 +18,7 @@ export class MissingFacebookCookiesError extends Error {
 
 export type RawFacebookCookie = Record<string, unknown>;
 
-function cookieExpirySeconds(cookie: RawFacebookCookie): number | undefined {
+export function cookieExpirySeconds(cookie: RawFacebookCookie): number | undefined {
   if (typeof cookie.expirationDate === 'number') return cookie.expirationDate;
   if (typeof cookie.expires === 'number') return cookie.expires;
   return undefined;
@@ -28,7 +29,7 @@ function cookieExpirySeconds(cookie: RawFacebookCookie): number | undefined {
 // immediately, before any browser is launched or network request made, instead
 // of only surfacing after a full, doomed scrape attempt.
 export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCookie[] {
-  if (!cookiesJson) throw new MissingFacebookCookiesError('');
+  if (!cookiesJson) throw new MissingFacebookCookiesError();
 
   let raw: unknown;
   try {
@@ -54,14 +55,14 @@ export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCook
   return unexpired;
 }
 
-// One row (id = 1): the most recently synced cookie set replaces the previous
-// one wholesale, so there is never a mix of old and new cookies.
 const MAX_COOKIE_PAYLOAD_BYTES = 64 * 1024;
 const MAX_COOKIE_COUNT = 200;
 
 // Cookies arrive from outside the process (the browser extension), so size and
 // count are capped before parsing, and the set is fully validated before it
 // replaces what's stored — a rejected sync leaves the previous cookies in use.
+// One row (id = 1): the newest set replaces the previous one wholesale, so there
+// is never a mix of old and new cookies.
 export function saveFacebookCookies(database: Database.Database, cookiesJson: string): void {
   if (Buffer.byteLength(cookiesJson, 'utf8') > MAX_COOKIE_PAYLOAD_BYTES) {
     throw new Error('Facebook cookie payload is larger than 64 KiB.');
@@ -71,18 +72,18 @@ export function saveFacebookCookies(database: Database.Database, cookiesJson: st
     throw new Error(`Facebook cookie set has more than ${MAX_COOKIE_COUNT} cookies.`);
   }
 
-  database
-    .prepare<[string, number]>(
-      `INSERT INTO facebook_cookies (id, cookies_json, synced_at) VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET cookies_json = excluded.cookies_json, synced_at = excluded.synced_at`
-    )
-    .run(JSON.stringify(unexpiredCookies), Date.now());
+  stmtUpsertFacebookCookies(database).run(JSON.stringify(unexpiredCookies), Date.now());
 }
 
 export function getStoredFacebookCookiesJson(database: Database.Database): string | undefined {
-  return database
-    .prepare<[], { cookies_json: string }>('SELECT cookies_json FROM facebook_cookies WHERE id = 1')
-    .get()?.cookies_json;
+  return stmtGetFacebookCookies(database).get()?.cookies_json;
+}
+
+// The stored cookies, validated: throws MissingFacebookCookiesError when none
+// have been synced or all have expired, so callers fail fast before any browser
+// is launched.
+export function loadFacebookCookies(database: Database.Database): RawFacebookCookie[] {
+  return parseFbCookies(getStoredFacebookCookiesJson(database));
 }
 
 // Facebook's other cookies (wd, presence, dpr, …) are short-lived or cosmetic and
@@ -102,11 +103,7 @@ export type FacebookCookieStatus =
 
 // Metadata only — cookie values never leave this module through the status.
 export function getFacebookCookieStatus(database: Database.Database): FacebookCookieStatus {
-  const row = database
-    .prepare<[], { cookies_json: string; synced_at: number }>(
-      'SELECT cookies_json, synced_at FROM facebook_cookies WHERE id = 1'
-    )
-    .get();
+  const row = stmtGetFacebookCookies(database).get();
   if (!row) return { isSynced: false };
 
   const storedCookies = JSON.parse(row.cookies_json) as RawFacebookCookie[];

@@ -19,9 +19,9 @@ import { getSharedBrowserAsync } from '../browserPool';
 import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
 import { getDb } from '../db';
 import {
-  getStoredFacebookCookiesJson,
+  cookieExpirySeconds,
   LOGIN_REQUIRED_MESSAGE,
-  parseFbCookies,
+  loadFacebookCookies,
   type RawFacebookCookie,
 } from '../facebookCookies';
 import { getRegions, type RegionEntry } from '../services/regions';
@@ -88,20 +88,19 @@ function toPlaywrightSameSite(browserSameSite: unknown): PlaywrightSameSite {
 export function toPlaywrightCookies(
   cookies: RawFacebookCookie[]
 ): Parameters<BrowserContext['addCookies']>[0] {
-  return cookies.map((cookie) => ({
-    name: String(cookie.name),
-    value: String(cookie.value),
-    domain: String(cookie.domain ?? '.facebook.com'),
-    path: String(cookie.path ?? '/'),
-    secure: Boolean(cookie.secure),
-    httpOnly: Boolean(cookie.httpOnly),
-    sameSite: toPlaywrightSameSite(cookie.sameSite),
-    ...(typeof cookie.expirationDate === 'number'
-      ? { expires: cookie.expirationDate }
-      : typeof cookie.expires === 'number'
-        ? { expires: cookie.expires }
-        : {}),
-  }));
+  return cookies.map((cookie) => {
+    const expiresSeconds = cookieExpirySeconds(cookie);
+    return {
+      name: String(cookie.name),
+      value: String(cookie.value),
+      domain: String(cookie.domain ?? '.facebook.com'),
+      path: String(cookie.path ?? '/'),
+      secure: Boolean(cookie.secure),
+      httpOnly: Boolean(cookie.httpOnly),
+      sameSite: toPlaywrightSameSite(cookie.sameSite),
+      ...(expiresSeconds === undefined ? {} : { expires: expiresSeconds }),
+    };
+  });
 }
 
 async function createFbContext(
@@ -508,7 +507,7 @@ async function runQuickSearchAsync(
     // Validate the Facebook cookies before touching the shared browser pool — a missing/
     // expired/malformed cookie config should fail fast without paying for a
     // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(getStoredFacebookCookiesJson(getDb()));
+    const cookies = loadFacebookCookies(getDb());
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     context = await createFbContext(checkout.browser, cookies);
@@ -986,7 +985,7 @@ async function deepSearchAsync(
     // Validate the Facebook cookies before touching the shared browser pool — a missing/
     // expired/malformed cookie config should fail fast without paying for a
     // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(getStoredFacebookCookiesJson(getDb()));
+    const cookies = loadFacebookCookies(getDb());
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     const activeContext = await createFbContext(checkout.browser, cookies);

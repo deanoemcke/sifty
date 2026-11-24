@@ -235,6 +235,8 @@ export type SavedSearchRow = {
   last_failure_alerted_at: number | null;
   alert_setup_notification_pending: number;
 };
+export type FacebookCookiesRow = { cookies_json: string; synced_at: number };
+export type SettingRow = { key: string; value: string };
 export type CategoryRow = { slug: string; display: string };
 export type CategoryWithEmbeddingRow = {
   slug: string;
@@ -465,6 +467,26 @@ export function stmtUpsertSitewideAlertState(database: Database.Database) {
   return database.prepare(
     'INSERT INTO sitewide_alert_state (cause, is_active, last_alerted_at) VALUES (?, ?, ?) ' +
       'ON CONFLICT(cause) DO UPDATE SET is_active = excluded.is_active, last_alerted_at = excluded.last_alerted_at'
+  );
+}
+export function stmtGetFacebookCookies(database: Database.Database) {
+  return database.prepare<[], FacebookCookiesRow>(
+    'SELECT cookies_json, synced_at FROM facebook_cookies WHERE id = 1'
+  );
+}
+export function stmtUpsertFacebookCookies(database: Database.Database) {
+  return database.prepare<[string, number]>(
+    'INSERT INTO facebook_cookies (id, cookies_json, synced_at) VALUES (1, ?, ?) ' +
+      'ON CONFLICT(id) DO UPDATE SET cookies_json = excluded.cookies_json, synced_at = excluded.synced_at'
+  );
+}
+export function stmtListSettings(database: Database.Database) {
+  return database.prepare<[], SettingRow>('SELECT key, value FROM settings');
+}
+export function stmtUpsertSetting(database: Database.Database) {
+  return database.prepare<[string, string, number]>(
+    'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ' +
+      'ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
   );
 }
 export function stmtGetAllCategoriesWithEmbeddings(database: Database.Database) {

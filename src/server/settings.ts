@@ -3,6 +3,7 @@
 // is no in-memory copy to keep in sync).
 
 import type Database from 'better-sqlite3';
+import { stmtListSettings, stmtUpsertSetting } from './db';
 
 export type SchedulerSettings = {
   targetIntervalMinutes: number;
@@ -18,7 +19,7 @@ export type SchedulerSettings = {
 // backlog (e.g. many searches added at once) can't turn a tick into an
 // unbounded scraping burst. The rest is processed over later ticks, oldest
 // (most overdue) first, so it self-heals rather than starving anything.
-export const DEFAULT_SCHEDULER_SETTINGS: SchedulerSettings = {
+const DEFAULT_SCHEDULER_SETTINGS: SchedulerSettings = {
   targetIntervalMinutes: 240,
   maxSearchesPerTick: 5,
 };
@@ -34,8 +35,6 @@ const SCHEDULER_SETTING_BOUNDS: Record<
   targetIntervalMinutes: { minimum: 1, maximum: MINUTES_PER_WEEK },
   maxSearchesPerTick: { minimum: 1, maximum: 50 },
 };
-
-type SettingRow = { key: string; value: string };
 
 function isSchedulerSettingKey(key: string): key is keyof SchedulerSettings {
   return Object.hasOwn(SCHEDULER_SETTING_BOUNDS, key);
@@ -71,17 +70,11 @@ function validateSchedulerSettingChanges(
 }
 
 export function getSchedulerSettings(database: Database.Database): SchedulerSettings {
-  const rows = database.prepare<[], SettingRow>('SELECT key, value FROM settings').all();
-  const savedValuesByKey = new Map(rows.map((row) => [row.key, JSON.parse(row.value) as unknown]));
-
-  return {
-    targetIntervalMinutes:
-      (savedValuesByKey.get('targetIntervalMinutes') as number | undefined) ??
-      DEFAULT_SCHEDULER_SETTINGS.targetIntervalMinutes,
-    maxSearchesPerTick:
-      (savedValuesByKey.get('maxSearchesPerTick') as number | undefined) ??
-      DEFAULT_SCHEDULER_SETTINGS.maxSearchesPerTick,
-  };
+  const settings = { ...DEFAULT_SCHEDULER_SETTINGS };
+  for (const row of stmtListSettings(database).all()) {
+    if (isSchedulerSettingKey(row.key)) settings[row.key] = JSON.parse(row.value) as number;
+  }
+  return settings;
 }
 
 export function updateSchedulerSettings(
@@ -89,10 +82,7 @@ export function updateSchedulerSettings(
   changes: Record<string, unknown>
 ): void {
   const validatedChanges = validateSchedulerSettingChanges(changes);
-  const upsertSetting = database.prepare<[string, string, number]>(
-    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-  );
+  const upsertSetting = stmtUpsertSetting(database);
   const nowMs = Date.now();
 
   database.transaction(() => {
