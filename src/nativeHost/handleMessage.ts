@@ -15,6 +15,9 @@ import {
   type SchedulerSettings,
   updateSchedulerSettings,
 } from '../server/settings';
+import { readLogTail } from './readLogTail';
+
+const MAX_TAIL_LINE_COUNT = 500;
 
 export type NativeHostDependencies = {
   database: Database.Database;
@@ -39,7 +42,8 @@ export type NativeHostReply =
   | { ok: true; cookies: FacebookCookieStatus; settings: SchedulerSettings }
   | { ok: true; cookies: FacebookCookieStatus }
   | { ok: true; settings: SchedulerSettings }
-  | { ok: true; searches: RunHistoryEntry[] };
+  | { ok: true; searches: RunHistoryEntry[] }
+  | { ok: true; isLogFilePresent: boolean; logLines: string[] };
 
 type MessageRecord = Record<string, unknown>;
 
@@ -100,6 +104,29 @@ function getRunHistory(dependencies: NativeHostDependencies): NativeHostReply {
   return { ok: true, searches };
 }
 
+function tailLog(message: MessageRecord, dependencies: NativeHostDependencies): NativeHostReply {
+  const { logName, lineCount } = message;
+  // Only names configured by the host's own code resolve to a path; the
+  // request never supplies one.
+  if (typeof logName !== 'string' || !Object.hasOwn(dependencies.logFilePathsByLogName, logName)) {
+    return { ok: false, error: `Unknown log: ${String(logName)}` };
+  }
+  if (
+    typeof lineCount !== 'number' ||
+    !Number.isInteger(lineCount) ||
+    lineCount < 1 ||
+    lineCount > MAX_TAIL_LINE_COUNT
+  ) {
+    return {
+      ok: false,
+      error: `tailLog requires lineCount to be a whole number from 1 to ${MAX_TAIL_LINE_COUNT}`,
+    };
+  }
+
+  const logTail = readLogTail(dependencies.logFilePathsByLogName[logName], lineCount);
+  return { ok: true, isLogFilePresent: logTail.isPresent, logLines: logTail.lines };
+}
+
 export async function handleNativeHostMessageAsync(
   message: unknown,
   dependencies: NativeHostDependencies
@@ -118,6 +145,8 @@ export async function handleNativeHostMessageAsync(
         return updateSettings(message, dependencies);
       case 'getRunHistory':
         return getRunHistory(dependencies);
+      case 'tailLog':
+        return tailLog(message, dependencies);
       default:
         return { ok: false, error: `Unknown request type: ${message.type}` };
     }

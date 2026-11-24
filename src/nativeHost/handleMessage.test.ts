@@ -1,5 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   initSchema,
   stmtInsertSavedSearch,
@@ -211,6 +214,98 @@ describe('getRunHistory', () => {
     expect(reply).toMatchObject({
       searches: [{ lastRunSucceeded: true, lastRunDetailLines: [] }],
     });
+  });
+});
+
+describe('tailLog', () => {
+  const temporaryDirectories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of temporaryDirectories.splice(0)) {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  function makeLogDependencies(logContents: string | undefined): NativeHostDependencies {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sifty-native-host-test-'));
+    temporaryDirectories.push(directory);
+    const logPath = path.join(directory, 'scheduler.log');
+    if (logContents !== undefined) fs.writeFileSync(logPath, logContents);
+    return makeDependencies({ logFilePathsByLogName: { scheduler: logPath } });
+  }
+
+  it('returns the last requested lines of a known log, oldest first', async () => {
+    const dependencies = makeLogDependencies('one\ntwo\nthree\nfour\n');
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'tailLog', logName: 'scheduler', lineCount: 2 },
+      dependencies
+    );
+
+    expect(reply).toEqual({ ok: true, isLogFilePresent: true, logLines: ['three', 'four'] });
+  });
+
+  it('returns every line when the log has fewer than requested', async () => {
+    const dependencies = makeLogDependencies('one\ntwo\n');
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'tailLog', logName: 'scheduler', lineCount: 50 },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({ logLines: ['one', 'two'] });
+  });
+
+  it('reports a log file that does not exist yet as absent, not as an error', async () => {
+    const dependencies = makeLogDependencies(undefined);
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'tailLog', logName: 'scheduler', lineCount: 10 },
+      dependencies
+    );
+
+    expect(reply).toEqual({ ok: true, isLogFilePresent: false, logLines: [] });
+  });
+
+  it('reads only the end of a very large log and never returns a partial first line', async () => {
+    const numberedLines = Array.from({ length: 60_000 }, (_, index) => `line ${index}`);
+    const dependencies = makeLogDependencies(`${numberedLines.join('\n')}\n`);
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'tailLog', logName: 'scheduler', lineCount: 500 },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({ ok: true, isLogFilePresent: true });
+    const { logLines } = reply as { logLines: string[] };
+    expect(logLines).toHaveLength(500);
+    expect(logLines.at(-1)).toBe('line 59999');
+    expect(logLines.at(0)).toBe('line 59500');
+  });
+
+  it('rejects a log name that is not configured, without touching the filesystem', async () => {
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'tailLog', logName: '../../etc/passwd', lineCount: 10 },
+      makeLogDependencies('secret\n')
+    );
+
+    expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('Unknown log') });
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -3],
+    ['fractional', 2.5],
+    ['more than 500', 501],
+    ['a string', '10'],
+    ['missing', undefined],
+  ])('rejects a lineCount that is %s', async (_description, lineCount) => {
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'tailLog', logName: 'scheduler', lineCount },
+      makeLogDependencies('one\n')
+    );
+
+    expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('lineCount') });
   });
 });
 
