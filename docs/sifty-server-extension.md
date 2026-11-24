@@ -83,7 +83,7 @@ Each phase is test-first, ends green, and is committed separately.
 
 ## Status
 
-Built and committed: phases 1–4 (scheduler settings, cookie store, native host, extension with cookie sync and the Sifty Server tab). Not built: phase 5 (launchd services and start/stop controls). `FB_COOKIES` is still a fallback until the sync has been used for a while.
+Built and committed: phases 1–5 (scheduler settings, cookie store, native host, extension with cookie sync and the Sifty Server tab, and launchd service control). `FB_COOKIES` is still a fallback until the sync has been used for a while.
 
 The cookie status reports when the login cookies (`c_user`, `xs`) expire, not the earliest of all cookies: Facebook's other cookies expire about a week out and say nothing about the session.
 
@@ -94,4 +94,14 @@ The cookie status reports when the login cookies (`c_user`, `xs`) expire, not th
 3. `chrome://extensions` → Developer mode → Load unpacked → `extension/dist`. Reload the extension there after each rebuild.
 4. Click the toolbar icon to open the Sifty Server tab. The service worker console logs each cookie sync.
 
-Logs the tab can read: `scheduler` and `scheduler-launchd` (written by the scheduler wrapper and launchd) and `native-host` (written by the host's wrapper script). All are in `/tmp`, which macOS clears from time to time.
+### Services (phase 5)
+
+The tab's Services section starts, stops and restarts three launchd user services: the webapp dev server (`ai.openclaw.sifty-webapp`), ngrok (`ai.openclaw.sifty-ngrok`) and the existing scheduler (`ai.openclaw.sifty-scheduler`, whose plist is never rewritten here).
+
+On and off persist. Start runs `launchctl enable` then `bootstrap`; Stop runs `bootout` then `disable`. A service left on starts at login and is restarted if it crashes; one stopped from the tab stays off after a login. This is how the scheduler is already parked on this machine.
+
+5. `npm run services:install` — writes the webapp and ngrok plists into `~/Library/LaunchAgents`. It never starts anything, and a service installed for the first time is also disabled, so nothing runs until Start is pressed in the tab. Re-running rewrites the plists but leaves each service's on/off state alone.
+6. Stop any ngrok started by hand before starting the ngrok service: a free ngrok account allows one session. The tab only sees launchd's services, not processes started from a terminal.
+7. The webapp service runs the checkout that installed it, on that checkout's port (5173 for the main checkout); ngrok forwards the same port.
+
+Logs the tab can read: `scheduler` and `scheduler-launchd` (written by the scheduler wrapper and launchd), `webapp` and `ngrok` (written by those services), and `native-host` (written by the host's wrapper script). All are in `/tmp`, which macOS clears from time to time.
