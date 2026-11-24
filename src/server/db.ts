@@ -57,6 +57,11 @@ export function initSchema(database: Database.Database): void {
       value      TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS facebook_cookies (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      cookies_json TEXT NOT NULL,
+      synced_at    INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS ai_filter_verdicts (
       saved_search_id TEXT NOT NULL,
       listing_hash     TEXT NOT NULL,
