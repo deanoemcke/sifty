@@ -47,7 +47,7 @@ import {
   stmtGetSitewideAlertState,
   stmtInsertSavedSearch,
 } from './db';
-import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
+import { LOGIN_REQUIRED_MESSAGE } from './facebookCookies';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   FACEBOOK_COOKIES_CAUSE,

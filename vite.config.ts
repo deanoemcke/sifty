@@ -4,7 +4,7 @@ import { createProviderCooldownStore } from './src/server/ai';
 import { closeAllPooledBrowsersAsync } from './src/server/browserPool';
 import { getDb } from './src/server/db';
 import { loadServerEnv } from './src/server/env';
-import { parseFbCookies } from './src/server/recipes/facebook';
+import { parseFbCookies } from './src/server/facebookCookies';
 import { assertCategoryEmbeddingCoverage } from './src/server/recipes/trademeCategoryResolver';
 import { handleAiFilter } from './src/server/routes/aiFilter';
 import { handleCacheClear } from './src/server/routes/cacheRoutes';

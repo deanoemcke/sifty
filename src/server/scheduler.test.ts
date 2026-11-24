@@ -32,8 +32,8 @@ import {
   stmtUpdateSavedSearchLastRunAt,
   stmtUpdateSavedSearchRunStatus,
 } from './db';
+import { LOGIN_REQUIRED_MESSAGE } from './facebookCookies';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
-import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   AI_FILTER_REASON_MAX_LENGTH,

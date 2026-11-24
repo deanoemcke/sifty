@@ -29,10 +29,11 @@ import {
   stmtUpsertAiFilterVerdict,
   stmtUpsertSitewideAlertState,
 } from './db';
+import { LOGIN_REQUIRED_MESSAGE } from './facebookCookies';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
 import { type SignalNotificationOptions, sendSignalNotificationAsync } from './notify';
 import { logQuickSearchEvent } from './quickSearchLogging';
-import { facebookRecipe, LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
+import { facebookRecipe } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import { normalizeScrapeErrorReason } from './schedulerErrorText';
 import {
