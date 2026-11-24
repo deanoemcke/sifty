@@ -29,7 +29,7 @@ Native messaging means no network port and no token: Chrome only lets the extens
 
 ## Decisions
 
-- **Full tab, not popup or side panel.** Logs and per-search history need room. A popup closes on blur. Same extension-page mechanics, so reversible.
+- **Full tab, not popup or side panel.** Logs and per-search history need room. A popup closes on blur. Same extension-page mechanics, so reversible. The toolbar button focuses the tab if open, otherwise opens it pinned.
 - **Cookies are read with `chrome.cookies`, not a content script.** `xs` is `HttpOnly`; page scripts cannot read it. No page access is needed.
 - **Sync runs in the background worker**, debounced a few seconds after the last `onChanged` (Facebook rotates several cookies together). It also runs on browser start and from a "Sync now" button, so a missed update is recovered.
 - **Database is the single source of truth** for settings and cookies. The scheduler is a fresh process each tick, so it reads settings at the start of every run: no reload logic.
@@ -80,3 +80,18 @@ Each phase is test-first, ends green, and is committed separately.
 - Shorter `StartInterval` ticks would also ping the dead-man's-switch healthcheck more often; check its grace period before changing the tick.
 - Cookies are per Chrome profile; the extension must be installed in the profile that is logged into Facebook.
 - Verification of the extension itself (loading it unpacked, exercising the tab) is done by the user in Chrome; it is not part of the automated tests.
+
+## Status
+
+Built and committed: phases 1–4 (scheduler settings, cookie store, native host, extension with cookie sync and the Sifty Server tab). Not built: phase 5 (launchd services and start/stop controls). `FB_COOKIES` is still a fallback until the sync has been used for a while.
+
+The cookie status reports when the login cookies (`c_user`, `xs`) expire, not the earliest of all cookies: Facebook's other cookies expire about a week out and say nothing about the session.
+
+## Setup
+
+1. `npm run extension:build` — writes `extension/dist/`.
+2. `npm run native-host:install` — registers the native host with Chrome for this extension only. The extension ID comes from the public key in `extension/manifest.json`; the private key was discarded because an unpacked extension does not need it. Re-run it if the checkout moves.
+3. `chrome://extensions` → Developer mode → Load unpacked → `extension/dist`. Reload the extension there after each rebuild.
+4. Click the toolbar icon to open the Sifty Server tab. The service worker console logs each cookie sync.
+
+Logs the tab can read: `scheduler` and `scheduler-launchd` (written by the scheduler wrapper and launchd) and `native-host` (written by the host's wrapper script). All are in `/tmp`, which macOS clears from time to time.
