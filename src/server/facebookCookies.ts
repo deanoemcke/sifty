@@ -34,6 +34,10 @@ export class InvalidFacebookCookiePayloadError extends Error {
   }
 }
 
+// Facebook's other cookies (wd, presence, dpr, …) are short-lived or cosmetic and
+// rotate constantly; only these two decide whether the login is still valid.
+const LOGIN_COOKIE_NAMES: ReadonlySet<string> = new Set(['c_user', 'xs']);
+
 const MAX_COOKIE_PAYLOAD_BYTES = 64 * 1024;
 const MAX_COOKIE_COUNT = 200;
 
@@ -52,7 +56,28 @@ function parseCookieArray(
     throw createError('The cookies must be a non-empty JSON array.');
   }
 
-  return raw as RawFacebookCookie[];
+  if (!raw.every(isCookieShaped)) {
+    throw createError('Every cookie must be an object with a string name and value.');
+  }
+
+  return raw;
+}
+
+function isCookieShaped(element: unknown): element is RawFacebookCookie {
+  return (
+    typeof element === 'object' &&
+    element !== null &&
+    typeof (element as RawFacebookCookie).name === 'string' &&
+    typeof (element as RawFacebookCookie).value === 'string'
+  );
+}
+
+// A sync from a Chrome that is logged out of Facebook still carries cookies
+// (datr, sb, …) but not the login pair, and must not replace a working login.
+function requireLoginCookie(cookies: RawFacebookCookie[]): void {
+  if (!cookies.some((cookie) => LOGIN_COOKIE_NAMES.has(String(cookie.name)))) {
+    throw new MissingFacebookCookiesError('No Facebook login cookies were found.');
+  }
 }
 
 function requireUnexpiredCookies(cookies: RawFacebookCookie[]): RawFacebookCookie[] {
@@ -85,8 +110,9 @@ export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCook
 // count are capped on the payload as received (before the expiry filter), and the
 // set is fully validated before it replaces what's stored — a rejected sync
 // leaves the previous cookies in use. Structurally unusable payloads throw
-// InvalidFacebookCookiePayloadError; a payload whose cookies have all expired
-// throws MissingFacebookCookiesError, since the user needs to log in again.
+// InvalidFacebookCookiePayloadError; a payload whose cookies have all expired,
+// or that has no unexpired login cookie, throws MissingFacebookCookiesError,
+// since the user needs to log in again.
 // One row (id = 1): the newest set replaces the previous one wholesale, so there
 // is never a mix of old and new cookies.
 export function saveFacebookCookies(database: Database.Database, cookiesJson: string): void {
@@ -103,6 +129,7 @@ export function saveFacebookCookies(database: Database.Database, cookiesJson: st
     );
   }
   const unexpiredCookies = requireUnexpiredCookies(payloadCookies);
+  requireLoginCookie(unexpiredCookies);
 
   stmtUpsertFacebookCookies(database).run(JSON.stringify(unexpiredCookies), Date.now());
 }
@@ -117,10 +144,6 @@ export function getStoredFacebookCookiesJson(database: Database.Database): strin
 export function loadFacebookCookies(database: Database.Database): RawFacebookCookie[] {
   return parseFbCookies(getStoredFacebookCookiesJson(database));
 }
-
-// Facebook's other cookies (wd, presence, dpr, …) are short-lived or cosmetic and
-// rotate constantly; only these two decide whether the login is still valid.
-const LOGIN_COOKIE_NAMES: ReadonlySet<string> = new Set(['c_user', 'xs']);
 
 export type FacebookCookieStatus =
   | { isSynced: false }

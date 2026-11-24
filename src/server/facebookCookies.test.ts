@@ -53,6 +53,51 @@ describe('facebook cookie store', () => {
     expect(getStoredFacebookCookiesJson(database)).toBe(goodCookiesJson);
   });
 
+  it.each([
+    '[null]',
+    '[1]',
+    '["a"]',
+    '[{}]',
+    '[{"name":1}]',
+    '[{"name":"c_user"}]',
+  ])('rejects the malformed cookie elements %s and keeps the previously saved cookies', (malformedCookiesJson) => {
+    const database = freshDb();
+    const goodCookiesJson = JSON.stringify([
+      { name: 'c_user', value: '1' },
+      { name: 'xs', value: '2' },
+    ]);
+    saveFacebookCookies(database, goodCookiesJson);
+
+    expect(() => saveFacebookCookies(database, malformedCookiesJson)).toThrow(
+      InvalidFacebookCookiePayloadError
+    );
+    expect(getStoredFacebookCookiesJson(database)).toBe(goodCookiesJson);
+  });
+
+  it.each([
+    ['no login cookies', [{ name: 'datr', value: 'x' }]],
+    [
+      'only expired login cookies',
+      [
+        { name: 'c_user', value: '1', expirationDate: 1000 },
+        { name: 'xs', value: '2', expirationDate: 1000 },
+        { name: 'datr', value: 'x' },
+      ],
+    ],
+  ])('rejects a set with %s as a logout and keeps the previously saved cookies', (_description, loggedOutCookies) => {
+    const database = freshDb();
+    const goodCookiesJson = JSON.stringify([
+      { name: 'c_user', value: '1' },
+      { name: 'xs', value: '2' },
+    ]);
+    saveFacebookCookies(database, goodCookiesJson);
+
+    expect(() => saveFacebookCookies(database, JSON.stringify(loggedOutCookies))).toThrow(
+      MissingFacebookCookiesError
+    );
+    expect(getStoredFacebookCookiesJson(database)).toBe(goodCookiesJson);
+  });
+
   it('reports a rejected sync payload without asking the user to log in', () => {
     expect(() => saveFacebookCookies(freshDb(), '{not json')).not.toThrow(/log in/i);
   });
@@ -64,12 +109,12 @@ describe('facebook cookie store', () => {
       database,
       JSON.stringify([
         { name: 'expired', value: '1', expirationDate: 1000 },
-        { name: 'fresh', value: '2' },
+        { name: 'c_user', value: '2' },
       ])
     );
 
     expect(JSON.parse(getStoredFacebookCookiesJson(database) ?? 'null')).toEqual([
-      { name: 'fresh', value: '2' },
+      { name: 'c_user', value: '2' },
     ]);
   });
 
@@ -175,6 +220,10 @@ describe('parseFbCookies', () => {
 
   it('throws MissingFacebookCookiesError when the cookies are not valid JSON', () => {
     expect(() => parseFbCookies('{not json')).toThrow(MissingFacebookCookiesError);
+  });
+
+  it('throws MissingFacebookCookiesError rather than a TypeError when an element is not a cookie', () => {
+    expect(() => parseFbCookies('[null]')).toThrow(MissingFacebookCookiesError);
   });
 
   it('throws MissingFacebookCookiesError when the cookies parse to an empty array', () => {
