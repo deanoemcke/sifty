@@ -28,12 +28,17 @@ import type { ServiceState } from './serviceState';
 
 const MAX_TAIL_LINE_COUNT = 500;
 
+// A service's launchd state, plus whether its plist has been installed — a
+// service that was never installed looks identical to a stopped one otherwise.
+export type InstalledServiceState = ServiceState & { isInstalled: boolean };
+
 export type NativeHostServices = {
   // The only services the extension may control, by the name it uses. The label
   // and plist path come from here, never from a request.
   definitionsByServiceName: Record<string, ServiceDefinition>;
   userId: number;
   runLaunchctlAsync: RunLaunchctl;
+  doesFileExist: (filePath: string) => boolean;
 };
 
 export type NativeHostDependencies = {
@@ -62,7 +67,7 @@ export type NativeHostReply =
   | { ok: true; settings: SchedulerSettings }
   | { ok: true; searches: RunHistoryEntry[] }
   | { ok: true; isLogFilePresent: boolean; logLines: string[] }
-  | { ok: true; servicesByName: Record<string, ServiceState> }
+  | { ok: true; servicesByName: Record<string, InstalledServiceState> }
   | { ok: true; serviceName: string; state: ServiceState };
 
 type MessageRecord = Record<string, unknown>;
@@ -148,14 +153,12 @@ function tailLog(message: MessageRecord, dependencies: NativeHostDependencies): 
 }
 
 async function getServices(dependencies: NativeHostDependencies): Promise<NativeHostReply> {
-  const { definitionsByServiceName, userId, runLaunchctlAsync } = dependencies.services;
-  const servicesByName: Record<string, ServiceState> = {};
+  const { definitionsByServiceName, userId, runLaunchctlAsync, doesFileExist } =
+    dependencies.services;
+  const servicesByName: Record<string, InstalledServiceState> = {};
   for (const [serviceName, definition] of Object.entries(definitionsByServiceName)) {
-    servicesByName[serviceName] = await getServiceStateAsync({
-      definition,
-      userId,
-      runLaunchctlAsync,
-    });
+    const state = await getServiceStateAsync({ definition, userId, runLaunchctlAsync });
+    servicesByName[serviceName] = { ...state, isInstalled: doesFileExist(definition.plistPath) };
   }
   return { ok: true, servicesByName };
 }
@@ -168,7 +171,8 @@ async function controlService(
   message: MessageRecord,
   dependencies: NativeHostDependencies
 ): Promise<NativeHostReply> {
-  const { definitionsByServiceName, userId, runLaunchctlAsync } = dependencies.services;
+  const { definitionsByServiceName, userId, runLaunchctlAsync, doesFileExist } =
+    dependencies.services;
   const { serviceName, action } = message;
   // Only names the host configured resolve to a launchd label; the request
   // never supplies a label, path or command.
@@ -182,9 +186,19 @@ async function controlService(
     };
   }
 
+  const definition = definitionsByServiceName[serviceName];
+  // Stopping an uninstalled service is harmless, but starting one would fail
+  // with launchd's unhelpful "Input/output error".
+  if (action !== 'stop' && !doesFileExist(definition.plistPath)) {
+    return {
+      ok: false,
+      error: `Service ${serviceName} is not installed (no ${definition.plistPath}). Run npm run services:install first.`,
+    };
+  }
+
   const state = await controlServiceAsync({
     action,
-    definition: definitionsByServiceName[serviceName],
+    definition,
     userId,
     runLaunchctlAsync,
   });

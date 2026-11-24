@@ -23,6 +23,7 @@ function makeDependencies(): NativeHostDependencies {
         exitCode: 1,
         output: 'launchctl is not available in this test',
       }),
+      doesFileExist: () => true,
     },
   };
 }

@@ -27,6 +27,7 @@ function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): Nati
         exitCode: 1,
         output: 'launchctl is not available in this test',
       }),
+      doesFileExist: () => true,
     },
     ...overrides,
   };
@@ -325,7 +326,10 @@ describe('tailLog', () => {
 const WEBAPP_PLIST = '/agents/webapp.plist';
 const NGROK_PLIST = '/agents/ngrok.plist';
 
-function makeServiceDependencies(failures: Record<string, string> = {}) {
+function makeServiceDependencies(
+  failures: Record<string, string> = {},
+  doesFileExist: (filePath: string) => boolean = () => true
+) {
   const fake = makeFakeLaunchd(
     {
       'ai.openclaw.sifty-webapp': {
@@ -351,6 +355,7 @@ function makeServiceDependencies(failures: Record<string, string> = {}) {
       },
       userId: 501,
       runLaunchctlAsync: fake.runLaunchctlAsync,
+      doesFileExist,
     },
   });
   return { dependencies, fake };
@@ -365,9 +370,25 @@ describe('getServices', () => {
     expect(reply).toEqual({
       ok: true,
       servicesByName: {
-        webapp: { isLoaded: true, isRunning: true, isEnabled: true, pid: 4242 },
-        ngrok: { isLoaded: false, isRunning: false, isEnabled: false, pid: null },
+        webapp: { isLoaded: true, isRunning: true, isEnabled: true, pid: 4242, isInstalled: true },
+        ngrok: {
+          isLoaded: false,
+          isRunning: false,
+          isEnabled: false,
+          pid: null,
+          isInstalled: true,
+        },
       },
+    });
+  });
+
+  it('reports a service whose plist has not been installed yet', async () => {
+    const { dependencies } = makeServiceDependencies({}, (filePath) => filePath !== NGROK_PLIST);
+
+    const reply = await handleNativeHostMessageAsync({ type: 'getServices' }, dependencies);
+
+    expect(reply).toMatchObject({
+      servicesByName: { webapp: { isInstalled: true }, ngrok: { isInstalled: false } },
     });
   });
 
@@ -438,6 +459,21 @@ describe('controlService', () => {
     );
 
     expect(reply).toMatchObject({ ok: false, error: expect.stringMatching(expectedMessage) });
+    expect(fake.commands).toEqual([]);
+  });
+
+  it('refuses to start a service that is not installed, saying how to install it', async () => {
+    const { dependencies, fake } = makeServiceDependencies({}, () => false);
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('npm run services:install'),
+    });
     expect(fake.commands).toEqual([]);
   });
 
