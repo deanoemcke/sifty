@@ -69,7 +69,23 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
 // ── Browser context ───────────────────────────────────────────────────────────
 
-function toPlaywrightCookies(
+type PlaywrightSameSite = 'Strict' | 'Lax' | 'None';
+
+// Chrome's cookies API (and Cookie-Editor exports) use lowercase values and
+// 'no_restriction' for None; Playwright wants the capitalised attribute names.
+// 'unspecified' or a missing value means the browser default, which is Lax.
+const PLAYWRIGHT_SAME_SITE_BY_BROWSER_VALUE = new Map<string, PlaywrightSameSite>([
+  ['no_restriction', 'None'],
+  ['none', 'None'],
+  ['lax', 'Lax'],
+  ['strict', 'Strict'],
+]);
+
+function toPlaywrightSameSite(browserSameSite: unknown): PlaywrightSameSite {
+  return PLAYWRIGHT_SAME_SITE_BY_BROWSER_VALUE.get(String(browserSameSite).toLowerCase()) ?? 'Lax';
+}
+
+export function toPlaywrightCookies(
   cookies: RawFacebookCookie[]
 ): Parameters<BrowserContext['addCookies']>[0] {
   return cookies.map((cookie) => ({
@@ -79,9 +95,7 @@ function toPlaywrightCookies(
     path: String(cookie.path ?? '/'),
     secure: Boolean(cookie.secure),
     httpOnly: Boolean(cookie.httpOnly),
-    sameSite: (['Strict', 'Lax', 'None'].includes(String(cookie.sameSite))
-      ? cookie.sameSite
-      : 'Lax') as 'Strict' | 'Lax' | 'None',
+    sameSite: toPlaywrightSameSite(cookie.sameSite),
     ...(typeof cookie.expirationDate === 'number'
       ? { expires: cookie.expirationDate }
       : typeof cookie.expires === 'number'

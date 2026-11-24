@@ -31,6 +31,7 @@ import {
   parseFacebookPriceLines,
   processRawListing,
   type RawListingMsg,
+  toPlaywrightCookies,
 } from './facebook';
 
 describe('facebookRecipe.computeAlertFingerprint', () => {
@@ -1430,6 +1431,36 @@ describe('detectLoginWallAsync', () => {
       evaluateResult: { domMatch: false, textSnippet: 'Vintage lamp, Auckland' },
     });
     expect(await detectLoginWallAsync(page)).toBe(false);
+  });
+});
+
+// ── toPlaywrightCookies ───────────────────────────────────────────────────────
+
+describe('toPlaywrightCookies', () => {
+  it.each([
+    ['no_restriction', 'None'],
+    ['lax', 'Lax'],
+    ['strict', 'Strict'],
+    ['unspecified', 'Lax'],
+    [undefined, 'Lax'],
+    ['None', 'None'],
+    ['Lax', 'Lax'],
+    ['Strict', 'Strict'],
+  ])('maps a sameSite of %s to %s', (chromeSameSite, expectedSameSite) => {
+    const [cookie] = toPlaywrightCookies([
+      { name: 'xs', value: '1', secure: true, sameSite: chromeSameSite },
+    ]);
+
+    expect(cookie.sameSite).toBe(expectedSameSite);
+  });
+
+  it('carries over the expiry from either expirationDate or expires', () => {
+    const cookies = toPlaywrightCookies([
+      { name: 'c_user', value: '1', expirationDate: 1_900_000_000 },
+      { name: 'xs', value: '2', expires: 1_800_000_000 },
+    ]);
+
+    expect(cookies.map((cookie) => cookie.expires)).toEqual([1_900_000_000, 1_800_000_000]);
   });
 });
 
