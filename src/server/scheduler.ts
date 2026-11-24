@@ -1,7 +1,7 @@
 // Server-side only — headless scheduler core, invoked by scripts/scheduler.ts.
 // Each run processes every alert-enabled saved search that is "due" — never
-// run, or last run at or before TARGET_INTERVAL_MINUTES ago — oldest first,
-// capped at MAX_SEARCHES_PER_TICK. For each: its already-known URLs (no
+// run, or last run at or before the saved target interval ago — oldest first,
+// capped at the saved per-tick search limit. For each: its already-known URLs (no
 // discovery, no deep search), applying its AI filter if set, and notifying
 // on any new, non-sold listing it hasn't alerted on before.
 
@@ -46,6 +46,7 @@ import {
   runAiFilterBatchesAsync,
 } from './services/aiFilter';
 import { runQuickSearchForUrlAsync } from './services/quickSearch';
+import { getSchedulerSettings } from './settings';
 import {
   formatAlertMessage,
   formatAlertSetupFailedMessage,
@@ -89,26 +90,12 @@ export const NOTIFY_LOOP_TIMEOUT_MS = 5 * 60_000;
 // internal 10s bound, same rationale as those three.
 export const STATUS_ALERT_TIMEOUT_MS = 30_000;
 
-// The guarantee: no alert-enabled saved search should go longer than this
-// between runs. Only holds if the external tick interval (launchd's
-// StartInterval in ai.openclaw.sifty-scheduler.plist, currently 1800s/30min)
-// stays well below it — nothing keeps that plist value and this constant in
-// sync automatically.
-export const TARGET_INTERVAL_MINUTES = 240;
-
 // How long an ai_filter_verdicts row can go untouched before it's pruned.
 // last_seen_at is refreshed on every cache hit (not just when freshly
 // scored), so a row only ever crosses this cutoff once its listing has
 // genuinely stopped appearing in any scrape for this search — a
 // still-active listing that keeps hitting the cache never ages out.
 export const AI_FILTER_VERDICT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
-
-// Cap on how many due searches to process in a single tick, so a large
-// backlog (e.g. many searches added at once) can't turn one tick into an
-// unbounded scraping burst. A backlog beyond this cap is processed over
-// subsequent ticks — oldest (most overdue) searches sort first, so it
-// self-heals rather than starving anything indefinitely.
-export const MAX_SEARCHES_PER_TICK = 5;
 
 // Once a saved search is failing and has already been alerted on, how long
 // before the *same* underlying failure is re-alerted anyway (see
@@ -1018,10 +1005,11 @@ async function runOneSavedSearchAsync(
 }
 
 export async function runSchedulerAsync(deps: SchedulerDeps): Promise<SchedulerSummary> {
+  const savedSettings = getSchedulerSettings(deps.database);
   const resolvedDeps: Required<SchedulerDeps> = {
     now: () => Date.now(),
-    targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
-    maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
+    targetIntervalMs: savedSettings.targetIntervalMinutes * 60_000,
+    maxSearchesPerTick: savedSettings.maxSearchesPerTick,
     checkConnectivityAsync: checkInternetConnectivityAsync,
     ...deps,
   };
@@ -1098,14 +1086,15 @@ export async function runImmediatePopulationRunAsync(
   try {
     const row = stmtGetSavedSearch(deps.database).get(savedSearchId);
     if (!row) return; // deleted/renamed away before this ran
+    const savedSettings = getSchedulerSettings(deps.database);
     const resolvedDeps: Required<SchedulerDeps> = {
       database: deps.database,
       cooldownStore: deps.cooldownStore,
       sendNotificationAsync: deps.sendNotificationAsync ?? sendSignalNotificationAsync,
       checkConnectivityAsync: deps.checkConnectivityAsync ?? checkInternetConnectivityAsync,
       now: () => Date.now(),
-      targetIntervalMs: TARGET_INTERVAL_MINUTES * 60_000,
-      maxSearchesPerTick: MAX_SEARCHES_PER_TICK,
+      targetIntervalMs: savedSettings.targetIntervalMinutes * 60_000,
+      maxSearchesPerTick: savedSettings.maxSearchesPerTick,
     };
     try {
       const summary = await processSavedSearchAsync(

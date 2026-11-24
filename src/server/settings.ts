@@ -9,6 +9,15 @@ export type SchedulerSettings = {
   maxSearchesPerTick: number;
 };
 
+// targetIntervalMinutes: no alert-enabled saved search should go longer than
+// this between runs. That only holds if the external tick interval (launchd's
+// StartInterval in ai.openclaw.sifty-scheduler.plist, currently 1800s/30min)
+// stays well below it — nothing keeps the plist value and this setting in sync.
+//
+// maxSearchesPerTick: caps how many due searches one tick processes, so a large
+// backlog (e.g. many searches added at once) can't turn a tick into an
+// unbounded scraping burst. The rest is processed over later ticks, oldest
+// (most overdue) first, so it self-heals rather than starving anything.
 export const DEFAULT_SCHEDULER_SETTINGS: SchedulerSettings = {
   targetIntervalMinutes: 240,
   maxSearchesPerTick: 5,

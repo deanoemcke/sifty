@@ -56,6 +56,7 @@ import {
   STATUS_ALERT_TIMEOUT_MS,
   triggerImmediatePopulationRunAsync,
 } from './scheduler';
+import { updateSchedulerSettings } from './settings';
 import {
   formatFacebookCookiesFailingMessage,
   formatFacebookCookiesRecoveredMessage,
@@ -1309,6 +1310,72 @@ describe('runSchedulerAsync', () => {
 
     expect(summary.searches).toHaveLength(1);
     expect(summary.searches[0].savedSearchId).toBe('search-old');
+  });
+
+  it('uses the saved target interval when deps does not supply one', async () => {
+    const db = freshDb();
+    const fixedNow = 1_700_000_000_000;
+    insertAlertSearch(db, { id: 'search-recent', name: 'Recent search' });
+    insertAlertSearch(db, { id: 'search-old', name: 'Old search' });
+    stmtUpdateSavedSearchLastRunAt(db).run(fixedNow - 30 * 60_000, 'search-recent');
+    stmtUpdateSavedSearchLastRunAt(db).run(fixedNow - 100 * 60_000, 'search-old');
+    updateSchedulerSettings(db, { targetIntervalMinutes: 60 });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    // Neither search is due under the 240 minute default; only search-old is
+    // due under the saved 60 minutes.
+    const summary = await runSchedulerAsyncUngated({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now: () => fixedNow,
+    });
+
+    expect(summary.searches.map((search) => search.savedSearchId)).toEqual(['search-old']);
+  });
+
+  it('uses the saved per-tick search cap when deps does not supply one', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
+    updateSchedulerSettings(db, { maxSearchesPerTick: 2 });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(summary.searches.map((search) => search.savedSearchId)).toEqual([
+      'search-a',
+      'search-b',
+    ]);
+  });
+
+  it('lets explicit deps override the saved per-tick search cap', async () => {
+    const db = freshDb();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
+    updateSchedulerSettings(db, { maxSearchesPerTick: 1 });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 2,
+    });
+
+    expect(summary.searches).toHaveLength(2);
   });
 
   it('processes multiple due searches in the same tick, up to maxSearchesPerTick', async () => {
