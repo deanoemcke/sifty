@@ -14,7 +14,8 @@
     "check": "biome check .",
     "prepare": "husky",
     "postinstall": "tsx scripts/setup-worktree-links.ts",
-    "scheduler": "tsx scripts/scheduler.ts"
+    "scheduler": "tsx scripts/scheduler.ts",
+    "native-host:install": "tsx scripts/install-native-host.ts"
   },
   "keywords": [],
   "author": "",
