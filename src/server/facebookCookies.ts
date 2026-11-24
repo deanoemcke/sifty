@@ -6,8 +6,7 @@ import type Database from 'better-sqlite3';
 // saved search that hits it — see isFacebookCookieFailure there, which
 // collapses what would otherwise be one duplicate alert per affected saved
 // search into a single application-wide alert.
-export const LOGIN_REQUIRED_MESSAGE =
-  'Facebook requires login. Set FB_COOKIES environment variable.';
+export const LOGIN_REQUIRED_MESSAGE = 'Facebook requires login. Log in to Facebook in Chrome.';
 
 export class MissingFacebookCookiesError extends Error {
   constructor(reason: string) {
@@ -24,11 +23,10 @@ function cookieExpirySeconds(cookie: RawFacebookCookie): number | undefined {
   return undefined;
 }
 
-// FB_COOKIES: JSON array of cookies exported from your browser (e.g. via the
-// "Cookie Editor" extension — Export > Export as JSON). Validated up front so a
-// missing/malformed/expired cookie set fails immediately, before any browser is
-// launched or network request made, instead of only surfacing after a full,
-// doomed scrape attempt.
+// Parses a JSON array of cookies (as synced from Chrome by the Sifty Server
+// extension). Validated up front so a missing/malformed/expired cookie set fails
+// immediately, before any browser is launched or network request made, instead
+// of only surfacing after a full, doomed scrape attempt.
 export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCookie[] {
   if (!cookiesJson) throw new MissingFacebookCookiesError('');
 
@@ -36,11 +34,11 @@ export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCook
   try {
     raw = JSON.parse(cookiesJson);
   } catch {
-    throw new MissingFacebookCookiesError('FB_COOKIES is not valid JSON.');
+    throw new MissingFacebookCookiesError('The cookies are not valid JSON.');
   }
 
   if (!Array.isArray(raw) || raw.length === 0) {
-    throw new MissingFacebookCookiesError('FB_COOKIES must be a non-empty JSON array of cookies.');
+    throw new MissingFacebookCookiesError('The cookies must be a non-empty JSON array.');
   }
 
   const nowSeconds = Date.now() / 1000;
@@ -50,7 +48,7 @@ export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCook
   });
 
   if (unexpired.length === 0) {
-    throw new MissingFacebookCookiesError('All cookies in FB_COOKIES have expired.');
+    throw new MissingFacebookCookiesError('All the cookies have expired.');
   }
 
   return unexpired;

@@ -142,19 +142,19 @@ describe('getFacebookCookieStatus', () => {
 });
 
 describe('parseFbCookies', () => {
-  it('throws MissingFacebookCookiesError when FB_COOKIES is undefined', () => {
+  it('throws MissingFacebookCookiesError when no cookies are given', () => {
     expect(() => parseFbCookies(undefined)).toThrow(MissingFacebookCookiesError);
   });
 
-  it('throws MissingFacebookCookiesError when FB_COOKIES is empty', () => {
+  it('throws MissingFacebookCookiesError when the cookies are empty', () => {
     expect(() => parseFbCookies('')).toThrow(MissingFacebookCookiesError);
   });
 
-  it('throws MissingFacebookCookiesError when FB_COOKIES is not valid JSON', () => {
+  it('throws MissingFacebookCookiesError when the cookies are not valid JSON', () => {
     expect(() => parseFbCookies('{not json')).toThrow(MissingFacebookCookiesError);
   });
 
-  it('throws MissingFacebookCookiesError when FB_COOKIES parses to an empty array', () => {
+  it('throws MissingFacebookCookiesError when the cookies parse to an empty array', () => {
     expect(() => parseFbCookies('[]')).toThrow(MissingFacebookCookiesError);
   });
 
@@ -166,11 +166,12 @@ describe('parseFbCookies', () => {
     expect(() => parseFbCookies(expired)).toThrow(MissingFacebookCookiesError);
   });
 
-  it('throws an error whose message tells the caller to set FB_COOKIES', () => {
-    expect(() => parseFbCookies(undefined)).toThrow(/FB_COOKIES/);
+  it('throws an error that tells the user to log in to Facebook in Chrome, not to set an environment variable', () => {
+    expect(() => parseFbCookies(undefined)).toThrow(/log in to Facebook in Chrome/i);
+    expect(() => parseFbCookies(undefined)).not.toThrow(/FB_COOKIES/);
   });
 
-  it('returns the parsed cookies when FB_COOKIES is valid and unexpired', () => {
+  it('returns the parsed cookies when the cookies are valid and unexpired', () => {
     const futureExpiry = Date.now() / 1000 + 3600;
     const cookies = parseFbCookies(
       JSON.stringify([{ name: 'c_user', value: '12345', expirationDate: futureExpiry }])

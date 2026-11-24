@@ -110,7 +110,7 @@ async function createFbContext(
 ): Promise<BrowserContext> {
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
   await context.addCookies(toPlaywrightCookies(cookies));
-  console.log(`[facebook] loaded ${cookies.length} cookies from FB_COOKIES`);
+  console.log(`[facebook] loaded ${cookies.length} cookies synced from Chrome`);
 
   return context;
 }
@@ -488,7 +488,7 @@ async function quickSearchAsync(
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
   // Each quick search launches its own authenticated headless browser off the
-  // shared FB_COOKIES session, and a sold-items discover produces two Facebook
+  // shared Facebook session, and a sold-items discover produces two Facebook
   // URLs that the frontend fires concurrently. Route the launch through the
   // per-domain concurrency limiter — the same one deepSearchAsync uses — so
   // concurrent searches can't stack unbounded logged-in sessions on one cookie

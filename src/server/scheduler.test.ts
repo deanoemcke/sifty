@@ -2371,7 +2371,9 @@ describe('runSchedulerAsync', () => {
 
   it("does not let the aggregated last_run_detail truncation cut a Facebook-cookie failure line in half, so a search's own recovery ping stays suppressed", async () => {
     const facebookLine = `scrape:Discarded 0 untrusted listing(s): ${LOGIN_REQUIRED_MESSAGE}`;
-    const urlCount = 20;
+    // The fewest lines whose joined length (with one newline between each) just
+    // exceeds the cap, so only the final line gets cut — whatever the message length.
+    const urlCount = Math.floor(DETAIL_LINE_MAX_LENGTH / (facebookLine.length + 1)) + 1;
     const joinedLength = urlCount * facebookLine.length + (urlCount - 1);
     const priorLinesLength = (urlCount - 1) * facebookLine.length + (urlCount - 2);
     expect(joinedLength).toBeGreaterThan(DETAIL_LINE_MAX_LENGTH);

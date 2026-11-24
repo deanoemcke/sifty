@@ -157,7 +157,7 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
 
     // Counts calls to chromium.launch() — i.e. the shared browser pool actually
     // acquiring/launching a browser. Used to assert that a fail-fast validation
-    // (e.g. FB_COOKIES) short-circuits before any browser is ever touched.
+    // (e.g. missing cookies) short-circuits before any browser is ever touched.
     const launchTracker = {
       count: 0,
       reset() {
@@ -2016,7 +2016,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+      message: LOGIN_REQUIRED_MESSAGE,
     });
     expect(launchTracker.count).toBe(0);
   });
@@ -2033,7 +2033,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+      message: LOGIN_REQUIRED_MESSAGE,
     });
     expect(page.waitForSelectorCalls).toHaveLength(0);
   });
@@ -2264,7 +2264,7 @@ describe('facebookRecipe.deepSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+      message: LOGIN_REQUIRED_MESSAGE,
     });
     expect(launchTracker.count).toBe(0);
   });
