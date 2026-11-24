@@ -1,6 +1,4 @@
-import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { initSchema } from './db';
 import {
   getFacebookCookieStatus,
   getStoredFacebookCookiesJson,
@@ -10,22 +8,17 @@ import {
   parseFbCookies,
   saveFacebookCookies,
 } from './facebookCookies';
-
-function freshDb(): Database.Database {
-  const database = new Database(':memory:');
-  initSchema(database);
-  return database;
-}
+import { createFreshDatabase } from './testDatabase';
 
 const FUTURE_EXPIRY_SECONDS = Date.now() / 1000 + 30 * 24 * 60 * 60;
 
 describe('facebook cookie store', () => {
   it('returns nothing when no cookies have been saved', () => {
-    expect(getStoredFacebookCookiesJson(freshDb())).toBeUndefined();
+    expect(getStoredFacebookCookiesJson(createFreshDatabase())).toBeUndefined();
   });
 
   it('returns the saved cookies on a later read', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     const cookies = [
       { name: 'c_user', value: '12345', expirationDate: FUTURE_EXPIRY_SECONDS },
       { name: 'xs', value: 'secret', httpOnly: true },
@@ -46,7 +39,7 @@ describe('facebook cookie store', () => {
       MissingFacebookCookiesError,
     ],
   ])('rejects %s and keeps the previously saved cookies', (_description, badCookiesJson, errorClass) => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     const goodCookiesJson = JSON.stringify([{ name: 'c_user', value: 'good' }]);
     saveFacebookCookies(database, goodCookiesJson);
 
@@ -62,7 +55,7 @@ describe('facebook cookie store', () => {
     '[{"name":1}]',
     '[{"name":"c_user"}]',
   ])('rejects the malformed cookie elements %s and keeps the previously saved cookies', (malformedCookiesJson) => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     const goodCookiesJson = JSON.stringify([
       { name: 'c_user', value: '1' },
       { name: 'xs', value: '2' },
@@ -86,7 +79,7 @@ describe('facebook cookie store', () => {
       ],
     ],
   ])('rejects a set with %s as a logout and keeps the previously saved cookies', (_description, loggedOutCookies) => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     const goodCookiesJson = JSON.stringify([
       { name: 'c_user', value: '1' },
       { name: 'xs', value: '2' },
@@ -100,11 +93,11 @@ describe('facebook cookie store', () => {
   });
 
   it('reports a rejected sync payload without asking the user to log in', () => {
-    expect(() => saveFacebookCookies(freshDb(), '{not json')).not.toThrow(/log in/i);
+    expect(() => saveFacebookCookies(createFreshDatabase(), '{not json')).not.toThrow(/log in/i);
   });
 
   it('stores only the unexpired cookies', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
 
     saveFacebookCookies(
       database,
@@ -125,10 +118,12 @@ describe('facebook cookie store', () => {
       value: 'x',
     }));
 
-    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(tooManyCookies))).toThrow(
-      InvalidFacebookCookiePayloadError
-    );
-    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(tooManyCookies))).toThrow(/200/);
+    expect(() =>
+      saveFacebookCookies(createFreshDatabase(), JSON.stringify(tooManyCookies))
+    ).toThrow(InvalidFacebookCookiePayloadError);
+    expect(() =>
+      saveFacebookCookies(createFreshDatabase(), JSON.stringify(tooManyCookies))
+    ).toThrow(/200/);
   });
 
   it('applies the cookie count cap to the payload, not to what survives the expiry filter', () => {
@@ -138,7 +133,7 @@ describe('facebook cookie store', () => {
       ...(index >= 190 ? { expirationDate: 1000 } : {}),
     }));
 
-    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(cookies))).toThrow(
+    expect(() => saveFacebookCookies(createFreshDatabase(), JSON.stringify(cookies))).toThrow(
       InvalidFacebookCookiePayloadError
     );
   });
@@ -146,12 +141,12 @@ describe('facebook cookie store', () => {
   it('rejects a cookie payload larger than 64 KiB', () => {
     const oversizedCookies = [{ name: 'c_user', value: 'x'.repeat(64 * 1024) }];
 
-    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(oversizedCookies))).toThrow(
-      InvalidFacebookCookiePayloadError
-    );
-    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(oversizedCookies))).toThrow(
-      /64 KiB/
-    );
+    expect(() =>
+      saveFacebookCookies(createFreshDatabase(), JSON.stringify(oversizedCookies))
+    ).toThrow(InvalidFacebookCookiePayloadError);
+    expect(() =>
+      saveFacebookCookies(createFreshDatabase(), JSON.stringify(oversizedCookies))
+    ).toThrow(/64 KiB/);
   });
 });
 
@@ -161,12 +156,12 @@ describe('getFacebookCookieStatus', () => {
   });
 
   it('reports not synced when no cookies have been saved', () => {
-    expect(getFacebookCookieStatus(freshDb())).toEqual({ isSynced: false });
+    expect(getFacebookCookieStatus(createFreshDatabase())).toEqual({ isSynced: false });
   });
 
   it('reports when cookies were synced, how many, and when the login cookies expire', () => {
     vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
-    const database = freshDb();
+    const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -188,7 +183,7 @@ describe('getFacebookCookieStatus', () => {
   });
 
   it('reports no login expiry when the login cookies are session cookies or missing', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -204,7 +199,7 @@ describe('getFacebookCookieStatus', () => {
   });
 
   it('reports no login expiry when only some login cookies are session cookies, since the session end is unknown', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -221,7 +216,7 @@ describe('getFacebookCookieStatus', () => {
 
   it('reports an unusable login once the stored cookies have expired, matching what loading would do', () => {
     vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
-    const database = freshDb();
+    const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -242,7 +237,7 @@ describe('getFacebookCookieStatus', () => {
 
   it('counts only unexpired cookies and ignores an expired login cookie when reporting the expiry', () => {
     vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
-    const database = freshDb();
+    const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -261,7 +256,7 @@ describe('getFacebookCookieStatus', () => {
 
   it('reports an unusable login when only non-login cookies remain unexpired', () => {
     vi.useFakeTimers({ now: new Date('2026-11-24T09:00:00Z') });
-    const database = freshDb();
+    const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -278,7 +273,7 @@ describe('getFacebookCookieStatus', () => {
   });
 
   it('reports an unusable login, rather than throwing, when the stored cookies are corrupt', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     database
       .prepare('INSERT INTO facebook_cookies (id, cookies_json, synced_at) VALUES (1, ?, ?)')
       .run('oops', 1);
@@ -291,7 +286,7 @@ describe('getFacebookCookieStatus', () => {
   });
 
   it('never includes cookie values', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([{ name: 'xs', value: 'secret-session-value', httpOnly: true }])
@@ -302,32 +297,21 @@ describe('getFacebookCookieStatus', () => {
 });
 
 describe('parseFbCookies', () => {
-  it('throws MissingFacebookCookiesError when no cookies are given', () => {
-    expect(() => parseFbCookies(undefined)).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when the cookies are empty', () => {
-    expect(() => parseFbCookies('')).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when the cookies are not valid JSON', () => {
-    expect(() => parseFbCookies('{not json')).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError rather than a TypeError when an element is not a cookie', () => {
-    expect(() => parseFbCookies('[null]')).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when the cookies parse to an empty array', () => {
-    expect(() => parseFbCookies('[]')).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when every cookie has expired', () => {
-    const expired = JSON.stringify([
-      { name: 'c_user', value: '1', expirationDate: 1000 },
-      { name: 'xs', value: '2', expires: 2000 },
-    ]);
-    expect(() => parseFbCookies(expired)).toThrow(MissingFacebookCookiesError);
+  it.each([
+    ['no cookies are given', undefined],
+    ['the cookies are empty', ''],
+    ['the cookies are not valid JSON', '{not json'],
+    ['an element is not a cookie', '[null]'],
+    ['the cookies parse to an empty array', '[]'],
+    [
+      'every cookie has expired',
+      JSON.stringify([
+        { name: 'c_user', value: '1', expirationDate: 1000 },
+        { name: 'xs', value: '2', expires: 2000 },
+      ]),
+    ],
+  ])('throws MissingFacebookCookiesError when %s', (_description, rawCookies) => {
+    expect(() => parseFbCookies(rawCookies)).toThrow(MissingFacebookCookiesError);
   });
 
   it('throws an error that tells the user to log in to Facebook in Chrome, not to set an environment variable', () => {

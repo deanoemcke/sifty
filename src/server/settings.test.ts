@@ -1,13 +1,7 @@
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { describe, expect, it, vi } from 'vitest';
-import { initSchema } from './db';
 import { getSchedulerSettings, updateSchedulerSettings } from './settings';
-
-function freshDb(): Database.Database {
-  const database = new Database(':memory:');
-  initSchema(database);
-  return database;
-}
+import { createFreshDatabase } from './testDatabase';
 
 describe('updateSchedulerSettings validation', () => {
   it.each([
@@ -20,13 +14,13 @@ describe('updateSchedulerSettings validation', () => {
     ['more than fifty searches per tick', { maxSearchesPerTick: 51 }, /maxSearchesPerTick/],
     ['an unknown setting', { notARealSetting: 1 }, /notARealSetting/],
   ])('rejects %s and names the offending setting', (_description, changes, expectedMessage) => {
-    const database = freshDb();
+    const database = createFreshDatabase();
 
     expect(() => updateSchedulerSettings(database, changes)).toThrow(expectedMessage);
   });
 
   it('stores nothing when any one setting in the update is invalid', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
 
     expect(() =>
       updateSchedulerSettings(database, { targetIntervalMinutes: 60, maxSearchesPerTick: 0 })
@@ -41,14 +35,14 @@ describe('updateSchedulerSettings validation', () => {
 
 describe('getSchedulerSettings', () => {
   it('returns the defaults when nothing has been saved', () => {
-    expect(getSchedulerSettings(freshDb())).toEqual({
+    expect(getSchedulerSettings(createFreshDatabase())).toEqual({
       targetIntervalMinutes: 240,
       maxSearchesPerTick: 5,
     });
   });
 
   it('returns saved values on later reads, leaving unsaved settings at their defaults', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
 
     updateSchedulerSettings(database, { targetIntervalMinutes: 60 });
 
@@ -59,7 +53,7 @@ describe('getSchedulerSettings', () => {
   });
 
   it('keeps earlier saved values when a later update changes a different setting', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
 
     updateSchedulerSettings(database, { targetIntervalMinutes: 60 });
     updateSchedulerSettings(database, { maxSearchesPerTick: 2 });
@@ -85,7 +79,7 @@ describe('getSchedulerSettings with unusable stored values', () => {
     ['a fractional number', '2.5'],
     ['a JSON string', '"abc"'],
   ])('falls back to the default and warns when maxSearchesPerTick is %s', (_description, rawValue) => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     storeRawSetting(database, 'maxSearchesPerTick', rawValue);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -96,7 +90,7 @@ describe('getSchedulerSettings with unusable stored values', () => {
   });
 
   it('keeps a valid stored setting when another stored setting is unusable', () => {
-    const database = freshDb();
+    const database = createFreshDatabase();
     storeRawSetting(database, 'maxSearchesPerTick', 'abc');
     storeRawSetting(database, 'targetIntervalMinutes', '60');
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
