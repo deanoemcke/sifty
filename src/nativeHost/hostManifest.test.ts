@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildNativeHostManifest, NATIVE_HOST_NAME } from './hostManifest';
+import { buildNativeHostManifest } from './hostManifest';
+import { NATIVE_HOST_NAME } from './hostName';
 
 const VALID_EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
 

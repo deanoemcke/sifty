@@ -2,8 +2,7 @@
 // https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
 
 import path from 'node:path';
-
-export const NATIVE_HOST_NAME = 'com.sifty.server';
+import { NATIVE_HOST_NAME } from './hostName';
 
 // Chrome extension IDs are 32 characters from a–p (a hex-style encoding).
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;

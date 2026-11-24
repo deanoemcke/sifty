@@ -9,7 +9,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildNativeHostManifest, NATIVE_HOST_NAME } from '../src/nativeHost/hostManifest';
+import { buildNativeHostManifest } from '../src/nativeHost/hostManifest';
+import { NATIVE_HOST_NAME } from '../src/nativeHost/hostName';
 
 const CHROME_NATIVE_HOSTS_DIRECTORY = path.join(
   os.homedir(),
