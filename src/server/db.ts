@@ -52,6 +52,11 @@ export function initSchema(database: Database.Database): void {
       is_active       INTEGER NOT NULL DEFAULT 0,
       last_alerted_at INTEGER
     );
+    CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS ai_filter_verdicts (
       saved_search_id TEXT NOT NULL,
       listing_hash     TEXT NOT NULL,
