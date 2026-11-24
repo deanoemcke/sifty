@@ -52,7 +52,7 @@ Each phase is test-first, ends green, and is committed separately.
 - `facebook_cookies` table: one row, cookie JSON plus `synced_at`. Replaced atomically, only after `parseFbCookies` accepts the set.
 - `facebook.ts` reads from the database instead of `process.env.FB_COOKIES`; user-facing messages that say "set FB_COOKIES" updated.
 - Fix `sameSite` mapping in `toPlaywrightCookies`: Chrome supplies `no_restriction`/`lax`/`strict`/`unspecified`, and the current case-sensitive check turns every cookie into `Lax`. Separate commit.
-- Temporary exception to single-source-of-truth: keep `FB_COOKIES` as a fallback until phase 4 has been used successfully, then delete it.
+- `FB_COOKIES` was kept as a fallback while the sync was proven, then removed: the database is the only source.
 
 ### 3. Native host
 
@@ -83,7 +83,7 @@ Each phase is test-first, ends green, and is committed separately.
 
 ## Status
 
-Built and committed: phases 1–5 (scheduler settings, cookie store, native host, extension with cookie sync and the Sifty Server tab, and launchd service control). `FB_COOKIES` is still a fallback until the sync has been used for a while.
+Built and committed: phases 1–5 (scheduler settings, cookie store, native host, extension with cookie sync and the Sifty Server tab, and launchd service control). The `FB_COOKIES` environment variable is no longer read: cookies come only from the database, via the extension.
 
 The cookie status reports when the login cookies (`c_user`, `xs`) expire, not the earliest of all cookies: Facebook's other cookies expire about a week out and say nothing about the session.
 
