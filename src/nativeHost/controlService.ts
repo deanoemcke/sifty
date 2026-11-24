@@ -9,7 +9,8 @@ export type CommandResult = { exitCode: number; output: string };
 export type RunLaunchctl = (args: string[]) => Promise<CommandResult>;
 
 export type ServiceDefinition = { label: string; plistPath: string };
-export type ServiceAction = 'start' | 'stop' | 'restart';
+export const SERVICE_ACTIONS = ['start', 'stop', 'restart'] as const;
+export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 
 type ServiceContext = {
   definition: ServiceDefinition;

@@ -11,12 +11,25 @@ import {
 } from '../server/db';
 import { getStoredFacebookCookiesJson } from '../server/facebookCookies';
 import { getSchedulerSettings, updateSchedulerSettings } from '../server/settings';
+import { makeFakeLaunchd } from './fakeLaunchd';
 import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
 
 function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): NativeHostDependencies {
   const database = new Database(':memory:');
   initSchema(database);
-  return { database, logFilePathsByLogName: {}, ...overrides };
+  return {
+    database,
+    logFilePathsByLogName: {},
+    services: {
+      definitionsByServiceName: {},
+      userId: 501,
+      runLaunchctlAsync: async () => ({
+        exitCode: 1,
+        output: 'launchctl is not available in this test',
+      }),
+    },
+    ...overrides,
+  };
 }
 
 const GOOD_COOKIES_JSON = JSON.stringify([{ name: 'c_user', value: '12345' }]);
@@ -306,6 +319,140 @@ describe('tailLog', () => {
     );
 
     expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('lineCount') });
+  });
+});
+
+const WEBAPP_PLIST = '/agents/webapp.plist';
+const NGROK_PLIST = '/agents/ngrok.plist';
+
+function makeServiceDependencies(failures: Record<string, string> = {}) {
+  const fake = makeFakeLaunchd(
+    {
+      'ai.openclaw.sifty-webapp': {
+        plistPath: WEBAPP_PLIST,
+        isLoaded: true,
+        isEnabled: true,
+        pid: 4242,
+      },
+      'ai.openclaw.sifty-ngrok': {
+        plistPath: NGROK_PLIST,
+        isLoaded: false,
+        isEnabled: false,
+        pid: null,
+      },
+    },
+    failures
+  );
+  const dependencies = makeDependencies({
+    services: {
+      definitionsByServiceName: {
+        webapp: { label: 'ai.openclaw.sifty-webapp', plistPath: WEBAPP_PLIST },
+        ngrok: { label: 'ai.openclaw.sifty-ngrok', plistPath: NGROK_PLIST },
+      },
+      userId: 501,
+      runLaunchctlAsync: fake.runLaunchctlAsync,
+    },
+  });
+  return { dependencies, fake };
+}
+
+describe('getServices', () => {
+  it('reports the state of every configured service by name', async () => {
+    const { dependencies } = makeServiceDependencies();
+
+    const reply = await handleNativeHostMessageAsync({ type: 'getServices' }, dependencies);
+
+    expect(reply).toEqual({
+      ok: true,
+      servicesByName: {
+        webapp: { isLoaded: true, isRunning: true, isEnabled: true, pid: 4242 },
+        ngrok: { isLoaded: false, isRunning: false, isEnabled: false, pid: null },
+      },
+    });
+  });
+
+  it('replies with an error when launchctl cannot be read', async () => {
+    const { dependencies } = makeServiceDependencies({ list: 'launchctl exploded' });
+
+    const reply = await handleNativeHostMessageAsync({ type: 'getServices' }, dependencies);
+
+    expect(reply).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('launchctl exploded'),
+    });
+  });
+});
+
+describe('controlService', () => {
+  it('starts a stopped service and replies with its new state', async () => {
+    const { dependencies } = makeServiceDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({
+      ok: true,
+      serviceName: 'ngrok',
+      state: { isLoaded: true, isRunning: true, isEnabled: true },
+    });
+  });
+
+  it('stops a running service and parks it disabled', async () => {
+    const { dependencies } = makeServiceDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'webapp', action: 'stop' },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({
+      ok: true,
+      serviceName: 'webapp',
+      state: { isLoaded: false, isEnabled: false },
+    });
+  });
+
+  it.each([
+    [
+      'an unknown service',
+      { serviceName: 'database', action: 'stop' },
+      /Unknown service: database/,
+    ],
+    [
+      'a prototype property as the service',
+      { serviceName: 'constructor', action: 'stop' },
+      /Unknown service/,
+    ],
+    ['a path as the service', { serviceName: '../../bin/sh', action: 'stop' }, /Unknown service/],
+    ['an unknown action', { serviceName: 'webapp', action: 'delete' }, /Unknown action: delete/],
+    ['a missing action', { serviceName: 'webapp' }, /action/],
+    ['a non-string service', { serviceName: 7, action: 'stop' }, /Unknown service/],
+  ])('rejects %s without running any launchctl command', async (_description, fields, expectedMessage) => {
+    const { dependencies, fake } = makeServiceDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'controlService', ...fields },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({ ok: false, error: expect.stringMatching(expectedMessage) });
+    expect(fake.commands).toEqual([]);
+  });
+
+  it("replies with launchctl's own message when a step fails", async () => {
+    const { dependencies } = makeServiceDependencies({ enable: 'Could not enable service' });
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('Could not enable service'),
+    });
   });
 });
 

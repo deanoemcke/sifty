@@ -15,15 +15,33 @@ import {
   type SchedulerSettings,
   updateSchedulerSettings,
 } from '../server/settings';
+import {
+  controlServiceAsync,
+  getServiceStateAsync,
+  type RunLaunchctl,
+  SERVICE_ACTIONS,
+  type ServiceAction,
+  type ServiceDefinition,
+} from './controlService';
 import { readLogTail } from './readLogTail';
+import type { ServiceState } from './serviceState';
 
 const MAX_TAIL_LINE_COUNT = 500;
+
+export type NativeHostServices = {
+  // The only services the extension may control, by the name it uses. The label
+  // and plist path come from here, never from a request.
+  definitionsByServiceName: Record<string, ServiceDefinition>;
+  userId: number;
+  runLaunchctlAsync: RunLaunchctl;
+};
 
 export type NativeHostDependencies = {
   database: Database.Database;
   // Absolute paths of the log files the extension may read, by name. A name
   // that is not here cannot be read.
   logFilePathsByLogName: Record<string, string>;
+  services: NativeHostServices;
 };
 
 export type RunHistoryEntry = {
@@ -43,7 +61,9 @@ export type NativeHostReply =
   | { ok: true; cookies: FacebookCookieStatus }
   | { ok: true; settings: SchedulerSettings }
   | { ok: true; searches: RunHistoryEntry[] }
-  | { ok: true; isLogFilePresent: boolean; logLines: string[] };
+  | { ok: true; isLogFilePresent: boolean; logLines: string[] }
+  | { ok: true; servicesByName: Record<string, ServiceState> }
+  | { ok: true; serviceName: string; state: ServiceState };
 
 type MessageRecord = Record<string, unknown>;
 
@@ -127,6 +147,50 @@ function tailLog(message: MessageRecord, dependencies: NativeHostDependencies): 
   return { ok: true, isLogFilePresent: logTail.isPresent, logLines: logTail.lines };
 }
 
+async function getServices(dependencies: NativeHostDependencies): Promise<NativeHostReply> {
+  const { definitionsByServiceName, userId, runLaunchctlAsync } = dependencies.services;
+  const servicesByName: Record<string, ServiceState> = {};
+  for (const [serviceName, definition] of Object.entries(definitionsByServiceName)) {
+    servicesByName[serviceName] = await getServiceStateAsync({
+      definition,
+      userId,
+      runLaunchctlAsync,
+    });
+  }
+  return { ok: true, servicesByName };
+}
+
+function isServiceAction(value: unknown): value is ServiceAction {
+  return (SERVICE_ACTIONS as readonly unknown[]).includes(value);
+}
+
+async function controlService(
+  message: MessageRecord,
+  dependencies: NativeHostDependencies
+): Promise<NativeHostReply> {
+  const { definitionsByServiceName, userId, runLaunchctlAsync } = dependencies.services;
+  const { serviceName, action } = message;
+  // Only names the host configured resolve to a launchd label; the request
+  // never supplies a label, path or command.
+  if (typeof serviceName !== 'string' || !Object.hasOwn(definitionsByServiceName, serviceName)) {
+    return { ok: false, error: `Unknown service: ${String(serviceName)}` };
+  }
+  if (!isServiceAction(action)) {
+    return {
+      ok: false,
+      error: `Unknown action: ${String(action)} (use ${SERVICE_ACTIONS.join(', ')} for action)`,
+    };
+  }
+
+  const state = await controlServiceAsync({
+    action,
+    definition: definitionsByServiceName[serviceName],
+    userId,
+    runLaunchctlAsync,
+  });
+  return { ok: true, serviceName, state };
+}
+
 export async function handleNativeHostMessageAsync(
   message: unknown,
   dependencies: NativeHostDependencies
@@ -147,6 +211,10 @@ export async function handleNativeHostMessageAsync(
         return getRunHistory(dependencies);
       case 'tailLog':
         return tailLog(message, dependencies);
+      case 'getServices':
+        return await getServices(dependencies);
+      case 'controlService':
+        return await controlService(message, dependencies);
       default:
         return { ok: false, error: `Unknown request type: ${message.type}` };
     }

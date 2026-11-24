@@ -13,7 +13,18 @@ import { runNativeHostAsync } from './runNativeHost';
 function makeDependencies(): NativeHostDependencies {
   const database = new Database(':memory:');
   initSchema(database);
-  return { database, logFilePathsByLogName: {} };
+  return {
+    database,
+    logFilePathsByLogName: {},
+    services: {
+      definitionsByServiceName: {},
+      userId: 501,
+      runLaunchctlAsync: async () => ({
+        exitCode: 1,
+        output: 'launchctl is not available in this test',
+      }),
+    },
+  };
 }
 
 // Feeds the given chunks to the host as its stdin, closes stdin, and returns
