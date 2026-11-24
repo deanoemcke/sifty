@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { initSchema } from './db';
 import { getSchedulerSettings, updateSchedulerSettings } from './settings';
 
@@ -68,5 +68,44 @@ describe('getSchedulerSettings', () => {
       targetIntervalMinutes: 60,
       maxSearchesPerTick: 2,
     });
+  });
+});
+
+describe('getSchedulerSettings with unusable stored values', () => {
+  function storeRawSetting(database: Database.Database, key: string, rawValue: string): void {
+    database
+      .prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, 1)')
+      .run(key, rawValue);
+  }
+
+  it.each([
+    ['non-JSON text', 'abc'],
+    ['zero (below the minimum)', '0'],
+    ['a value above the maximum', '51'],
+    ['a fractional number', '2.5'],
+    ['a JSON string', '"abc"'],
+  ])('falls back to the default and warns when maxSearchesPerTick is %s', (_description, rawValue) => {
+    const database = freshDb();
+    storeRawSetting(database, 'maxSearchesPerTick', rawValue);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(getSchedulerSettings(database).maxSearchesPerTick).toBe(5);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('maxSearchesPerTick'));
+
+    warnSpy.mockRestore();
+  });
+
+  it('keeps a valid stored setting when another stored setting is unusable', () => {
+    const database = freshDb();
+    storeRawSetting(database, 'maxSearchesPerTick', 'abc');
+    storeRawSetting(database, 'targetIntervalMinutes', '60');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(getSchedulerSettings(database)).toEqual({
+      targetIntervalMinutes: 60,
+      maxSearchesPerTick: 5,
+    });
+
+    warnSpy.mockRestore();
   });
 });
