@@ -16,7 +16,8 @@
     "postinstall": "tsx scripts/setup-worktree-links.ts",
     "scheduler": "tsx scripts/scheduler.ts",
     "native-host:install": "tsx scripts/install-native-host.ts",
-    "extension:build": "vite build --config vite.extension.config.ts"
+    "extension:build": "vite build --config vite.extension.config.ts",
+    "services:install": "tsx scripts/install-services.ts"
   },
   "keywords": [],
   "author": "",

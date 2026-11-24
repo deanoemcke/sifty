@@ -5,7 +5,12 @@
  */
 
 import { LOG_FILE_PATHS_BY_LOG_NAME } from '../src/nativeHost/logFiles';
+import { runLaunchctlAsync } from '../src/nativeHost/runLaunchctl';
 import { runNativeHostAsync } from '../src/nativeHost/runNativeHost';
+import { buildServiceDefinitions } from '../src/nativeHost/serviceDefinitions';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { getDb } from '../src/server/db';
 
 async function main(): Promise<number> {
@@ -17,6 +22,14 @@ async function main(): Promise<number> {
   const outcome = await runNativeHostAsync(process.stdin, process.stdout, {
     database: getDb(),
     logFilePathsByLogName: LOG_FILE_PATHS_BY_LOG_NAME,
+    services: {
+      definitionsByServiceName: buildServiceDefinitions(
+        path.join(os.homedir(), 'Library/LaunchAgents')
+      ),
+      userId: process.getuid?.() ?? 501,
+      runLaunchctlAsync,
+      doesFileExist: (filePath) => fs.existsSync(filePath),
+    },
   });
   if (outcome === 'protocol-error') {
     console.error('[native-host] stopped after a malformed or oversized message');
