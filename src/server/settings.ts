@@ -7,7 +7,7 @@ const MINUTES_PER_WEEK = 7 * 24 * 60;
 // The scheduler cannot run more often than this, so a shorter target interval could never be met.
 export const SCHEDULER_TICK_INTERVAL_MINUTES = 30;
 
-const SCHEDULER_SETTING_DEFINITIONS = {
+export const SCHEDULER_SETTING_DEFINITIONS = {
   targetIntervalMinutes: {
     defaultValue: 240,
     minimum: SCHEDULER_TICK_INTERVAL_MINUTES,
