@@ -17,7 +17,13 @@ import { aiJSON, applyAiJsonResult } from '../ai';
 import { hashFingerprintParts } from '../alerts';
 import { getSharedBrowserAsync } from '../browserPool';
 import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
-import { LOGIN_REQUIRED_MESSAGE, parseFbCookies, type RawFacebookCookie } from '../facebookCookies';
+import { getDb } from '../db';
+import {
+  LOGIN_REQUIRED_MESSAGE,
+  parseFbCookies,
+  type RawFacebookCookie,
+  resolveFacebookCookiesJson,
+} from '../facebookCookies';
 import { getRegions, type RegionEntry } from '../services/regions';
 
 const USER_AGENT =
@@ -485,10 +491,10 @@ async function runQuickSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
-    // Validate FB_COOKIES before touching the shared browser pool — a missing/
+    // Validate the Facebook cookies before touching the shared browser pool — a missing/
     // expired/malformed cookie config should fail fast without paying for a
     // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(process.env.FB_COOKIES);
+    const cookies = parseFbCookies(resolveFacebookCookiesJson(getDb()));
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     context = await createFbContext(checkout.browser, cookies);
@@ -963,10 +969,10 @@ async function deepSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
-    // Validate FB_COOKIES before touching the shared browser pool — a missing/
+    // Validate the Facebook cookies before touching the shared browser pool — a missing/
     // expired/malformed cookie config should fail fast without paying for a
     // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(process.env.FB_COOKIES);
+    const cookies = parseFbCookies(resolveFacebookCookiesJson(getDb()));
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     const activeContext = await createFbContext(checkout.browser, cookies);

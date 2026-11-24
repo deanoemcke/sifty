@@ -1,10 +1,12 @@
+import Database from 'better-sqlite3';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import { makeListing } from '../../lib/testFixtures';
 import { aiJSON } from '../ai';
 import { closeAllPooledBrowsersAsync } from '../browserPool';
-import { LOGIN_REQUIRED_MESSAGE } from '../facebookCookies';
+import { initSchema } from '../db';
+import { LOGIN_REQUIRED_MESSAGE, saveFacebookCookies } from '../facebookCookies';
 import {
   buildFacebookDeepSearchDetail,
   buildFacebookListing,
@@ -267,6 +269,15 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
     };
   });
 
+// The recipe reads stored cookies through getDb(); route it to a fresh
+// in-memory database per test so nothing touches data/sifty.db. A plain
+// function, not vi.fn(), so the file-wide vi.resetAllMocks() can't clear it.
+const testDatabaseHolder = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock('../db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../db')>();
+  return { ...actual, getDb: () => testDatabaseHolder.current };
+});
+
 vi.mock('playwright', () => ({
   chromium: {
     launch: async () => {
@@ -349,7 +360,14 @@ function aiJsonOk(value: unknown) {
 beforeEach(async () => {
   vi.resetAllMocks();
   await closeAllPooledBrowsersAsync();
+  const testDatabase = new Database(':memory:');
+  initSchema(testDatabase);
+  testDatabaseHolder.current = testDatabase;
 });
+
+function getTestDatabase(): Database.Database {
+  return testDatabaseHolder.current as Database.Database;
+}
 
 describe('extractImplicitFilters', () => {
   it('extracts the search query without quote marks', () => {
@@ -1971,6 +1989,19 @@ describe('facebookRecipe.quickSearchAsync', () => {
     expect(launchTracker.count).toBe(0);
   });
 
+  it('uses cookies saved in the database when FB_COOKIES is not set', async () => {
+    vi.stubEnv('FB_COOKIES', undefined);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
+    resetPageQueue(makeFacebookPage({ domLoginWall: true }));
+
+    await facebookRecipe.quickSearchAsync(
+      'https://www.facebook.com/marketplace/search?query=lamp',
+      () => {}
+    );
+
+    expect(launchTracker.count).toBe(1);
+  });
+
   it('emits the login-required error immediately and never waits on the listings selector', async () => {
     const page = makeFacebookPage({ domLoginWall: true });
     resetPageQueue(page);
@@ -2216,6 +2247,23 @@ describe('facebookRecipe.deepSearchAsync', () => {
       message: 'Facebook requires login. Set FB_COOKIES environment variable.',
     });
     expect(launchTracker.count).toBe(0);
+  });
+
+  it('uses cookies saved in the database when FB_COOKIES is not set', async () => {
+    vi.stubEnv('FB_COOKIES', undefined);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
+    resetPageQueue(makeFacebookPage({ domLoginWall: true }));
+    const listing = buildFacebookListing(
+      'https://www.facebook.com/marketplace/item/1/',
+      undefined,
+      'Chair',
+      50,
+      'Auckland'
+    );
+
+    await facebookRecipe.deepSearchAsync([listing], () => {});
+
+    expect(launchTracker.count).toBe(1);
   });
 
   it('reports a detail-error for a login-walled listing without aborting the rest of the batch', async () => {

@@ -6,6 +6,7 @@ import {
   getStoredFacebookCookiesJson,
   MissingFacebookCookiesError,
   parseFbCookies,
+  resolveFacebookCookiesJson,
   saveFacebookCookies,
 } from './facebookCookies';
 
@@ -83,6 +84,32 @@ describe('facebook cookie store', () => {
     expect(() => saveFacebookCookies(freshDb(), JSON.stringify(oversizedCookies))).toThrow(
       /64 KiB/
     );
+  });
+});
+
+describe('resolveFacebookCookiesJson', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('prefers cookies saved in the database over FB_COOKIES', () => {
+    vi.stubEnv('FB_COOKIES', JSON.stringify([{ name: 'c_user', value: 'from-env' }]));
+    const database = freshDb();
+    saveFacebookCookies(database, JSON.stringify([{ name: 'c_user', value: 'from-database' }]));
+
+    expect(resolveFacebookCookiesJson(database)).toContain('from-database');
+  });
+
+  it('falls back to FB_COOKIES when nothing has been saved', () => {
+    vi.stubEnv('FB_COOKIES', JSON.stringify([{ name: 'c_user', value: 'from-env' }]));
+
+    expect(resolveFacebookCookiesJson(freshDb())).toContain('from-env');
+  });
+
+  it('returns nothing when neither source has cookies', () => {
+    vi.stubEnv('FB_COOKIES', undefined);
+
+    expect(resolveFacebookCookiesJson(freshDb())).toBeUndefined();
   });
 });
 
