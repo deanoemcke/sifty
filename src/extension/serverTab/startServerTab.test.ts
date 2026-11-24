@@ -345,6 +345,8 @@ describe('startServerTab — logs', () => {
     expect([...logSelect().options].map((option) => option.value)).toEqual([
       'scheduler',
       'scheduler-launchd',
+      'webapp',
+      'ngrok',
       'native-host',
     ]);
     expect(logSelect().value).toBe('scheduler');
