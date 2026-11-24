@@ -21,10 +21,23 @@ export function encodeNativeMessage(message: unknown): Buffer {
   return Buffer.concat([lengthPrefix, jsonBytes]);
 }
 
+// Thrown for an oversized or malformed frame. Messages completed earlier in the
+// same chunk are carried on the error, so the caller can still answer them.
+export class NativeMessageFramingError extends Error {
+  readonly messagesBeforeError: unknown[];
+
+  constructor(reason: string, messagesBeforeError: unknown[]) {
+    super(reason);
+    this.name = 'NativeMessageFramingError';
+    this.messagesBeforeError = messagesBeforeError;
+  }
+}
+
 export type NativeMessageDecoder = {
   // Feeds the next chunk read from stdin; returns every message it completes.
-  // Throws on an oversized or malformed message — the stream cannot be
-  // resynchronised after that, so the caller should reply with an error and exit.
+  // Throws NativeMessageFramingError on an oversized or malformed message — the
+  // stream cannot be resynchronised after that, so the caller should reply with
+  // an error and exit.
   push(chunk: Buffer): unknown[];
 };
 
@@ -41,8 +54,9 @@ export function createNativeMessageDecoder(): NativeMessageDecoder {
         // Checked as soon as the prefix is known, so an absurd declared length
         // is rejected before any of its body is buffered.
         if (messageLength > MAX_INCOMING_MESSAGE_BYTES) {
-          throw new Error(
-            `Native message is too large: ${messageLength} bytes declared, limit ${MAX_INCOMING_MESSAGE_BYTES}`
+          throw new NativeMessageFramingError(
+            `Native message is too large: ${messageLength} bytes declared, limit ${MAX_INCOMING_MESSAGE_BYTES}`,
+            completedMessages
           );
         }
         const messageEnd = LENGTH_PREFIX_BYTES + messageLength;
@@ -53,7 +67,10 @@ export function createNativeMessageDecoder(): NativeMessageDecoder {
         try {
           completedMessages.push(JSON.parse(jsonText));
         } catch {
-          throw new Error('Native message body is not valid JSON');
+          throw new NativeMessageFramingError(
+            'Native message body is not valid JSON',
+            completedMessages
+          );
         }
       }
 
