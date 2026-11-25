@@ -1,5 +1,6 @@
 import { describeError } from '../nativeHost/describeError';
 import { NATIVE_HOST_NAME } from '../nativeHost/hostName';
+import { buildNativeHostRequest, type NativeHostRequest } from '../nativeHost/protocol';
 import {
   type BrowserCookie,
   FACEBOOK_DOMAIN,
@@ -14,7 +15,7 @@ export type ChromeApi = {
     onChanged: { addListener(listener: (changeInfo: { cookie: BrowserCookie }) => void): void };
   };
   runtime: {
-    sendNativeMessage(hostName: string, message: unknown): Promise<unknown>;
+    sendNativeMessage(hostName: string, message: NativeHostRequest): Promise<unknown>;
     onStartup: { addListener(listener: () => void): void };
     onInstalled: { addListener(listener: () => void): void };
   };
@@ -51,10 +52,10 @@ export async function syncFacebookCookiesAsync(chromeApi: ChromeApi): Promise<Co
   if (syncableCookies.length === 0) return { kind: 'no-facebook-cookies' };
 
   try {
-    const reply = await chromeApi.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
-      type: 'syncCookies',
-      cookiesJson: JSON.stringify(syncableCookies),
-    });
+    const reply = await chromeApi.runtime.sendNativeMessage(
+      NATIVE_HOST_NAME,
+      buildNativeHostRequest('syncCookies', { cookiesJson: JSON.stringify(syncableCookies) })
+    );
     return interpretHostReply(reply, syncableCookies.length);
   } catch (error) {
     return { kind: 'host-unreachable', error: describeError(error) };

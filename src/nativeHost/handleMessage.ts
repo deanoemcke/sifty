@@ -16,7 +16,12 @@ import {
   type ServiceDefinition,
 } from './controlService';
 import { describeError } from './describeError';
-import { isRecord, type UnknownRecord } from './isRecord';
+import { isRecord } from './isRecord';
+import {
+  isNativeHostRequestType,
+  type NativeHostRequestByType,
+  type NativeHostRequestType,
+} from './protocol';
 import { readLogTail } from './readLogTail';
 import { describeHowToInstallService } from './serviceDefinitions';
 import type { ServiceState } from './serviceState';
@@ -51,6 +56,10 @@ export type RunHistoryEntry = {
   nextDueAtMs: number | null;
 };
 
+type UnvalidatedRequest<Type extends NativeHostRequestType> = {
+  readonly [Field in keyof NativeHostRequestByType[Type]]?: unknown;
+};
+
 export type NativeHostReply =
   | { ok: false; error: string }
   | { ok: true; cookies: FacebookCookieStatus; settings: SchedulerSettings }
@@ -71,7 +80,7 @@ function getStatus(dependencies: NativeHostDependencies): NativeHostReply {
 }
 
 function syncCookies(
-  message: UnknownRecord,
+  message: UnvalidatedRequest<'syncCookies'>,
   dependencies: NativeHostDependencies
 ): NativeHostReply {
   if (typeof message.cookiesJson !== 'string') {
@@ -82,7 +91,7 @@ function syncCookies(
 }
 
 function updateSettings(
-  message: UnknownRecord,
+  message: UnvalidatedRequest<'updateSettings'>,
   dependencies: NativeHostDependencies
 ): NativeHostReply {
   if (!isRecord(message.changes)) {
@@ -111,7 +120,10 @@ function getRunHistory(dependencies: NativeHostDependencies): NativeHostReply {
   return { ok: true, searches };
 }
 
-function tailLog(message: UnknownRecord, dependencies: NativeHostDependencies): NativeHostReply {
+function tailLog(
+  message: UnvalidatedRequest<'tailLog'>,
+  dependencies: NativeHostDependencies
+): NativeHostReply {
   const { logName, lineCount } = message;
   if (typeof logName !== 'string' || !Object.hasOwn(dependencies.logFilePathsByLogName, logName)) {
     return { ok: false, error: `Unknown log: ${String(logName)}` };
@@ -154,7 +166,7 @@ function isServiceAction(value: unknown): value is ServiceAction {
 }
 
 async function controlService(
-  message: UnknownRecord,
+  message: UnvalidatedRequest<'controlService'>,
   dependencies: NativeHostDependencies
 ): Promise<NativeHostReply> {
   const { definitionsByServiceName, userId, runLaunchctlAsync, doesFileExist } =
@@ -189,7 +201,7 @@ async function controlService(
 }
 
 function isBatchRequest(request: unknown): boolean {
-  return isRecord(request) && request.type === 'batch';
+  return isRecord(request) && request.type === ('batch' satisfies NativeHostRequestType);
 }
 
 async function handleBatchedRequestAsync(
@@ -203,7 +215,7 @@ async function handleBatchedRequestAsync(
 }
 
 async function batchAsync(
-  message: UnknownRecord,
+  message: UnvalidatedRequest<'batch'>,
   dependencies: NativeHostDependencies
 ): Promise<NativeHostReply> {
   const { requests } = message;
@@ -231,8 +243,13 @@ export async function handleNativeHostMessageAsync(
     return { ok: false, error: 'Request must be an object with a string type' };
   }
 
+  if (!isNativeHostRequestType(message.type)) {
+    return { ok: false, error: `Unknown request type: ${message.type}` };
+  }
+
+  const requestType = message.type;
   try {
-    switch (message.type) {
+    switch (requestType) {
       case 'getStatus':
         return getStatus(dependencies);
       case 'syncCookies':
@@ -249,8 +266,10 @@ export async function handleNativeHostMessageAsync(
         return await controlService(message, dependencies);
       case 'batch':
         return await batchAsync(message, dependencies);
-      default:
-        return { ok: false, error: `Unknown request type: ${message.type}` };
+      default: {
+        const unhandledRequestType: never = requestType;
+        return { ok: false, error: `Unhandled request type: ${unhandledRequestType}` };
+      }
     }
   } catch (error) {
     return { ok: false, error: describeError(error) };

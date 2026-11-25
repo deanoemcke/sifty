@@ -3,6 +3,7 @@ import { describeError } from '../../nativeHost/describeError';
 import type { InstalledServiceState, RunHistoryEntry } from '../../nativeHost/handleMessage';
 import { NATIVE_HOST_NAME } from '../../nativeHost/hostName';
 import { isRecord, type UnknownRecord } from '../../nativeHost/isRecord';
+import { buildNativeHostRequest, type NativeHostRequest } from '../../nativeHost/protocol';
 import type { LogTail } from '../../nativeHost/readLogTail';
 import type { FacebookCookieStatus } from '../../server/facebookCookies';
 import {
@@ -170,7 +171,7 @@ function requireReplyPerRequest(batchReply: UnknownRecord, requestCount: number)
 }
 
 export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostClient {
-  async function requestAsync(message: UnknownRecord): Promise<UnknownRecord> {
+  async function requestAsync(message: NativeHostRequest): Promise<UnknownRecord> {
     let reply: unknown;
     try {
       reply = await chromeApi.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
@@ -183,14 +184,14 @@ export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostCli
   return {
     async getPanels(logName, lineCount) {
       const requests = [
-        { type: 'getServices' },
-        { type: 'getStatus' },
-        { type: 'getRunHistory' },
-        { type: 'tailLog', logName, lineCount },
+        buildNativeHostRequest('getServices', {}),
+        buildNativeHostRequest('getStatus', {}),
+        buildNativeHostRequest('getRunHistory', {}),
+        buildNativeHostRequest('tailLog', { logName, lineCount }),
       ];
       let subReplies: unknown[];
       try {
-        const batchReply = await requestAsync({ type: 'batch', requests });
+        const batchReply = await requestAsync(buildNativeHostRequest('batch', { requests }));
         subReplies = requireReplyPerRequest(batchReply, requests.length);
       } catch (error) {
         return rejectEveryPanel(error as Error);
@@ -204,11 +205,11 @@ export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostCli
       };
     },
     async updateSettings(changes) {
-      const reply = await requestAsync({ type: 'updateSettings', changes });
+      const reply = await requestAsync(buildNativeHostRequest('updateSettings', { changes }));
       return requireField(reply, 'settings', isSchedulerSettings);
     },
     async controlService(serviceName, action) {
-      await requestAsync({ type: 'controlService', serviceName, action });
+      await requestAsync(buildNativeHostRequest('controlService', { serviceName, action }));
     },
   };
 }

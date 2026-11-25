@@ -8,6 +8,7 @@ import {
   handleNativeHostMessageAsync,
   type NativeHostDependencies,
 } from '../../nativeHost/handleMessage';
+import { NATIVE_HOST_REQUEST_TYPES } from '../../nativeHost/protocol';
 import {
   initSchema,
   stmtInsertSavedSearch,
@@ -489,5 +490,32 @@ describe('createHostClient rejecting malformed sub-replies', () => {
     expect(rejectionReasonOf(panels.logTail)).toEqual(
       new HostRejectedError(`Host reply has no valid "${fieldName}"`)
     );
+  });
+});
+
+function collectRequestTypes(message: unknown): unknown[] {
+  const { type, requests } = message as { type: unknown; requests?: unknown[] };
+  return [type, ...(requests ?? []).flatMap(collectRequestTypes)];
+}
+
+describe('createHostClient requests', () => {
+  it('sends only request types the native host protocol defines, inside a batch too', async () => {
+    const sentMessages: unknown[] = [];
+    const client = createHostClient({
+      runtime: {
+        sendNativeMessage: async (_hostName: string, message: unknown) => {
+          sentMessages.push(message);
+          return { ok: true, settings: VALID_SETTINGS };
+        },
+      },
+    } as unknown as Pick<ChromeApi, 'runtime'>);
+
+    await client.getPanels('webapp', 5);
+    await client.updateSettings(VALID_SETTINGS);
+    await client.controlService('webapp', 'start');
+
+    const sentTypes = sentMessages.flatMap(collectRequestTypes);
+    expect(sentTypes).toHaveLength(7);
+    expect(NATIVE_HOST_REQUEST_TYPES).toEqual(expect.arrayContaining(sentTypes));
   });
 });
