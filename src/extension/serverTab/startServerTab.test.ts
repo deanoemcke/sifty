@@ -14,6 +14,7 @@ const DEFAULT_REPLIES: Record<string, unknown> = {
     ok: true,
     cookies: {
       isSynced: true,
+      isLoginUsable: true,
       syncedAtMs: NOW_MS - 2 * 60_000,
       cookieCount: 10,
       loginExpiryMs: NOW_MS + 81 * 24 * HOUR_MS,

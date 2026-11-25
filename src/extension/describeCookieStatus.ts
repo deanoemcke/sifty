@@ -29,6 +29,15 @@ export function describeCookieStatus(
   }
 
   const syncedAge = formatDuration(nowMs - status.syncedAtMs);
+
+  if (!status.isLoginUsable) {
+    return {
+      tone: 'problem',
+      headline: 'Facebook login cannot be used',
+      detail: `${status.unusableReason} Last synced ${syncedAge} ago.`,
+    };
+  }
+
   const cookieCount = pluralise(status.cookieCount, 'cookie');
 
   if (status.loginExpiryMs !== null && status.loginExpiryMs <= nowMs) {

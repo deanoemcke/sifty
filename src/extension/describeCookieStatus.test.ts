@@ -11,6 +11,7 @@ function syncedStatus(overrides: { syncedAgoMs?: number; loginExpiresInMs?: numb
     overrides.loginExpiresInMs === undefined ? 81 * DAY_MS : overrides.loginExpiresInMs;
   return {
     isSynced: true as const,
+    isLoginUsable: true as const,
     syncedAtMs: NOW_MS - (overrides.syncedAgoMs ?? 2 * MINUTE_MS),
     cookieCount: 10,
     loginExpiryMs: loginExpiresInMs === null ? null : NOW_MS + loginExpiresInMs,
@@ -24,6 +25,26 @@ describe('describeCookieStatus', () => {
       headline: 'Facebook cookies not synced',
       detail: 'Log in to Facebook in Chrome. The extension syncs your cookies automatically.',
     });
+  });
+
+  it('flags a stored set the scraper cannot use as a problem, giving the reason and the age of the sync', () => {
+    const view = describeCookieStatus(
+      {
+        isSynced: true,
+        isLoginUsable: false,
+        syncedAtMs: NOW_MS - 3 * HOUR_MS,
+        unusableReason:
+          'Facebook requires login. Log in to Facebook in Chrome. All the cookies have expired.',
+      },
+      NOW_MS
+    );
+
+    expect(view.tone).toBe('problem');
+    expect(view.headline).toBe('Facebook login cannot be used');
+    expect(view.detail).toContain(
+      'Facebook requires login. Log in to Facebook in Chrome. All the cookies have expired.'
+    );
+    expect(view.detail).toContain('Last synced 3 hours ago');
   });
 
   it('reports a healthy sync with its age, cookie count and remaining login time', () => {
