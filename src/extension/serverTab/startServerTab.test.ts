@@ -698,6 +698,24 @@ describe('startServerTab — services', () => {
     expect(fake.requests.filter((request) => request.type === 'controlService')).toHaveLength(1);
   });
 
+  it('disables every service button while an action runs, then re-enables them', async () => {
+    const heldControl = holdReply<unknown>();
+    const fake = makeFakeChrome({ replies: { controlService: () => heldControl.reply } });
+    await openTab(fake);
+
+    await click('[data-service="webapp"] button[data-action="restart"]');
+
+    const buttonsWhileRunning = [...root.querySelectorAll<HTMLButtonElement>('.service button')];
+    expect(buttonsWhileRunning.length).toBeGreaterThan(1);
+    expect(buttonsWhileRunning.every((button) => button.disabled)).toBe(true);
+
+    heldControl.release({ ok: true, serviceName: 'webapp', state: {} });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const buttonsAfterwards = [...root.querySelectorAll<HTMLButtonElement>('.service button')];
+    expect(buttonsAfterwards.some((button) => button.disabled)).toBe(false);
+  });
+
   it('drops the failure message once it is old', async () => {
     let clockMs = NOW_MS;
     const fake = makeFakeChrome({

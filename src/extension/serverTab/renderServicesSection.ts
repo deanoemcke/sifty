@@ -5,6 +5,8 @@ import { createElement } from './dom';
 
 export type ServicesSectionActions = {
   message: string | undefined;
+  // True while an action is running, so a click that would be dropped is not offered.
+  isDisabled: boolean;
   onAction: (serviceName: string, action: ServiceAction) => void;
 };
 
@@ -24,6 +26,7 @@ export function renderServicesSection(
     const buttons = view.actions.map((action) => {
       const button = createElement('button', { text: ACTION_LABELS[action] });
       button.dataset.action = action;
+      button.disabled = actions.isDisabled;
       button.addEventListener('click', () => actions.onAction(serviceName, action));
       return button;
     });

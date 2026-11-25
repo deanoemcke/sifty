@@ -3,6 +3,7 @@
 
 import type { ServiceAction } from '../../nativeHost/controlService';
 import { describeError } from '../../nativeHost/describeError';
+import type { InstalledServiceState } from '../../nativeHost/handleMessage';
 import { LOG_FILE_PATHS_BY_LOG_NAME } from '../../nativeHost/logFiles';
 import { type ChromeApi, describeSyncOutcome, syncFacebookCookiesAsync } from '../startCookieSync';
 import { createElement } from './dom';
@@ -40,6 +41,8 @@ type ServerTabState = {
   // fetched the old log or read the service before an action finished.
   isRefreshQueued: boolean;
   isServiceActionRunning: boolean;
+  // The last services read, so the buttons can be redrawn when an action starts or ends.
+  servicesByName: Record<string, InstalledServiceState> | undefined;
 };
 
 function isMessageExpired(message: TimedMessage, currentMs: number): boolean {
@@ -60,6 +63,7 @@ export async function startServerTab(
     isRefreshing: false,
     isRefreshQueued: false,
     isServiceActionRunning: false,
+    servicesByName: undefined,
   };
 
   const hostErrorContainer = createElement('div', { section: 'host-error', className: 'banner' });
@@ -98,11 +102,22 @@ export async function startServerTab(
     await refreshAsync();
   }
 
+  function renderServices(): void {
+    if (!state.servicesByName) return;
+    renderServicesSection(servicesContainer, state.servicesByName, {
+      message: state.serviceMessage?.text,
+      isDisabled: state.isServiceActionRunning,
+      onAction: (serviceName, action) => void controlServiceAsync(serviceName, action),
+    });
+  }
+
   async function controlServiceAsync(serviceName: string, action: ServiceAction): Promise<void> {
     // Each host call takes seconds, and a second Start sent meanwhile would fail
-    // against the service the first has just loaded.
+    // against the service the first has just loaded. The buttons are disabled
+    // while one runs; this guards a click that reaches a button already replaced.
     if (state.isServiceActionRunning) return;
     state.isServiceActionRunning = true;
+    renderServices();
     try {
       await hostClient.controlService(serviceName, action);
       state.serviceMessage = undefined;
@@ -114,6 +129,7 @@ export async function startServerTab(
     } finally {
       state.isServiceActionRunning = false;
     }
+    renderServices();
     await refreshAsync();
   }
 
@@ -150,10 +166,8 @@ export async function startServerTab(
         failedPanelNames
       );
       if (services.status === 'fulfilled') {
-        renderServicesSection(servicesContainer, services.value, {
-          message: state.serviceMessage?.text,
-          onAction: (serviceName, action) => void controlServiceAsync(serviceName, action),
-        });
+        state.servicesByName = services.value;
+        renderServices();
       }
       if (status.status === 'fulfilled') {
         renderCookiesSection(cookiesContainer, status.value.cookies, nowMs(), {
