@@ -1,6 +1,10 @@
 import type Database from 'better-sqlite3';
 import { describe, expect, it, vi } from 'vitest';
-import { getSchedulerSettings, updateSchedulerSettings } from './settings';
+import {
+  getSchedulerSettings,
+  SCHEDULER_TICK_INTERVAL_MINUTES,
+  updateSchedulerSettings,
+} from './settings';
 import { createFreshDatabase } from './testDatabase';
 
 describe('updateSchedulerSettings validation', () => {
@@ -8,6 +12,11 @@ describe('updateSchedulerSettings validation', () => {
     ['zero interval', { targetIntervalMinutes: 0 }, /targetIntervalMinutes/],
     ['negative interval', { targetIntervalMinutes: -5 }, /targetIntervalMinutes/],
     ['fractional interval', { targetIntervalMinutes: 1.5 }, /targetIntervalMinutes/],
+    [
+      'interval shorter than the scheduler tick',
+      { targetIntervalMinutes: SCHEDULER_TICK_INTERVAL_MINUTES - 1 },
+      /targetIntervalMinutes/,
+    ],
     ['interval longer than a week', { targetIntervalMinutes: 10_081 }, /targetIntervalMinutes/],
     ['non-numeric interval', { targetIntervalMinutes: '60' }, /targetIntervalMinutes/],
     ['zero searches per tick', { maxSearchesPerTick: 0 }, /maxSearchesPerTick/],
@@ -17,6 +26,18 @@ describe('updateSchedulerSettings validation', () => {
     const database = createFreshDatabase();
 
     expect(() => updateSchedulerSettings(database, changes)).toThrow(expectedMessage);
+  });
+
+  it('accepts an interval equal to the scheduler tick', () => {
+    const database = createFreshDatabase();
+
+    updateSchedulerSettings(database, {
+      targetIntervalMinutes: SCHEDULER_TICK_INTERVAL_MINUTES,
+    });
+
+    expect(getSchedulerSettings(database).targetIntervalMinutes).toBe(
+      SCHEDULER_TICK_INTERVAL_MINUTES
+    );
   });
 
   it('stores nothing when any one setting in the update is invalid', () => {
