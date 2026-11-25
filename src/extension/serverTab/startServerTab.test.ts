@@ -95,16 +95,30 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  setPageHidden(false);
 });
+
+function setPageHidden(isHidden: boolean): void {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => isHidden });
+}
+
+// A host reply that stays pending until the test lets it through.
+function holdReply<Reply>() {
+  let release: (reply: Reply) => void = () => {};
+  const reply = new Promise<Reply>((resolve) => {
+    release = resolve;
+  });
+  return { reply, release };
+}
 
 function sectionText(sectionName: string): string {
   return root.querySelector(`[data-section="${sectionName}"]`)?.textContent ?? '';
 }
 
-async function openTab(fake = makeFakeChrome()) {
+async function openTab(fake = makeFakeChrome(), nowMs: () => number = () => NOW_MS) {
   await startServerTab(root, {
     chromeApi: fake.chromeApi,
-    nowMs: () => NOW_MS,
+    nowMs,
     pollIntervalMs: 30_000,
   });
   return fake;
@@ -311,6 +325,25 @@ describe('startServerTab — Sync now', () => {
 
     expect(sectionText('cookies')).toContain('no Facebook cookies');
   });
+
+  it('drops the sync message once it is old, so a failure does not outlive its cause', async () => {
+    let clockMs = NOW_MS;
+    const fake = makeFakeChrome({
+      browserCookies: [LOGGED_IN_COOKIE],
+      replies: { syncCookies: { ok: false, error: 'host unreachable' } },
+    });
+    await openTab(fake, () => clockMs);
+    await click('[data-section="cookies"] button');
+    expect(sectionText('cookies')).toContain('Cookie sync rejected');
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    clockMs += 30_000;
+    expect(sectionText('cookies')).toContain('Cookie sync rejected');
+
+    clockMs += 5 * 60_000;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sectionText('cookies')).not.toContain('Cookie sync rejected');
+  });
 });
 
 describe('startServerTab — refreshing', () => {
@@ -323,6 +356,20 @@ describe('startServerTab — refreshing', () => {
     expect(fake.requests.filter((request) => request.type === 'getStatus')).toHaveLength(2);
     expect(fake.requests.filter((request) => request.type === 'getRunHistory')).toHaveLength(2);
     expect(settingsInput('targetIntervalMinutes').value).toBe('75');
+  });
+
+  it('does not poll while the page is hidden, and refreshes once when it is shown again', async () => {
+    const fake = await openTab();
+    const requestsAfterOpen = fake.requests.length;
+
+    setPageHidden(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fake.requests).toHaveLength(requestsAfterOpen);
+
+    setPageHidden(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.requests.length).toBeGreaterThan(requestsAfterOpen);
   });
 
   it('shows the host error when a refresh fails, and recovers when the host comes back', async () => {
@@ -344,6 +391,73 @@ describe('startServerTab — refreshing', () => {
     isHostUp = true;
     await vi.advanceTimersByTimeAsync(30_000);
     expect(root.querySelector<HTMLElement>('[data-section="host-error"]')?.hidden).toBe(true);
+  });
+});
+
+describe('startServerTab — refreshing while a refresh is already running', () => {
+  it('fetches again with the newly chosen log instead of showing the old log under the new name', async () => {
+    const heldTail = holdReply<unknown>();
+    let shouldHoldTail = false;
+    const fake = makeFakeChrome({
+      replies: {
+        tailLog: (request: HostRequest) =>
+          shouldHoldTail
+            ? heldTail.reply
+            : { ok: true, isLogFilePresent: true, logLines: [`content of ${request.logName}`] },
+      },
+    });
+    await openTab(fake);
+    shouldHoldTail = true;
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    const select = root.querySelector<HTMLSelectElement>('[data-section="logs"] select');
+    if (!select) throw new Error('No log selector');
+    shouldHoldTail = false;
+    select.value = 'webapp';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    heldTail.release({ ok: true, isLogFilePresent: true, logLines: ['content of scheduler'] });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sectionText('logs')).toContain('content of webapp');
+    expect(sectionText('logs')).not.toContain('content of scheduler');
+  });
+
+  it('shows the state after a service action even when a poll was already in flight', async () => {
+    let isWebappRunning = true;
+    const heldTail = holdReply<unknown>();
+    let shouldHoldTail = false;
+    const fake = makeFakeChrome({
+      replies: {
+        tailLog: () =>
+          shouldHoldTail ? heldTail.reply : { ok: true, isLogFilePresent: true, logLines: [] },
+        getServices: () => ({
+          ok: true,
+          servicesByName: {
+            webapp: {
+              isInstalled: true,
+              isLoaded: isWebappRunning,
+              isRunning: isWebappRunning,
+              isEnabled: isWebappRunning,
+              pid: isWebappRunning ? 4242 : null,
+            },
+          },
+        }),
+        controlService: () => {
+          isWebappRunning = false;
+          return { ok: true, serviceName: 'webapp', state: {} };
+        },
+      },
+    });
+    await openTab(fake);
+    shouldHoldTail = true;
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await click('[data-service="webapp"] button[data-action="stop"]');
+    shouldHoldTail = false;
+    heldTail.release({ ok: true, isLogFilePresent: true, logLines: [] });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(serviceRow('webapp').textContent).toContain('Off');
   });
 });
 
@@ -486,5 +600,36 @@ describe('startServerTab — services', () => {
 
     expect(sectionText('services')).toContain('Input/output error');
     expect(serviceRow('webapp').textContent).toContain('Running (pid 4242)');
+  });
+
+  it('sends one request when a button is clicked twice before the host answers', async () => {
+    const heldControl = holdReply<unknown>();
+    const fake = makeFakeChrome({ replies: { controlService: () => heldControl.reply } });
+    await openTab(fake);
+
+    const button = root.querySelector<HTMLElement>(
+      '[data-service="scheduler"] button[data-action="start"]'
+    );
+    if (!button) throw new Error('No start button');
+    button.click();
+    button.click();
+    heldControl.release({ ok: true, serviceName: 'scheduler', state: {} });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fake.requests.filter((request) => request.type === 'controlService')).toHaveLength(1);
+  });
+
+  it('drops the failure message once it is old', async () => {
+    let clockMs = NOW_MS;
+    const fake = makeFakeChrome({
+      replies: { controlService: { ok: false, error: 'Input/output error' } },
+    });
+    await openTab(fake, () => clockMs);
+    await click('[data-service="webapp"] button[data-action="restart"]');
+    expect(sectionText('services')).toContain('Input/output error');
+
+    clockMs += 5 * 60_000;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sectionText('services')).not.toContain('Input/output error');
   });
 });

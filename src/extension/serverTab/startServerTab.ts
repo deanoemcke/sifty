@@ -20,15 +20,28 @@ export type ServerTabDependencies = {
 
 const LOG_LINES_SHOWN = 200;
 const DEFAULT_LOG_NAME = 'scheduler';
+// A sync or service message carries no timestamp on screen, so it is dropped
+// before it can read as current.
+const MESSAGE_LIFETIME_MS = 60_000;
+
+type TimedMessage = { text: string; shownAtMs: number };
 
 // What the tab remembers between refreshes: plain data, not read back from the DOM.
 type ServerTabState = {
   selectedLogName: string;
-  syncMessage: string | undefined;
-  serviceMessage: string | undefined;
+  syncMessage: TimedMessage | undefined;
+  serviceMessage: TimedMessage | undefined;
   isSettingsRendered: boolean;
   isRefreshing: boolean;
+  // A refresh was asked for while another was in flight: that one may have
+  // fetched the old log or read the service before an action finished.
+  isRefreshQueued: boolean;
+  isServiceActionRunning: boolean;
 };
+
+function isMessageExpired(message: TimedMessage, currentMs: number): boolean {
+  return currentMs - message.shownAtMs >= MESSAGE_LIFETIME_MS;
+}
 
 export async function startServerTab(
   root: HTMLElement,
@@ -42,6 +55,8 @@ export async function startServerTab(
     serviceMessage: undefined,
     isSettingsRendered: false,
     isRefreshing: false,
+    isRefreshQueued: false,
+    isServiceActionRunning: false,
   };
 
   const hostErrorContainer = createElement('div', { section: 'host-error', className: 'banner' });
@@ -70,28 +85,50 @@ export async function startServerTab(
   );
 
   async function syncNowAsync(): Promise<void> {
+    let text: string;
     try {
-      state.syncMessage = describeSyncOutcome(await syncFacebookCookiesAsync(chromeApi));
+      text = describeSyncOutcome(await syncFacebookCookiesAsync(chromeApi));
     } catch (error) {
-      state.syncMessage = `Cookie sync failed: ${describeError(error)}`;
+      text = `Cookie sync failed: ${describeError(error)}`;
     }
+    state.syncMessage = { text, shownAtMs: nowMs() };
     await refreshAsync();
   }
 
   async function controlServiceAsync(serviceName: string, action: ServiceAction): Promise<void> {
+    // Each host call takes seconds, and a second Start sent meanwhile would fail
+    // against the service the first has just loaded.
+    if (state.isServiceActionRunning) return;
+    state.isServiceActionRunning = true;
     try {
       await hostClient.controlService(serviceName, action);
       state.serviceMessage = undefined;
     } catch (error) {
-      state.serviceMessage = `Could not ${action} ${serviceName}: ${describeError(error)}`;
+      state.serviceMessage = {
+        text: `Could not ${action} ${serviceName}: ${describeError(error)}`,
+        shownAtMs: nowMs(),
+      };
+    } finally {
+      state.isServiceActionRunning = false;
     }
     await refreshAsync();
   }
 
   async function refreshAsync(): Promise<void> {
-    if (state.isRefreshing) return;
+    if (state.isRefreshing) {
+      state.isRefreshQueued = true;
+      return;
+    }
     state.isRefreshing = true;
+    state.isRefreshQueued = false;
     try {
+      const currentMs = nowMs();
+      if (state.syncMessage && isMessageExpired(state.syncMessage, currentMs)) {
+        state.syncMessage = undefined;
+      }
+      if (state.serviceMessage && isMessageExpired(state.serviceMessage, currentMs)) {
+        state.serviceMessage = undefined;
+      }
       const [services, status, runHistory, logTail] = await Promise.all([
         hostClient.getServices(),
         hostClient.getStatus(),
@@ -100,11 +137,11 @@ export async function startServerTab(
       ]);
       renderHostError(hostErrorContainer, undefined);
       renderServicesSection(servicesContainer, services, {
-        message: state.serviceMessage,
+        message: state.serviceMessage?.text,
         onAction: (serviceName, action) => void controlServiceAsync(serviceName, action),
       });
       renderCookiesSection(cookiesContainer, status.cookies, nowMs(), {
-        syncMessage: state.syncMessage,
+        syncMessage: state.syncMessage?.text,
         onSyncNow: () => void syncNowAsync(),
       });
       // Rendered only once: later refreshes must not overwrite what is typed.
@@ -125,8 +162,19 @@ export async function startServerTab(
     } finally {
       state.isRefreshing = false;
     }
+    if (state.isRefreshQueued) await refreshAsync();
+  }
+
+  function onPollTick(): void {
+    // The tab is usually in the background, where nobody sees the output.
+    if (!document.hidden) void refreshAsync();
+  }
+
+  function onVisibilityChange(): void {
+    if (!document.hidden) void refreshAsync();
   }
 
   await refreshAsync();
-  setInterval(() => void refreshAsync(), dependencies.pollIntervalMs);
+  setInterval(onPollTick, dependencies.pollIntervalMs);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 }
