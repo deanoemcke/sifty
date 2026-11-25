@@ -25,7 +25,7 @@ launchd ── scheduler (every 30 min) ── reads settings from sifty.db
 launchd ── webapp server (vite) ─────── ngrok
 ```
 
-Each request is one `sendNativeMessage` call, so Chrome starts a fresh host process for it and the process exits after replying; there is no long-lived connection. Refreshing the tab sends several requests (one per panel), so it starts several host processes. Native messaging means no network port and no token: Chrome only lets the extension ID listed in the host manifest's `allowed_origins` talk to the host. Cookie syncing and the settings tab both work when the webapp server is stopped.
+Each request is one `sendNativeMessage` call, so Chrome starts a fresh host process for it and the process exits after replying; there is no long-lived connection. Refreshing the tab sends one `batch` request that carries the four panel requests, so it starts one host process. Native messaging means no network port and no token: Chrome only lets the extension ID listed in the host manifest's `allowed_origins` talk to the host. Cookie syncing and the settings tab both work when the webapp server is stopped.
 
 ## Decisions
 
@@ -57,7 +57,9 @@ Each phase is test-first, ends green, and is committed separately.
 ### 3. Native host
 
 - `src/nativeHost/` and `scripts/sifty-native-host.ts` — a Node script speaking Chrome's length-prefixed JSON protocol over stdin/stdout, plus a wrapper (`scripts/sifty-native-host.sh`) that runs `nvm use` (matching `.nvmrc`, as `run-and-notify.sh` does) so `better-sqlite3` loads.
-- Messages (each validated at the boundary; unknown or oversized messages rejected explicitly): `getStatus` (cookie status and current settings), `syncCookies`, `updateSettings`, `getRunHistory`, `tailLog`, `getServices`, `controlService`. There is no separate `getSettings`.
+- Messages (each validated at the boundary; unknown or oversized messages rejected explicitly): `getStatus` (cookie status and current settings), `syncCookies`, `updateSettings`, `getRunHistory`, `tailLog`, `getServices`, `controlService`, and `batch`. There is no separate `getSettings`.
+- `src/nativeHost/protocol.ts` defines each request's shape once. The host's dispatch and both extension clients (the cookie sync and the server tab) are typed against it, so renaming a field, or changing what the client sends, fails to compile at the client call sites. The host handlers deliberately take every field as optional and unknown (`UnvalidatedRequest`), because the host validates each message at runtime; the compiler therefore does not tell the host about a new field or a changed field type, and the handler must be updated by hand. Replies are still checked by hand in each client.
+- `batch` runs up to 8 requests concurrently in one host process and replies with each request's own reply, failures included, so one failing panel does not hide the others. Only the read-only types `getStatus`, `getRunHistory`, `tailLog` and `getServices` are accepted; `controlService`, `syncCookies`, `updateSettings` and a nested `batch` are rejected. The combined reply must still fit Chrome's 1 MB limit, or the host replies with an explicit too-large error.
 - `controlService` only accepts a fixed list of service names (webapp server, ngrok, scheduler); nothing is built from free text.
 - Logs to a file from the start; "native host has exited" is otherwise undiagnosable.
 - An install script writes the host manifest to `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`.

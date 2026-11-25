@@ -1,0 +1,49 @@
+diff --git a/src/nativeHost/runNativeHost.test.ts b/src/nativeHost/runNativeHost.test.ts
+index 2fcd225..76309c8 100644
+--- a/src/nativeHost/runNativeHost.test.ts
++++ b/src/nativeHost/runNativeHost.test.ts
+@@ -1,3 +1,6 @@
++import fs from 'node:fs';
++import os from 'node:os';
++import path from 'node:path';
+ import { PassThrough } from 'node:stream';
+ import Database from 'better-sqlite3';
+ import { describe, expect, it } from 'vitest';
+@@ -160,3 +163,37 @@ describe('runNativeHostAsync', () => {
+     ]);
+   });
+ });
++
++describe('R1-F001: batch reply budget', () => {
++  it('still answers a batch whose sub-replies each fit but together exceed the reply limit', async () => {
++    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'r1-f001-'));
++    try {
++      // 500 lines of ANSI-heavy text: about 256 KB raw, about 576 KB once JSON escapes each ESC byte.
++      const ansiLine = '\u001bxxx'.repeat(128);
++      const logText = `${Array.from({ length: 500 }, () => ansiLine).join('\n')}\n`;
++      fs.writeFileSync(path.join(directory, 'a.log'), logText);
++      fs.writeFileSync(path.join(directory, 'b.log'), logText);
++      const dependencies = {
++        ...makeDependencies(),
++        logFilePathsByLogName: {
++          a: path.join(directory, 'a.log'),
++          b: path.join(directory, 'b.log'),
++        },
++      };
++      const tailA = { type: 'tailLog', logName: 'a', lineCount: 500 };
++      const tailB = { type: 'tailLog', logName: 'b', lineCount: 500 };
++
++      const alone = await runHostWithChunks([encodeNativeMessage(tailA)], dependencies);
++      expect(alone.replies[0]).toMatchObject({ ok: true });
++
++      const { replies } = await runHostWithChunks(
++        [encodeNativeMessage({ type: 'batch', requests: [tailA, tailB] })],
++        dependencies
++      );
++
++      expect(replies[0]).toMatchObject({ ok: true });
++    } finally {
++      fs.rmSync(directory, { recursive: true, force: true });
++    }
++  });
++});

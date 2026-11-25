@@ -1,0 +1,347 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261125-080550",
+  "round": 1,
+  "findings": [
+    {
+      "id": "R1-F001",
+      "title": "One oversized combined reply fails all four server-tab panels",
+      "claim": "The four panel replies share one 1 MB native-message budget. If run history (no row cap) plus the log tail (JSON escaping can expand ANSI bytes) exceed it, writeReplyAsync replaces the whole batch reply with a single { ok:false } error and getPanels rejects every panel, including small ones that would have rendered before. The error does not say which panel was too large.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "generic-correctness",
+        "informed-data-tests",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/nativeHost/runNativeHost.ts",
+        "line": 18
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Test in src/nativeHost/runNativeHost.test.ts: two tailLog requests on 256 KB ANSI-heavy logs (JSON-escaped ESC bytes). Each alone returns { ok:true } (asserted), but as one batch writeReplyAsync replaces the whole reply with { ok:false, error:'Native message reply is too large...' }, so every sub-reply is lost. Used two tailLogs rather than run history plus a log; the mechanism (shared 1 MB budget, whole-batch replacement) is identical.",
+        "reference": "repro/R1-F001.patch"
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "It is real but needs a per-panel size policy, which is a design decision, and 1 MB is a lot for these panels."
+      }
+    },
+    {
+      "id": "R1-F002",
+      "title": "A batch can hold state-changing requests that run concurrently, and the protocol types allow batches the host rejects",
+      "claim": "batchAsync runs every sub-request under Promise.all and accepts any request type, so [controlService stop, getServices] or two controlService calls on one service race, and a sub-reply is not what the request would produce alone. The protocol type for batch also permits nested batches and more than 8 requests, which the host rejects only at run time. The tab batches only reads, so this is latent. Suggested fix: restrict batch to a read-only request subset (by type), or run sub-requests in order.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "informed-data-tests",
+        "informed-design",
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 217
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Test in src/nativeHost/handleMessage.test.ts: fake launchd whose bootout is delayed 20 ms, batch [controlService stop, getServices]. The getServices sub-reply reports webapp isLoaded:true (expected false), because Promise.all starts it before the stop finishes. Also confirmed with tsc that buildNativeHostRequest('batch', { requests: [{ type:'batch', requests:[] }, controlService...] }) compiles, so nested batches and state-changing requests are allowed by the type; MAX_BATCH_REQUEST_COUNT is runtime only.",
+        "reference": "repro/R1-F002.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "d02e9d712cf475f684be6406dd6f293834efb54e"
+      }
+    },
+    {
+      "id": "R1-F003",
+      "title": "No version-skew fallback when the installed native host predates batch",
+      "claim": "getPanels needs the host to understand the batch message. A host installed before this change replies 'Unknown request type: batch', so all four panels show that error. The old per-request protocol would have worked against the old host. There is no version handshake or fallback.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "generic-correctness"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 185
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Test in src/extension/serverTab/hostClient.test.ts: fake host that answers { ok:false, error:'Unknown request type: batch' } to batch but answers single requests fine. getPanels marks every panel rejected (services.status is 'rejected', expected 'fulfilled' under a fallback). Confirms no fallback exists. Impact depends on the extension and host being updated independently; the host is run from the same repo checkout via scripts/sifty-native-host.sh, so skew needs an extension reload lagging a git pull or the reverse.",
+        "reference": "repro/R1-F003.patch"
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "The host runs from the same repo checkout as the extension, so the two only differ briefly. The error message already names the cause, and a fallback would keep the old four-request code alive."
+      }
+    },
+    {
+      "id": "R1-F004",
+      "title": "settleSubReply turns any thrown error, including bugs, into a host-reported panel failure",
+      "claim": "The catch around parseReply(requireOkReply(subReply)) captures every exception and stores it as a rejected panel with an 'error as Error' cast. A programming error such as a TypeError in a parser would be shown to the user as 'The Sifty native host reported an error: ...' instead of surfacing as a bug.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 149
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Test in src/extension/serverTab/hostClient.test.ts: a sub-reply whose servicesByName getter throws TypeError('parser bug'). settleSubReply's catch stores it as a rejected panel; services.reason is the TypeError. renderSections.describeHostError labels every non-HostUnreachableError as 'The Sifty native host reported an error: ...', so the bug would be shown as a host-reported error. The test's assertion (reason not a TypeError) encodes the proposed behaviour; the parsers are guard-based and do not throw on malformed data today, so this is latent.",
+        "reference": "repro/R1-F004.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "865a06b3506c88bdd0e16f7f4bdb1a30f0c21316"
+      }
+    },
+    {
+      "id": "R1-F005",
+      "title": "Docs overstate the compile-time guarantee for request reshaping",
+      "claim": "docs/sifty-server-extension.md line 61 says adding, renaming or reshaping a request without updating every side fails to compile. Host handlers take UnvalidatedRequest (every field optional and unknown), so adding a field or changing a field's value type compiles unchanged on the host side and is silently ignored. Only renames of fields the host already reads are caught. The looseness is not explained where UnvalidatedRequest is defined.",
+      "severity": "minor",
+      "classification": "docs-code-drift",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 59
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "Add a required field 'since: number' to tailLog in NativeHostRequestByType. The buildNativeHostRequest('tailLog', ...) call sites in hostClient.ts fail to compile, but tailLog(message: UnvalidatedRequest<'tailLog'>) still compiles and ignores 'since'.\nVerifier: Compile-time claim. Ran tsc with 'since: number' added to tailLog in NativeHostRequestByType: errors only at the client call sites (hostClient.ts:190, protocol.test.ts:40). handleMessage.ts tailLog(message: UnvalidatedRequest<'tailLog'>) compiles unchanged and ignores the field; UnvalidatedRequest maps every field to optional unknown. Docs line 61 ('without updating every side fails to compile') overstates this."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "ed7c41b8c39a0e2da3c8774c24dab6c37d4b7f17"
+      }
+    },
+    {
+      "id": "R1-F006",
+      "title": "protocol.test 'is understood by the host' passes even if a switch case is missing",
+      "claim": "The test forbids the 'Unknown request type: X' error, but isNativeHostRequestType already uses the same list, so a listed type can never produce that message. Removing a case from the switch yields 'Unhandled request type: X', which still passes. Only tsc, not vitest, catches the gap.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests"
+      ],
+      "location": {
+        "file": "src/nativeHost/protocol.test.ts",
+        "line": 27
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Delete `case 'getServices'` from the switch in handleNativeHostMessageAsync with the never check bypassed. The host returns { ok:false, error:'Unhandled request type: getServices' }, which the test does not forbid. A stronger assertion is that the error does not match /Unknown|Unhandled request type/.\nVerifier: Mutation run. Deleted case 'getServices' from the switch in handleNativeHostMessageAsync: protocol.test.ts still passes 12/12 (the host returns 'Unhandled request type: getServices', not the forbidden 'Unknown request type' string); only tsc fails (TS2322 string not assignable to never). Claim holds. Not a failing test on current code, so no patch."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "607f21a7767ff68140dd5ac4ff3d2e2a6612d25c"
+      }
+    },
+    {
+      "id": "R1-F007",
+      "title": "No test pins the own-property check for request types",
+      "claim": "isNativeHostRequestType relies on Object.hasOwn. No test sends a prototype-chain name such as 'constructor' or '__proto__' as the request type, so changing the guard to `value in IS_REQUEST_TYPE_BY_NAME` would pass the whole suite while letting those names reach the never branch.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests"
+      ],
+      "location": {
+        "file": "src/nativeHost/protocol.ts",
+        "line": 43
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Test idea: handleNativeHostMessageAsync({ type: 'constructor' }) and ({ type: '__proto__' }) must each return { ok:false, error:'Unknown request type: ...' }. protocol.test.ts only checks 'getSettings'.\nVerifier: Mutation run. Changed Object.hasOwn(IS_REQUEST_TYPE_BY_NAME, value) to 'value in IS_REQUEST_TYPE_BY_NAME': the full suite passed 1793/1793 and tsc was clean. Under the mutation { type:'constructor' }, '__proto__' and 'toString' reach the never branch and reply 'Unhandled request type: ...' instead of 'Unknown request type: ...'. Current code is correct; the gap is only missing coverage, so no failing test exists."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "607f21a7767ff68140dd5ac4ff3d2e2a6612d25c"
+      }
+    },
+    {
+      "id": "R1-F008",
+      "title": "The request-type list is kept twice and request fields are still validated by hand",
+      "claim": "protocol.ts holds NativeHostRequestByType and a second list, IS_REQUEST_TYPE_BY_NAME, kept in step only by a satisfies check. Each handler re-validates its own fields with the loose UnvalidatedRequest type. Simpler options: derive the type from one runtime tuple, or define one runtime descriptor per request type that gives both the type and the field checks.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/protocol.ts",
+        "line": 27
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Adding a request type means touching the type map, the runtime map and the switch. The descriptor option was skipped because it rewrites every handler's validation and could change which error is reported first. The author's summary names the second list as a known limit.\nVerifier: Read protocol.ts: NativeHostRequestByType (type-level) and IS_REQUEST_TYPE_BY_NAME (runtime, tied by 'satisfies Record<NativeHostRequestType, true>') mirror each other; handlers each validate fields by hand via UnvalidatedRequest. Design observation holds; settled by a design decision, not a test."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "The author left it out on purpose because it rewrites every handler and could change which error wins. The compiler already checks the two request-name lists against each other."
+      }
+    },
+    {
+      "id": "R1-F009",
+      "title": "Replies are not tied to the requests that produced them",
+      "claim": "NativeHostReply is one flat union and a batch reply is replies: NativeHostReply[], so the tab client relies on position (requireReplyPerRequest and destructuring) and re-checks each field by hand. A reply type per request type, with the batch typed over a tuple of requests, would let the per-panel checks share one definition.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 66
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Skipped as a large typing change best done together with the request-validation finding. The summary lists per-request reply types as deliberately not done.\nVerifier: Read handleMessage.ts and hostClient.ts: NativeHostReply is one flat union, batch carries replies: NativeHostReply[], and getPanels destructures sub-replies by position then re-checks each field with requireField. Claim holds; it is a typing design point."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "The author left it out on purpose because it rewrites every handler and could change which error wins. The compiler already checks the two request-name lists against each other."
+      }
+    },
+    {
+      "id": "R1-F010",
+      "title": "Batching is a tab-only call that hard-codes four requests",
+      "claim": "getPanels hard-codes the four panel requests and the four single-request HostClient methods were removed, so any other multi-request caller still pays one host start per request. Alternatives are to coalesce same-tick requests inside requestAsync into one batch (keeping the tab's Promise.allSettled and removing getPanels, settleSubReply and the PanelResult types), or to use one long-lived connectNative port.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 186
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "The docs (line 28) record 'no long-lived connection' as a decision, so the connectNative option runs against it, but the coalescing option does not. It was skipped as a different design with a service-worker lifecycle cost.\nVerifier: Read hostClient.ts and git show c89331d: the per-request getStatus/getRunHistory/tailLog/getServices methods were removed and getPanels hard-codes four requests; each other call (updateSettings, controlService, cookie sync) is its own sendNativeMessage and host process. docs/sifty-server-extension.md line 28 does record 'no long-lived connection'. Claim holds; the alternatives are design choices."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Nothing else needs several requests today, and automatic batching is a different design that is not needed to fix the problem this change targets."
+      }
+    },
+    {
+      "id": "R1-F011",
+      "title": "The batch size limit of eight and the tab's four requests are not linked",
+      "claim": "MAX_BATCH_REQUEST_COUNT is defined in the host and hostClient builds a literal four-element array, with nothing connecting them. If the tab grew past eight panels, every panel would fail. Moving the limit into protocol.ts and checking the client's list against it would link them.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 30
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "No failure today; the risk appears only if the tab gains more than eight panels. The informed-design report also notes the limit sits outside the protocol file.\nVerifier: MAX_BATCH_REQUEST_COUNT = 8 is defined in handleMessage.ts:30 and used only there; hostClient.getPanels builds a literal four-element array with no reference to it. Nothing links them; no failure today. Claim holds."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "d02e9d712cf475f684be6406dd6f293834efb54e"
+      }
+    },
+    {
+      "id": "R1-F012",
+      "title": "Small leftovers in the new client code and host reads",
+      "claim": "Three small overlaps remain: parseServicesReply and parseRunHistoryReply are one-line pass-throughs; PanelResult repeats PromiseSettledResult with a narrower reason type; requireOkReply repeats the envelope check of interpretHostReply in startCookieSync.ts. A getStatus plus getRunHistory batch also reads scheduler settings twice, which was already true before the change.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 127
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Reuse agent: PanelResult keeps reason typed as Error rather than any, judged the better trade-off; sharing the envelope check would need a new module and change interpretHostReply's error text. Efficiency agent: one extra small SELECT per batch.\nVerifier: Checked: parseServicesReply and parseRunHistoryReply are single requireField pass-throughs (hostClient.ts:127-137); PanelResult is a narrowed PromiseSettledResult; requireOkReply (hostClient.ts) and interpretHostReply (startCookieSync.ts:39-47) both implement the ok/error envelope check with different error text; getStatus and getRunHistory each call getSchedulerSettings. All overlaps are as described and minor."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "The reviewers judged each one a fair trade as it stands. Merging them would add a shared file or change an error message for no real gain."
+      }
+    },
+    {
+      "id": "R1-F013",
+      "title": "R1-F004 fix only moves the mislabelled bug report up one level and now blanks every panel",
+      "claim": "settleSubReply now rethrows non-HostRejectedError errors, but the only caller, refreshAsync in startServerTab.ts, catches them and passes them to renderHostError, whose describeHostError labels every non-HostUnreachableError as 'The Sifty native host reported an error: ...'. A parser bug is therefore still shown as a host-reported error, and the other three panels (which parsed fine) are no longer updated.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "fix-check"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 180
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "Make parseServicesReply throw TypeError('parser bug'). getPanels rejects. refreshAsync's catch calls renderHostError(hostErrorContainer, [error], []), which renders 'The Sifty native host reported an error: parser bug' with no 'Not updated' list. None of the four panel render branches run, so the status, run history and log panels also stay stale. The new hostClient test only asserts getPanels rejects with TypeError; it does not cover what the user sees."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Nothing in the reply reading can throw this kind of error today, so it cannot happen yet. The earlier fix already stops the bug being hidden inside one panel."
+      }
+    },
+    {
+      "id": "R1-F014",
+      "title": "Docs bullet for batch does not mention the new read-only restriction",
+      "claim": "docs/sifty-server-extension.md line 62 still says only 'A batch inside a batch is rejected'. The R1-F002 fix also rejects controlService, syncCookies and updateSettings inside a batch, and the same file was edited for R1-F005 in the adjacent bullet.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "fix-check"
+      ],
+      "location": {
+        "file": "docs/sifty-server-extension.md",
+        "line": 62
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Compare the line with BATCHABLE_REQUEST_TYPES in src/nativeHost/protocol.ts (getStatus, getRunHistory, tailLog, getServices) and the new handleMessage.test.ts cases that expect an error for the three state-changing types."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "f232be43481de9bf270cf718ef331c8ee15d626e"
+      }
+    },
+    {
+      "id": "R1-F015",
+      "title": "Host handlers see every request field as unknown, so the compiler misses added or changed fields",
+      "claim": "UnvalidatedRequest in handleMessage.ts types every field of a request as optional and unknown, so a handler that ignores a newly added field, or one whose field type changes, still compiles and must be updated by hand. The alternative is a per-request validator that returns the typed request so handlers receive real types. That is a design change touching every handler, so it was not made in the cleanup pass. The limitation is now documented in docs/sifty-server-extension.md.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "cleanup"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 61
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "The comment-cleanup pass found that UnvalidatedRequest admits the compiler gap; deleting its caveat comment is safe only because the docs now carry it. Replacing it needs a design decision on validator shape across all handlers."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "The gap is real but already written down in the docs, and closing it means redesigning how every handler checks its input, which is too big to bolt onto this change."
+      }
+    }
+  ]
+}

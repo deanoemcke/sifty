@@ -133,13 +133,10 @@ export async function startServerTab(
       if (state.serviceMessage && isMessageExpired(state.serviceMessage, currentMs)) {
         state.serviceMessage = undefined;
       }
-      const results = await Promise.allSettled([
-        hostClient.getServices(),
-        hostClient.getStatus(),
-        hostClient.getRunHistory(),
-        hostClient.tailLog(state.selectedLogName, LOG_LINES_SHOWN),
-      ]);
-      const [services, status, runHistory, logTail] = results;
+      const { services, status, runHistory, logTail } = await hostClient.getPanels(
+        state.selectedLogName,
+        LOG_LINES_SHOWN
+      );
       const panelResults = [
         { panelName: 'Services', result: services },
         { panelName: 'Cookies and settings', result: status },
@@ -151,7 +148,7 @@ export async function startServerTab(
         .map(({ panelName }) => panelName);
       renderHostError(
         hostErrorContainer,
-        results.flatMap((result) => (result.status === 'rejected' ? [result.reason as Error] : [])),
+        panelResults.flatMap(({ result }) => (result.status === 'rejected' ? [result.reason] : [])),
         failedPanelNames
       );
       if (services.status === 'fulfilled') {

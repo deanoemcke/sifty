@@ -75,12 +75,17 @@ function makeFakeChrome(
 ) {
   const replies = { ...DEFAULT_REPLIES, ...options.replies };
   const requests: HostRequest[] = [];
-  const sendNativeMessage = vi.fn(async (_hostName: string, message: unknown) => {
-    const request = message as HostRequest;
+  async function answerRequestAsync(request: HostRequest): Promise<unknown> {
     requests.push(request);
-    if (options.hostUnreachableError) throw options.hostUnreachableError;
     const reply = replies[request.type];
     return typeof reply === 'function' ? reply(request) : reply;
+  }
+  const sendNativeMessage = vi.fn(async (_hostName: string, message: unknown) => {
+    if (options.hostUnreachableError) throw options.hostUnreachableError;
+    const request = message as HostRequest;
+    if (request.type !== 'batch') return answerRequestAsync(request);
+    const subRequests = request.requests as HostRequest[];
+    return { ok: true, replies: await Promise.all(subRequests.map(answerRequestAsync)) };
   });
 
   const chromeApi: ChromeApi = {
@@ -95,7 +100,7 @@ function makeFakeChrome(
     },
     alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
   };
-  return { chromeApi, requests };
+  return { chromeApi, requests, sendNativeMessage };
 }
 
 let root: HTMLElement;
@@ -421,6 +426,16 @@ describe('startServerTab — Sync now', () => {
 });
 
 describe('startServerTab — refreshing', () => {
+  it('fetches every panel with one host request per refresh', async () => {
+    const fake = await openTab();
+    expect(fake.sendNativeMessage).toHaveBeenCalledTimes(1);
+    expect(fake.sendNativeMessage.mock.calls[0][1]).toMatchObject({ type: 'batch' });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(fake.sendNativeMessage).toHaveBeenCalledTimes(2);
+  });
+
   it('refreshes status and run history on a timer without touching what is typed in the form', async () => {
     const fake = await openTab();
     settingsInput('targetIntervalMinutes').value = '75';

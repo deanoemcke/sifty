@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NATIVE_HOST_REQUEST_TYPES } from '../nativeHost/protocol';
 import type { BrowserCookie } from './cookieSync';
 import { type ChromeApi, startCookieSync } from './startCookieSync';
 
@@ -82,6 +83,20 @@ describe('startCookieSync', () => {
     expect(JSON.parse(message.cookiesJson)).toEqual([
       expect.objectContaining({ name: 'xs', value: 'session-value', httpOnly: true }),
     ]);
+  });
+
+  it('sends only request types the native host protocol defines', async () => {
+    const fake = makeFakeChrome({});
+    startCookieSync(fake.chromeApi, { log: vi.fn() });
+
+    fake.listenersByEvent.startup[0]();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    const sentTypes = fake.sendNativeMessage.mock.calls.map(
+      (call) => (call as unknown as [string, { type: unknown }])[1].type
+    );
+    expect(sentTypes).toHaveLength(1);
+    expect(NATIVE_HOST_REQUEST_TYPES).toEqual(expect.arrayContaining(sentTypes));
   });
 
   it('logs each successful sync with how many cookies were sent', async () => {

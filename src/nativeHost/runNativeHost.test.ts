@@ -130,4 +130,33 @@ describe('runNativeHostAsync', () => {
     expect(outcome).toBe('input-closed');
     expect(replies).toEqual([{ ok: false, error: expect.stringContaining('too large') }]);
   });
+
+  it('replies with an error instead of a truncated batch when the combined replies are too large', async () => {
+    const dependencies = makeDependencies();
+    const insertSearch = dependencies.getDatabase().prepare(
+      `INSERT INTO saved_searches
+         (id, name, urls, created_at, should_alert_on_new_listings, last_run_at, last_run_detail)
+       VALUES (?, ?, '[]', 1, 1, 1, ?)`
+    );
+    dependencies.getDatabase().transaction(() => {
+      for (let index = 0; index < 1000; index++) {
+        insertSearch.run(`search-${index}`, `Search ${index}`, 'scrape:'.padEnd(500, 'x'));
+      }
+    })();
+    const batchRequest = {
+      type: 'batch',
+      requests: [{ type: 'getRunHistory' }, { type: 'getRunHistory' }],
+    };
+
+    const { outcome, replies } = await runHostWithChunks(
+      [encodeNativeMessage({ type: 'getRunHistory' }), encodeNativeMessage(batchRequest)],
+      dependencies
+    );
+
+    expect(outcome).toBe('input-closed');
+    expect(replies).toEqual([
+      { ok: true, searches: expect.any(Array) },
+      { ok: false, error: expect.stringContaining('too large') },
+    ]);
+  });
 });

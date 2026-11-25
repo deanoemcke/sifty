@@ -1,0 +1,31 @@
+diff --git a/src/extension/serverTab/hostClient.test.ts b/src/extension/serverTab/hostClient.test.ts
+index 771503c..cac01eb 100644
+--- a/src/extension/serverTab/hostClient.test.ts
++++ b/src/extension/serverTab/hostClient.test.ts
+@@ -517,3 +517,26 @@ describe('createHostClient requests', () => {
+     expect(NATIVE_HOST_REQUEST_TYPES).toEqual(expect.arrayContaining(sentTypes));
+   });
+ });
++
++describe('R1-F004: a bug while reading one sub-reply', () => {
++  it('lets a thrown TypeError surface instead of reporting it as a host error', async () => {
++    const buggyReply = {
++      ok: true,
++      replies: [
++        {
++          ok: true,
++          get servicesByName(): never {
++            throw new TypeError('parser bug');
++          },
++        },
++        { ok: false, error: 'x' },
++        { ok: false, error: 'x' },
++        { ok: false, error: 'x' },
++      ],
++    };
++
++    const panels = await clientReplying(buggyReply).getPanels('webapp', 10);
++
++    expect(rejectionReasonOf(panels.services)).not.toBeInstanceOf(TypeError);
++  });
++});
