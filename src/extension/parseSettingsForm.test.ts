@@ -28,12 +28,13 @@ describe('parseSettingsForm', () => {
     ['negative', '-3'],
     ['in exponent form', '1e2'],
     ['zero', '0'],
+    ['shorter than the 30-minute scheduler tick', '29'],
     ['above the maximum of a week', '10081'],
   ])('rejects an interval that is %s, naming the allowed range', (_description, value) => {
     expect(parseSettingsForm({ ...VALID_FIELDS, targetIntervalMinutes: value })).toEqual({
       isValid: false,
       errorsBySettingName: {
-        targetIntervalMinutes: 'Enter a whole number from 1 to 10080',
+        targetIntervalMinutes: 'Enter a whole number from 30 to 10080',
       },
     });
   });

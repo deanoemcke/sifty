@@ -1,4 +1,4 @@
-import { SCHEDULER_SETTING_BOUNDS, type SchedulerSettings } from '../../server/settings';
+import { SCHEDULER_SETTING_DEFINITIONS, type SchedulerSettings } from '../../server/settings';
 import { parseSettingsForm, type SettingsFormFields } from '../parseSettingsForm';
 import { createElement } from './dom';
 
@@ -22,7 +22,7 @@ export type SaveSettingsResult =
 export type SaveSettings = (changes: SchedulerSettings) => Promise<SaveSettingsResult>;
 
 function describeRange(settingName: SettingName): string {
-  const { minimum, maximum } = SCHEDULER_SETTING_BOUNDS[settingName];
+  const { minimum, maximum } = SCHEDULER_SETTING_DEFINITIONS[settingName];
   return `${minimum} to ${maximum}`;
 }
 
