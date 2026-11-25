@@ -58,6 +58,9 @@ export type RunHistoryEntry = {
   nextDueAtMs: number | null;
 };
 
+// Handlers see every field as optional and unknown because messages come from outside the process
+// and are validated at runtime. This means the compiler does not flag a handler that ignores a newly
+// added field or a changed field type; only renames of fields the handler already reads are caught.
 type UnvalidatedRequest<Type extends NativeHostRequestType> = {
   readonly [Field in keyof NativeHostRequestByType[Type]]?: unknown;
 };
