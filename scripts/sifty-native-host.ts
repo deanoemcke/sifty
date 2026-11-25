@@ -19,7 +19,7 @@ async function main(): Promise<number> {
   console.log = (...logArguments: unknown[]) => console.error(...logArguments);
 
   const outcome = await runNativeHostAsync(process.stdin, process.stdout, {
-    database: getDb(),
+    getDatabase: getDb,
     logFilePathsByLogName: LOG_FILE_PATHS_BY_LOG_NAME,
     services: {
       definitionsByServiceName: buildServiceDefinitions(getLaunchAgentsDirectory()),

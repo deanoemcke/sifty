@@ -14,7 +14,7 @@ function makeDependencies(): NativeHostDependencies {
   const database = new Database(':memory:');
   initSchema(database);
   return {
-    database,
+    getDatabase: () => database,
     logFilePathsByLogName: {},
     services: {
       definitionsByServiceName: {},
@@ -113,12 +113,12 @@ describe('runNativeHostAsync', () => {
 
   it('replies with an error instead of failing silently when a reply is too large for Chrome', async () => {
     const dependencies = makeDependencies();
-    const insertSearch = dependencies.database.prepare(
+    const insertSearch = dependencies.getDatabase().prepare(
       `INSERT INTO saved_searches
          (id, name, urls, created_at, should_alert_on_new_listings, last_run_at, last_run_detail)
        VALUES (?, ?, '[]', 1, 1, 1, ?)`
     );
-    dependencies.database.transaction(() => {
+    dependencies.getDatabase().transaction(() => {
       for (let index = 0; index < 3000; index++) {
         insertSearch.run(`search-${index}`, `Search ${index}`, 'scrape:'.padEnd(500, 'x'));
       }

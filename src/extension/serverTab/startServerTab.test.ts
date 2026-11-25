@@ -223,6 +223,30 @@ describe('startServerTab — loading', () => {
       'database is locked'
     );
   });
+
+  it('still shows the other panels and the settings form when one request fails', async () => {
+    await openTab(
+      makeFakeChrome({
+        replies: { getServices: { ok: false, error: 'launchctl print-disabled failed (exit 1)' } },
+      })
+    );
+
+    expect(sectionText('host-error')).toContain('launchctl print-disabled failed');
+    expect(sectionText('cookies')).toContain('Facebook cookies synced');
+    expect(sectionText('runs')).toContain('Gravitrax');
+    expect(sectionText('logs')).toContain('first line');
+    expect(settingsInput('targetIntervalMinutes').value).toBe('240');
+  });
+
+  it('shows the panels that load when only the log read fails', async () => {
+    await openTab(
+      makeFakeChrome({ replies: { tailLog: { ok: false, error: 'cannot read log' } } })
+    );
+
+    expect(sectionText('host-error')).toContain('cannot read log');
+    expect(sectionText('services')).toContain('webapp');
+    expect(sectionText('cookies')).toContain('Facebook cookies synced');
+  });
 });
 
 function settingsInput(settingName: string): HTMLInputElement {

@@ -18,7 +18,7 @@ function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): Nati
   const database = new Database(':memory:');
   initSchema(database);
   return {
-    database,
+    getDatabase: () => database,
     logFilePathsByLogName: {},
     services: {
       definitionsByServiceName: {},
@@ -70,7 +70,7 @@ describe('syncCookies', () => {
     });
     expect(JSON.stringify(reply)).not.toContain('12345');
     expect(JSON.stringify(reply)).not.toContain('67890');
-    expect(getStoredFacebookCookiesJson(dependencies.database)).toBe(GOOD_COOKIES_JSON);
+    expect(getStoredFacebookCookiesJson(dependencies.getDatabase())).toBe(GOOD_COOKIES_JSON);
   });
 
   it('replies with an error and keeps the previous cookies when the new set is invalid', async () => {
@@ -86,7 +86,7 @@ describe('syncCookies', () => {
     );
 
     expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('non-empty') });
-    expect(getStoredFacebookCookiesJson(dependencies.database)).toBe(GOOD_COOKIES_JSON);
+    expect(getStoredFacebookCookiesJson(dependencies.getDatabase())).toBe(GOOD_COOKIES_JSON);
   });
 
   it('rejects a request whose cookiesJson is not a string', async () => {
@@ -112,7 +112,7 @@ describe('updateSettings', () => {
       ok: true,
       settings: { targetIntervalMinutes: 60, maxSearchesPerTick: 5 },
     });
-    expect(getSchedulerSettings(dependencies.database).targetIntervalMinutes).toBe(60);
+    expect(getSchedulerSettings(dependencies.getDatabase()).targetIntervalMinutes).toBe(60);
   });
 
   it('replies with an error naming the setting when a change is invalid, saving nothing', async () => {
@@ -127,7 +127,7 @@ describe('updateSettings', () => {
       ok: false,
       error: expect.stringContaining('maxSearchesPerTick'),
     });
-    expect(getSchedulerSettings(dependencies.database).targetIntervalMinutes).toBe(240);
+    expect(getSchedulerSettings(dependencies.getDatabase()).targetIntervalMinutes).toBe(240);
   });
 
   it('rejects a request whose changes is not an object', async () => {
@@ -165,8 +165,8 @@ describe('getRunHistory', () => {
 
   it('lists only alert-enabled searches', async () => {
     const dependencies = makeDependencies();
-    insertSearch(dependencies.database, 'alerting');
-    insertSearch(dependencies.database, 'silent', { isAlertEnabled: false });
+    insertSearch(dependencies.getDatabase(), 'alerting');
+    insertSearch(dependencies.getDatabase(), 'silent', { isAlertEnabled: false });
 
     const reply = await handleNativeHostMessageAsync({ type: 'getRunHistory' }, dependencies);
 
@@ -179,7 +179,7 @@ describe('getRunHistory', () => {
 
   it('reports a never-run search as having no last run and no scheduled time', async () => {
     const dependencies = makeDependencies();
-    insertSearch(dependencies.database, 'fresh');
+    insertSearch(dependencies.getDatabase(), 'fresh');
 
     const reply = await handleNativeHostMessageAsync({ type: 'getRunHistory' }, dependencies);
 
@@ -200,16 +200,16 @@ describe('getRunHistory', () => {
 
   it('reports the last run, its failure detail, and when the next run is due', async () => {
     const dependencies = makeDependencies();
-    insertSearch(dependencies.database, 'failing');
+    insertSearch(dependencies.getDatabase(), 'failing');
     const lastRunAtMs = 1_699_990_000_000;
-    stmtUpdateSavedSearchLastRunAt(dependencies.database).run(lastRunAtMs, 'failing');
-    stmtUpdateSavedSearchRunStatus(dependencies.database).run(
+    stmtUpdateSavedSearchLastRunAt(dependencies.getDatabase()).run(lastRunAtMs, 'failing');
+    stmtUpdateSavedSearchRunStatus(dependencies.getDatabase()).run(
       0,
       'scrape:Timed out\nai-filter:Rate limited',
       null,
       'failing'
     );
-    updateSchedulerSettings(dependencies.database, { targetIntervalMinutes: 60 });
+    updateSchedulerSettings(dependencies.getDatabase(), { targetIntervalMinutes: 60 });
 
     const reply = await handleNativeHostMessageAsync({ type: 'getRunHistory' }, dependencies);
 
@@ -228,9 +228,9 @@ describe('getRunHistory', () => {
 
   it('reports a successful last run as succeeded', async () => {
     const dependencies = makeDependencies();
-    insertSearch(dependencies.database, 'ok');
-    stmtUpdateSavedSearchLastRunAt(dependencies.database).run(1_699_990_000_000, 'ok');
-    stmtUpdateSavedSearchRunStatus(dependencies.database).run(1, null, null, 'ok');
+    insertSearch(dependencies.getDatabase(), 'ok');
+    stmtUpdateSavedSearchLastRunAt(dependencies.getDatabase()).run(1_699_990_000_000, 'ok');
+    stmtUpdateSavedSearchRunStatus(dependencies.getDatabase()).run(1, null, null, 'ok');
 
     const reply = await handleNativeHostMessageAsync({ type: 'getRunHistory' }, dependencies);
 
@@ -553,5 +553,31 @@ describe('malformed requests', () => {
     const reply = await handleNativeHostMessageAsync(message, makeDependencies());
 
     expect(reply).toMatchObject({ ok: false, error: expect.any(String) });
+  });
+});
+
+function throwDatabaseLocked(): never {
+  throw new Error('database is locked');
+}
+
+describe('when the database cannot be opened', () => {
+  it('still reports service state, which does not use the database', async () => {
+    const { dependencies } = makeServiceDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'getServices' },
+      { ...dependencies, getDatabase: throwDatabaseLocked }
+    );
+
+    expect(reply).toMatchObject({ ok: true });
+  });
+
+  it('answers a request that needs the database with an error reply', async () => {
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'getStatus' },
+      makeDependencies({ getDatabase: throwDatabaseLocked })
+    );
+
+    expect(reply).toEqual({ ok: false, error: 'database is locked' });
   });
 });

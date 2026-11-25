@@ -46,7 +46,9 @@ export type NativeHostServices = {
 };
 
 export type NativeHostDependencies = {
-  database: Database.Database;
+  // Opened on first use, so a request that never touches the database (service
+  // control, log reading) still works when the database cannot be opened.
+  getDatabase: () => Database.Database;
   // Absolute paths of the log files the extension may read, by name. A name
   // that is not here cannot be read.
   logFilePathsByLogName: Record<string, string>;
@@ -77,8 +79,8 @@ export type NativeHostReply =
 function getStatus(dependencies: NativeHostDependencies): NativeHostReply {
   return {
     ok: true,
-    cookies: getFacebookCookieStatus(dependencies.database),
-    settings: getSchedulerSettings(dependencies.database),
+    cookies: getFacebookCookieStatus(dependencies.getDatabase()),
+    settings: getSchedulerSettings(dependencies.getDatabase()),
   };
 }
 
@@ -89,8 +91,8 @@ function syncCookies(
   if (typeof message.cookiesJson !== 'string') {
     return { ok: false, error: 'syncCookies requires cookiesJson to be a string' };
   }
-  saveFacebookCookies(dependencies.database, message.cookiesJson);
-  return { ok: true, cookies: getFacebookCookieStatus(dependencies.database) };
+  saveFacebookCookies(dependencies.getDatabase(), message.cookiesJson);
+  return { ok: true, cookies: getFacebookCookieStatus(dependencies.getDatabase()) };
 }
 
 function updateSettings(
@@ -100,13 +102,13 @@ function updateSettings(
   if (!isRecord(message.changes)) {
     return { ok: false, error: 'updateSettings requires changes to be an object' };
   }
-  updateSchedulerSettings(dependencies.database, message.changes);
-  return { ok: true, settings: getSchedulerSettings(dependencies.database) };
+  updateSchedulerSettings(dependencies.getDatabase(), message.changes);
+  return { ok: true, settings: getSchedulerSettings(dependencies.getDatabase()) };
 }
 
 function getRunHistory(dependencies: NativeHostDependencies): NativeHostReply {
-  const { targetIntervalMinutes } = getSchedulerSettings(dependencies.database);
-  const searches = stmtListSavedSearches(dependencies.database)
+  const { targetIntervalMinutes } = getSchedulerSettings(dependencies.getDatabase());
+  const searches = stmtListSavedSearches(dependencies.getDatabase())
     .all()
     .filter((row) => row.should_alert_on_new_listings === 1)
     .map((row): RunHistoryEntry => {

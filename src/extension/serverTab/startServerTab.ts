@@ -129,34 +129,47 @@ export async function startServerTab(
       if (state.serviceMessage && isMessageExpired(state.serviceMessage, currentMs)) {
         state.serviceMessage = undefined;
       }
-      const [services, status, runHistory, logTail] = await Promise.all([
+      // Each panel renders from its own request, so one failing request (a
+      // launchctl error, an unreadable log) leaves the other panels working.
+      const [services, status, runHistory, logTail] = await Promise.allSettled([
         hostClient.getServices(),
         hostClient.getStatus(),
         hostClient.getRunHistory(),
         hostClient.tailLog(state.selectedLogName, LOG_LINES_SHOWN),
       ]);
-      renderHostError(hostErrorContainer, undefined);
-      renderServicesSection(servicesContainer, services, {
-        message: state.serviceMessage?.text,
-        onAction: (serviceName, action) => void controlServiceAsync(serviceName, action),
-      });
-      renderCookiesSection(cookiesContainer, status.cookies, nowMs(), {
-        syncMessage: state.syncMessage?.text,
-        onSyncNow: () => void syncNowAsync(),
-      });
-      // Rendered only once: later refreshes must not overwrite what is typed.
-      if (!state.isSettingsRendered) {
-        renderSettingsSection(settingsContainer, status.settings, async (changes) => {
-          try {
-            return { kind: 'saved', settings: await hostClient.updateSettings(changes) };
-          } catch (error) {
-            return { kind: 'failed', message: describeError(error) };
-          }
+      const firstFailure = [services, status, runHistory, logTail].find(
+        (result) => result.status === 'rejected'
+      );
+      renderHostError(hostErrorContainer, firstFailure?.reason as Error | undefined);
+      if (services.status === 'fulfilled') {
+        renderServicesSection(servicesContainer, services.value, {
+          message: state.serviceMessage?.text,
+          onAction: (serviceName, action) => void controlServiceAsync(serviceName, action),
         });
-        state.isSettingsRendered = true;
       }
-      renderRunsSection(runsContainer, runHistory, nowMs());
-      logsSection.showLog(logTail);
+      if (status.status === 'fulfilled') {
+        renderCookiesSection(cookiesContainer, status.value.cookies, nowMs(), {
+          syncMessage: state.syncMessage?.text,
+          onSyncNow: () => void syncNowAsync(),
+        });
+        // Rendered only once: later refreshes must not overwrite what is typed.
+        if (!state.isSettingsRendered) {
+          renderSettingsSection(settingsContainer, status.value.settings, async (changes) => {
+            try {
+              return { kind: 'saved', settings: await hostClient.updateSettings(changes) };
+            } catch (error) {
+              return { kind: 'failed', message: describeError(error) };
+            }
+          });
+          state.isSettingsRendered = true;
+        }
+      }
+      if (runHistory.status === 'fulfilled') {
+        renderRunsSection(runsContainer, runHistory.value, nowMs());
+      }
+      if (logTail.status === 'fulfilled') {
+        logsSection.showLog(logTail.value);
+      }
     } catch (error) {
       renderHostError(hostErrorContainer, error as Error);
     } finally {
