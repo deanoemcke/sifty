@@ -1,4 +1,7 @@
-import { SCHEDULER_SETTING_DEFINITIONS, type SchedulerSettings } from '../../server/settings';
+import {
+  SCHEDULER_SETTING_DEFINITIONS,
+  type SchedulerSettings,
+} from '../../server/schedulerSettingDefinitions';
 import { parseSettingsForm, type SettingsFormFields } from '../parseSettingsForm';
 import { createElement } from './dom';
 
@@ -61,10 +64,12 @@ export function renderSettingsSection(
   });
 
   function readFields(): SettingsFormFields {
-    return {
-      targetIntervalMinutes: inputsBySettingName.get('targetIntervalMinutes')?.value ?? '',
-      maxSearchesPerTick: inputsBySettingName.get('maxSearchesPerTick')?.value ?? '',
-    };
+    return Object.fromEntries(
+      settingNames.map((settingName) => [
+        settingName,
+        inputsBySettingName.get(settingName)?.value ?? '',
+      ])
+    ) as SettingsFormFields;
   }
 
   async function handleSubmit(event: Event): Promise<void> {

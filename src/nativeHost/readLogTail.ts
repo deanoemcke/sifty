@@ -4,14 +4,15 @@ import fs from 'node:fs';
 // also keeps the reply well inside Chrome's 1 MB limit for native messages.
 export const MAX_LOG_TAIL_BYTES = 256 * 1024;
 
-export type LogTail = { isPresent: boolean; lines: string[] };
+export type LogTail = { isLogFilePresent: boolean; logLines: string[] };
 
 export function readLogTail(logFilePath: string, lineCount: number): LogTail {
   let fileDescriptor: number;
   try {
     fileDescriptor = fs.openSync(logFilePath, 'r');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { isPresent: false, lines: [] };
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      return { isLogFilePresent: false, logLines: [] };
     throw error;
   }
 
@@ -29,7 +30,7 @@ export function readLogTail(logFilePath: string, lineCount: number): LogTail {
     // A file ending in a newline splits into a final empty string.
     if (lines.at(-1) === '') lines.pop();
 
-    return { isPresent: true, lines: lines.slice(-lineCount) };
+    return { isLogFilePresent: true, logLines: lines.slice(-lineCount) };
   } finally {
     fs.closeSync(fileDescriptor);
   }

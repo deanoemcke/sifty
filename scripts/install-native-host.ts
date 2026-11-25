@@ -14,6 +14,7 @@ import path from 'node:path';
 import { computeExtensionId } from '../src/extension/extensionId';
 import { buildNativeHostManifest } from '../src/nativeHost/hostManifest';
 import { NATIVE_HOST_NAME } from '../src/nativeHost/hostName';
+import { writeFileAtomically } from '../src/nativeHost/writeFileAtomically';
 
 const CHROME_NATIVE_HOSTS_DIRECTORY = path.join(
   os.homedir(),
@@ -40,10 +41,7 @@ function main(): void {
 
   fs.mkdirSync(CHROME_NATIVE_HOSTS_DIRECTORY, { recursive: true });
   const manifestPath = path.join(CHROME_NATIVE_HOSTS_DIRECTORY, `${NATIVE_HOST_NAME}.json`);
-  // Written to a temporary file and renamed, so Chrome never reads a half-written manifest.
-  const temporaryPath = `${manifestPath}.tmp`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  fs.renameSync(temporaryPath, manifestPath);
+  writeFileAtomically(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`Installed ${manifestPath}`);
   console.log(`Allowed extension: ${extensionId}`);
 }

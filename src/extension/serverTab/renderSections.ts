@@ -10,13 +10,9 @@ export function renderHostError(container: HTMLElement, error: Error | undefined
   container.hidden = error === undefined;
   if (error === undefined) return;
 
-  const advice =
-    error instanceof HostUnreachableError
-      ? ` Run "npm run native-host:install" in the sifty-webapp folder, then reload this extension.`
-      : '';
   const message =
     error instanceof HostUnreachableError
-      ? `Can't reach the Sifty native host: ${error.message}.${advice}`
+      ? `Can't reach the Sifty native host: ${error.message}. Run "npm run native-host:install" in the sifty-webapp folder, then reload this extension.`
       : `The Sifty native host reported an error: ${error.message}`;
   container.append(createElement('p', { text: message, className: 'tone-problem' }));
 }
@@ -35,7 +31,7 @@ export type CookiesSectionActions = {
 
 export function renderCookiesSection(
   container: HTMLElement,
-  status: FacebookCookieStatus | undefined,
+  status: FacebookCookieStatus,
   nowMs: number,
   actions: CookiesSectionActions
 ): void {
@@ -44,7 +40,7 @@ export function renderCookiesSection(
 
   container.replaceChildren(
     createElement('h2', { text: 'Facebook cookies' }),
-    ...(status ? renderCookieView(describeCookieStatus(status, nowMs)) : []),
+    ...renderCookieView(describeCookieStatus(status, nowMs)),
     syncButton,
     ...(actions.syncMessage
       ? [createElement('p', { text: actions.syncMessage, className: 'detail sync-message' })]
@@ -69,13 +65,13 @@ function renderRunRow(row: RunHistoryRowView): HTMLElement {
 
 export function renderRunsSection(
   container: HTMLElement,
-  entries: RunHistoryEntry[] | undefined,
+  entries: RunHistoryEntry[],
   nowMs: number
 ): void {
-  const rows = entries ? describeRunHistory(entries, nowMs) : [];
+  const rows = describeRunHistory(entries, nowMs);
   container.replaceChildren(
     createElement('h2', { text: 'Last runs' }),
-    ...(entries && rows.length === 0
+    ...(rows.length === 0
       ? [
           createElement('p', {
             text: 'No saved searches have alerts turned on.',

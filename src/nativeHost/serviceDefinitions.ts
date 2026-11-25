@@ -15,17 +15,17 @@ const SERVICE_LABELS_BY_NAME: Record<ServiceName, string> = {
   scheduler: 'ai.openclaw.sifty-scheduler',
 };
 
-const NGROK_PATH = '/opt/homebrew/bin/ngrok';
+export const NGROK_PATH = '/opt/homebrew/bin/ngrok';
 
 export function buildServiceDefinitions(
   launchAgentsDirectory: string
 ): Record<ServiceName, ServiceDefinition> {
-  const definitions = {} as Record<ServiceName, ServiceDefinition>;
-  for (const serviceName of SERVICE_NAMES) {
-    const label = SERVICE_LABELS_BY_NAME[serviceName];
-    definitions[serviceName] = { label, plistPath: `${launchAgentsDirectory}/${label}.plist` };
-  }
-  return definitions;
+  return Object.fromEntries(
+    SERVICE_NAMES.map((serviceName) => {
+      const label = SERVICE_LABELS_BY_NAME[serviceName];
+      return [serviceName, { label, plistPath: `${launchAgentsDirectory}/${label}.plist` }];
+    })
+  ) as Record<ServiceName, ServiceDefinition>;
 }
 
 // Only the webapp and ngrok are installed by this code: the scheduler's plist

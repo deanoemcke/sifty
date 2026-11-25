@@ -27,7 +27,7 @@ export type SyncableCookie = {
   expirationDate?: number;
 };
 
-const FACEBOOK_DOMAIN = 'facebook.com';
+export const FACEBOOK_DOMAIN = 'facebook.com';
 
 // Matches facebook.com and its subdomains, with or without the leading dot
 // Chrome puts on domain cookies — but not look-alikes such as notfacebook.com

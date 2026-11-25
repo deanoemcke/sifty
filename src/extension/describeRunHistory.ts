@@ -1,5 +1,6 @@
 import type { RunHistoryEntry } from '../nativeHost/handleMessage';
-import { formatDuration } from './formatDuration';
+import { SCHEDULER_TICK_INTERVAL_MINUTES } from '../server/schedulerSettingDefinitions';
+import { formatDuration, MINUTE_MS } from './formatDuration';
 
 export type RunResult = 'ok' | 'failed' | 'never-run' | 'unknown';
 
@@ -10,14 +11,14 @@ export type RunHistoryRowView = {
   lastRunText: string;
   dueText: string;
   isOverdue: boolean;
+  overdueByMs: number;
   // The scheduler's recorded `${kind}:${message}` lines, unchanged.
   failureLines: string[];
 };
 
-// The scheduler ticks every half hour, so a search that became due within the
-// last hour is just waiting for its turn. Beyond that, something is stopping
+// A search that became due within two scheduler ticks is just waiting for its turn. Beyond that, something is stopping
 // the scheduler (it's unloaded, a stale lock file, …).
-const OVERDUE_GRACE_MS = 60 * 60_000;
+const OVERDUE_GRACE_MS = 2 * SCHEDULER_TICK_INTERVAL_MINUTES * MINUTE_MS;
 
 function describeResult(entry: RunHistoryEntry): RunResult {
   if (entry.lastRunAtMs === null) return 'never-run';
@@ -43,16 +44,13 @@ function describeRow(entry: RunHistoryEntry, nowMs: number): RunHistoryRowView {
       entry.lastRunAtMs === null ? 'Never run' : `${formatDuration(nowMs - entry.lastRunAtMs)} ago`,
     dueText,
     isOverdue,
+    overdueByMs,
     failureLines: entry.lastRunDetailLines,
   };
 }
 
 // Problems first: failed runs, then searches furthest past due, then the rest by name.
 export function describeRunHistory(entries: RunHistoryEntry[], nowMs: number): RunHistoryRowView[] {
-  const overdueByMsById = new Map(
-    entries.map((entry) => [entry.id, entry.nextDueAtMs === null ? 0 : nowMs - entry.nextDueAtMs])
-  );
-
   return entries
     .map((entry) => describeRow(entry, nowMs))
     .sort((first, second) => {
@@ -61,9 +59,7 @@ export function describeRunHistory(entries: RunHistoryEntry[], nowMs: number): R
       if (failedDifference !== 0) return failedDifference;
       const overdueDifference = Number(second.isOverdue) - Number(first.isOverdue);
       if (overdueDifference !== 0) return overdueDifference;
-      if (first.isOverdue) {
-        return (overdueByMsById.get(second.id) ?? 0) - (overdueByMsById.get(first.id) ?? 0);
-      }
+      if (first.isOverdue) return second.overdueByMs - first.overdueByMs;
       return first.name.localeCompare(second.name);
     });
 }

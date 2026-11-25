@@ -2,9 +2,11 @@
 // The `chrome` global is passed in (as ChromeApi) so the wiring can be tested
 // with a fake.
 
+import { describeError } from '../nativeHost/describeError';
 import { NATIVE_HOST_NAME } from '../nativeHost/hostName';
 import {
   type BrowserCookie,
+  FACEBOOK_DOMAIN,
   isFacebookCookieDomain,
   toSyncableFacebookCookies,
 } from './cookieSync';
@@ -41,10 +43,6 @@ export const COOKIE_RESYNC_ALARM_NAME = 'sifty-cookie-resync';
 // itself on the next resync, so no retry logic is needed.
 export const COOKIE_RESYNC_PERIOD_MINUTES = 60;
 
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function interpretHostReply(reply: unknown, sentCookieCount: number): CookieSyncOutcome {
   if (typeof reply === 'object' && reply !== null && 'ok' in reply) {
     if (reply.ok === true) return { kind: 'synced', cookieCount: sentCookieCount };
@@ -56,7 +54,7 @@ function interpretHostReply(reply: unknown, sentCookieCount: number): CookieSync
 }
 
 export async function syncFacebookCookiesAsync(chromeApi: ChromeApi): Promise<CookieSyncOutcome> {
-  const browserCookies = await chromeApi.cookies.getAll({ domain: 'facebook.com' });
+  const browserCookies = await chromeApi.cookies.getAll({ domain: FACEBOOK_DOMAIN });
   const syncableCookies = toSyncableFacebookCookies(browserCookies);
   // Nothing to send when logged out: the host would reject an empty set, and
   // the previously stored cookies are better than none.

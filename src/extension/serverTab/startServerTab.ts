@@ -2,6 +2,7 @@
 // keeps it fresh.
 
 import type { ServiceAction } from '../../nativeHost/controlService';
+import { describeError } from '../../nativeHost/describeError';
 import { LOG_FILE_PATHS_BY_LOG_NAME } from '../../nativeHost/logFiles';
 import { type ChromeApi, describeSyncOutcome, syncFacebookCookiesAsync } from '../startCookieSync';
 import { createElement } from './dom';
@@ -72,7 +73,7 @@ export async function startServerTab(
     try {
       state.syncMessage = describeSyncOutcome(await syncFacebookCookiesAsync(chromeApi));
     } catch (error) {
-      state.syncMessage = `Cookie sync failed: ${(error as Error).message}`;
+      state.syncMessage = `Cookie sync failed: ${describeError(error)}`;
     }
     await refreshAsync();
   }
@@ -82,7 +83,7 @@ export async function startServerTab(
       await hostClient.controlService(serviceName, action);
       state.serviceMessage = undefined;
     } catch (error) {
-      state.serviceMessage = `Could not ${action} ${serviceName}: ${(error as Error).message}`;
+      state.serviceMessage = `Could not ${action} ${serviceName}: ${describeError(error)}`;
     }
     await refreshAsync();
   }
@@ -112,7 +113,7 @@ export async function startServerTab(
           try {
             return { kind: 'saved', settings: await hostClient.updateSettings(changes) };
           } catch (error) {
-            return { kind: 'failed', message: (error as Error).message };
+            return { kind: 'failed', message: describeError(error) };
           }
         });
         state.isSettingsRendered = true;

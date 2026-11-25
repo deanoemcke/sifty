@@ -1,6 +1,6 @@
-const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
+export const MINUTE_MS = 60_000;
+export const HOUR_MS = 60 * MINUTE_MS;
+export const DAY_MS = 24 * HOUR_MS;
 // Hours read better than days up to two days ("40 hours" beats "1 day").
 const HOURS_UNTIL_DAYS = 48;
 

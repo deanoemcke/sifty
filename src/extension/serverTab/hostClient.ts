@@ -1,10 +1,13 @@
 // Typed requests to the native host, with replies checked at the boundary.
 
 import type { ServiceAction } from '../../nativeHost/controlService';
+import { describeError } from '../../nativeHost/describeError';
 import type { InstalledServiceState, RunHistoryEntry } from '../../nativeHost/handleMessage';
 import { NATIVE_HOST_NAME } from '../../nativeHost/hostName';
+import { isRecord, type UnknownRecord } from '../../nativeHost/isRecord';
+import type { LogTail } from '../../nativeHost/readLogTail';
 import type { FacebookCookieStatus } from '../../server/facebookCookies';
-import type { SchedulerSettings } from '../../server/settings';
+import type { SchedulerSettings } from '../../server/schedulerSettingDefinitions';
 import type { ChromeApi } from '../startCookieSync';
 
 // Chrome could not start the host or talk to it: not installed, wrong
@@ -25,7 +28,7 @@ export class HostRejectedError extends Error {
   }
 }
 
-export type LogTail = { isLogFilePresent: boolean; logLines: string[] };
+export type { LogTail };
 
 export type HostClient = {
   getStatus(): Promise<{ cookies: FacebookCookieStatus; settings: SchedulerSettings }>;
@@ -36,14 +39,8 @@ export type HostClient = {
   controlService(serviceName: string, action: ServiceAction): Promise<void>;
 };
 
-type ReplyRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is ReplyRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function requireField<Value>(
-  reply: ReplyRecord,
+  reply: UnknownRecord,
   fieldName: string,
   isValid: (value: unknown) => value is Value
 ): Value {
@@ -52,19 +49,17 @@ function requireField<Value>(
   return value;
 }
 
-const isObject = (value: unknown): value is ReplyRecord => isRecord(value);
-const isArray = (value: unknown): value is unknown[] => Array.isArray(value);
 const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostClient {
-  async function requestAsync(message: ReplyRecord): Promise<ReplyRecord> {
+  async function requestAsync(message: UnknownRecord): Promise<UnknownRecord> {
     let reply: unknown;
     try {
       reply = await chromeApi.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
     } catch (error) {
-      throw new HostUnreachableError(error instanceof Error ? error.message : String(error));
+      throw new HostUnreachableError(describeError(error));
     }
     if (!isRecord(reply)) throw new HostRejectedError('Host sent a reply that is not an object');
     if (reply.ok !== true) {
@@ -77,21 +72,21 @@ export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostCli
     async getStatus() {
       const reply = await requestAsync({ type: 'getStatus' });
       return {
-        cookies: requireField(reply, 'cookies', isObject) as FacebookCookieStatus,
-        settings: requireField(reply, 'settings', isObject) as SchedulerSettings,
+        cookies: requireField(reply, 'cookies', isRecord) as FacebookCookieStatus,
+        settings: requireField(reply, 'settings', isRecord) as SchedulerSettings,
       };
     },
     async getRunHistory() {
       const reply = await requestAsync({ type: 'getRunHistory' });
-      return requireField(reply, 'searches', isArray) as RunHistoryEntry[];
+      return requireField(reply, 'searches', Array.isArray) as RunHistoryEntry[];
     },
     async updateSettings(changes) {
       const reply = await requestAsync({ type: 'updateSettings', changes });
-      return requireField(reply, 'settings', isObject) as SchedulerSettings;
+      return requireField(reply, 'settings', isRecord) as SchedulerSettings;
     },
     async getServices() {
       const reply = await requestAsync({ type: 'getServices' });
-      return requireField(reply, 'servicesByName', isObject) as Record<
+      return requireField(reply, 'servicesByName', isRecord) as Record<
         string,
         InstalledServiceState
       >;

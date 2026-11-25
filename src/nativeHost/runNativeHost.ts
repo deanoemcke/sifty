@@ -3,6 +3,7 @@
 // testable without a real process.
 
 import type { Readable, Writable } from 'node:stream';
+import { describeError } from './describeError';
 import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
 import {
   createNativeMessageDecoder,
@@ -11,10 +12,6 @@ import {
 } from './nativeMessaging';
 
 export type NativeHostOutcome = 'input-closed' | 'protocol-error';
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function writeFramedAsync(output: Writable, framedMessage: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {

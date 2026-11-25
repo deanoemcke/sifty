@@ -11,19 +11,19 @@
  */
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { runLaunchctlAsync } from '../src/nativeHost/runLaunchctl';
-import { buildInstallablePlistOptions } from '../src/nativeHost/serviceDefinitions';
+import { getCurrentUserId, getLaunchAgentsDirectory } from '../src/nativeHost/hostEnvironment';
+import { buildInstallablePlistOptions, NGROK_PATH } from '../src/nativeHost/serviceDefinitions';
 import { buildServicePlist } from '../src/nativeHost/servicePlist';
+import { writeFileAtomically } from '../src/nativeHost/writeFileAtomically';
 import { getWorktreePort } from '../vite.config.helpers';
 
-const LAUNCH_AGENTS_DIRECTORY = path.join(os.homedir(), 'Library/LaunchAgents');
-const NGROK_PATH = '/opt/homebrew/bin/ngrok';
+const LAUNCH_AGENTS_DIRECTORY = getLaunchAgentsDirectory();
 
 async function main(): Promise<void> {
   const projectDirectory = path.resolve(__dirname, '..');
-  const userId = process.getuid?.() ?? 501;
+  const userId = getCurrentUserId();
 
   for (const requiredFile of [
     NGROK_PATH,
@@ -43,10 +43,7 @@ async function main(): Promise<void> {
     const plistPath = path.join(LAUNCH_AGENTS_DIRECTORY, `${options.label}.plist`);
     const isFirstInstall = !fs.existsSync(plistPath);
 
-    // Written to a temporary file and renamed, so launchd never reads a half-written plist.
-    const temporaryPath = `${plistPath}.tmp`;
-    fs.writeFileSync(temporaryPath, buildServicePlist(options));
-    fs.renameSync(temporaryPath, plistPath);
+    writeFileAtomically(plistPath, buildServicePlist(options));
     console.log(`Wrote ${plistPath}`);
 
     if (isFirstInstall) {

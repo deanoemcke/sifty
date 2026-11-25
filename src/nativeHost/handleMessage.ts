@@ -10,11 +10,8 @@ import {
   getFacebookCookieStatus,
   saveFacebookCookies,
 } from '../server/facebookCookies';
-import {
-  getSchedulerSettings,
-  type SchedulerSettings,
-  updateSchedulerSettings,
-} from '../server/settings';
+import type { SchedulerSettings } from '../server/schedulerSettingDefinitions';
+import { getSchedulerSettings, updateSchedulerSettings } from '../server/settings';
 import {
   controlServiceAsync,
   getServiceStateAsync,
@@ -23,6 +20,8 @@ import {
   type ServiceAction,
   type ServiceDefinition,
 } from './controlService';
+import { describeError } from './describeError';
+import { isRecord, type UnknownRecord } from './isRecord';
 import { readLogTail } from './readLogTail';
 import type { ServiceState } from './serviceState';
 
@@ -70,16 +69,6 @@ export type NativeHostReply =
   | { ok: true; servicesByName: Record<string, InstalledServiceState> }
   | { ok: true; serviceName: string; state: ServiceState };
 
-type MessageRecord = Record<string, unknown>;
-
-function isMessageRecord(value: unknown): value is MessageRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function getStatus(dependencies: NativeHostDependencies): NativeHostReply {
   return {
     ok: true,
@@ -89,7 +78,7 @@ function getStatus(dependencies: NativeHostDependencies): NativeHostReply {
 }
 
 function syncCookies(
-  message: MessageRecord,
+  message: UnknownRecord,
   dependencies: NativeHostDependencies
 ): NativeHostReply {
   if (typeof message.cookiesJson !== 'string') {
@@ -100,10 +89,10 @@ function syncCookies(
 }
 
 function updateSettings(
-  message: MessageRecord,
+  message: UnknownRecord,
   dependencies: NativeHostDependencies
 ): NativeHostReply {
-  if (!isMessageRecord(message.changes)) {
+  if (!isRecord(message.changes)) {
     return { ok: false, error: 'updateSettings requires changes to be an object' };
   }
   updateSchedulerSettings(dependencies.database, message.changes);
@@ -129,7 +118,7 @@ function getRunHistory(dependencies: NativeHostDependencies): NativeHostReply {
   return { ok: true, searches };
 }
 
-function tailLog(message: MessageRecord, dependencies: NativeHostDependencies): NativeHostReply {
+function tailLog(message: UnknownRecord, dependencies: NativeHostDependencies): NativeHostReply {
   const { logName, lineCount } = message;
   // Only names configured by the host's own code resolve to a path; the
   // request never supplies one.
@@ -149,18 +138,23 @@ function tailLog(message: MessageRecord, dependencies: NativeHostDependencies): 
   }
 
   const logTail = readLogTail(dependencies.logFilePathsByLogName[logName], lineCount);
-  return { ok: true, isLogFilePresent: logTail.isPresent, logLines: logTail.lines };
+  return { ok: true, ...logTail };
 }
 
 async function getServices(dependencies: NativeHostDependencies): Promise<NativeHostReply> {
   const { definitionsByServiceName, userId, runLaunchctlAsync, doesFileExist } =
     dependencies.services;
-  const servicesByName: Record<string, InstalledServiceState> = {};
-  for (const [serviceName, definition] of Object.entries(definitionsByServiceName)) {
-    const state = await getServiceStateAsync({ definition, userId, runLaunchctlAsync });
-    servicesByName[serviceName] = { ...state, isInstalled: doesFileExist(definition.plistPath) };
-  }
-  return { ok: true, servicesByName };
+  const installedStates = await Promise.all(
+    Object.entries(definitionsByServiceName).map(async ([serviceName, definition]) => {
+      const state = await getServiceStateAsync({ definition, userId, runLaunchctlAsync });
+      const installedState: InstalledServiceState = {
+        ...state,
+        isInstalled: doesFileExist(definition.plistPath),
+      };
+      return [serviceName, installedState] as const;
+    })
+  );
+  return { ok: true, servicesByName: Object.fromEntries(installedStates) };
 }
 
 function isServiceAction(value: unknown): value is ServiceAction {
@@ -168,7 +162,7 @@ function isServiceAction(value: unknown): value is ServiceAction {
 }
 
 async function controlService(
-  message: MessageRecord,
+  message: UnknownRecord,
   dependencies: NativeHostDependencies
 ): Promise<NativeHostReply> {
   const { definitionsByServiceName, userId, runLaunchctlAsync, doesFileExist } =
@@ -209,7 +203,7 @@ export async function handleNativeHostMessageAsync(
   message: unknown,
   dependencies: NativeHostDependencies
 ): Promise<NativeHostReply> {
-  if (!isMessageRecord(message) || typeof message.type !== 'string') {
+  if (!isRecord(message) || typeof message.type !== 'string') {
     return { ok: false, error: 'Request must be an object with a string type' };
   }
 

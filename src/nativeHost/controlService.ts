@@ -18,24 +18,22 @@ type ServiceContext = {
   runLaunchctlAsync: RunLaunchctl;
 };
 
-async function runCheckedAsync(context: ServiceContext, args: string[]): Promise<void> {
+async function runCheckedAsync(context: ServiceContext, args: string[]): Promise<CommandResult> {
   const result = await context.runLaunchctlAsync(args);
   if (result.exitCode !== 0) {
     throw new Error(
       `launchctl ${args.join(' ')} failed (exit ${result.exitCode}): ${result.output.trim()}`
     );
   }
+  return result;
 }
 
 export async function getServiceStateAsync(context: ServiceContext): Promise<ServiceState> {
   const { definition, userId, runLaunchctlAsync } = context;
-  const list = await runLaunchctlAsync(['list', definition.label]);
-  const printDisabled = await runLaunchctlAsync(['print-disabled', `gui/${userId}`]);
-  if (printDisabled.exitCode !== 0) {
-    throw new Error(
-      `launchctl print-disabled gui/${userId} failed (exit ${printDisabled.exitCode}): ${printDisabled.output.trim()}`
-    );
-  }
+  const [list, printDisabled] = await Promise.all([
+    runLaunchctlAsync(['list', definition.label]),
+    runCheckedAsync(context, ['print-disabled', `gui/${userId}`]),
+  ]);
 
   return parseServiceState({
     label: definition.label,

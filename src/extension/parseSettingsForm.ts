@@ -1,4 +1,7 @@
-import { SCHEDULER_SETTING_DEFINITIONS, type SchedulerSettings } from '../server/settings';
+import {
+  SCHEDULER_SETTING_DEFINITIONS,
+  type SchedulerSettings,
+} from '../server/schedulerSettingDefinitions';
 
 export type SettingsFormFields = Record<keyof SchedulerSettings, string>;
 
