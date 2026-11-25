@@ -1,0 +1,39 @@
+diff --git a/src/server/verify.repro.test.ts b/src/server/verify.repro.test.ts
+new file mode 100644
+index 0000000..32a1c44
+--- /dev/null
++++ b/src/server/verify.repro.test.ts
+@@ -0,0 +1,33 @@
++import Database from 'better-sqlite3';
++import { describe, expect, it } from 'vitest';
++import { initSchema } from './db';
++import {
++  getFacebookCookieStatus,
++  loadFacebookCookies,
++  MissingFacebookCookiesError,
++  saveFacebookCookies,
++  getStoredFacebookCookiesJson,
++} from './facebookCookies';
++import { getSchedulerSettings } from './settings';
++
++function freshDb(): Database.Database {
++  const database = new Database(':memory:');
++  initSchema(database);
++  return database;
++}
++const GOOD = JSON.stringify([
++  { name: 'c_user', value: '1' },
++  { name: 'xs', value: '2' },
++]);
++
++describe('R1-F005 count cap', () => {
++  it('rejects a payload of 250 cookies of which 60 are expired (cap applies to payload)', () => {
++    const cookies = Array.from({ length: 250 }, (_, i) => ({
++      name: i === 0 ? 'c_user' : `c${i}`,
++      value: 'v',
++      ...(i >= 190 ? { expirationDate: 1000 } : {}),
++    }));
++    expect(() => saveFacebookCookies(freshDb(), JSON.stringify(cookies))).toThrow(/more than/);
++  });
++});
++

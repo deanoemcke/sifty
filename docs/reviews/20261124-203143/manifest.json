@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261124-203143",
+  "round": 1,
+  "branch": "feat/sifty-foundation",
+  "baseRef": "origin/main",
+  "baseSha": "a0393c8ab400821c14bc6443bcfdf49786cedbb0",
+  "headSha": "7c66c8d85ed956447954ce63049489bf041b0b13",
+  "headPrNumber": 71,
+  "stackPrNumbers": [
+    71
+  ],
+  "isDeepRequested": false,
+  "mode": "full",
+  "reviewers": [
+    {
+      "id": "blind",
+      "status": "complete"
+    },
+    {
+      "id": "informed-design",
+      "status": "complete"
+    },
+    {
+      "id": "informed-data-tests",
+      "status": "complete"
+    },
+    {
+      "id": "generic-correctness",
+      "status": "complete"
+    }
+  ],
+  "phase": "done"
+}

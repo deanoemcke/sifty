@@ -1,0 +1,306 @@
+{
+  "groups": [
+    {
+      "headline": "A bad cookie sync can wipe out the working Facebook login",
+      "plainSummary": "Saving Facebook cookies accepts junk entries and sets that hold no login. Either one replaces the working login, and every Facebook search then fails.",
+      "fixSize": "A few lines in one place, plus tests.",
+      "whyTogether": "Both are gaps in the save-time validation in parseFbCookies: element shape (F001) and presence of c_user/xs login cookies (F002). One tightened check settles both, and both rely on rejecting before the upsert.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "Both break the promise that a rejected set leaves the old one in use, and the fix is small."
+      },
+      "ifAccepted": "A cookie set is refused unless every entry is a proper cookie and the set includes the Facebook login cookies. The previously saved set stays in place when a sync is refused.",
+      "ifLeftAlone": "Syncing from a Chrome that is logged out of Facebook, or sending a malformed list, overwrites the working login. Every later Facebook search then fails until someone logs in and syncs again.",
+      "howLikely": "Occasional. It happens whenever the synced Chrome has logged out of Facebook, which is easy to do by accident.",
+      "members": [
+        {
+          "findingId": "R1-F001",
+          "plainSummary": "Entries that are not proper cookies either crash the save with an unhelpful error or overwrite the good set."
+        },
+        {
+          "findingId": "R1-F002",
+          "plainSummary": "A set with no login cookies is accepted and replaces a logged-in set."
+        }
+      ]
+    },
+    {
+      "headline": "Rejected cookie sets give the wrong kind of error",
+      "plainSummary": "A bad cookie list is reported as 'log in to Facebook', which is the wrong advice. The size and count limits also use different rules and a different error type.",
+      "fixSize": "A few lines in one place, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It is cheap, and the new rejections from the first group need a clear error type to land on."
+      },
+      "ifAccepted": "Faulty syncs get their own error type with an accurate message. The cookie-count limit is checked the same way as the size limit, before expired cookies are dropped.",
+      "ifLeftAlone": "A faulty sync tells the user to log in to Facebook when that is not the problem. Callers cannot tell the kinds of rejection apart.",
+      "howLikely": "Rare. It only shows when a sync sends bad data, and then only as a confusing message.",
+      "members": [
+        {
+          "findingId": "R1-F005",
+          "plainSummary": "Sync faults reuse the login error, and the size and count limits are applied inconsistently."
+        }
+      ]
+    },
+    {
+      "headline": "Cookie status cannot say whether the login still works",
+      "plainSummary": "The status report can say cookies are synced when they have already expired, and it crashes on corrupt stored data. It cannot tell a working login from a dead one.",
+      "fixSize": "A few lines in one place, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The next pull request relies on this report to show login health, so it should be right before it ships."
+      },
+      "ifAccepted": "The status uses the same expiry rules as the scrape. It reports a usable login only when a login cookie is still valid, and it fails with a clear error on corrupt data.",
+      "ifLeftAlone": "The extension would show a healthy login while every Facebook search is failing. Corrupt stored data would crash the status check.",
+      "howLikely": "Fairly likely over time. Login cookies expire in the end, and the status would be wrong from then until the next sync.",
+      "members": [
+        {
+          "findingId": "R1-F003",
+          "plainSummary": "Status ignores expiry, mixes up 'no login' with 'session login', and crashes on corrupt data."
+        }
+      ]
+    },
+    {
+      "headline": "Merging this change alone stops Facebook searches",
+      "plainSummary": "This change removes the old way of supplying cookies, and nothing in it saves new ones. On a machine that has not already synced cookies, every Facebook search fails.",
+      "fixSize": "No code. A note in the pull request, and merging the two pull requests together.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The break is real, but the fix is a merge rule. Putting the old fallback back would undo the decision to make the database the only source."
+      },
+      "ifAccepted": "The pull request says it must not ship without the extension pull request, and the two merge together. The old environment fallback is not restored.",
+      "ifLeftAlone": "Someone merges and deploys this one alone, and Facebook searches fail with a login-required alert on any machine without synced cookies.",
+      "howLikely": "Depends on merge order. It does not bite on the author's machine, where cookies are already synced.",
+      "members": [
+        {
+          "findingId": "R1-F008",
+          "plainSummary": "Nothing in this change writes cookies, and the old fallback is gone, so it only works with the next pull request."
+        }
+      ]
+    },
+    {
+      "headline": "Saved scheduler settings are trusted without checks, and described in four places",
+      "plainSummary": "One bad saved value can crash every scheduler run or silently make it do nothing. Each setting is also defined in four separate places that must be edited together.",
+      "fixSize": "One file, plus tests.",
+      "whyTogether": "Both rewrite the settings read. One record holding each setting's default and allowed range lets the same rules check values on read and on write, which fixes both.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A bad row would stall the scheduler with no clear cause. One record per setting also matches the project's single-source-of-truth rule."
+      },
+      "ifAccepted": "Each setting is defined once, with default and range. Saved values are checked against it when read, and an invalid value falls back to the default with a logged warning, so the scheduler keeps running.",
+      "ifLeftAlone": "A hand-edited or corrupt settings row makes every scheduler run fail, or process zero searches without saying why. Adding a setting later means editing four places.",
+      "howLikely": "Rare. Settings are only written through the checked save path, so it takes a hand edit or corruption.",
+      "members": [
+        {
+          "findingId": "R1-F007",
+          "plainSummary": "Stored values are read without checks, so bad values crash or stall every run."
+        },
+        {
+          "findingId": "R1-F010",
+          "plainSummary": "The type, defaults and ranges are separate records that must be kept in step."
+        }
+      ]
+    },
+    {
+      "headline": "A one-off extra alert for old stored Facebook failures",
+      "plainSummary": "The login message was reworded, so failures saved with the old wording are no longer recognised as sitewide. After a recovery, each such search sends its own 'recovered' alert on top of the sitewide one.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "It is a single extra message, once, and the scheduler is switched off. Recognising the old wording would leave a compatibility patch behind for no lasting benefit.",
+        "reopenIf": "The scheduler is turned on while searches still hold old-wording failures, and the extra alerts become noisy."
+      },
+      "ifAccepted": "The scheduler would also recognise the old wording as a cookie failure, so recovery sends one alert.",
+      "ifLeftAlone": "After the next recovery, a few searches each send an extra 'recovered' message once. After that, the old wording is gone.",
+      "howLikely": "Once, and only if searches are failing on cookies when this ships. The scheduler is off today.",
+      "members": [
+        {
+          "findingId": "R1-F006",
+          "plainSummary": "Old-wording failures are not recognised as sitewide, which causes duplicate recovery alerts."
+        }
+      ]
+    },
+    {
+      "headline": "Facebook searches find the database through a hidden global",
+      "plainSummary": "The scheduler is handed its database, but the Facebook search reaches for the default one itself. Today they are the same, so nothing goes wrong.",
+      "fixSize": "Several files, plus test changes.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "No caller passes a different database, so nothing is wrong today. The fix means changing every search's interface.",
+        "reopenIf": "Anything starts running real Facebook searches against a database other than the default one."
+      },
+      "ifAccepted": "The database is passed into the Facebook search like the scheduler's other inputs, and the tests no longer need to stub the global lookup.",
+      "ifLeftAlone": "The tests keep their stub. A future run against another database would quietly read cookies from the default one.",
+      "howLikely": "Very unlikely now. It would take a new kind of caller.",
+      "members": [
+        {
+          "findingId": "R1-F004",
+          "plainSummary": "The Facebook search takes cookies from the global database, not an injected one."
+        }
+      ]
+    },
+    {
+      "headline": "Quick population runs read settings they never use",
+      "plainSummary": "The immediate population run loads the saved interval and search cap and then ignores them. This costs a little extra work, and the run would fail if the settings were bad.",
+      "fixSize": "A few lines across two or three places in the scheduler, plus test updates.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The cost is a tiny extra read, and the settings fix in the other group removes the risk of a bad row breaking this path.",
+        "reopenIf": "A third scheduler entry point appears, or the settings read becomes slow or can fail."
+      },
+      "ifAccepted": "Only the main scheduler run loads settings. The immediate run no longer reads them.",
+      "ifLeftAlone": "The immediate run keeps doing one small unneeded read. The code stays slightly tangled.",
+      "howLikely": "Not a user-visible problem. It would only matter if a settings problem hit this path.",
+      "members": [
+        {
+          "findingId": "R1-F009",
+          "plainSummary": "The immediate run loads settings only to fill fields it does not use."
+        }
+      ]
+    },
+    {
+      "headline": "Remove unused status and settings-update code until the next pull request",
+      "plainSummary": "The cookie status report and the settings update function are not called by the app in this change. Only tests use them.",
+      "fixSize": "Two functions and their tests, removed here and added back in the next pull request.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The next pull request is stacked on this one and uses both, so removing them adds churn. The other findings ask for fixes to this same code.",
+        "reopenIf": "The extension pull request is dropped or delayed so that nothing uses them."
+      },
+      "ifAccepted": "The code is removed here, and the next pull request adds it back with its tests.",
+      "ifLeftAlone": "This pull request carries two functions that only tests call, until the next one lands.",
+      "howLikely": "No effect on behaviour. It only affects how tidy this pull request looks.",
+      "members": [
+        {
+          "findingId": "R1-F011",
+          "plainSummary": "Two new functions have no caller outside tests in this change."
+        }
+      ]
+    },
+    {
+      "headline": "Repeated test setup and overlapping cookie tests",
+      "plainSummary": "The in-memory database setup is copied into several test files. A few cookie tests repeat ones already in the same file.",
+      "fixSize": "Several test files, no app code.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "It does not affect behaviour and can be tidied whenever those tests are next edited.",
+        "reopenIf": "The setup copies drift apart, or another test file needs the same helper."
+      },
+      "ifAccepted": "One shared database helper is used by all the tests, and the overlapping tests are merged.",
+      "ifLeftAlone": "The tests work as they do now. They are a little longer, and a change to the setup needs editing in several places.",
+      "howLikely": "No effect on users. It adds a small upkeep cost for future test changes.",
+      "members": [
+        {
+          "findingId": "R1-F012",
+          "plainSummary": "Test setup is duplicated and some cookie tests overlap."
+        }
+      ]
+    },
+    {
+      "headline": "Saved Facebook login is judged more loosely when scraping than when saving",
+      "plainSummary": "A Facebook login can look dead on the status check but still be used for a scrape that is bound to fail. Separately, a saved set with only one of the two login cookies is accepted as a working login.",
+      "fixSize": "A few lines in one place, plus a test or two. One existing test that stores a single login cookie will need updating.",
+      "whyTogether": "Both are the login-cookie rule in facebookCookies.ts: R1-F015 tightens requireLoginCookie to need both c_user and xs, and R1-F014 moves that same check into the load path (parseFbCookies) so save, status and load share one definition.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The earlier fixes promised to fail fast on a dead login, and these two gaps break that promise in a small, cheap-to-fix way."
+      },
+      "ifAccepted": "A saved set must hold both login cookies, and the same check runs when the cookies are read for a scrape. A dead login then fails straight away with the usual 'log in to Facebook in Chrome' alert instead of after a wasted scrape. The rule lives in one place, so the status check and the scraper can no longer disagree.",
+      "ifLeftAlone": "After the login cookies expire, the status check says the login is unusable, but a search still launches a browser and fails at Facebook's login page. A sync that carries only one login cookie can also replace a working login with one Facebook will reject.",
+      "howLikely": "Uncommon. It needs a login that expires while other short-lived cookies are still valid, or a sync that is missing one login cookie, and the result is a failed scrape and a later alert rather than lost data.",
+      "members": [
+        {
+          "findingId": "R1-F014",
+          "plainSummary": "The scraper's cookie load skips the login-cookie check that saving and the status check apply, so it can run a doomed scrape."
+        },
+        {
+          "findingId": "R1-F015",
+          "plainSummary": "The login-cookie check passes with just one of the two login cookies, so a half-complete login can overwrite a good one."
+        }
+      ]
+    },
+    {
+      "headline": "Status check breaks on a corrupted saved cookie row",
+      "plainSummary": "The report said the cookie status check would crash with a raw error if the stored cookie text was corrupted. That was fixed by the earlier status change, which now reports a corrupted row as an unusable login.",
+      "fixSize": "No change needed.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The earlier status fix already routes the stored text through the same checks as the scraper, so a corrupted row now gives a clear 'unusable' answer, and the fix check confirmed this.",
+        "reopenIf": "A corrupted or hand-edited stored row still makes the status check throw a raw error rather than report an unusable login."
+      },
+      "ifAccepted": "Nothing more would change, because the behaviour is already correct.",
+      "ifLeftAlone": "The status check keeps reporting a corrupted row as an unusable login with a plain reason, which is what the report asked for.",
+      "howLikely": "Already handled. Corrupted stored cookies are very unlikely, since the row is only written through the checked save.",
+      "members": [
+        {
+          "findingId": "R1-F013",
+          "plainSummary": "The status check was said to throw a raw error on corrupted stored cookies, which the earlier status fix has already dealt with."
+        }
+      ]
+    },
+    {
+      "headline": "The run-interval setting can be set shorter than the scheduler can actually run",
+      "plainSummary": "The scheduler is started by the system every 30 minutes, and that timing lives outside the app. The app lets someone set the interval as low as 1 minute, but it would still only run every 30 minutes.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A setting that is accepted but silently ignored is misleading, and the fix is a one-number change to the allowed range."
+      },
+      "ifAccepted": "The lowest allowed interval is raised to 30 minutes, so the app refuses values it could never honour. This is simpler than making the system timing follow the setting, which would mean editing a file outside the app.",
+      "ifLeftAlone": "Someone can set the interval to 5 minutes, see it saved, and then find searches still only run every 30 minutes.",
+      "howLikely": "Uncommon. It only affects someone who deliberately picks a very short interval, and the scheduler is switched off for now.",
+      "members": [
+        {
+          "findingId": "R1-F016",
+          "plainSummary": "The allowed range starts at 1 minute although runs can never be closer than 30 minutes apart."
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "kind": "conflict",
+      "findingIds": [
+        "R1-F003",
+        "R1-F011"
+      ],
+      "plainSummary": "One fixes the cookie status report, and the other wants that same report removed until the next pull request.",
+      "suggestedResolution": "Do R1-F003 and reject R1-F011. The next pull request is stacked on this one and uses the report, so it is better to fix it now."
+    },
+    {
+      "kind": "conflict",
+      "findingIds": [
+        "R1-F010",
+        "R1-F011"
+      ],
+      "plainSummary": "One reshapes the settings code so reads and writes share the same rules, and the other wants the settings update function removed.",
+      "suggestedResolution": "Do R1-F010 and reject R1-F011, because the next pull request needs the update function and the shared rules."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F001",
+        "R1-F002",
+        "R1-F005"
+      ],
+      "plainSummary": "The first two add new reasons to reject a cookie set, and the third decides what kind of error those rejections give."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F007",
+        "R1-F009"
+      ],
+      "plainSummary": "The immediate run only reads settings so that a bad saved value can break it. Fixing the read (R1-F007) removes most of that risk."
+    }
+  ]
+}

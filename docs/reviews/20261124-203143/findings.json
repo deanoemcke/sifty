@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261124-203143",
+  "round": 1,
+  "findings": [
+    {
+      "id": "R1-F001",
+      "title": "saveFacebookCookies does not check cookie element shape: [null] throws a raw TypeError, [{}] overwrites a good set",
+      "claim": "parseFbCookies only checks the payload is a non-empty array with an unexpired element. Non-object elements make cookieExpirySeconds throw a TypeError instead of MissingFacebookCookiesError, and elements without string name/value (e.g. {}, 1, \"a\") are stored over the previously working set and later reach Playwright as a cookie named 'undefined'. This breaks the 'fully validated before it replaces what is stored' guarantee.",
+      "severity": "major",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "generic-correctness",
+        "informed-data-tests",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 31
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Ran it.each over '[null]','[1]','[\"a\"]','[{}]','[{\"name\":1}]' against a saved good set. All 5 fail: '[null]' throws a raw TypeError from cookieExpirySeconds (not MissingFacebookCookiesError); the others are accepted and overwrite the stored set (no error thrown, and the stored JSON no longer equals the good set).",
+        "reference": "repro/R1-F001.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "a3167b072422af913133e5810a02c02a844c0ef0"
+      }
+    },
+    {
+      "id": "R1-F002",
+      "title": "A cookie set without login cookies (c_user/xs) is accepted and replaces a logged-in set",
+      "claim": "Validation requires only one unexpired cookie of any name. A sync from a Chrome logged out of Facebook (datr, sb, wd and so on) is saved over the working login, the fail-fast check does not fire, and every later scrape hits the login wall. The 'a rejected set leaves the previous one in use' promise does not cover this case.",
+      "severity": "major",
+      "classification": "new",
+      "sources": [
+        "generic-correctness",
+        "informed-data-tests",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 66
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Saved [c_user, xs], then saveFacebookCookies with [{name:'datr',value:'x'}]. It did not throw and replaced the stored login set.",
+        "reference": "repro/R1-F002.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "a3167b072422af913133e5810a02c02a844c0ef0"
+      }
+    },
+    {
+      "id": "R1-F003",
+      "title": "getFacebookCookieStatus cannot say whether the stored cookies are usable",
+      "claim": "Status reads the stored JSON without the unexpired filter loadFacebookCookies applies, so isSynced can be true with a loginExpiryMs already in the past while loading the same set would throw. loginExpiryMs null conflates session-cookie logins with no login cookies at all, and if c_user is persistent and xs is a session cookie the persistent expiry is reported as the session end. JSON.parse of the stored column is unguarded. A caller (the native host in PR 2) cannot tell a usable login from a dead one.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 105
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Two of three tests fail. (1) With c_user expiring and xs a session cookie, after the clock advances status reports isSynced:true with a loginExpiryMs already in the past, while loadFacebookCookies still returns the xs cookie. (2) Corrupt stored cookies_json makes getFacebookCookieStatus throw a raw SyntaxError. A third test (null expiry identical for no-login vs session-login) passes only because cookieCount/syncedAtMs differ; the null conflation is visible from the code (loginExpiriesSeconds empty in both cases) but not isolated by that test.",
+        "reference": "repro/R1-F003.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "c3a6f4f439714a8c53b572a8a77402ea973ece8c"
+      }
+    },
+    {
+      "id": "R1-F004",
+      "title": "Facebook recipe reads cookies from the global getDb() instead of an injected database",
+      "claim": "The scheduler and settings take the database as a parameter, but quickSearchAsync and deepSearchAsync call loadFacebookCookies(getDb()) internally. A run against a non-default database silently reads cookies from the singleton, the dependency is invisible from the recipe interface, and the facebook tests need a module-level vi.mock of getDb.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/server/recipes/facebook.ts",
+        "line": 510
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Run runSchedulerAsync with deps.database set to an in-memory db holding valid cookies and the real facebookRecipe: the recipe still calls getDb() and finds none. Needs a check of whether any caller passes a non-singleton database to a real Facebook recipe. Same getDb() call also at facebook.ts:988.\nVerifier: Confirmed by reading: facebook.ts:510 and :988 call loadFacebookCookies(getDb()), and facebook.test.ts:273-279 has to vi.mock('../db') to route getDb. getDb() opens the real DB_PATH file, so a runtime repro would touch the real database. In production scripts/scheduler.ts passes the same singleton, so no wrong-database behaviour occurs today; it is a hidden-dependency/design concern only. Evidence that would settle it: a caller passing a non-singleton database to the real facebook recipe (none found)."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "No caller passes a different database, so nothing is wrong today. The fix means changing every search's interface."
+      }
+    },
+    {
+      "id": "R1-F005",
+      "title": "Cookie-payload rejections reuse the 'log in to Facebook' error and the size/count errors are a different class",
+      "claim": "A malformed or empty payload at sync time throws MissingFacebookCookiesError with the message 'Facebook requires login. Log in to Facebook in Chrome. The cookies are not valid JSON.', which is a sync fault rather than a login fault. Oversize and too-many-cookies cases throw plain Error, so a caller cannot tell rejection classes apart. The 200 cap is applied after the expiry filter while the size cap applies to the raw payload, so the limit is inconsistent (250 cookies with 60 expired passes).",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 66
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Cap inconsistency reproduced: a 250-cookie payload with 60 expired passes saveFacebookCookies (190 kept) although the count cap is 200 on the payload, so the test expecting rejection fails. The error-class points (MissingFacebookCookiesError reused for sync faults with the 'log in' wording; plain Error for size/count) are visible directly in facebookCookies.ts:19-24, 47-69 and are design observations, not testable failures.",
+        "reference": "repro/R1-F005.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b32cf21979825fceb90c0248099157d0c1f6419b"
+      }
+    },
+    {
+      "id": "R1-F006",
+      "title": "Changed LOGIN_REQUIRED_MESSAGE breaks recognition of already-stored Facebook-cookie failures",
+      "claim": "isFacebookCookieFailure substring-matches the new message against persisted last_run_detail. Rows holding the old 'Set FB_COOKIES environment variable.' text no longer count as sitewide-covered. After deploy, a search whose stored failure is the old line is not seen as purely sitewide-covered, so on recovery each such search sends its own 'recovered' ping on top of the sitewide recovery alert.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "generic-correctness",
+        "informed-data-tests",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 321
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Scheduler test: after a Facebook-cookie failure run, set the search's last_run_detail to the pre-change line 'scrape:Facebook requires login. Set FB_COOKIES environment variable.', then ran a recovering scheduler tick. Two notifications were sent instead of one (sitewide recovery plus the search's own recovery ping), because isFacebookCookieFailure's includes(LOGIN_REQUIRED_MESSAGE) no longer matches the old text.",
+        "reference": "repro/R1-F006.patch"
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "It is a single extra message, once, and the scheduler is switched off. Recognising the old wording would leave a compatibility patch behind for no lasting benefit."
+      }
+    },
+    {
+      "id": "R1-F007",
+      "title": "Stored scheduler settings are parsed and trusted on read, so one bad row breaks or stalls every run",
+      "claim": "getSchedulerSettings does an unguarded JSON.parse(row.value) with no shape or range check, and runSchedulerAsync calls it unconditionally even when deps supply both overrides. A non-JSON value makes every tick reject with SyntaxError; a wrong-typed value flows through as a non-number; maxSearchesPerTick = 0 silently processes nothing. Bounds are enforced only in updateSchedulerSettings. The author lists this as a known limit.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "generic-correctness",
+        "informed-data-tests",
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/settings.ts",
+        "line": 72
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Three tests fail: a stored non-JSON value makes getSchedulerSettings throw SyntaxError; stored '0' yields maxSearchesPerTick 0; stored '\"abc\"' yields a string maxSearchesPerTick.",
+        "reference": "repro/R1-F007.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "e5d7736119fbdb501a57f6b60f2077c959f49508"
+      }
+    },
+    {
+      "id": "R1-F008",
+      "title": "Merging this PR alone breaks Facebook scraping: nothing in it writes facebook_cookies and FB_COOKIES is no longer read",
+      "claim": "saveFacebookCookies, getFacebookCookieStatus and updateSchedulerSettings have no caller outside tests in this PR, and the env fallback was removed, so merged on its own every Facebook search fails with the login-required error on any machine that has not already synced cookies. The branch is correct only together with PR 2 yet is presented as independently mergeable. The author notes it did not check a machine without the extension.",
+      "severity": "major",
+      "classification": "new",
+      "sources": [
+        "informed-design"
+      ],
+      "location": null,
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "grep outside *.test.ts finds only definitions of saveFacebookCookies, getFacebookCookieStatus, updateSchedulerSettings. Recipe and vite.config.ts call loadFacebookCookies(getDb()), which throws on an empty table. Decide the merge contract: keep the env fallback until PR 2 lands, or state it must not ship without PR 2 and merge the pair together.\nVerifier: Checked with git grep: saveFacebookCookies, getFacebookCookieStatus, updateSchedulerSettings have no non-test callers; FB_COOKIES appears only in tests (one asserting it is ignored); facebook_cookies is written only by stmtUpsertFacebookCookies via saveFacebookCookies; facebook.ts and vite.config.ts call loadFacebookCookies(getDb()), which throws on an empty table. So merged alone, a machine without previously stored cookies fails every Facebook search. It is a merge-contract claim; the settling evidence is the PR 2 branch wiring the native host."
+      },
+      "status": "rejected",
+      "resolution": {
+        "decisionId": "RD-20261124-merging-this-pr-alone-breaks-facebook-sc",
+        "note": "The server will not be started until the extension branch is merged, so the two ship together"
+      }
+    },
+    {
+      "id": "R1-F009",
+      "title": "Immediate population run reads scheduler settings it never uses",
+      "claim": "runImmediatePopulationRunAsync (and runSchedulerAsync when its caller supplies both values) reads the saved interval and search cap from the database although the immediate path never uses targetIntervalMs or maxSearchesPerTick. They are read only to fill two fields the shared Required<SchedulerDeps> type demands. Fix: split SchedulerDeps into per-search deps and tick config so only runSchedulerAsync resolves settings.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/scheduler.ts",
+        "line": 1090
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "With an unreadable stored 'maxSearchesPerTick' row, runImmediatePopulationRunAsync rejects with SyntaxError and never completes the population run, although scheduler.ts uses targetIntervalMs/maxSearchesPerTick only in runSchedulerAsync (lines 1029, 1036, 1046); lines 1097-1098 fill them solely to satisfy Required<SchedulerDeps>.",
+        "reference": "repro/R1-F009.patch"
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "The cost is a tiny extra read, and the settings fix in the other group removes the risk of a bad row breaking this path."
+      }
+    },
+    {
+      "id": "R1-F010",
+      "title": "Scheduler settings are described in several parallel structures",
+      "claim": "The SchedulerSettings type, DEFAULT_SCHEDULER_SETTINGS and SCHEDULER_SETTING_BOUNDS are separate records that must be edited together when a setting is added, contrary to the single-source-of-truth principle. Fix: one definitions record holding default and range per setting, from which type, defaults, validation and read derive.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/settings.ts",
+        "line": 31
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Skipped because SCHEDULER_SETTING_BOUNDS is imported by src/extension/parseSettingsForm.ts and renderSettingsSection.ts on feat/sifty-extension, so changing its shape ripples into PR 2. The read side was already derived from the defaults in the simplify pass.\nVerifier: Read settings.ts: SchedulerSettings (type), DEFAULT_SCHEDULER_SETTINGS and SCHEDULER_SETTING_BOUNDS are three records keyed by the same setting names, and the file's own comment calls the bounds record the 'single source of truth' while defaults live separately. Design/maintainability point; the cross-branch ripple to PR 2 cannot be checked here."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "e5d7736119fbdb501a57f6b60f2077c959f49508"
+      }
+    },
+    {
+      "id": "R1-F011",
+      "title": "Some new exports have no caller outside tests in this PR",
+      "claim": "getFacebookCookieStatus and updateSchedulerSettings (with its validator) are exported and tested but unused by app code in this PR. Fix: leave them out until PR 2, which uses them.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 105
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Both are imported by src/nativeHost/handleMessage.ts on feat/sifty-extension, so removing them would break that branch. Decide whether the foundation should ship API only the next PR uses.\nVerifier: Confirmed with git grep that getFacebookCookieStatus and updateSchedulerSettings have no non-test callers on this branch (see R1-F008). The claim is a scoping decision; the counter-evidence (use by src/nativeHost/handleMessage.ts on the next branch) is outside this commit."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "The next pull request is stacked on this one and uses both, so removing them adds churn. The other findings ask for fixes to this same code."
+      }
+    },
+    {
+      "id": "R1-F012",
+      "title": "Test setup duplicated and some cookie parsing tests overlap",
+      "claim": "The in-memory database helper is redefined in several test files, and a few parseFbCookies tests overlap the table-driven rejection tests in the same file. Fix: share one helper and merge the overlapping tests.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.test.ts",
+        "line": 1
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Test-only duplication following the repository's per-file freshDb pattern; no behaviour at stake.\nVerifier: Test-only tidiness. Confirmed freshDb() is redefined in facebookCookies.test.ts and settings.test.ts (and scheduler tests use their own); no behaviour to test."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "cadf5b62c087d2a8928a5d5987ab99d6c943bf50"
+      }
+    },
+    {
+      "id": "R1-F013",
+      "title": "getFacebookCookieStatus parses stored JSON unguarded",
+      "claim": "getFacebookCookieStatus calls JSON.parse(row.cookies_json) and filters elements with no guard, so a corrupted or hand-edited row throws a raw SyntaxError/TypeError from a status read instead of a typed error or a not-synced result.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "implementer"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 128
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "getFacebookCookieStatus does JSON.parse on the stored column and String(cookie.name) on each element without validation; loadFacebookCookies goes through parseFbCookies and would throw MissingFacebookCookiesError instead, so the two readers of the same row disagree on corrupt data."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "already fixed by the earlier status change, which reports a corrupted row as unusable"
+      }
+    },
+    {
+      "id": "R1-F014",
+      "title": "Login-cookie rule is enforced on save and in status but not on load, so loading and status disagree",
+      "claim": "loadFacebookCookies (via parseFbCookies) only requires some unexpired cookie, while saveFacebookCookies and getFacebookCookieStatus now also require an unexpired login cookie. After the login cookies expire but a session cookie remains, status reports isLoginUsable false yet the scraper still loads the set and runs a doomed scrape, so the fail-fast promise from R1-F002/R1-F003 is not met at scrape time.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "fix-check"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 95
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "Save [c_user exp now+1h, xs exp now+1h, wd (session)]; advance the clock 2h. loadFacebookCookies returns [wd] without throwing (parseFbCookies does not call requireLoginCookie), while getFacebookCookieStatus returns isLoginUsable:false. The new test 'reports an unusable login when only non-login cookies remain unexpired' asserts only the status, never that loading throws."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "9a668f6a4e6c2dc7c4f487c5820eecaae165e7c3"
+      }
+    },
+    {
+      "id": "R1-F015",
+      "title": "requireLoginCookie accepts a set holding only one of c_user and xs",
+      "claim": "The check passes if either login cookie is present, so a sync with only xs (or only c_user) replaces a working login with a set Facebook will reject, which is the failure R1-F002 describes in a narrower form.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "fix-check"
+      ],
+      "location": {
+        "file": "src/server/facebookCookies.ts",
+        "line": 83
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "saveFacebookCookies(db, '[{\"name\":\"xs\",\"value\":\"2\"}]') is accepted and stored over a previous good set; the existing test 'never includes cookie values' stores exactly that. getFacebookCookieStatus then reports isLoginUsable:true with a loginExpiryMs derived from xs alone."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "9a668f6a4e6c2dc7c4f487c5820eecaae165e7c3"
+      }
+    },
+    {
+      "id": "R1-F016",
+      "title": "Target interval setting can be set below the scheduler's fixed 30-minute tick",
+      "claim": "The scheduler setting targetIntervalMinutes is only honoured if the external launchd StartInterval (currently 1800 seconds, in ai.openclaw.sifty-scheduler.plist) stays well below it, and nothing enforces that. Cleanup deleted the comment that said so. Setting the interval to, say, 5 minutes is accepted (the minimum is 1) but the scheduler would still only run every 30 minutes. The fix is to derive the tick interval from the setting, or to reject a value below the tick interval. It needs a design decision, roughly a few lines in one or two files.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "cleanup"
+      ],
+      "location": {
+        "file": "src/server/settings.ts",
+        "line": 7
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Flagged by comment cleanup as a MUST KILL needing a design decision: the constraint lives in an external plist, and the code validates only minimum 1 and maximum one week."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "c82c4d285bab7f98bc7817ba3f962bf3078728d5"
+      }
+    }
+  ]
+}
