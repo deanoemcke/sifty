@@ -31,13 +31,30 @@ describe('native host protocol', () => {
   it.each(NATIVE_HOST_REQUEST_TYPES)('is understood by the host for %s', async (requestType) => {
     const reply = await handleNativeHostMessageAsync({ type: requestType }, makeDependencies());
 
-    expect(reply).not.toEqual({ ok: false, error: `Unknown request type: ${requestType}` });
+    const errorMessage = reply.ok ? '' : reply.error;
+    expect(errorMessage).not.toMatch(/Unknown request type|Unhandled request type/);
   });
 
   it('leaves the host rejecting a type it does not list', async () => {
     const reply = await handleNativeHostMessageAsync({ type: 'getSettings' }, makeDependencies());
 
     expect(reply).toEqual({ ok: false, error: 'Unknown request type: getSettings' });
+  });
+
+  it.each([
+    'constructor',
+    '__proto__',
+    'toString',
+  ])('rejects the inherited object property name %s as a request type', async (inheritedPropertyName) => {
+    const reply = await handleNativeHostMessageAsync(
+      { type: inheritedPropertyName },
+      makeDependencies()
+    );
+
+    expect(reply).toEqual({
+      ok: false,
+      error: `Unknown request type: ${inheritedPropertyName}`,
+    });
   });
 
   it('builds a request carrying its type and fields', () => {
