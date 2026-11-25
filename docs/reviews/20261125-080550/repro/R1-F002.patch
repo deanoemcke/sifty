@@ -1,0 +1,40 @@
+diff --git a/src/nativeHost/handleMessage.test.ts b/src/nativeHost/handleMessage.test.ts
+index a5caed4..e8b8ab9 100644
+--- a/src/nativeHost/handleMessage.test.ts
++++ b/src/nativeHost/handleMessage.test.ts
+@@ -693,3 +693,35 @@ describe('batch', () => {
+     expect(reply).toMatchObject({ ok: true, replies: expect.any(Array) });
+   });
+ });
++
++describe('R1-F002: batch ordering', () => {
++  it('runs a stop before a later getServices in the same batch, as separate requests would', async () => {
++    const { dependencies } = makeServiceDependencies();
++    const slowDependencies: NativeHostDependencies = {
++      ...dependencies,
++      services: {
++        ...dependencies.services,
++        runLaunchctlAsync: async (args) => {
++          if (args[0] === 'bootout') await new Promise((resolve) => setTimeout(resolve, 20));
++          return dependencies.services.runLaunchctlAsync(args);
++        },
++      },
++    };
++
++    const reply = await handleNativeHostMessageAsync(
++      {
++        type: 'batch',
++        requests: [
++          { type: 'controlService', serviceName: 'webapp', action: 'stop' },
++          { type: 'getServices' },
++        ],
++      },
++      slowDependencies
++    );
++
++    expect(reply).toMatchObject({
++      ok: true,
++      replies: [{ ok: true }, { ok: true, servicesByName: { webapp: { isLoaded: false } } }],
++    });
++  });
++});

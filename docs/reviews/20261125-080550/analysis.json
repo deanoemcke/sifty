@@ -1,0 +1,261 @@
+{
+  "groups": [
+    {
+      "headline": "A batch of requests can include changes, and its size limit is kept in a different place from the tab's list",
+      "plainSummary": "The host will run any mix of requests in one batch, including ones that change things, all at the same moment. The rules for what a batch may hold are checked only when it runs. The limit of eight is also set far from the code that builds the tab's batch.",
+      "fixSize": "A few lines in two files, plus a test.",
+      "whyTogether": "Both are about what a batch is allowed to contain. One change moves the batch rules (allowed request types, maximum count) into protocol.ts so the type and the host handler enforce the same thing.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "Nothing breaks today, but the rules are cheap to write down once. Doing it now stops the next caller hitting a race that was proven in a test."
+      },
+      "ifAccepted": "A batch may only hold read-only requests, and the type itself refuses nested batches and changes. The size limit sits next to the request definitions, and the tab's list is checked against it. Running the requests one after another was rejected because it would make every refresh slower for a case nobody uses.",
+      "ifLeftAlone": "Nothing changes for the tab today. A future caller could batch a stop and a status check and get a status that is already out of date.",
+      "howLikely": "Not today, because the tab only reads. It would bite the first time someone batches a change.",
+      "members": [
+        {
+          "findingId": "R1-F002",
+          "plainSummary": "A batch can hold changes that run at the same time, and the types allow batches the host refuses."
+        },
+        {
+          "findingId": "R1-F011",
+          "plainSummary": "The limit of eight is not tied to the tab's list of four requests."
+        }
+      ]
+    },
+    {
+      "headline": "One oversized reply blanks all four panels",
+      "plainSummary": "The four panels share one reply that can be at most 1 MB. If the run history and log tail together go over, every panel shows an error, even the small ones that would have been fine. The error does not say which panel was too big.",
+      "fixSize": "Several files. The host would need a size budget per panel, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "It is real but needs a per-panel size policy, which is a design decision, and 1 MB is a lot for these panels.",
+        "reopenIf": "A panel goes blank in real use with a size error, or run history is allowed to grow without a cap."
+      },
+      "ifAccepted": "Each panel would get its own size budget, so one big panel is cut down or fails alone while the others still show.",
+      "ifLeftAlone": "If the logs are huge, the whole Sifty Server tab shows one size error instead of its panels.",
+      "howLikely": "Rare. It needs very large or escape-heavy logs together with a long run history.",
+      "members": [
+        {
+          "findingId": "R1-F001",
+          "plainSummary": "The shared 1 MB reply budget makes one big panel fail all four."
+        }
+      ]
+    },
+    {
+      "headline": "A bug in reading a reply is shown as a host error",
+      "plainSummary": "If the tab's own code for reading a reply hits a programming mistake, the user sees 'The Sifty native host reported an error' instead. That points them at the wrong place and hides the real fault.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It hides real bugs behind a misleading message and the fix is a few lines."
+      },
+      "ifAccepted": "Only the expected 'the host sent something wrong' errors are turned into a failed panel. Any other error is allowed to surface as the bug it is.",
+      "ifLeftAlone": "A future mistake in the reading code would look like a host problem and take longer to find.",
+      "howLikely": "Rare. The reading code only checks shapes today, so this matters only after someone changes it.",
+      "members": [
+        {
+          "findingId": "R1-F004",
+          "plainSummary": "The catch turns every thrown error, including bugs, into a panel failure."
+        }
+      ]
+    },
+    {
+      "headline": "An older installed host makes the whole tab show an error",
+      "plainSummary": "If the host program is older than the extension, it does not know the batch request. All four panels then show 'Unknown request type: batch' where the old four-request way would have worked.",
+      "fixSize": "A fallback path in one place, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The host runs from the same repo checkout as the extension, so the two only differ briefly. The error message already names the cause, and a fallback would keep the old four-request code alive.",
+        "reopenIf": "The host starts being installed or updated separately from the extension."
+      },
+      "ifAccepted": "The tab would retry with the four single requests when the host says it does not know batch.",
+      "ifLeftAlone": "After a git update, the tab shows the error until the extension is reloaded. Reloading fixes it.",
+      "howLikely": "Brief and occasional. It needs the extension and the host code to be out of step.",
+      "members": [
+        {
+          "findingId": "R1-F003",
+          "plainSummary": "No fallback exists when the host predates batch."
+        }
+      ]
+    },
+    {
+      "headline": "The docs promise more than the compiler checks",
+      "plainSummary": "The docs say that adding or reshaping a request without updating every side will fail to compile. That is only true for renamed fields the host already reads. A new field, or a changed field type, compiles on the host side and is quietly ignored.",
+      "fixSize": "A docs sentence and a short note in one place.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A false safety claim in the docs is cheap to correct and could mislead the next change."
+      },
+      "ifAccepted": "The docs say exactly what is caught (missing types, renamed fields) and what is not. The place that defines the loose host-side type explains why it is loose.",
+      "ifLeftAlone": "Someone adds a field, trusts the docs, and the host ignores it with no warning.",
+      "howLikely": "Occasional. It bites the next time a request gains a field.",
+      "members": [
+        {
+          "findingId": "R1-F005",
+          "plainSummary": "The docs claim a compile-time guarantee that the host side does not give."
+        }
+      ]
+    },
+    {
+      "headline": "Two gaps in the tests for unknown request types",
+      "plainSummary": "One test says every listed request type is understood, but it still passes if a handler is deleted. Another gap is that no test sends names like 'constructor' as a request type, so a weaker check would go unnoticed.",
+      "fixSize": "A few lines of tests in one file, no production change.",
+      "whyTogether": "Both tighten the tests around the host's request-type check, in the same test file area, and neither changes production code.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "Both were shown by deliberately breaking the code and watching the tests still pass. The fix is only a few test lines."
+      },
+      "ifAccepted": "The test fails if a handler is missing, and a new test pins that names like 'constructor' and '__proto__' get the 'Unknown request type' reply.",
+      "ifLeftAlone": "A broken handler or a weaker type check could pass the whole test suite.",
+      "howLikely": "Rare. The compiler catches the missing handler today. The name check is only at risk if someone edits it.",
+      "members": [
+        {
+          "findingId": "R1-F006",
+          "plainSummary": "The 'host understands every type' test passes even when a handler is removed."
+        },
+        {
+          "findingId": "R1-F007",
+          "plainSummary": "No test sends names from the object prototype as request types."
+        }
+      ]
+    },
+    {
+      "headline": "Bigger typing redesigns for requests and replies",
+      "plainSummary": "The list of request names is kept in two places, and each request's fields are checked by hand. Replies are also one loose type, so the tab matches them to requests by position. Both could be replaced by a single typed description of each request.",
+      "fixSize": "Large. It touches the host handlers, both clients and their tests.",
+      "whyTogether": "Both are halves of one redesign, a typed descriptor per request covering its fields and its reply. Doing either alone would be rewritten by the other.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The author left it out on purpose because it rewrites every handler and could change which error wins. The compiler already checks the two request-name lists against each other.",
+        "reopenIf": "A third caller of the host appears, or a request type is added and the two lists drift apart."
+      },
+      "ifAccepted": "Each request would be defined once, with its checks and its reply type, and the lists and hand checks would go away.",
+      "ifLeftAlone": "Adding a request still means touching the type map, the name list and the switch. The compiler flags any one that is missed.",
+      "howLikely": "It costs a little effort whenever a request is added, and it risks a mistake only if the compiler checks are removed.",
+      "members": [
+        {
+          "findingId": "R1-F008",
+          "plainSummary": "The request-name list is a second copy kept in step by a compile check, and field checks stay by hand."
+        },
+        {
+          "findingId": "R1-F009",
+          "plainSummary": "Replies are not tied to their requests, so the tab relies on position and re-checks fields."
+        }
+      ]
+    },
+    {
+      "headline": "Only the server tab can batch, and its four requests are fixed in code",
+      "plainSummary": "The tab batches by hand with a fixed set of four requests. Any other part that wants several host requests would still start a host process for each one. The alternative is to batch automatically in the client.",
+      "fixSize": "Several files. The client and the tab would change, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "Nothing else needs several requests today, and automatic batching is a different design that is not needed to fix the problem this change targets.",
+        "reopenIf": "A second part of the extension needs to send several host requests at once."
+      },
+      "ifAccepted": "The client would join requests made in the same moment into one batch and hand each caller its own answer. The tab could go back to its original simple code.",
+      "ifLeftAlone": "The tab pays for one host start per refresh. Other callers each pay for one start per request, as they do now.",
+      "howLikely": "It only matters if another caller needs several requests, and none does today.",
+      "members": [
+        {
+          "findingId": "R1-F010",
+          "plainSummary": "Batching is built into the tab's call instead of being a general feature of the client."
+        }
+      ]
+    },
+    {
+      "headline": "Three small overlaps in the new client code",
+      "plainSummary": "Two reply readers only pass a value through. One result type repeats a standard one with a narrower error type. One envelope check is a near copy of another. A batch also reads the scheduler settings twice, as it did before.",
+      "fixSize": "A few lines in each of two files.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The reviewers judged each one a fair trade as it stands. Merging them would add a shared file or change an error message for no real gain.",
+        "reopenIf": "A third copy of the envelope check appears, or the pass-through readers gain real logic."
+      },
+      "ifAccepted": "The pass-through readers would be inlined and the envelope check shared between the two clients.",
+      "ifLeftAlone": "A few lines of near-duplicate code stay, and one extra small database read happens per batch.",
+      "howLikely": "No user-visible effect. It only adds a little reading effort.",
+      "members": [
+        {
+          "findingId": "R1-F012",
+          "plainSummary": "Small duplicate or pass-through helpers remain in the client."
+        }
+      ]
+    },
+    {
+      "headline": "A coding bug in the server tab would still be shown as a host error and blank every panel",
+      "plainSummary": "An earlier fix made a coding bug in the reply reading stop being passed off as a normal panel failure. But the screen that catches it still words it as 'the host reported an error' and skips updating the other three panels.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "Nothing in the reply reading can throw this kind of error today, so it cannot happen yet. The earlier fix already stops the bug being hidden inside one panel.",
+        "reopenIf": "A reply reader is changed so that it can fail for reasons other than the host rejecting a request, or someone is confused by a wrongly worded error on the tab."
+      },
+      "ifAccepted": "Only host-reported failures would keep the current message. Any other error would be worded as a bug in the extension, and the panels that did load would still be updated.",
+      "ifLeftAlone": "If a coding bug ever appears in the reply reading, the tab would say the host reported an error and would stop refreshing all four panels.",
+      "howLikely": "Not possible today, because the reply readers only fail by reporting a host error. It needs a future coding mistake.",
+      "members": [
+        {
+          "findingId": "R1-F013",
+          "plainSummary": "The tab's catch-all still words every non-connection error as a host error and leaves all four panels stale."
+        }
+      ]
+    },
+    {
+      "headline": "The notes on batching do not mention that batches are now read-only",
+      "plainSummary": "The written notes say only that a batch inside a batch is refused. Since the last fix, a batch also refuses requests that change things, such as stopping a service, syncing cookies or saving settings.",
+      "fixSize": "One line in the docs.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The notes are wrong by omission, the fix is one line, and the neighbouring line was already edited in this change."
+      },
+      "ifAccepted": "The notes list the four read-only request types that a batch accepts and say that all others are refused.",
+      "ifLeftAlone": "Someone reading the notes could try to put a state-changing request in a batch and be surprised when the host refuses it.",
+      "howLikely": "Only bites a future developer who reads the notes before trying to batch something other than the four panel reads.",
+      "members": [
+        {
+          "findingId": "R1-F014",
+          "plainSummary": "The batch bullet in the notes omits the read-only restriction added by the earlier fix."
+        }
+      ]
+    },
+    {
+      "headline": "The compiler cannot catch a changed or added field in a request the server tab sends to the helper program",
+      "plainSummary": "The helper program that the Chrome extension talks to treats every field of an incoming request as an unchecked value. If someone adds a field to a request, or changes what type a field holds, the helper's code still builds without complaint and must be updated by hand.",
+      "fixSize": "Several files: every request handler in the helper would need its own checker, plus tests.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The gap is real but already written down in the docs, and closing it means redesigning how every handler checks its input, which is too big to bolt onto this change.",
+        "reopenIf": "A request field is added or changes type and the helper is not updated to match, or a few more request types are added so hand-checking each one gets error-prone."
+      },
+      "ifAccepted": "Each request type would get its own checker that returns a properly typed request, so the handlers receive real types and the compiler flags any field that is added, removed or changed. All handlers would be rewritten to use them.",
+      "ifLeftAlone": "Nothing changes for users. A future developer who changes a request field must remember to update the helper by hand, as the docs now say, because the compiler will not warn them.",
+      "howLikely": "Rare. It only bites when a request field changes, and only if that change is missed in review.",
+      "members": [
+        {
+          "findingId": "R1-F015",
+          "plainSummary": "The helper's request handlers see every field as an unchecked value, so field changes are not caught at build time."
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F002",
+        "R1-F010"
+      ],
+      "plainSummary": "If requests were batched automatically for every caller, the rules on what a batch may hold would matter much more."
+    }
+  ]
+}

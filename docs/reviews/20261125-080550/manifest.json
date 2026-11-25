@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261125-080550",
+  "round": 1,
+  "branch": "feat/batch-host-requests",
+  "baseRef": "origin/main",
+  "baseSha": "f53e6654f2a0f1168efdb284b1f0c0a04e210332",
+  "headSha": "d3df4d4df315b777abf11dd1dc4af2972f2a1a48",
+  "headPrNumber": 73,
+  "stackPrNumbers": [
+    73
+  ],
+  "isDeepRequested": false,
+  "mode": "full",
+  "reviewers": [
+    {
+      "id": "blind",
+      "status": "complete"
+    },
+    {
+      "id": "informed-design",
+      "status": "complete"
+    },
+    {
+      "id": "informed-data-tests",
+      "status": "complete"
+    },
+    {
+      "id": "generic-correctness",
+      "status": "complete"
+    }
+  ],
+  "phase": "done"
+}

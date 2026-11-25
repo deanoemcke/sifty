@@ -1,0 +1,26 @@
+diff --git a/src/extension/serverTab/hostClient.test.ts b/src/extension/serverTab/hostClient.test.ts
+index 771503c..1f0eb9f 100644
+--- a/src/extension/serverTab/hostClient.test.ts
++++ b/src/extension/serverTab/hostClient.test.ts
+@@ -517,3 +517,21 @@ describe('createHostClient requests', () => {
+     expect(NATIVE_HOST_REQUEST_TYPES).toEqual(expect.arrayContaining(sentTypes));
+   });
+ });
++
++describe('R1-F003: host older than batch', () => {
++  it('still fills the panels when the host does not know the batch request', async () => {
++    const oldHost = async (_hostName: string, message: unknown) => {
++      const { type } = message as { type: string };
++      return type === 'batch'
++        ? { ok: false, error: 'Unknown request type: batch' }
++        : { ok: true, servicesByName: {}, cookies: { isSynced: false }, settings: { targetIntervalMinutes: 240, maxSearchesPerTick: 5 }, searches: [], isLogFilePresent: false, logLines: [] };
++    };
++    const client = createHostClient({
++      runtime: { sendNativeMessage: oldHost },
++    } as unknown as Pick<ChromeApi, 'runtime'>);
++
++    const panels = await client.getPanels('webapp', 10);
++
++    expect(panels.services.status).toBe('fulfilled');
++  });
++});
