@@ -8,7 +8,11 @@ import {
   handleNativeHostMessageAsync,
   type NativeHostDependencies,
 } from '../../nativeHost/handleMessage';
-import { NATIVE_HOST_REQUEST_TYPES } from '../../nativeHost/protocol';
+import {
+  isBatchableRequestType,
+  MAX_BATCH_REQUEST_COUNT,
+  NATIVE_HOST_REQUEST_TYPES,
+} from '../../nativeHost/protocol';
 import {
   initSchema,
   stmtInsertSavedSearch,
@@ -497,6 +501,16 @@ function collectRequestTypes(message: unknown): unknown[] {
 }
 
 describe('createHostClient requests', () => {
+  it('keeps the panels batch within the size and request types the host accepts', async () => {
+    const { client, sentMessages } = clientRecording({ ok: true, replies: [] });
+
+    await client.getPanels('webapp', 5);
+
+    const [batch] = sentMessages as { requests: { type: string }[] }[];
+    expect(batch.requests.length).toBeLessThanOrEqual(MAX_BATCH_REQUEST_COUNT);
+    expect(batch.requests.every((request) => isBatchableRequestType(request.type))).toBe(true);
+  });
+
   it('sends only request types the native host protocol defines, inside a batch too', async () => {
     const { client, sentMessages } = clientRecording({ ok: true, settings: VALID_SETTINGS });
 

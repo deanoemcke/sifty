@@ -18,7 +18,10 @@ import {
 import { describeError } from './describeError';
 import { isRecord } from './isRecord';
 import {
+  BATCHABLE_REQUEST_TYPES,
+  isBatchableRequestType,
   isNativeHostRequestType,
+  MAX_BATCH_REQUEST_COUNT,
   type NativeHostRequestByType,
   type NativeHostRequestType,
 } from './protocol';
@@ -27,7 +30,6 @@ import { describeHowToInstallService } from './serviceDefinitions';
 import type { ServiceState } from './serviceState';
 
 const MAX_TAIL_LINE_COUNT = 500;
-export const MAX_BATCH_REQUEST_COUNT = 8;
 
 export type InstalledServiceState = ServiceState & {
   isInstalled: boolean;
@@ -200,16 +202,19 @@ async function controlService(
   return { ok: true, serviceName, state };
 }
 
-function isBatchRequest(request: unknown): boolean {
-  return isRecord(request) && request.type === ('batch' satisfies NativeHostRequestType);
-}
-
 async function handleBatchedRequestAsync(
   request: unknown,
   dependencies: NativeHostDependencies
 ): Promise<NativeHostReply> {
-  if (isBatchRequest(request)) {
-    return { ok: false, error: 'A batch request cannot contain another batch' };
+  if (
+    isRecord(request) &&
+    isNativeHostRequestType(request.type) &&
+    !isBatchableRequestType(request.type)
+  ) {
+    return {
+      ok: false,
+      error: `A batch cannot contain ${request.type} requests (only ${BATCHABLE_REQUEST_TYPES.join(', ')})`,
+    };
   }
   return handleNativeHostMessageAsync(request, dependencies);
 }

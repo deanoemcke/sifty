@@ -2,7 +2,11 @@ import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { initSchema } from '../server/db';
 import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
-import { buildNativeHostRequest, NATIVE_HOST_REQUEST_TYPES } from './protocol';
+import {
+  type BatchableRequest,
+  buildNativeHostRequest,
+  NATIVE_HOST_REQUEST_TYPES,
+} from './protocol';
 
 function makeDependencies(): NativeHostDependencies {
   const database = new Database(':memory:');
@@ -49,5 +53,24 @@ describe('native host protocol', () => {
     expect(buildNativeHostRequest('getSettings', {})).toEqual({ type: 'getSettings' });
     // @ts-expect-error
     expect(buildNativeHostRequest('syncCookies', { cookieJson: '[]' })).toBeDefined();
+  });
+
+  it('refuses at compile time a batch holding a state-changing request or another batch', () => {
+    const stopRequest = buildNativeHostRequest('controlService', {
+      serviceName: 'webapp',
+      action: 'stop',
+    });
+    const nestedBatch = buildNativeHostRequest('batch', { requests: [] });
+
+    const batchableRequests: BatchableRequest[] = [];
+
+    // @ts-expect-error
+    batchableRequests.push(stopRequest);
+    // @ts-expect-error
+    batchableRequests.push(nestedBatch);
+    // @ts-expect-error
+    batchableRequests.push({ type: 'tailLog' });
+
+    expect(batchableRequests).toHaveLength(3);
   });
 });

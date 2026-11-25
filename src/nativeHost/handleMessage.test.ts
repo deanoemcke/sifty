@@ -12,11 +12,8 @@ import {
 import { getStoredFacebookCookiesJson } from '../server/facebookCookies';
 import { getSchedulerSettings, updateSchedulerSettings } from '../server/settings';
 import { makeFakeLaunchd } from './fakeLaunchd';
-import {
-  handleNativeHostMessageAsync,
-  MAX_BATCH_REQUEST_COUNT,
-  type NativeHostDependencies,
-} from './handleMessage';
+import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
+import { MAX_BATCH_REQUEST_COUNT } from './protocol';
 
 function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): NativeHostDependencies {
   const database = new Database(':memory:');
@@ -653,8 +650,29 @@ describe('batch', () => {
     expect(reply).toEqual({
       ok: true,
       replies: [
-        { ok: false, error: expect.stringContaining('cannot contain another batch') },
+        { ok: false, error: expect.stringContaining('cannot contain batch requests') },
         { ok: true, searches: [] },
+      ],
+    });
+  });
+
+  it.each([
+    ['controlService', { type: 'controlService', serviceName: 'webapp', action: 'stop' }],
+    ['syncCookies', { type: 'syncCookies', cookiesJson: '[]' }],
+    ['updateSettings', { type: 'updateSettings', changes: {} }],
+  ])('refuses a %s request, which changes state, without running it', async (requestType, request) => {
+    const { dependencies } = makeServiceDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'batch', requests: [request, { type: 'getServices' }] },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({
+      ok: true,
+      replies: [
+        { ok: false, error: expect.stringContaining(`cannot contain ${requestType} requests`) },
+        { ok: true, servicesByName: { webapp: { isLoaded: true } } },
       ],
     });
   });
