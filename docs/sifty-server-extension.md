@@ -14,9 +14,9 @@ A Chrome extension whose full-tab UI ("Sifty Server") keeps Facebook cookies in 
 ```
 Chrome
 ├─ background service worker ── chrome.cookies.onChanged ─┐
-└─ "Sifty Server" tab (server.html) ──────────────────────┤  chrome.runtime.connectNative
+└─ "Sifty Server" tab (server.html) ──────────────────────┤  chrome.runtime.sendNativeMessage
                                                           ▼
-                            native host (Node, started by Chrome on demand)
+                            native host (Node, one process per request, started by Chrome)
                                ├─ sifty.db  (settings, facebook_cookies, saved_searches)
                                ├─ launchctl (webapp server, ngrok)
                                └─ /tmp log files
@@ -25,7 +25,7 @@ launchd ── scheduler (every 30 min) ── reads settings from sifty.db
 launchd ── webapp server (vite) ─────── ngrok
 ```
 
-Native messaging means no network port and no token: Chrome only lets the extension ID listed in the host manifest's `allowed_origins` talk to the host. Cookie syncing and the settings tab both work when the webapp server is stopped.
+Each request is one `sendNativeMessage` call, so Chrome starts a fresh host process for it and the process exits after replying; there is no long-lived connection. Refreshing the tab sends several requests (one per panel), so it starts several host processes. Native messaging means no network port and no token: Chrome only lets the extension ID listed in the host manifest's `allowed_origins` talk to the host. Cookie syncing and the settings tab both work when the webapp server is stopped.
 
 ## Decisions
 
@@ -45,7 +45,7 @@ Each phase is test-first, ends green, and is committed separately.
 - `settings` table created in `initSchema` (key, JSON value, updated_at).
 - `getSchedulerSettings(database)` returns typed values with defaults taken from the existing constants; bounds-checked on write (positive integers, sane maximums).
 - `runSchedulerAsync` takes its interval, per-tick cap and re-alert window from it. The constants remain as defaults only.
-- The launchd tick (`StartInterval`) stays in the plist for now; the tab shows it read-only. Editing it means rewriting the plist and reloading the job, which can follow once the host exists.
+- The launchd tick (`StartInterval`) stays in the plist for now; the tab does not display it. The tick length is a hard-coded constant (`SCHEDULER_TICK_INTERVAL_MINUTES`, 30) used only as the minimum for the interval setting and for the overdue grace. Editing the tick means rewriting the plist and reloading the job, which is not built.
 
 ### 2. Facebook cookies in the database
 
@@ -56,8 +56,8 @@ Each phase is test-first, ends green, and is committed separately.
 
 ### 3. Native host
 
-- `native-host/` — a Node script speaking Chrome's length-prefixed JSON protocol over stdin/stdout, plus a wrapper that runs `nvm use` (matching `.nvmrc`, as `run-and-notify.sh` does) so `better-sqlite3` loads.
-- Messages (each validated at the boundary; unknown or oversized messages rejected explicitly): `syncCookies`, `getStatus`, `getSettings`, `updateSettings`, `getRunHistory`, `tailLog`, `controlService`.
+- `src/nativeHost/` and `scripts/sifty-native-host.ts` — a Node script speaking Chrome's length-prefixed JSON protocol over stdin/stdout, plus a wrapper (`scripts/sifty-native-host.sh`) that runs `nvm use` (matching `.nvmrc`, as `run-and-notify.sh` does) so `better-sqlite3` loads.
+- Messages (each validated at the boundary; unknown or oversized messages rejected explicitly): `getStatus` (cookie status and current settings), `syncCookies`, `updateSettings`, `getRunHistory`, `tailLog`, `getServices`, `controlService`. There is no separate `getSettings`.
 - `controlService` only accepts a fixed list of service names (webapp server, ngrok, scheduler); nothing is built from free text.
 - Logs to a file from the start; "native host has exited" is otherwise undiagnosable.
 - An install script writes the host manifest to `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`.
