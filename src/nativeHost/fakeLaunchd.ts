@@ -1,9 +1,3 @@
-// Test support: a stand-in for launchd that follows its real rules, including
-// the failures — bootstrapping a disabled or already-loaded service fails, and
-// booting out or kickstarting something that isn't loaded fails. Tests check
-// the resulting state, not the exact commands, so they survive a reordering of
-// the steps.
-
 import type { CommandResult } from './controlService';
 
 export type FakeServiceState = {
@@ -15,7 +9,6 @@ export type FakeServiceState = {
 
 export function makeFakeLaunchd(
   initialStatesByLabel: Record<string, FakeServiceState>,
-  // Makes every call of a subcommand fail with the given message.
   failuresBySubcommand: Record<string, string> = {}
 ) {
   const statesByLabel: Record<string, FakeServiceState> = {};

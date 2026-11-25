@@ -1,5 +1,3 @@
-// Typed requests to the native host, with replies checked at the boundary.
-
 import type { ServiceAction } from '../../nativeHost/controlService';
 import { describeError } from '../../nativeHost/describeError';
 import type { InstalledServiceState, RunHistoryEntry } from '../../nativeHost/handleMessage';
@@ -13,8 +11,6 @@ import {
 } from '../../server/schedulerSettingDefinitions';
 import type { ChromeApi } from '../startCookieSync';
 
-// Chrome could not start the host or talk to it: not installed, wrong
-// extension ID in the host manifest, or the wrapper script crashed.
 export class HostUnreachableError extends Error {
   constructor(reason: string) {
     super(reason);
@@ -22,8 +18,6 @@ export class HostUnreachableError extends Error {
   }
 }
 
-// The host ran and answered with `{ ok: false }`, or with something that is
-// not a valid reply.
 export class HostRejectedError extends Error {
   constructor(reason: string) {
     super(reason);

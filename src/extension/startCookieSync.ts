@@ -1,7 +1,3 @@
-// Keeps the Sifty database's Facebook cookies in step with the ones in Chrome.
-// The `chrome` global is passed in (as ChromeApi) so the wiring can be tested
-// with a fake.
-
 import { describeError } from '../nativeHost/describeError';
 import { NATIVE_HOST_NAME } from '../nativeHost/hostName';
 import {
@@ -12,7 +8,6 @@ import {
 } from './cookieSync';
 import { createCookieSyncScheduler } from './syncScheduler';
 
-// The parts of the `chrome` global this module uses.
 export type ChromeApi = {
   cookies: {
     getAll(details: { domain: string }): Promise<BrowserCookie[]>;
@@ -35,14 +30,9 @@ export type CookieSyncOutcome =
   | { kind: 'host-rejected'; error: string }
   | { kind: 'host-unreachable'; error: string };
 
-// How long cookie changes must stop for before syncing. Facebook rotates
-// several cookies at once, so this lets the burst settle.
 export const COOKIE_SYNC_WAIT_MS = 5000;
-// Even if cookies keep changing, sync at least this often.
 export const COOKIE_SYNC_MAX_WAIT_MS = 60_000;
 export const COOKIE_RESYNC_ALARM_NAME = 'sifty-cookie-resync';
-// A missed push (host not installed yet, Chrome closed mid-change) repairs
-// itself on the next resync, so no retry logic is needed.
 export const COOKIE_RESYNC_PERIOD_MINUTES = 60;
 
 function interpretHostReply(reply: unknown, sentCookieCount: number): CookieSyncOutcome {
@@ -58,8 +48,6 @@ function interpretHostReply(reply: unknown, sentCookieCount: number): CookieSync
 export async function syncFacebookCookiesAsync(chromeApi: ChromeApi): Promise<CookieSyncOutcome> {
   const browserCookies = await chromeApi.cookies.getAll({ domain: FACEBOOK_DOMAIN });
   const syncableCookies = toSyncableFacebookCookies(browserCookies);
-  // Nothing to send when logged out: the host would reject an empty set, and
-  // the previously stored cookies are better than none.
   if (syncableCookies.length === 0) return { kind: 'no-facebook-cookies' };
 
   try {

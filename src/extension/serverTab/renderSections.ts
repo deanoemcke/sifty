@@ -11,8 +11,6 @@ function describeHostError(error: Error): string {
     : `The Sifty native host reported an error: ${error.message}`;
 }
 
-// `notUpdatedPanelNames` are the panels whose request failed: they keep their
-// previous content, so the banner says which ones to distrust.
 export function renderHostError(
   container: HTMLElement,
   errors: Error[],

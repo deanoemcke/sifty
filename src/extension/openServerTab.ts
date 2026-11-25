@@ -1,4 +1,3 @@
-// The parts of the `chrome` global the toolbar button uses.
 export type ServerTabApi = {
   runtime: { getURL(path: string): string };
   tabs: {

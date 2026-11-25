@@ -1,15 +1,3 @@
-/**
- * Installs the launchd plists for the Sifty webapp and ngrok services, so the
- * Sifty Server tab can start and stop them.
- *
- * Run with: npm run services:install
- *
- * Installing never starts anything. A service installed for the first time is
- * also disabled, so it stays off at login until it is started from the tab.
- * Re-running rewrites the plists but leaves each service's on/off state alone.
- * The existing scheduler plist is not touched.
- */
-
 import fs from 'node:fs';
 import path from 'node:path';
 import { installServiceAsync } from '../src/nativeHost/installService';

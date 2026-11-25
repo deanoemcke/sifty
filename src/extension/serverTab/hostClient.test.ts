@@ -27,8 +27,6 @@ function clientReplying(reply: unknown) {
   } as unknown as Pick<ChromeApi, 'runtime'>);
 }
 
-// Replies come from the real host handler, so a change to the host's replies
-// that the client rejects fails here.
 function makeRealHost(logFilePath: string) {
   const database = new Database(':memory:');
   initSchema(database);

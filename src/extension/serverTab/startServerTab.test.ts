@@ -66,8 +66,6 @@ const DEFAULT_REPLIES: Record<string, unknown> = {
   },
 };
 
-// A stand-in for the `chrome` global: answers native messages from a table,
-// and records every request so tests can see what the tab asked the host.
 function makeFakeChrome(
   options: {
     replies?: Record<string, unknown | ((request: HostRequest) => unknown)>;
@@ -117,7 +115,6 @@ function setPageHidden(isHidden: boolean): void {
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => isHidden });
 }
 
-// A host reply that stays pending until the test lets it through.
 function holdReply<Reply>() {
   let release: (reply: Reply) => void = () => {};
   const reply = new Promise<Reply>((resolve) => {

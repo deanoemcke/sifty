@@ -1,7 +1,5 @@
 import fs from 'node:fs';
 
-// A log can grow without bound, so only its final bytes are ever read. This
-// also keeps the reply well inside Chrome's 1 MB limit for native messages.
 export const MAX_LOG_TAIL_BYTES = 256 * 1024;
 
 export type LogTail = { isLogFilePresent: boolean; logLines: string[] };
@@ -24,11 +22,10 @@ export function readLogTail(logFilePath: string, lineCount: number): LogTail {
     fs.readSync(fileDescriptor, buffer, 0, bytesToRead, startOffset);
 
     const lines = buffer.toString('utf8').split('\n');
-    // Reading from mid-file starts partway through a line (and possibly a
-    // multi-byte character), so that fragment is dropped.
-    if (startOffset > 0) lines.shift();
-    // A file ending in a newline splits into a final empty string.
-    if (lines.at(-1) === '') lines.pop();
+    const startsMidLine = startOffset > 0;
+    if (startsMidLine) lines.shift();
+    const endsWithNewline = lines.at(-1) === '';
+    if (endsWithNewline) lines.pop();
 
     return { isLogFilePresent: true, logLines: lines.slice(-lineCount) };
   } finally {

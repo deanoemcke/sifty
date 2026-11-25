@@ -29,8 +29,6 @@ function describeRange(settingName: SettingName): string {
   return `${minimum} to ${maximum}`;
 }
 
-// Rendered once from the host's settings. Afterwards only the messages change,
-// so refreshes and failed saves never overwrite what has been typed.
 export function renderSettingsSection(
   container: HTMLElement,
   settings: SchedulerSettings,

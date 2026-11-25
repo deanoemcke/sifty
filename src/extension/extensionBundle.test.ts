@@ -20,7 +20,6 @@ describe('extension bundle', () => {
   it('contains no server database code, which cannot run in the browser', async () => {
     const chunkCodes = await buildExtensionChunkCodesAsync();
 
-    // Without this, a build that yields no chunks would pass every marker check below.
     expect(chunkCodes.length).toBeGreaterThan(0);
     for (const marker of SERVER_ONLY_MARKERS) {
       expect(chunkCodes.filter((code) => code.includes(marker))).toEqual([]);

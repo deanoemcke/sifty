@@ -1,6 +1,3 @@
-// The launchd services the Sifty Server tab controls: one place for their
-// names, labels and logs, shared by the native host, the installer and the tab.
-
 import type { ServiceDefinition } from './controlService';
 import { NGROK_LOG_FILE_PATH, WEBAPP_LOG_FILE_PATH } from './logFiles';
 import type { ServicePlistOptions } from './servicePlist';
@@ -11,11 +8,9 @@ export type ServiceName = (typeof SERVICE_NAMES)[number];
 const SERVICE_LABELS_BY_NAME: Record<ServiceName, string> = {
   webapp: 'ai.openclaw.sifty-webapp',
   ngrok: 'ai.openclaw.sifty-ngrok',
-  // Already installed (and parked disabled) on this machine; never rewritten here.
   scheduler: 'ai.openclaw.sifty-scheduler',
 };
 
-// launchd runs these on a timer (StartInterval), so they idle between ticks.
 const INTERVAL_JOB_SERVICE_NAMES: readonly ServiceName[] = ['scheduler'];
 
 export const NGROK_PATH = '/opt/homebrew/bin/ngrok';
@@ -38,12 +33,8 @@ export function buildServiceDefinitions(
   ) as Record<ServiceName, ServiceDefinition>;
 }
 
-// Only the webapp and ngrok are installed by this code: the scheduler's plist
-// and wrapper already exist outside this repo.
 type InstallableServiceName = Exclude<ServiceName, 'scheduler'>;
 
-// What to tell someone whose service has no plist. Advice for a service the
-// installer cannot write would send them to a command that does nothing.
 export function describeHowToInstallService(serviceName: string): string {
   if (serviceName === 'scheduler') {
     return 'Its plist is set up outside this project, so the installer cannot create it.';

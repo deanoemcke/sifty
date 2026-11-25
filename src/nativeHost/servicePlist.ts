@@ -7,8 +7,7 @@ export type ServicePlistOptions = {
   logFilePath: string;
 };
 
-// launchd's own default for user agents is a bare /usr/bin:/bin:/usr/sbin:/sbin;
-// Homebrew tools (node, ngrok) live in /opt/homebrew/bin, as in the scheduler's plist.
+// launchd's default PATH for user agents is only /usr/bin:/bin:/usr/sbin:/sbin.
 const SERVICE_PATH = '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 function escapeXml(text: string): string {
@@ -24,8 +23,6 @@ function stringElement(text: string): string {
   return `<string>${escapeXml(text)}</string>`;
 }
 
-// A job that starts when loaded and is restarted if it exits. The tab loads it
-// with Start and removes it with Stop, so "stopped" also means "not restarting".
 export function buildServicePlist(options: ServicePlistOptions): string {
   if (options.programArguments.length === 0) {
     throw new Error('programArguments must contain at least the command to run');

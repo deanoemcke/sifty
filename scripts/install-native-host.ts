@@ -1,13 +1,3 @@
-/**
- * Registers the native messaging host with Chrome so the Sifty Server
- * extension (and only that extension) can start it.
- *
- * Run with: npm run native-host:install
- * The extension's ID comes from the public key in extension/manifest.json, so
- * there is nothing to pass in. Re-run after moving the checkout: the host
- * manifest holds an absolute path.
- */
-
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

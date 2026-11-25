@@ -2,7 +2,6 @@ import type { FacebookCookieStatus } from '../server/facebookCookies';
 import { DAY_MS, formatDuration, MINUTE_MS, pluralise } from './formatDuration';
 import { COOKIE_RESYNC_PERIOD_MINUTES } from './startCookieSync';
 
-// 'neutral' is for a state that is intended, such as a service parked off.
 export type StatusTone = 'ok' | 'warning' | 'problem' | 'neutral';
 
 export type CookieStatusView = {
@@ -12,8 +11,8 @@ export type CookieStatusView = {
 };
 
 const LOGIN_EXPIRY_WARNING_MS = 14 * DAY_MS;
-// A day of missed resyncs means Chrome has been closed or the extension is broken.
-const STALE_SYNC_MS = 24 * COOKIE_RESYNC_PERIOD_MINUTES * MINUTE_MS;
+const MISSED_RESYNCS_BEFORE_STALE = 24;
+const STALE_SYNC_MS = MISSED_RESYNCS_BEFORE_STALE * COOKIE_RESYNC_PERIOD_MINUTES * MINUTE_MS;
 
 export function describeCookieStatus(
   status: FacebookCookieStatus,

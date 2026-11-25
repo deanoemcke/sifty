@@ -2,8 +2,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildServicePlist } from './servicePlist';
 
-// Reads a plist's top-level <dict> back into plain values, so the tests check
-// structure rather than matching the XML text.
 function parsePlist(xml: string): Record<string, unknown> {
   const document = new DOMParser().parseFromString(xml, 'application/xml');
   expect(document.querySelector('parsererror')).toBeNull();

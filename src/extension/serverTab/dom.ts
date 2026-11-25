@@ -1,6 +1,3 @@
-// Tiny element builder. Content only ever goes in as textContent — the tab
-// shows saved-search names and log lines, so nothing is parsed as markup.
-
 type ElementOptions = {
   text?: string;
   className?: string;

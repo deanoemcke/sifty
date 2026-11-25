@@ -1,8 +1,3 @@
-// Handles one request from the Sifty Server extension. Requests come from
-// outside the process, so everything is validated here, and every failure —
-// including exceptions from the store — becomes an `{ ok: false, error }`
-// reply rather than a crash, so the extension always gets an answer.
-
 import type Database from 'better-sqlite3';
 import { stmtListSavedSearches } from '../server/db';
 import {
@@ -28,17 +23,12 @@ import type { ServiceState } from './serviceState';
 
 const MAX_TAIL_LINE_COUNT = 500;
 
-// A service's launchd state, plus whether its plist has been installed — a
-// service that was never installed looks identical to a stopped one otherwise —
-// and whether it is an interval job, which is healthy while loaded and idle.
 export type InstalledServiceState = ServiceState & {
   isInstalled: boolean;
   isIntervalJob: boolean;
 };
 
 export type NativeHostServices = {
-  // The only services the extension may control, by the name it uses. The label
-  // and plist path come from here, never from a request.
   definitionsByServiceName: Record<string, ServiceDefinition>;
   userId: number;
   runLaunchctlAsync: RunLaunchctl;
@@ -46,11 +36,7 @@ export type NativeHostServices = {
 };
 
 export type NativeHostDependencies = {
-  // Opened on first use, so a request that never touches the database (service
-  // control, log reading) still works when the database cannot be opened.
   getDatabase: () => Database.Database;
-  // Absolute paths of the log files the extension may read, by name. A name
-  // that is not here cannot be read.
   logFilePathsByLogName: Record<string, string>;
   services: NativeHostServices;
 };
@@ -60,9 +46,7 @@ export type RunHistoryEntry = {
   name: string;
   lastRunAtMs: number | null;
   lastRunSucceeded: boolean | null;
-  // One entry per `${kind}:${message}` line the scheduler recorded for the run.
   lastRunDetailLines: string[];
-  // null until the search has run once: it is due on the next scheduler run.
   nextDueAtMs: number | null;
 };
 
@@ -127,8 +111,6 @@ function getRunHistory(dependencies: NativeHostDependencies): NativeHostReply {
 
 function tailLog(message: UnknownRecord, dependencies: NativeHostDependencies): NativeHostReply {
   const { logName, lineCount } = message;
-  // Only names configured by the host's own code resolve to a path; the
-  // request never supplies one.
   if (typeof logName !== 'string' || !Object.hasOwn(dependencies.logFilePathsByLogName, logName)) {
     return { ok: false, error: `Unknown log: ${String(logName)}` };
   }
@@ -176,8 +158,6 @@ async function controlService(
   const { definitionsByServiceName, userId, runLaunchctlAsync, doesFileExist } =
     dependencies.services;
   const { serviceName, action } = message;
-  // Only names the host configured resolve to a launchd label; the request
-  // never supplies a label, path or command.
   if (typeof serviceName !== 'string' || !Object.hasOwn(definitionsByServiceName, serviceName)) {
     return { ok: false, error: `Unknown service: ${String(serviceName)}` };
   }
@@ -189,8 +169,7 @@ async function controlService(
   }
 
   const definition = definitionsByServiceName[serviceName];
-  // Stopping an uninstalled service is harmless, but starting one would fail
-  // with launchd's unhelpful "Input/output error".
+  // Starting an uninstalled service fails with launchd's unhelpful "Input/output error".
   if (action !== 'stop' && !doesFileExist(definition.plistPath)) {
     return {
       ok: false,

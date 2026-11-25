@@ -5,7 +5,6 @@ import { createElement } from './dom';
 
 export type ServicesSectionActions = {
   message: string | undefined;
-  // True while an action is running, so a click that would be dropped is not offered.
   isDisabled: boolean;
   onAction: (serviceName: string, action: ServiceAction) => void;
 };

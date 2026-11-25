@@ -2,13 +2,6 @@ export type CookieSyncScheduler = {
   requestSync(): void;
 };
 
-// Facebook rotates several cookies together, firing a burst of change events:
-// waiting until they stop means one sync reads the settled set instead of
-// sending half-updated ones several times. Syncs never overlap, and a request
-// that lands while one is running earns a follow-up, because that sync may
-// already have read the old values. The wait is capped at maxWaitMs from the
-// first request of a burst, so cookies that never stop changing cannot postpone
-// syncing indefinitely.
 export function createCookieSyncScheduler(options: {
   waitMs: number;
   maxWaitMs: number;

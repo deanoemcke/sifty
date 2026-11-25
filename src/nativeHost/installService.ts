@@ -4,11 +4,6 @@ import type { CommandResult } from './controlService';
 import { buildServicePlist, type ServicePlistOptions } from './servicePlist';
 import { writeFileAtomically } from './writeFileAtomically';
 
-// Writes the service's plist. A service installed for the first time is also
-// disabled, so it stays off at login until it is started from the tab; an
-// existing one keeps its on/off state. The disable happens before the plist is
-// written: the plist's existence is what marks "installed", so a failed disable
-// must leave no plist behind, or the next run would skip the disable for good.
 export async function installServiceAsync(input: {
   options: ServicePlistOptions;
   plistDirectory: string;

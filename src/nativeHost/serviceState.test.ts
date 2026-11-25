@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseServiceState } from './serviceState';
 
-// Abbreviated from real `launchctl list {label}` output on macOS 15.
 const LIST_OUTPUT_RUNNING = `{
 \t"StandardOutPath" = "/tmp/signal-notify-proxy.log";
 \t"LimitLoadToSessionType" = "Aqua";
@@ -22,10 +21,8 @@ const LIST_OUTPUT_LOADED_NOT_RUNNING = `{
 };
 `;
 
-// `launchctl list` exits 113 ("Could not find service") for a job that isn't loaded.
 const LIST_EXIT_NOT_LOADED = 113;
 
-// From `launchctl print-disabled gui/{uid}`.
 const PRINT_DISABLED_OUTPUT = `
 \tdisabled services = {
 \t\t"com.docker.helper" => enabled

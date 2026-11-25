@@ -1,6 +1,3 @@
-// The "Sifty Server" tab: loads status from the native host, renders it, and
-// keeps it fresh.
-
 import type { ServiceAction } from '../../nativeHost/controlService';
 import { describeError } from '../../nativeHost/describeError';
 import type { InstalledServiceState } from '../../nativeHost/handleMessage';
@@ -21,27 +18,18 @@ export type ServerTabDependencies = {
 
 const LOG_LINES_SHOWN = 200;
 const DEFAULT_LOG_NAME = 'scheduler';
-// A sync or service message carries no timestamp on screen, so it is dropped
-// before it can read as current.
 const MESSAGE_LIFETIME_MS = 60_000;
-
-// Matches the order of the requests in refreshAsync.
-const PANEL_NAMES_IN_REQUEST_ORDER = ['Services', 'Cookies and settings', 'Last runs', 'Logs'];
 
 type TimedMessage = { text: string; shownAtMs: number };
 
-// What the tab remembers between refreshes: plain data, not read back from the DOM.
 type ServerTabState = {
   selectedLogName: string;
   syncMessage: TimedMessage | undefined;
   serviceMessage: TimedMessage | undefined;
   isSettingsRendered: boolean;
   isRefreshing: boolean;
-  // A refresh was asked for while another was in flight: that one may have
-  // fetched the old log or read the service before an action finished.
   isRefreshQueued: boolean;
   isServiceActionRunning: boolean;
-  // The last services read, so the buttons can be redrawn when an action starts or ends.
   servicesByName: Record<string, InstalledServiceState> | undefined;
 };
 
@@ -112,9 +100,6 @@ export async function startServerTab(
   }
 
   async function controlServiceAsync(serviceName: string, action: ServiceAction): Promise<void> {
-    // Each host call takes seconds, and a second Start sent meanwhile would fail
-    // against the service the first has just loaded. The buttons are disabled
-    // while one runs; this guards a click that reaches a button already replaced.
     if (state.isServiceActionRunning) return;
     state.isServiceActionRunning = true;
     renderServices();
@@ -148,8 +133,6 @@ export async function startServerTab(
       if (state.serviceMessage && isMessageExpired(state.serviceMessage, currentMs)) {
         state.serviceMessage = undefined;
       }
-      // Each panel renders from its own request, so one failing request (a
-      // launchctl error, an unreadable log) leaves the other panels working.
       const results = await Promise.allSettled([
         hostClient.getServices(),
         hostClient.getStatus(),
@@ -157,9 +140,15 @@ export async function startServerTab(
         hostClient.tailLog(state.selectedLogName, LOG_LINES_SHOWN),
       ]);
       const [services, status, runHistory, logTail] = results;
-      const failedPanelNames = PANEL_NAMES_IN_REQUEST_ORDER.filter(
-        (_panelName, index) => results[index].status === 'rejected'
-      );
+      const panelResults = [
+        { panelName: 'Services', result: services },
+        { panelName: 'Cookies and settings', result: status },
+        { panelName: 'Last runs', result: runHistory },
+        { panelName: 'Logs', result: logTail },
+      ];
+      const failedPanelNames = panelResults
+        .filter(({ result }) => result.status === 'rejected')
+        .map(({ panelName }) => panelName);
       renderHostError(
         hostErrorContainer,
         results.flatMap((result) => (result.status === 'rejected' ? [result.reason as Error] : [])),
@@ -174,7 +163,6 @@ export async function startServerTab(
           syncMessage: state.syncMessage?.text,
           onSyncNow: () => void syncNowAsync(),
         });
-        // Rendered only once: later refreshes must not overwrite what is typed.
         if (!state.isSettingsRendered) {
           renderSettingsSection(settingsContainer, status.value.settings, async (changes) => {
             try {
@@ -201,7 +189,6 @@ export async function startServerTab(
   }
 
   function onPollTick(): void {
-    // The tab is usually in the background, where nobody sees the output.
     if (!document.hidden) void refreshAsync();
   }
 

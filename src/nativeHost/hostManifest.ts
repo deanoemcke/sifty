@@ -1,10 +1,8 @@
-// Builds the manifest Chrome reads to find the native host — see
 // https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
 
 import path from 'node:path';
 import { NATIVE_HOST_NAME } from './hostName';
 
-// Chrome extension IDs are 32 characters from a–p (a hex-style encoding).
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
 
 export type NativeHostManifest = {
@@ -15,9 +13,7 @@ export type NativeHostManifest = {
   allowed_origins: string[];
 };
 
-// allowed_origins is the only access control on the host: Chrome refuses calls
-// from any other extension. A wildcard is not valid there, and the ID is
-// validated so a typo can't silently produce a manifest nothing may use.
+// Chrome rejects a wildcard in allowed_origins.
 export function buildNativeHostManifest(options: {
   hostPath: string;
   extensionId: string;

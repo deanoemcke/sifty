@@ -1,8 +1,3 @@
-// Starts, stops and restarts a launchd user service. The state it leaves behind
-// persists: Stop also disables the service so it stays off after a login, and
-// Start enables it so it comes back. That is how the scheduler is already
-// parked on this machine.
-
 import { parseServiceState, type ServiceState } from './serviceState';
 
 export type CommandResult = { exitCode: number; output: string };
@@ -11,8 +6,6 @@ export type RunLaunchctl = (args: string[]) => Promise<CommandResult>;
 export type ServiceDefinition = {
   label: string;
   plistPath: string;
-  // A StartInterval job: launchd loads it and runs it on a timer, so it sits
-  // idle with no process between ticks. Loaded and idle is its healthy state.
   isIntervalJob: boolean;
 };
 export const SERVICE_ACTIONS = ['start', 'stop', 'restart'] as const;
@@ -82,8 +75,6 @@ async function restartAsync(context: ServiceContext): Promise<void> {
   await runCheckedAsync(context, ['kickstart', '-k', `gui/${userId}/${definition.label}`]);
 }
 
-// Returns the state after the action. The first failing launchctl step throws
-// with launchctl's own message, and nothing after it runs.
 export async function controlServiceAsync(
   context: ServiceContext & { action: ServiceAction }
 ): Promise<ServiceState> {

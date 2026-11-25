@@ -1,5 +1,3 @@
-// No database imports here: the Chrome extension bundles this file for its settings form.
-
 const MINUTES_PER_WEEK = 7 * 24 * 60;
 
 // Matches launchd's StartInterval (1800s) in the external ai.openclaw.sifty-scheduler.plist.

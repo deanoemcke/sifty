@@ -19,8 +19,6 @@ function makeBrowserCookie(overrides: Partial<BrowserCookie> = {}): BrowserCooki
   };
 }
 
-// A stand-in for the `chrome` global that records the listeners the extension
-// registers, so tests can fire browser events by hand.
 function makeFakeChrome(options: {
   browserCookies?: BrowserCookie[];
   hostReply?: unknown;

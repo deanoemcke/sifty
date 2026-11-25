@@ -12,13 +12,11 @@ export type RunHistoryRowView = {
   dueText: string;
   isOverdue: boolean;
   overdueByMs: number;
-  // The scheduler's recorded `${kind}:${message}` lines, unchanged.
   failureLines: string[];
 };
 
-// A search that became due within two scheduler ticks is just waiting for its turn. Beyond that, something is stopping
-// the scheduler (it's unloaded, a stale lock file, …).
-const OVERDUE_GRACE_MS = 2 * SCHEDULER_TICK_INTERVAL_MINUTES * MINUTE_MS;
+const OVERDUE_GRACE_TICKS = 2;
+const OVERDUE_GRACE_MS = OVERDUE_GRACE_TICKS * SCHEDULER_TICK_INTERVAL_MINUTES * MINUTE_MS;
 
 function describeResult(entry: RunHistoryEntry): RunResult {
   if (entry.lastRunAtMs === null) return 'never-run';
@@ -49,7 +47,6 @@ function describeRow(entry: RunHistoryEntry, nowMs: number): RunHistoryRowView {
   };
 }
 
-// Problems first: failed runs, then searches furthest past due, then the rest by name.
 export function describeRunHistory(entries: RunHistoryEntry[], nowMs: number): RunHistoryRowView[] {
   return entries
     .map((entry) => describeRow(entry, nowMs))

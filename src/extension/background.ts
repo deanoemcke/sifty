@@ -1,5 +1,3 @@
-// Service worker entry point (built to extension/dist/background.js).
-
 import { type ServerTabApi, startServerTabButton } from './openServerTab';
 import { type ChromeApi, startCookieSync } from './startCookieSync';
 

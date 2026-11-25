@@ -28,8 +28,6 @@ function makeDependencies(): NativeHostDependencies {
   };
 }
 
-// Feeds the given chunks to the host as its stdin, closes stdin, and returns
-// how the loop ended along with every reply it wrote to stdout.
 async function runHostWithChunks(chunks: Buffer[], dependencies = makeDependencies()) {
   const input = new PassThrough();
   const output = new PassThrough();

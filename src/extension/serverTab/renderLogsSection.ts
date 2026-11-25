@@ -5,7 +5,6 @@ export type LogsSection = {
   showLog(logTail: LogTail): void;
 };
 
-// Built once so a refresh can replace the lines without resetting the selector.
 export function renderLogsSection(
   container: HTMLElement,
   logNames: string[],

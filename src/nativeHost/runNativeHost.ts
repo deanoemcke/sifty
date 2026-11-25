@@ -1,7 +1,3 @@
-// The native host's read loop: framed requests in on `input` (Chrome's stdin
-// pipe), framed replies out on `output`. Taking streams as arguments keeps it
-// testable without a real process.
-
 import type { Readable, Writable } from 'node:stream';
 import { describeError } from './describeError';
 import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
@@ -19,8 +15,6 @@ function writeFramedAsync(output: Writable, framedMessage: Buffer): Promise<void
   });
 }
 
-// A reply Chrome would reject (over 1 MB) is replaced by an error reply, so
-// the extension is told why instead of seeing the host exit with no answer.
 async function writeReplyAsync(output: Writable, reply: unknown): Promise<void> {
   let framedReply: Buffer;
   try {
@@ -54,7 +48,6 @@ export async function runNativeHostAsync(
     }
 
     if (framingError) {
-      // The stream cannot be re-synchronised after a bad frame: answer once, stop.
       await writeReplyAsync(output, { ok: false, error: framingError.message });
       return 'protocol-error';
     }

@@ -1,9 +1,3 @@
-/**
- * Chrome native messaging host for the Sifty Server extension. Chrome starts
- * it (via sifty-native-host.sh) for each request; it answers on stdout and
- * exits when Chrome closes stdin. All the logic lives in src/nativeHost.
- */
-
 import { getCurrentUserId, getLaunchAgentsDirectory } from '../src/nativeHost/hostEnvironment';
 import { LOG_FILE_PATHS_BY_LOG_NAME } from '../src/nativeHost/logFiles';
 import { runLaunchctlAsync } from '../src/nativeHost/runLaunchctl';
@@ -12,11 +6,12 @@ import { buildServiceDefinitions } from '../src/nativeHost/serviceDefinitions';
 import fs from 'node:fs';
 import { getDb } from '../src/server/db';
 
-async function main(): Promise<number> {
-  // stdout carries only framed replies — a stray console.log (getDb prints
-  // database stats) would corrupt the protocol, so logging goes to stderr,
-  // which the wrapper script appends to the host's log file.
+function redirectConsoleLogToStderr(): void {
   console.log = (...logArguments: unknown[]) => console.error(...logArguments);
+}
+
+async function main(): Promise<number> {
+  redirectConsoleLogToStderr();
 
   const outcome = await runNativeHostAsync(process.stdin, process.stdout, {
     getDatabase: getDb,

@@ -38,7 +38,6 @@ export function describeService(serviceName: string, state: InstalledServiceStat
       actions: ['restart', 'stop'],
     };
   }
-  // An interval job has no process between ticks; that is it waiting, not failing.
   if (state.isLoaded && state.isIntervalJob) {
     return {
       title,
@@ -66,7 +65,6 @@ export function describeService(serviceName: string, state: InstalledServiceStat
       actions: ['start', 'stop'],
     };
   }
-  // Disabled and unloaded is the deliberate "off" — how the scheduler is parked.
   return {
     title,
     tone: 'neutral',

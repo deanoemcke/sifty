@@ -112,8 +112,6 @@ describe('createCookieSyncScheduler', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(syncAsync).toHaveBeenCalledTimes(1);
 
-    // The cookies change again while the first sync is still in flight: it may
-    // have read the old values, so it must not be the last word.
     scheduler.requestSync();
     await vi.advanceTimersByTimeAsync(1000);
     expect(syncAsync).toHaveBeenCalledTimes(1);

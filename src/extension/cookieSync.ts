@@ -1,4 +1,3 @@
-// The subset of chrome.cookies.Cookie this extension reads.
 export type BrowserCookie = {
   name: string;
   value: string;
@@ -14,8 +13,6 @@ export type BrowserCookie = {
   expirationDate?: number;
 };
 
-// The shape the native host's syncCookies request accepts (what Cookie-Editor
-// exports, and what the scraper's parseFbCookies reads).
 export type SyncableCookie = {
   name: string;
   value: string;
@@ -29,9 +26,6 @@ export type SyncableCookie = {
 
 export const FACEBOOK_DOMAIN = 'facebook.com';
 
-// Matches facebook.com and its subdomains, with or without the leading dot
-// Chrome puts on domain cookies — but not look-alikes such as notfacebook.com
-// or facebook.com.evil.example.
 export function isFacebookCookieDomain(cookieDomain: string): boolean {
   const domain = cookieDomain.startsWith('.') ? cookieDomain.slice(1) : cookieDomain;
   return domain === FACEBOOK_DOMAIN || domain.endsWith(`.${FACEBOOK_DOMAIN}`);

@@ -1,5 +1,3 @@
-// Page entry point for server.html (built to extension/dist/server.js).
-
 import type { ChromeApi } from '../startCookieSync';
 import { startServerTab } from './startServerTab';
 

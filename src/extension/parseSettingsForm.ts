@@ -14,8 +14,6 @@ export type SettingsFormResult =
 
 const WHOLE_NUMBER_PATTERN = /^\d+$/;
 
-// Checks the form before it is sent so a typo gets an inline message; the host
-// validates again with the same ranges, since it must not trust the extension.
 export function parseSettingsForm(fields: SettingsFormFields): SettingsFormResult {
   const changes: Partial<SchedulerSettings> = {};
   const errorsBySettingName: Partial<Record<keyof SchedulerSettings, string>> = {};

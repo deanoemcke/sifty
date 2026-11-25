@@ -132,7 +132,6 @@ describe('controlServiceAsync — restart', () => {
 describe('controlServiceAsync — failures', () => {
   it("surfaces launchctl's own message when a step fails", async () => {
     const fake = makeFakeService(STOPPED, { bootstrap: 'Bootstrap failed: 5: Input/output error' });
-    // `bootstrap` fails for every call here, regardless of the fake's own rules.
 
     await expect(control('start', fake)).rejects.toThrow(
       /launchctl bootstrap.*Bootstrap failed: 5: Input\/output error/
