@@ -5,16 +5,29 @@ import { describeRunHistory, type RunHistoryRowView } from '../describeRunHistor
 import { createElement } from './dom';
 import { HostUnreachableError } from './hostClient';
 
-export function renderHostError(container: HTMLElement, error: Error | undefined): void {
-  container.replaceChildren();
-  container.hidden = error === undefined;
-  if (error === undefined) return;
+function describeHostError(error: Error): string {
+  return error instanceof HostUnreachableError
+    ? `Can't reach the Sifty native host: ${error.message}. Run "npm run native-host:install" in the sifty-webapp folder, then reload this extension.`
+    : `The Sifty native host reported an error: ${error.message}`;
+}
 
-  const message =
-    error instanceof HostUnreachableError
-      ? `Can't reach the Sifty native host: ${error.message}. Run "npm run native-host:install" in the sifty-webapp folder, then reload this extension.`
-      : `The Sifty native host reported an error: ${error.message}`;
-  container.append(createElement('p', { text: message, className: 'tone-problem' }));
+// `notUpdatedPanelNames` are the panels whose request failed: they keep their
+// previous content, so the banner says which ones to distrust.
+export function renderHostError(
+  container: HTMLElement,
+  errors: Error[],
+  notUpdatedPanelNames: string[]
+): void {
+  container.replaceChildren();
+  container.hidden = errors.length === 0;
+  if (errors.length === 0) return;
+
+  const messages = [...new Set(errors.map(describeHostError))];
+  const lines =
+    notUpdatedPanelNames.length > 0
+      ? [...messages, `Not updated: ${notUpdatedPanelNames.join(', ')}`]
+      : messages;
+  container.append(...lines.map((text) => createElement('p', { text, className: 'tone-problem' })));
 }
 
 function renderCookieView(view: CookieStatusView): Node[] {

@@ -247,6 +247,44 @@ describe('startServerTab — loading', () => {
     expect(sectionText('services')).toContain('webapp');
     expect(sectionText('cookies')).toContain('Facebook cookies synced');
   });
+
+  it('reports every failed request and names the panels that were not updated', async () => {
+    await openTab(
+      makeFakeChrome({
+        replies: {
+          getServices: { ok: false, error: 'launchctl print-disabled failed (exit 1)' },
+          tailLog: { ok: false, error: 'cannot read log' },
+        },
+      })
+    );
+
+    const banner = sectionText('host-error');
+    expect(banner).toContain('launchctl print-disabled failed');
+    expect(banner).toContain('cannot read log');
+    expect(banner).toContain('Not updated: Services, Logs');
+    expect(banner).not.toContain('Last runs');
+  });
+
+  it('names a panel as not updated when a later refresh fails and its old content stays', async () => {
+    let isServicesRequestFailing = false;
+    await openTab(
+      makeFakeChrome({
+        replies: {
+          getServices: (): unknown => {
+            if (isServicesRequestFailing) return { ok: false, error: 'launchctl hung' };
+            return DEFAULT_REPLIES.getServices;
+          },
+        },
+      })
+    );
+    expect(sectionText('host-error')).toBe('');
+
+    isServicesRequestFailing = true;
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(sectionText('services')).toContain('webapp');
+    expect(sectionText('host-error')).toContain('Not updated: Services');
+  });
 });
 
 function settingsInput(settingName: string): HTMLInputElement {

@@ -24,6 +24,9 @@ const DEFAULT_LOG_NAME = 'scheduler';
 // before it can read as current.
 const MESSAGE_LIFETIME_MS = 60_000;
 
+// Matches the order of the requests in refreshAsync.
+const PANEL_NAMES_IN_REQUEST_ORDER = ['Services', 'Cookies and settings', 'Last runs', 'Logs'];
+
 type TimedMessage = { text: string; shownAtMs: number };
 
 // What the tab remembers between refreshes: plain data, not read back from the DOM.
@@ -131,16 +134,21 @@ export async function startServerTab(
       }
       // Each panel renders from its own request, so one failing request (a
       // launchctl error, an unreadable log) leaves the other panels working.
-      const [services, status, runHistory, logTail] = await Promise.allSettled([
+      const results = await Promise.allSettled([
         hostClient.getServices(),
         hostClient.getStatus(),
         hostClient.getRunHistory(),
         hostClient.tailLog(state.selectedLogName, LOG_LINES_SHOWN),
       ]);
-      const firstFailure = [services, status, runHistory, logTail].find(
-        (result) => result.status === 'rejected'
+      const [services, status, runHistory, logTail] = results;
+      const failedPanelNames = PANEL_NAMES_IN_REQUEST_ORDER.filter(
+        (_panelName, index) => results[index].status === 'rejected'
       );
-      renderHostError(hostErrorContainer, firstFailure?.reason as Error | undefined);
+      renderHostError(
+        hostErrorContainer,
+        results.flatMap((result) => (result.status === 'rejected' ? [result.reason as Error] : [])),
+        failedPanelNames
+      );
       if (services.status === 'fulfilled') {
         renderServicesSection(servicesContainer, services.value, {
           message: state.serviceMessage?.text,
@@ -171,7 +179,7 @@ export async function startServerTab(
         logsSection.showLog(logTail.value);
       }
     } catch (error) {
-      renderHostError(hostErrorContainer, error as Error);
+      renderHostError(hostErrorContainer, [error as Error], []);
     } finally {
       state.isRefreshing = false;
     }
