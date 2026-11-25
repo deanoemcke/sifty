@@ -17,6 +17,13 @@ import { aiJSON, applyAiJsonResult } from '../ai';
 import { hashFingerprintParts } from '../alerts';
 import { getSharedBrowserAsync } from '../browserPool';
 import { MAX_PHOTOS_PER_LISTING, MAX_RESULTS_PER_URL } from '../constants';
+import { getDb } from '../db';
+import {
+  cookieExpirySeconds,
+  LOGIN_REQUIRED_MESSAGE,
+  loadFacebookCookies,
+  type RawFacebookCookie,
+} from '../facebookCookies';
 import { getRegions, type RegionEntry } from '../services/regions';
 
 const USER_AGENT =
@@ -62,79 +69,37 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
 
 // ── Browser context ───────────────────────────────────────────────────────────
 
-// Exported so scheduler.ts can recognize this specific failure across every
-// saved search that hits it — see isFacebookCookieFailure there, which
-// collapses what would otherwise be one duplicate alert per affected saved
-// search into a single application-wide alert.
-export const LOGIN_REQUIRED_MESSAGE =
-  'Facebook requires login. Set FB_COOKIES environment variable.';
+type PlaywrightSameSite = 'Strict' | 'Lax' | 'None';
 
-export class MissingFacebookCookiesError extends Error {
-  constructor(reason: string) {
-    super(reason ? `${LOGIN_REQUIRED_MESSAGE} ${reason}` : LOGIN_REQUIRED_MESSAGE);
-    this.name = 'MissingFacebookCookiesError';
-  }
+// Chrome's cookies API (and Cookie-Editor exports) use lowercase values and
+// 'no_restriction' for None; Playwright wants the capitalised attribute names.
+const PLAYWRIGHT_SAME_SITE_BY_BROWSER_VALUE = new Map<string, PlaywrightSameSite>([
+  ['no_restriction', 'None'],
+  ['none', 'None'],
+  ['lax', 'Lax'],
+  ['strict', 'Strict'],
+]);
+
+function toPlaywrightSameSite(browserSameSite: unknown): PlaywrightSameSite {
+  return PLAYWRIGHT_SAME_SITE_BY_BROWSER_VALUE.get(String(browserSameSite).toLowerCase()) ?? 'Lax';
 }
 
-type RawFacebookCookie = Record<string, unknown>;
-
-function cookieExpirySeconds(cookie: RawFacebookCookie): number | undefined {
-  if (typeof cookie.expirationDate === 'number') return cookie.expirationDate;
-  if (typeof cookie.expires === 'number') return cookie.expires;
-  return undefined;
-}
-
-// FB_COOKIES: JSON array of cookies exported from your browser (e.g. via the
-// "Cookie Editor" extension — Export > Export as JSON). Validated up front so a
-// missing/malformed/expired cookie set fails immediately, before any browser is
-// launched or network request made, instead of only surfacing after a full,
-// doomed scrape attempt.
-export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCookie[] {
-  if (!cookiesJson) throw new MissingFacebookCookiesError('');
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(cookiesJson);
-  } catch {
-    throw new MissingFacebookCookiesError('FB_COOKIES is not valid JSON.');
-  }
-
-  if (!Array.isArray(raw) || raw.length === 0) {
-    throw new MissingFacebookCookiesError('FB_COOKIES must be a non-empty JSON array of cookies.');
-  }
-
-  const nowSeconds = Date.now() / 1000;
-  const unexpired = (raw as RawFacebookCookie[]).filter((cookie) => {
-    const expiry = cookieExpirySeconds(cookie);
-    return expiry === undefined || expiry > nowSeconds;
-  });
-
-  if (unexpired.length === 0) {
-    throw new MissingFacebookCookiesError('All cookies in FB_COOKIES have expired.');
-  }
-
-  return unexpired;
-}
-
-function toPlaywrightCookies(
+export function toPlaywrightCookies(
   cookies: RawFacebookCookie[]
 ): Parameters<BrowserContext['addCookies']>[0] {
-  return cookies.map((cookie) => ({
-    name: String(cookie.name),
-    value: String(cookie.value),
-    domain: String(cookie.domain ?? '.facebook.com'),
-    path: String(cookie.path ?? '/'),
-    secure: Boolean(cookie.secure),
-    httpOnly: Boolean(cookie.httpOnly),
-    sameSite: (['Strict', 'Lax', 'None'].includes(String(cookie.sameSite))
-      ? cookie.sameSite
-      : 'Lax') as 'Strict' | 'Lax' | 'None',
-    ...(typeof cookie.expirationDate === 'number'
-      ? { expires: cookie.expirationDate }
-      : typeof cookie.expires === 'number'
-        ? { expires: cookie.expires }
-        : {}),
-  }));
+  return cookies.map((cookie) => {
+    const expiresSeconds = cookieExpirySeconds(cookie);
+    return {
+      name: String(cookie.name),
+      value: String(cookie.value),
+      domain: String(cookie.domain ?? '.facebook.com'),
+      path: String(cookie.path ?? '/'),
+      secure: Boolean(cookie.secure),
+      httpOnly: Boolean(cookie.httpOnly),
+      sameSite: toPlaywrightSameSite(cookie.sameSite),
+      ...(expiresSeconds === undefined ? {} : { expires: expiresSeconds }),
+    };
+  });
 }
 
 async function createFbContext(
@@ -143,7 +108,7 @@ async function createFbContext(
 ): Promise<BrowserContext> {
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
   await context.addCookies(toPlaywrightCookies(cookies));
-  console.log(`[facebook] loaded ${cookies.length} cookies from FB_COOKIES`);
+  console.log(`[facebook] loaded ${cookies.length} cookies synced from Chrome`);
 
   return context;
 }
@@ -520,13 +485,6 @@ async function quickSearchAsync(
 ): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
-  // Each quick search launches its own authenticated headless browser off the
-  // shared FB_COOKIES session, and a sold-items discover produces two Facebook
-  // URLs that the frontend fires concurrently. Route the launch through the
-  // per-domain concurrency limiter — the same one deepSearchAsync uses — so
-  // concurrent searches can't stack unbounded logged-in sessions on one cookie
-  // jar. The criteria event is emitted before queueing so the card gets its
-  // filter chips immediately, even while the search waits for a slot.
   await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));
 }
 
@@ -538,10 +496,7 @@ async function runQuickSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
-    // Validate FB_COOKIES before touching the shared browser pool — a missing/
-    // expired/malformed cookie config should fail fast without paying for a
-    // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(process.env.FB_COOKIES);
+    const cookies = loadFacebookCookies(getDb());
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     context = await createFbContext(checkout.browser, cookies);
@@ -1016,10 +971,7 @@ async function deepSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
-    // Validate FB_COOKIES before touching the shared browser pool — a missing/
-    // expired/malformed cookie config should fail fast without paying for a
-    // browser acquisition (which may include launching a fresh Chromium).
-    const cookies = parseFbCookies(process.env.FB_COOKIES);
+    const cookies = loadFacebookCookies(getDb());
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
     const activeContext = await createFbContext(checkout.browser, cookies);

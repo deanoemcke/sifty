@@ -1,9 +1,12 @@
+import Database from 'better-sqlite3';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderCooldownStore } from '../../lib/recipes/base';
 import { makeListing } from '../../lib/testFixtures';
 import { aiJSON } from '../ai';
 import { closeAllPooledBrowsersAsync } from '../browserPool';
+import { initSchema } from '../db';
+import { LOGIN_REQUIRED_MESSAGE, saveFacebookCookies } from '../facebookCookies';
 import {
   buildFacebookDeepSearchDetail,
   buildFacebookListing,
@@ -25,12 +28,10 @@ import {
   isEmptyResultsText,
   isLoginWallText,
   isLoginWallUrl,
-  LOGIN_REQUIRED_MESSAGE,
-  MissingFacebookCookiesError,
   parseFacebookPriceLines,
-  parseFbCookies,
   processRawListing,
   type RawListingMsg,
+  toPlaywrightCookies,
 } from './facebook';
 
 describe('facebookRecipe.computeAlertFingerprint', () => {
@@ -154,9 +155,6 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
       },
     };
 
-    // Counts calls to chromium.launch() — i.e. the shared browser pool actually
-    // acquiring/launching a browser. Used to assert that a fail-fast validation
-    // (e.g. FB_COOKIES) short-circuits before any browser is ever touched.
     const launchTracker = {
       count: 0,
       reset() {
@@ -269,6 +267,12 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
     };
   });
 
+const testDatabaseHolder = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock('../db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../db')>();
+  return { ...actual, getDb: () => testDatabaseHolder.current };
+});
+
 vi.mock('playwright', () => ({
   chromium: {
     launch: async () => {
@@ -317,7 +321,10 @@ const { enqueuedUrls, serializingEnqueue } = vi.hoisted(() => {
 
 vi.mock('../../lib/queue', () => ({ enqueue: serializingEnqueue }));
 
-const VALID_FB_COOKIES = JSON.stringify([{ name: 'c_user', value: '12345' }]);
+const VALID_FB_COOKIES = JSON.stringify([
+  { name: 'c_user', value: '12345' },
+  { name: 'xs', value: 'session' },
+]);
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -351,7 +358,14 @@ function aiJsonOk(value: unknown) {
 beforeEach(async () => {
   vi.resetAllMocks();
   await closeAllPooledBrowsersAsync();
+  const testDatabase = new Database(':memory:');
+  initSchema(testDatabase);
+  testDatabaseHolder.current = testDatabase;
 });
+
+function getTestDatabase(): Database.Database {
+  return testDatabaseHolder.current as Database.Database;
+}
 
 describe('extractImplicitFilters', () => {
   it('extracts the search query without quote marks', () => {
@@ -1417,60 +1431,31 @@ describe('detectLoginWallAsync', () => {
   });
 });
 
-// ── parseFbCookies ─────────────────────────────────────────────────────────────
-
-describe('parseFbCookies', () => {
-  it('throws MissingFacebookCookiesError when FB_COOKIES is undefined', () => {
-    expect(() => parseFbCookies(undefined)).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when FB_COOKIES is empty', () => {
-    expect(() => parseFbCookies('')).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when FB_COOKIES is not valid JSON', () => {
-    expect(() => parseFbCookies('{not json')).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when FB_COOKIES parses to an empty array', () => {
-    expect(() => parseFbCookies('[]')).toThrow(MissingFacebookCookiesError);
-  });
-
-  it('throws MissingFacebookCookiesError when every cookie has expired', () => {
-    const expired = JSON.stringify([
-      { name: 'c_user', value: '1', expirationDate: 1000 },
-      { name: 'xs', value: '2', expires: 2000 },
+describe('toPlaywrightCookies', () => {
+  it.each([
+    ['no_restriction', 'None'],
+    ['lax', 'Lax'],
+    ['strict', 'Strict'],
+    ['unspecified', 'Lax'],
+    [undefined, 'Lax'],
+    ['None', 'None'],
+    ['Lax', 'Lax'],
+    ['Strict', 'Strict'],
+  ])('maps a sameSite of %s to %s', (chromeSameSite, expectedSameSite) => {
+    const [cookie] = toPlaywrightCookies([
+      { name: 'xs', value: '1', secure: true, sameSite: chromeSameSite },
     ]);
-    expect(() => parseFbCookies(expired)).toThrow(MissingFacebookCookiesError);
+
+    expect(cookie.sameSite).toBe(expectedSameSite);
   });
 
-  it('throws an error whose message tells the caller to set FB_COOKIES', () => {
-    expect(() => parseFbCookies(undefined)).toThrow(/FB_COOKIES/);
-  });
+  it('carries over the expiry from either expirationDate or expires', () => {
+    const cookies = toPlaywrightCookies([
+      { name: 'c_user', value: '1', expirationDate: 1_900_000_000 },
+      { name: 'xs', value: '2', expires: 1_800_000_000 },
+    ]);
 
-  it('returns the parsed cookies when FB_COOKIES is valid and unexpired', () => {
-    const futureExpiry = Date.now() / 1000 + 3600;
-    const cookies = parseFbCookies(
-      JSON.stringify([{ name: 'c_user', value: '12345', expirationDate: futureExpiry }])
-    );
-    expect(cookies).toHaveLength(1);
-    expect(cookies[0]).toMatchObject({ name: 'c_user', value: '12345' });
-  });
-
-  it('returns cookies that have no expiry field at all', () => {
-    const cookies = parseFbCookies(JSON.stringify([{ name: 'c_user', value: '12345' }]));
-    expect(cookies).toHaveLength(1);
-  });
-
-  it('filters out only the expired cookies, keeping the rest', () => {
-    const cookies = parseFbCookies(
-      JSON.stringify([
-        { name: 'expired', value: '1', expirationDate: 1000 },
-        { name: 'fresh', value: '2' },
-      ])
-    );
-    expect(cookies).toHaveLength(1);
-    expect(cookies[0]).toMatchObject({ name: 'fresh' });
+    expect(cookies.map((cookie) => cookie.expires)).toEqual([1_900_000_000, 1_800_000_000]);
   });
 });
 
@@ -2007,15 +1992,16 @@ describe('facebookRecipe.quickSearchAsync', () => {
   beforeEach(() => {
     resetPageQueue();
     launchTracker.reset();
-    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('fails fast on invalid FB_COOKIES without ever acquiring a shared browser', async () => {
-    vi.stubEnv('FB_COOKIES', undefined);
+  it('fails fast when no cookies have been synced, ignoring any FB_COOKIES, without acquiring a shared browser', async () => {
+    getTestDatabase().exec('DELETE FROM facebook_cookies');
+    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
 
     const events: unknown[] = [];
     await facebookRecipe.quickSearchAsync(
@@ -2025,7 +2011,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+      message: LOGIN_REQUIRED_MESSAGE,
     });
     expect(launchTracker.count).toBe(0);
   });
@@ -2042,7 +2028,7 @@ describe('facebookRecipe.quickSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+      message: LOGIN_REQUIRED_MESSAGE,
     });
     expect(page.waitForSelectorCalls).toHaveLength(0);
   });
@@ -2206,7 +2192,7 @@ describe('facebookRecipe.quickSearchAsync — domain concurrency limiting', () =
     resetPageQueue();
     browserSessionTracker.reset();
     enqueuedUrls.length = 0;
-    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
   });
 
   afterEach(() => {
@@ -2249,15 +2235,16 @@ describe('facebookRecipe.deepSearchAsync', () => {
   beforeEach(() => {
     resetPageQueue();
     launchTracker.reset();
-    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
+    saveFacebookCookies(getTestDatabase(), VALID_FB_COOKIES);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('fails fast on invalid FB_COOKIES without ever acquiring a shared browser', async () => {
-    vi.stubEnv('FB_COOKIES', undefined);
+  it('fails fast when no cookies have been synced, ignoring any FB_COOKIES, without acquiring a shared browser', async () => {
+    getTestDatabase().exec('DELETE FROM facebook_cookies');
+    vi.stubEnv('FB_COOKIES', VALID_FB_COOKIES);
 
     const listing = buildFacebookListing(
       'https://www.facebook.com/marketplace/item/1/',
@@ -2272,7 +2259,7 @@ describe('facebookRecipe.deepSearchAsync', () => {
 
     expect(events).toContainEqual({
       type: 'error',
-      message: 'Facebook requires login. Set FB_COOKIES environment variable.',
+      message: LOGIN_REQUIRED_MESSAGE,
     });
     expect(launchTracker.count).toBe(0);
   });

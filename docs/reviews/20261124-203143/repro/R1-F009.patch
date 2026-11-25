@@ -1,0 +1,29 @@
+diff --git a/src/server/scheduler.test.ts b/src/server/scheduler.test.ts
+index 8b4eeb6..4f2bf2b 100644
+--- a/src/server/scheduler.test.ts
++++ b/src/server/scheduler.test.ts
+@@ -2934,6 +2934,24 @@ describe('runImmediatePopulationRunAsync', () => {
+     if (lockPath && fs.existsSync(lockPath)) fs.rmSync(lockPath);
+   });
+ 
++  it('REPRO R1-F009: an unreadable scheduler setting does not stop an immediate population run, which never uses settings', async () => {
++    const db = freshDb();
++    const searchId = insertAlertSearch(db);
++    db.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('maxSearchesPerTick','oops',1)").run();
++    vi.mocked(getRecipeForUrl).mockReturnValue(
++      makeStubRecipe([makeListing({ title: 'Existing', url: 'https://example.com/existing' })])
++    );
++
++    await expect(
++      runImmediatePopulationRunAsync(
++        searchId,
++        { database: db, cooldownStore: STUB_COOLDOWN_STORE, sendNotificationAsync: vi.fn() },
++        lockPath
++      )
++    ).resolves.toBeUndefined();
++    expect(stmtGetSavedSearch(db).get(searchId)?.has_completed_population_run).toBe(1);
++  });
++
+   it('redoes the population pass even when has_completed_population_run is already 1, sending one setup-success alert but no per-listing alerts', async () => {
+     const db = freshDb();
+     const searchId = insertAlertSearch(db);

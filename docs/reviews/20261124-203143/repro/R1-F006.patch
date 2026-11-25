@@ -1,0 +1,50 @@
+diff --git a/src/server/scheduler.test.ts b/src/server/scheduler.test.ts
+index 8b4eeb6..8720afc 100644
+--- a/src/server/scheduler.test.ts
++++ b/src/server/scheduler.test.ts
+@@ -2422,6 +2422,45 @@ describe('runSchedulerAsync', () => {
+     expect(stmtGetSavedSearch(db).get(searchId)?.last_run_succeeded).toBe(1);
+   });
+ 
++  it('REPRO R1-F006: a stored failure line with the pre-change wording is still treated as sitewide-covered on recovery', async () => {
++    const db = freshDb();
++    const searchId = insertAlertSearch(db, {
++      name: 'FB search',
++      urls: ['https://facebook.com/marketplace/search'],
++    });
++    const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
++    await runSchedulerAsync({
++      database: db,
++      cooldownStore: STUB_COOLDOWN_STORE,
++      sendNotificationAsync: vi.fn(),
++    });
++    stmtClearSearch(db).run();
++
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
++    await runSchedulerAsync({
++      database: db,
++      cooldownStore: STUB_COOLDOWN_STORE,
++      sendNotificationAsync: vi.fn(),
++    });
++    // Simulate a row persisted by the previous release.
++    db.prepare('UPDATE saved_searches SET last_run_detail = ? WHERE id = ?').run(
++      'scrape:Facebook requires login. Set FB_COOKIES environment variable.',
++      searchId
++    );
++    stmtClearSearch(db).run();
++
++    vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
++    const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
++    await runSchedulerAsync({
++      database: db,
++      cooldownStore: STUB_COOLDOWN_STORE,
++      sendNotificationAsync,
++    });
++
++    expect(sendNotificationAsync).toHaveBeenCalledTimes(1);
++  });
++
+   it('does not send a false sitewide recovery alert when a Facebook-touching search fails for an unrelated (non-cookie) reason while the sitewide alert is active', async () => {
+     const db = freshDb();
+     insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });

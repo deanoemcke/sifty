@@ -288,6 +288,13 @@ describe('formatFacebookCookiesFailingMessage', () => {
     expect(message).toMatch(/login/i);
     expect(message).toMatch(/every|all/i);
   });
+
+  it('tells the user to log in in Chrome, not to set an environment variable', () => {
+    const message = formatFacebookCookiesFailingMessage();
+
+    expect(message).toMatch(/Chrome/);
+    expect(message).not.toContain('FB_COOKIES');
+  });
 });
 
 describe('formatFacebookCookiesRecoveredMessage', () => {

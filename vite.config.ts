@@ -4,7 +4,7 @@ import { createProviderCooldownStore } from './src/server/ai';
 import { closeAllPooledBrowsersAsync } from './src/server/browserPool';
 import { getDb } from './src/server/db';
 import { loadServerEnv } from './src/server/env';
-import { parseFbCookies } from './src/server/recipes/facebook';
+import { loadFacebookCookies } from './src/server/facebookCookies';
 import { assertCategoryEmbeddingCoverage } from './src/server/recipes/trademeCategoryResolver';
 import { handleAiFilter } from './src/server/routes/aiFilter';
 import { handleCacheClear } from './src/server/routes/cacheRoutes';
@@ -42,13 +42,12 @@ export default defineConfig({
     {
       name: 'sifty-api',
       configureServer(server) {
-        const fbCookies = parseFbCookies(process.env.FB_COOKIES);
-        console.log(`[startup] FB_COOKIES valid — ${fbCookies.length} cookie(s) loaded`);
-
         // Vitest also loads this file as its test config and runs this hook, but tests
         // mock ../db entirely rather than touching the real sifty.db — skip the real-DB
         // check there so an incomplete backfill on disk can't fail the whole test suite.
         if (!process.env.VITEST) {
+          const fbCookies = loadFacebookCookies(getDb());
+          console.log(`[startup] Facebook cookies valid — ${fbCookies.length} cookie(s) loaded`);
           assertCategoryEmbeddingCoverage(getDb());
         }
 

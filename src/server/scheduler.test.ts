@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore, QuickSearchEvent, Recipe } from '../lib/recipes/base';
 import { makeListing } from '../lib/testFixtures';
@@ -20,7 +20,6 @@ import { aiJSON, getAIConfig } from './ai';
 import { hashFingerprintParts } from './alerts';
 import { checkInternetConnectivityAsync } from './connectivity';
 import {
-  initSchema,
   stmtClearSearch,
   stmtCountAlertsForSavedSearch,
   stmtGetSavedSearch,
@@ -32,8 +31,8 @@ import {
   stmtUpdateSavedSearchLastRunAt,
   stmtUpdateSavedSearchRunStatus,
 } from './db';
+import { LOGIN_REQUIRED_MESSAGE } from './facebookCookies';
 import { fetchListingImageAttachmentAsync } from './imageAttachment';
-import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   AI_FILTER_REASON_MAX_LENGTH,
@@ -56,12 +55,14 @@ import {
   STATUS_ALERT_TIMEOUT_MS,
   triggerImmediatePopulationRunAsync,
 } from './scheduler';
+import { updateSchedulerSettings } from './settings';
 import {
   formatFacebookCookiesFailingMessage,
   formatFacebookCookiesRecoveredMessage,
   formatNetworkUnreachableFailingMessage,
   formatNetworkUnreachableRecoveredMessage,
 } from './signalMessage';
+import { createFreshDatabase } from './testDatabase';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -79,12 +80,6 @@ function runSchedulerAsync(deps: SchedulerDeps) {
 }
 
 const SEARCH_URL = 'https://example.com/marketplace/search';
-
-function freshDb(): Database.Database {
-  const db = new Database(':memory:');
-  initSchema(db);
-  return db;
-}
 
 function insertAlertSearch(
   db: Database.Database,
@@ -255,7 +250,7 @@ beforeEach(() => {
 
 describe('runSchedulerAsync', () => {
   it('is a population run for a saved search with no existing alerts: inserts alert rows without notifying', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -273,7 +268,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('notifies for a genuinely new listing on a saved search that already has alert history', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     // Seed alert history with a different listing so this is not a population run.
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -307,7 +302,7 @@ describe('runSchedulerAsync', () => {
     // drops the count back to zero (a zero-row run, manual cleanup, etc.)
     // makes the next genuinely-new listing look like population-run
     // backfill and silently swallows the alert instead of notifying.
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -344,7 +339,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('rolls back the entire population baseline insert if an error occurs partway through, leaving no partial rows and the flag unset for a clean retry', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const listingA = makeListing({ title: 'Chair', url: 'https://example.com/1' });
     const listingB = makeListing({ title: 'Table', url: 'https://example.com/2' });
@@ -371,7 +366,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not re-notify for a listing that was already alerted', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -393,7 +388,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('never notifies or records an alert for a sold listing', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     // Seed non-population history first.
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -424,7 +419,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('is relist-proof: a listing found again under a new URL id but same content does not re-alert', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     const original = makeListing({
       title: 'Vintage lamp',
@@ -459,7 +454,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('skips the AI filter step entirely when the saved search has no aiFilter prompt', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: null });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -485,7 +480,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('only notifies for listings that pass the AI filter when aiFilter is set', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -537,7 +532,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('passes a listing categoryPath through to the AI filter prompt', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -577,7 +572,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not call the AI filter again for a listing whose content and prompt are unchanged', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     await seedCachedVerdictAsync(db, seedListing);
@@ -612,7 +607,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not re-send an AI-rejected listing to the AI filter on the next run', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     await seedCachedVerdictAsync(db, seedListing);
@@ -650,7 +645,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('re-scores a cached listing after the saved search prompt is edited', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     await seedCachedVerdictAsync(db, seedListing);
@@ -674,7 +669,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('re-scores a cached listing after the configured AI model changes', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     await seedCachedVerdictAsync(db, seedListing);
@@ -706,7 +701,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('re-scores a cached listing after the configured AI provider changes', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     await seedCachedVerdictAsync(db, seedListing);
@@ -738,7 +733,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('re-scores a listing whose content hash changes even though the URL is the same', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const original = makeListing({
       title: 'Old title',
@@ -766,7 +761,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not swap AI verdicts between two same-tick candidates that share a URL but have different content hashes', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     await seedCachedVerdictAsync(db, seedListing);
@@ -828,7 +823,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('caps an overlong AI-filter reason before persisting it', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const listing = makeListing({ title: 'Gaming laptop', url: 'https://example.com/verbose' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([listing]));
@@ -862,7 +857,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not cache a verdict when the AI filter call fails, so the listing is retried next run', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     await seedCachedVerdictAsync(db, seedListing);
@@ -899,7 +894,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('refreshes last_seen_at on a cache hit without changing created_at', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     const firstRunAt = 1_000_000;
@@ -926,7 +921,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('prunes ai_filter_verdicts rows not seen in over 90 days, keeping recent ones', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const now = 10_000_000_000;
     const insertVerdict = db.prepare(
       'INSERT INTO ai_filter_verdicts (saved_search_id, listing_hash, prompt_hash, passed, relevance, reason, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
@@ -957,7 +952,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('never prunes a verdict for a listing that keeps appearing in scrapes more often than the expiry window', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
     insertAlertSearch(db, { aiFilter: 'laptop' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -992,7 +987,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not record an alert when the notification send fails, so it is retried next run', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1018,7 +1013,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('a failed notification for one listing does not prevent others from being processed, and does not falsely fail the search', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1060,7 +1055,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('alerts independently per saved search for the same physical listing', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     // A monotonic fake clock — real scheduler invocations are minutes apart
     // (cron-driven), but these calls run back-to-back with no real I/O
     // between them, so a wall-clock Date.now() could tie two last_run_at
@@ -1123,7 +1118,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('a saved search with no matching recipe for one of its URLs records an error but keeps processing', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { urls: ['https://unrecognized.example.com/search'] });
     vi.mocked(getRecipeForUrl).mockReturnValue(null);
 
@@ -1137,7 +1132,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('skips the entire scrape loop and records a single error when there is no internet connectivity', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, {
       urls: ['https://a.example.com/search', 'https://b.example.com/search'],
     });
@@ -1171,7 +1166,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('a saved search whose row causes a synchronous throw does not prevent other saved searches from being processed on a later run', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     // Corrupt urls column — JSON.parse(row.urls) throws synchronously inside processSavedSearchAsync.
     stmtInsertSavedSearch(db).run(
       'search-corrupt',
@@ -1217,7 +1212,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('names the saved search and states the column is corrupted when urls is not valid JSON', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     stmtInsertSavedSearch(db).run(
       'search-corrupt',
       'Corrupt search',
@@ -1242,7 +1237,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('names the saved search and states the column is the wrong shape when urls is valid JSON but not an array of strings', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     stmtInsertSavedSearch(db).run(
       'search-wrong-shape',
       'Wrong shape search',
@@ -1267,7 +1262,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('processes only up to maxSearchesPerTick due searches, oldest first', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
     vi.mocked(getRecipeForUrl).mockReturnValue(
@@ -1288,7 +1283,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not select a saved search whose last_run_at is within the target interval, even if others are due', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const fixedNow = 1_700_000_000_000;
     const targetIntervalMs = 60 * 60_000;
     insertAlertSearch(db, { id: 'search-recent', name: 'Recent search' });
@@ -1311,8 +1306,72 @@ describe('runSchedulerAsync', () => {
     expect(summary.searches[0].savedSearchId).toBe('search-old');
   });
 
+  it('uses the saved target interval when deps does not supply one', async () => {
+    const db = createFreshDatabase();
+    const fixedNow = 1_700_000_000_000;
+    insertAlertSearch(db, { id: 'search-recent', name: 'Recent search' });
+    insertAlertSearch(db, { id: 'search-old', name: 'Old search' });
+    stmtUpdateSavedSearchLastRunAt(db).run(fixedNow - 30 * 60_000, 'search-recent');
+    stmtUpdateSavedSearchLastRunAt(db).run(fixedNow - 100 * 60_000, 'search-old');
+    updateSchedulerSettings(db, { targetIntervalMinutes: 60 });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsyncUngated({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      now: () => fixedNow,
+    });
+
+    expect(summary.searches.map((search) => search.savedSearchId)).toEqual(['search-old']);
+  });
+
+  it('uses the saved per-tick search cap when deps does not supply one', async () => {
+    const db = createFreshDatabase();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
+    updateSchedulerSettings(db, { maxSearchesPerTick: 2 });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+    });
+
+    expect(summary.searches.map((search) => search.savedSearchId)).toEqual([
+      'search-a',
+      'search-b',
+    ]);
+  });
+
+  it('lets explicit deps override the saved per-tick search cap', async () => {
+    const db = createFreshDatabase();
+    insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
+    insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
+    insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
+    updateSchedulerSettings(db, { maxSearchesPerTick: 1 });
+    vi.mocked(getRecipeForUrl).mockReturnValue(
+      makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
+    );
+
+    const summary = await runSchedulerAsync({
+      database: db,
+      cooldownStore: STUB_COOLDOWN_STORE,
+      sendNotificationAsync: vi.fn(),
+      maxSearchesPerTick: 2,
+    });
+
+    expect(summary.searches).toHaveLength(2);
+  });
+
   it('processes multiple due searches in the same tick, up to maxSearchesPerTick', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
     insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
@@ -1335,7 +1394,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('a synchronous throw from one search in a batch does not prevent the rest of that same tick from being processed', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     stmtInsertSavedSearch(db).run(
       'search-corrupt',
       'Corrupt search',
@@ -1365,7 +1424,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('warns when more searches are due than maxSearchesPerTick can process, naming the backlog size', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
     insertAlertSearch(db, { id: 'search-c', name: 'Search C' });
@@ -1394,7 +1453,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not warn when maxSearchesPerTick covers every due search', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -1413,7 +1472,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('sets last_run_at to the injected clock time after processing a saved search', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -1432,7 +1491,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('never selects a saved search with alerts disabled', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-disabled', alertEnabled: false });
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -1448,7 +1507,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('returns no searches when there are no alert-enabled saved searches at all', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
 
     const summary = await runSchedulerAsync({
       database: db,
@@ -1462,7 +1521,7 @@ describe('runSchedulerAsync', () => {
   it('times out a stalled scrape instead of hanging forever, recording an error and completing the run', async () => {
     vi.useFakeTimers();
     try {
-      const db = freshDb();
+      const db = createFreshDatabase();
       insertAlertSearch(db);
       vi.mocked(getRecipeForUrl).mockReturnValue(makeHangingRecipe());
 
@@ -1485,7 +1544,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('logs progress and error events reported by the recipe during quick search, tagged with the recipe name', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     const recipe: Recipe = {
       name: 'trademe',
@@ -1533,7 +1592,7 @@ describe('runSchedulerAsync', () => {
   it('times out a stalled AI filter run instead of hanging forever, recording an error and completing the run', async () => {
     vi.useFakeTimers();
     try {
-      const db = freshDb();
+      const db = createFreshDatabase();
       insertAlertSearch(db, { aiFilter: 'laptop' });
       const listing = makeListing({ title: 'Gaming laptop', url: 'https://example.com/pass' });
       vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([listing]));
@@ -1567,7 +1626,7 @@ describe('runSchedulerAsync', () => {
   it('times out a stalled notify loop instead of hanging forever, recording an error and completing the run', async () => {
     vi.useFakeTimers();
     try {
-      const db = freshDb();
+      const db = createFreshDatabase();
       const searchId = insertAlertSearch(db);
       const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
       vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1609,7 +1668,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('sends the image as its own message before the text message when the listing has a thumbnail', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1646,7 +1705,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('still sends the text message and marks the listing notified when the image-only send fails', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1682,7 +1741,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('records a failed image-only send as a notify-image error so a sustained image outage is visible', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1719,7 +1778,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not retry when the notifier rejects a message that never had an image attached', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1750,7 +1809,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('notifies with no image argument when the listing has no thumbnail', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1776,7 +1835,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('discards partial listings and sends one failure Signal alert when a facebook-named recipe never completes (login wall)', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1814,7 +1873,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('omits the "Discarded N untrusted listing(s)" wrapper when a recipe fails before collecting any listings', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1843,7 +1902,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('still notifies for a trademe listing on the same saved search when a facebook URL in it fails', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const fbUrl = 'https://facebook.com/marketplace/search';
     const tmUrl = 'https://trademe.co.nz/search';
     const searchId = insertAlertSearch(db, { urls: [fbUrl, tmUrl] });
@@ -1887,7 +1946,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('sends a proactive Signal notification for a non-facebook recipe that never completes too, not just facebook', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'TM search' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -1923,7 +1982,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('suppresses a repeat Signal alert for the same reason on the same saved search within 12h', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search' });
     const taintedListing = makeListing({
       title: 'Tainted FB listing',
@@ -1952,7 +2011,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('re-sends a Signal alert for the same reason once the 12h suppression window has elapsed', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search' });
     const taintedListing = makeListing({
       title: 'Tainted FB listing',
@@ -1981,7 +2040,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not suppress a genuinely different reason even within the 12h window', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search' });
     const taintedListing = makeListing({
       title: 'Tainted FB listing',
@@ -2021,7 +2080,7 @@ describe('runSchedulerAsync', () => {
     // the general case of this: their kind can't be recovered at all, so they
     // must never be trusted as a confirmed match — this is exactly what
     // forces one conservative re-alert here rather than silently suppressing.
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     // This run must not itself be treated as the population run — otherwise
     // it also emits a "Population run incomplete" error line that the seeded
@@ -2051,7 +2110,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('sends a recovery alert when a previously-failing saved search succeeds, and resets its persisted failure state', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     const taintedListing = makeListing({
       title: 'Tainted FB listing',
@@ -2087,7 +2146,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not re-send a recovery alert for a saved search that keeps succeeding', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -2111,7 +2170,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it("evaluates each saved search's success/failure independently within the same tick", async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, {
       id: 'search-fail',
       name: 'Search Fail',
@@ -2150,7 +2209,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it("collapses duplicate Facebook-cookie failures across multiple saved searches into a single sitewide alert, suppressing each search's own per-search alert", async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, {
       id: 'search-a',
       name: 'Search A',
@@ -2184,7 +2243,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('still sends a per-search alert for a search with a mix of a Facebook-cookie failure and an unrelated scrape error, excluding only the Facebook-cookie line', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const fbUrl = 'https://facebook.com/marketplace/search';
     const unknownUrl = 'https://unknown-site.example.com/search';
     insertAlertSearch(db, { name: 'Mixed search', urls: [fbUrl, unknownUrl] });
@@ -2219,7 +2278,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('suppresses a repeat sitewide alert within 12h while still failing, and re-sends once the window elapses', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -2261,7 +2320,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it("sends a single sitewide recovery alert when a Facebook-touching search succeeds again, suppressing that search's own per-search recovery ping", async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, {
       name: 'FB search',
       urls: ['https://facebook.com/marketplace/search'],
@@ -2304,7 +2363,7 @@ describe('runSchedulerAsync', () => {
 
   it("does not let the aggregated last_run_detail truncation cut a Facebook-cookie failure line in half, so a search's own recovery ping stays suppressed", async () => {
     const facebookLine = `scrape:Discarded 0 untrusted listing(s): ${LOGIN_REQUIRED_MESSAGE}`;
-    const urlCount = 20;
+    const urlCount = Math.floor(DETAIL_LINE_MAX_LENGTH / (facebookLine.length + 1)) + 1;
     const joinedLength = urlCount * facebookLine.length + (urlCount - 1);
     const priorLinesLength = (urlCount - 1) * facebookLine.length + (urlCount - 2);
     expect(joinedLength).toBeGreaterThan(DETAIL_LINE_MAX_LENGTH);
@@ -2314,7 +2373,7 @@ describe('runSchedulerAsync', () => {
       { length: urlCount },
       (_, i) => `https://facebook.com/marketplace/search-${i}`
     );
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search', urls });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeNamedStubRecipe('facebook', [seedListing]));
@@ -2354,7 +2413,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not send a false sitewide recovery alert when a Facebook-touching search fails for an unrelated (non-cookie) reason while the sitewide alert is active', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -2395,7 +2454,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not touch the sitewide Facebook-cookies state for an unrelated recipe failure', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'TM search' });
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeFailingRecipeWithReason('trademe', 'Some other scrape problem')
@@ -2412,7 +2471,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it("collapses duplicate network-unreachable failures across multiple saved searches into a single sitewide alert, suppressing each search's own per-search alert", async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -2438,7 +2497,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it("sends a single sitewide recovery alert when connectivity returns, suppressing each search's own per-search recovery ping", async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'Some search' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -2474,7 +2533,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('keeps the Facebook-cookies and network-unreachable sitewide states independent of one another', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search', urls: ['https://facebook.com/marketplace/search'] });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeFacebookCookieFailureRecipe());
     const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
@@ -2493,7 +2552,7 @@ describe('runSchedulerAsync', () => {
     // Matches the existing 200-char precedent in ai.ts (AI parse-error
     // messages) — an unusually long or malformed error message must not
     // flow uncapped into last_run_detail or an outbound Signal payload.
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     const overlongReason = `Login wall detected — ${'x'.repeat(250)} listings loaded`;
     expect(overlongReason.length).toBeGreaterThan(SCRAPE_ERROR_REASON_MAX_LENGTH);
@@ -2525,7 +2584,7 @@ describe('runSchedulerAsync', () => {
       { length: 12 },
       (_, i) => `https://facebook.com/marketplace/search-${i}`
     );
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { urls });
     const reason = 'x'.repeat(SCRAPE_ERROR_REASON_MAX_LENGTH);
     vi.mocked(getRecipeForUrl).mockImplementation(() =>
@@ -2558,7 +2617,7 @@ describe('runSchedulerAsync', () => {
       { length: 12 },
       (_, i) => `https://facebook.com/marketplace/search-${i}`
     );
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { urls });
     let failureIndex = 0;
     vi.mocked(getRecipeForUrl).mockImplementation(() => {
@@ -2590,7 +2649,7 @@ describe('runSchedulerAsync', () => {
     // 4 different-looking alert lines instead of collapsing to one). The
     // URL itself is also stripped: a phone alert should read as "which
     // search, what went wrong," not repeat a URL the reader can't act on.
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search' });
     const reason =
       'page.goto: net::ERR_INTERNET_DISCONNECTED at https://example.com/search\nCall log:\n  - navigating to "https://example.com/search", waiting until "load"';
@@ -2619,7 +2678,7 @@ describe('runSchedulerAsync', () => {
     // hasn't changed. Without normalizing that count out of the suppression
     // key, this exact case — the one the suppression table exists for — would
     // never actually suppress.
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { name: 'FB search' });
     const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
     const baseTime = Date.now();
@@ -2665,7 +2724,7 @@ describe('runSchedulerAsync', () => {
     // search-a already experienced and was alerted for.
     vi.useFakeTimers();
     try {
-      const db = freshDb();
+      const db = createFreshDatabase();
       insertAlertSearch(db, {
         id: 'search-a',
         name: 'Search A',
@@ -2708,7 +2767,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('sends an independent first-failure alert for each saved search that fails in the same tick, even sharing the same underlying reason', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-a', name: 'Search A' });
     insertAlertSearch(db, { id: 'search-b', name: 'Search B' });
     const taintedListing = makeListing({
@@ -2740,7 +2799,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('leaves has_completed_population_run unset when a URL is discarded during a population run, so the full baseline retries next tick', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     const taintedListing = makeListing({
       title: 'Tainted FB listing',
@@ -2769,7 +2828,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('leaves the whole saved search in population mode when only one of several URLs fails during the population run, even though another URL succeeded', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const fbUrl = 'https://facebook.com/marketplace/search';
     const tmUrl = 'https://trademe.co.nz/search';
     const searchId = insertAlertSearch(db, { urls: [fbUrl, tmUrl] });
@@ -2807,7 +2866,7 @@ describe('runSchedulerAsync', () => {
   // "finishing alert setup" moment, so neither the success nor the failure
   // branch should use the setup-specific message for it — both must agree.
   it('does not use the setup-failure message for an ordinary run that merely has a stale pending setup flag and is not itself a population run', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     stmtMarkPopulationRunComplete(db).run(searchId);
     stmtMarkAlertSetupNotificationPending(db).run(searchId);
@@ -2826,7 +2885,7 @@ describe('runSchedulerAsync', () => {
   });
 
   it('does not use the setup-success message for an ordinary run that merely has a stale pending setup flag and is not itself a population run', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     stmtMarkPopulationRunComplete(db).run(searchId);
     stmtMarkAlertSetupNotificationPending(db).run(searchId);
@@ -2866,7 +2925,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('redoes the population pass even when has_completed_population_run is already 1, sending one setup-success alert but no per-listing alerts', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -2901,7 +2960,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('leaves pre-existing alerted_listings rows untouched', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));
@@ -2929,7 +2988,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('updates last_run_at', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -2946,7 +3005,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('resolves without running a population pass when the lock is already held, but marks the setup notification as pending so a later run still sends it', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -2971,7 +3030,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('resolves without throwing when the saved search no longer exists', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
 
     await expect(
       runImmediatePopulationRunAsync(
@@ -2983,7 +3042,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('releases the lock after finishing, so a subsequent call can acquire it', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -2999,7 +3058,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('advances last_run_at even when processing throws, so a corrupted saved search does not get stuck retrying forever', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     // Corrupt urls column — JSON.parse(row.urls) throws synchronously inside processSavedSearchAsync,
     // mirroring the batch-path scenario in the 'a saved search whose row causes a synchronous throw...' test above.
     stmtInsertSavedSearch(db).run(
@@ -3022,7 +3081,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('releases the lock even when processing throws', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     stmtInsertSavedSearch(db).run(
       'search-corrupt',
       'Corrupt search',
@@ -3043,7 +3102,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('persists failure status and sends a failure alert when the population scrape fails', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db, { name: 'FB search' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeLoginWalledRecipe('facebook', []));
     const sendNotificationAsync = vi.fn().mockResolvedValue(undefined);
@@ -3062,7 +3121,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('persists failure status and sends a failure alert when processing throws synchronously', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     stmtInsertSavedSearch(db).run(
       'search-corrupt',
       'Corrupt search',
@@ -3087,7 +3146,7 @@ describe('runImmediatePopulationRunAsync', () => {
   });
 
   it('still sends the "Alerts set up" confirmation via the next scheduler tick when the immediate run is deferred by a contended lock, and does not resend it once consumed', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     vi.mocked(getRecipeForUrl).mockReturnValue(
       makeStubRecipe([makeListing({ title: 'Chair', url: 'https://example.com/1' })])
@@ -3152,7 +3211,7 @@ describe('triggerImmediatePopulationRunAsync', () => {
   });
 
   it('never throws synchronously, even if the underlying run eventually rejects', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     // Corrupt urls column makes processSavedSearchAsync throw synchronously.
     stmtInsertSavedSearch(db).run(
       'search-corrupt',
@@ -3181,7 +3240,7 @@ describe('triggerImmediatePopulationRunAsync', () => {
   });
 
   it('is fire-and-forget: returns before the underlying population run completes', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchId = insertAlertSearch(db);
     let resolveScrape: () => void = () => {};
     const blockedRecipe: Recipe = {
@@ -3213,7 +3272,7 @@ describe('triggerImmediatePopulationRunAsync', () => {
   });
 
   it('defers a second immediate-run request for a different saved search while the first still holds the lock, then leaves it to a later cron tick rather than retrying it automatically', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     const searchAId = insertAlertSearch(db, {
       id: 'search-a',
       name: 'Search A',
@@ -3401,7 +3460,7 @@ describe('determineExitCode', () => {
 
 describe('lost thumbnails (image-only send failures)', () => {
   it('exits 1, not the systemic-outage 2, when every text alert was delivered and only thumbnails were lost across two searches', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, { id: 'search-1', name: 'One' });
     insertAlertSearch(db, { id: 'search-2', name: 'Two' });
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
@@ -3443,7 +3502,7 @@ describe('lost thumbnails (image-only send failures)', () => {
   });
 
   it('does not retry a lost thumbnail on the next run — the text alert marks the listing alerted', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
     vi.mocked(getRecipeForUrl).mockReturnValue(makeStubRecipe([seedListing]));

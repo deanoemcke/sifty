@@ -17,7 +17,7 @@
 // be set, and the sitewide alert would never recover — this test fails on
 // that implementation and passes once the comparison is anchored to
 // `facebookRecipe.name`.
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, ProviderCooldownStore, QuickSearchEvent, Recipe } from '../lib/recipes/base';
 import { makeListing } from '../lib/testFixtures';
@@ -41,13 +41,8 @@ vi.mock('./recipes/facebook', async (importOriginal) => {
 });
 
 import { checkInternetConnectivityAsync } from './connectivity';
-import {
-  initSchema,
-  stmtClearSearch,
-  stmtGetSitewideAlertState,
-  stmtInsertSavedSearch,
-} from './db';
-import { LOGIN_REQUIRED_MESSAGE } from './recipes/facebook';
+import { stmtClearSearch, stmtGetSitewideAlertState, stmtInsertSavedSearch } from './db';
+import { LOGIN_REQUIRED_MESSAGE } from './facebookCookies';
 import { getRecipeForUrl } from './recipes/registry';
 import {
   FACEBOOK_COOKIES_CAUSE,
@@ -55,6 +50,7 @@ import {
   type SchedulerDeps,
 } from './scheduler';
 import { formatFacebookCookiesRecoveredMessage } from './signalMessage';
+import { createFreshDatabase } from './testDatabase';
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},
@@ -63,12 +59,6 @@ const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
 
 function runSchedulerAsync(deps: SchedulerDeps) {
   return runSchedulerAsyncUngated({ targetIntervalMs: 0, ...deps });
-}
-
-function freshDb(): Database.Database {
-  const db = new Database(':memory:');
-  initSchema(db);
-  return db;
 }
 
 function insertAlertSearch(db: Database.Database, name: string, urls: string[]): string {
@@ -121,7 +111,7 @@ afterEach(() => {
 
 describe('sitewide Facebook-cookies recovery survives a canonical recipe rename', () => {
   it('still recovers the sitewide alert when the Facebook recipe has been renamed', async () => {
-    const db = freshDb();
+    const db = createFreshDatabase();
     insertAlertSearch(db, 'FB search', ['https://facebook.com/marketplace/search']);
     const seedListing = makeListing({ title: 'Existing', url: 'https://example.com/existing' });
 
