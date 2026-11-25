@@ -531,3 +531,26 @@ describe('createHostClient requests', () => {
     expect(NATIVE_HOST_REQUEST_TYPES).toEqual(expect.arrayContaining(sentTypes));
   });
 });
+
+describe('a bug while reading one sub-reply', () => {
+  it('lets a thrown TypeError surface instead of reporting it as a host error', async () => {
+    const buggyReply = {
+      ok: true,
+      replies: [
+        {
+          ok: true,
+          get servicesByName(): never {
+            throw new TypeError('parser bug');
+          },
+        },
+        { ok: false, error: 'x' },
+        { ok: false, error: 'x' },
+        { ok: false, error: 'x' },
+      ],
+    };
+
+    await expect(clientReplying(buggyReply).getPanels('webapp', 10)).rejects.toBeInstanceOf(
+      TypeError
+    );
+  });
+});

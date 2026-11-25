@@ -153,7 +153,8 @@ function settleSubReply<Value>(
   try {
     return { status: 'fulfilled', value: parseReply(requireOkReply(subReply)) };
   } catch (error) {
-    return { status: 'rejected', reason: error as Error };
+    if (error instanceof HostRejectedError) return { status: 'rejected', reason: error };
+    throw error;
   }
 }
 
