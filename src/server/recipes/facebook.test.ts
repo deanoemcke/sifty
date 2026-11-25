@@ -327,7 +327,10 @@ const { enqueuedUrls, serializingEnqueue } = vi.hoisted(() => {
 
 vi.mock('../../lib/queue', () => ({ enqueue: serializingEnqueue }));
 
-const VALID_FB_COOKIES = JSON.stringify([{ name: 'c_user', value: '12345' }]);
+const VALID_FB_COOKIES = JSON.stringify([
+  { name: 'c_user', value: '12345' },
+  { name: 'xs', value: 'session' },
+]);
 
 const STUB_COOLDOWN_STORE: ProviderCooldownStore = {
   markExhausted: () => {},

@@ -40,7 +40,10 @@ describe('facebook cookie store', () => {
     ],
   ])('rejects %s and keeps the previously saved cookies', (_description, badCookiesJson, errorClass) => {
     const database = createFreshDatabase();
-    const goodCookiesJson = JSON.stringify([{ name: 'c_user', value: 'good' }]);
+    const goodCookiesJson = JSON.stringify([
+      { name: 'c_user', value: 'good' },
+      { name: 'xs', value: 'good' },
+    ]);
     saveFacebookCookies(database, goodCookiesJson);
 
     expect(() => saveFacebookCookies(database, badCookiesJson)).toThrow(errorClass);
@@ -70,6 +73,8 @@ describe('facebook cookie store', () => {
 
   it.each([
     ['no login cookies', [{ name: 'datr', value: 'x' }]],
+    ['only the xs login cookie', [{ name: 'xs', value: '2' }]],
+    ['only the c_user login cookie', [{ name: 'c_user', value: '1' }]],
     [
       'only expired login cookies',
       [
@@ -104,11 +109,13 @@ describe('facebook cookie store', () => {
       JSON.stringify([
         { name: 'expired', value: '1', expirationDate: 1000 },
         { name: 'c_user', value: '2' },
+        { name: 'xs', value: '3' },
       ])
     );
 
     expect(JSON.parse(getStoredFacebookCookiesJson(database) ?? 'null')).toEqual([
       { name: 'c_user', value: '2' },
+      { name: 'xs', value: '3' },
     ]);
   });
 
@@ -182,11 +189,12 @@ describe('getFacebookCookieStatus', () => {
     });
   });
 
-  it('reports no login expiry when the login cookies are session cookies or missing', () => {
+  it('reports no login expiry when the login cookies are session cookies', () => {
     const database = createFreshDatabase();
     saveFacebookCookies(
       database,
       JSON.stringify([
+        { name: 'c_user', value: '1' },
         { name: 'xs', value: '2' },
         { name: 'wd', value: '3', expirationDate: Date.now() / 1000 + 3600 },
       ])
@@ -241,15 +249,16 @@ describe('getFacebookCookieStatus', () => {
     saveFacebookCookies(
       database,
       JSON.stringify([
-        { name: 'c_user', value: '1', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
+        { name: 'c_user', value: '1', expirationDate: Date.parse('2027-02-14T00:00:00Z') / 1000 },
         { name: 'xs', value: '2', expirationDate: Date.parse('2027-01-10T00:00:00Z') / 1000 },
+        { name: 'wd', value: '3', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
       ])
     );
     vi.setSystemTime(new Date('2026-11-24T11:00:00Z'));
 
     expect(getFacebookCookieStatus(database)).toMatchObject({
       isLoginUsable: true,
-      cookieCount: 1,
+      cookieCount: 2,
       loginExpiryMs: Date.parse('2027-01-10T00:00:00Z'),
     });
   });
@@ -260,12 +269,27 @@ describe('getFacebookCookieStatus', () => {
     saveFacebookCookies(
       database,
       JSON.stringify([
+        { name: 'c_user', value: '1', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
         { name: 'xs', value: '2', expirationDate: Date.parse('2026-11-24T10:00:00Z') / 1000 },
         { name: 'wd', value: '3' },
       ])
     );
     vi.setSystemTime(new Date('2026-11-24T11:00:00Z'));
 
+    expect(() => loadFacebookCookies(database)).toThrow(MissingFacebookCookiesError);
+    expect(getFacebookCookieStatus(database)).toMatchObject({
+      isSynced: true,
+      isLoginUsable: false,
+    });
+  });
+
+  it('reports an unusable login, and refuses to load, when a stored set holds only one login cookie', () => {
+    const database = createFreshDatabase();
+    database
+      .prepare('INSERT INTO facebook_cookies (id, cookies_json, synced_at) VALUES (1, ?, ?)')
+      .run(JSON.stringify([{ name: 'xs', value: '2' }]), 1);
+
+    expect(() => loadFacebookCookies(database)).toThrow(MissingFacebookCookiesError);
     expect(getFacebookCookieStatus(database)).toMatchObject({
       isSynced: true,
       isLoginUsable: false,
@@ -289,7 +313,10 @@ describe('getFacebookCookieStatus', () => {
     const database = createFreshDatabase();
     saveFacebookCookies(
       database,
-      JSON.stringify([{ name: 'xs', value: 'secret-session-value', httpOnly: true }])
+      JSON.stringify([
+        { name: 'c_user', value: '1' },
+        { name: 'xs', value: 'secret-session-value', httpOnly: true },
+      ])
     );
 
     expect(JSON.stringify(getFacebookCookieStatus(database))).not.toContain('secret-session-value');

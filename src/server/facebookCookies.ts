@@ -74,9 +74,14 @@ function isCookieShaped(element: unknown): element is RawFacebookCookie {
 
 // A sync from a Chrome that is logged out of Facebook still carries cookies
 // (datr, sb, …) but not the login pair, and must not replace a working login.
-function requireLoginCookie(cookies: RawFacebookCookie[]): void {
-  if (!cookies.some((cookie) => LOGIN_COOKIE_NAMES.has(String(cookie.name)))) {
-    throw new MissingFacebookCookiesError('No Facebook login cookies were found.');
+// Facebook rejects a session holding only one of the pair, so both are required.
+function requireLoginCookies(cookies: RawFacebookCookie[]): void {
+  const presentNames = new Set(cookies.map((cookie) => String(cookie.name)));
+  const missingNames = [...LOGIN_COOKIE_NAMES].filter((name) => !presentNames.has(name));
+  if (missingNames.length > 0) {
+    throw new MissingFacebookCookiesError(
+      `The Facebook login cookies are incomplete (missing ${missingNames.join(', ')}).`
+    );
   }
 }
 
@@ -111,7 +116,7 @@ export function parseFbCookies(cookiesJson: string | undefined): RawFacebookCook
 // set is fully validated before it replaces what's stored — a rejected sync
 // leaves the previous cookies in use. Structurally unusable payloads throw
 // InvalidFacebookCookiePayloadError; a payload whose cookies have all expired,
-// or that has no unexpired login cookie, throws MissingFacebookCookiesError,
+// or that lacks an unexpired c_user and xs, throws MissingFacebookCookiesError,
 // since the user needs to log in again.
 // One row (id = 1): the newest set replaces the previous one wholesale, so there
 // is never a mix of old and new cookies.
@@ -129,7 +134,7 @@ export function saveFacebookCookies(database: Database.Database, cookiesJson: st
     );
   }
   const unexpiredCookies = requireUnexpiredCookies(payloadCookies);
-  requireLoginCookie(unexpiredCookies);
+  requireLoginCookies(unexpiredCookies);
 
   stmtUpsertFacebookCookies(database).run(JSON.stringify(unexpiredCookies), Date.now());
 }
@@ -138,11 +143,19 @@ export function getStoredFacebookCookiesJson(database: Database.Database): strin
   return stmtGetFacebookCookies(database).get()?.cookies_json;
 }
 
+// The unexpired cookies of a stored set, held to the same login rule as
+// saveFacebookCookies, so loading, saving and status can never disagree.
+function parseUsableFacebookCookies(cookiesJson: string | undefined): RawFacebookCookie[] {
+  const unexpiredCookies = parseFbCookies(cookiesJson);
+  requireLoginCookies(unexpiredCookies);
+  return unexpiredCookies;
+}
+
 // The stored cookies, validated: throws MissingFacebookCookiesError when none
-// have been synced or all have expired, so callers fail fast before any browser
-// is launched.
+// have been synced, all have expired, or no unexpired login cookie pair remains,
+// so callers fail fast before any browser is launched.
 export function loadFacebookCookies(database: Database.Database): RawFacebookCookie[] {
-  return parseFbCookies(getStoredFacebookCookiesJson(database));
+  return parseUsableFacebookCookies(getStoredFacebookCookiesJson(database));
 }
 
 export type FacebookCookieStatus =
@@ -150,8 +163,8 @@ export type FacebookCookieStatus =
   | {
       isSynced: true;
       syncedAtMs: number;
-      // false when loading would throw, or no unexpired login cookie remains:
-      // the stored set exists but Facebook scraping cannot use it.
+      // false when loading would throw: the stored set exists but Facebook
+      // scraping cannot use it.
       isLoginUsable: false;
       unusableReason: string;
     }
@@ -168,17 +181,15 @@ export type FacebookCookieStatus =
     };
 
 // Metadata only — cookie values never leave this module through the status.
-// Judged by the same rules as loadFacebookCookies (expired cookies dropped), plus
-// the unexpired-login-cookie rule saveFacebookCookies enforces, so a caller can
-// tell a usable login from a dead one without attempting a scrape.
+// Judged by exactly the rules loadFacebookCookies applies, so a caller can tell a
+// usable login from a dead one without attempting a scrape.
 export function getFacebookCookieStatus(database: Database.Database): FacebookCookieStatus {
   const row = stmtGetFacebookCookies(database).get();
   if (!row) return { isSynced: false };
 
   let unexpiredCookies: RawFacebookCookie[];
   try {
-    unexpiredCookies = parseFbCookies(row.cookies_json);
-    requireLoginCookie(unexpiredCookies);
+    unexpiredCookies = parseUsableFacebookCookies(row.cookies_json);
   } catch (error) {
     if (!(error instanceof MissingFacebookCookiesError)) throw error;
     return {
