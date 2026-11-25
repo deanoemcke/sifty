@@ -22,6 +22,7 @@ import { describeHowToInstallService } from './serviceDefinitions';
 import type { ServiceState } from './serviceState';
 
 const MAX_TAIL_LINE_COUNT = 500;
+export const MAX_BATCH_REQUEST_COUNT = 8;
 
 export type InstalledServiceState = ServiceState & {
   isInstalled: boolean;
@@ -58,7 +59,8 @@ export type NativeHostReply =
   | { ok: true; searches: RunHistoryEntry[] }
   | { ok: true; isLogFilePresent: boolean; logLines: string[] }
   | { ok: true; servicesByName: Record<string, InstalledServiceState> }
-  | { ok: true; serviceName: string; state: ServiceState };
+  | { ok: true; serviceName: string; state: ServiceState }
+  | { ok: true; replies: NativeHostReply[] };
 
 function getStatus(dependencies: NativeHostDependencies): NativeHostReply {
   return {
@@ -186,6 +188,41 @@ async function controlService(
   return { ok: true, serviceName, state };
 }
 
+function isBatchRequest(request: unknown): boolean {
+  return isRecord(request) && request.type === 'batch';
+}
+
+async function handleBatchedRequestAsync(
+  request: unknown,
+  dependencies: NativeHostDependencies
+): Promise<NativeHostReply> {
+  if (isBatchRequest(request)) {
+    return { ok: false, error: 'A batch request cannot contain another batch' };
+  }
+  return handleNativeHostMessageAsync(request, dependencies);
+}
+
+async function batchAsync(
+  message: UnknownRecord,
+  dependencies: NativeHostDependencies
+): Promise<NativeHostReply> {
+  const { requests } = message;
+  if (
+    !Array.isArray(requests) ||
+    requests.length === 0 ||
+    requests.length > MAX_BATCH_REQUEST_COUNT
+  ) {
+    return {
+      ok: false,
+      error: `batch requires requests to be an array of 1 to ${MAX_BATCH_REQUEST_COUNT} requests`,
+    };
+  }
+  const replies = await Promise.all(
+    requests.map((request) => handleBatchedRequestAsync(request, dependencies))
+  );
+  return { ok: true, replies };
+}
+
 export async function handleNativeHostMessageAsync(
   message: unknown,
   dependencies: NativeHostDependencies
@@ -210,6 +247,8 @@ export async function handleNativeHostMessageAsync(
         return await getServices(dependencies);
       case 'controlService':
         return await controlService(message, dependencies);
+      case 'batch':
+        return await batchAsync(message, dependencies);
       default:
         return { ok: false, error: `Unknown request type: ${message.type}` };
     }

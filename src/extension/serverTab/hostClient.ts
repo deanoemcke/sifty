@@ -27,12 +27,22 @@ export class HostRejectedError extends Error {
 
 export type { LogTail };
 
+export type HostStatus = { cookies: FacebookCookieStatus; settings: SchedulerSettings };
+
+export type PanelResult<Value> =
+  | { status: 'fulfilled'; value: Value }
+  | { status: 'rejected'; reason: Error };
+
+export type ServerTabPanels = {
+  services: PanelResult<Record<string, InstalledServiceState>>;
+  status: PanelResult<HostStatus>;
+  runHistory: PanelResult<RunHistoryEntry[]>;
+  logTail: PanelResult<LogTail>;
+};
+
 export type HostClient = {
-  getStatus(): Promise<{ cookies: FacebookCookieStatus; settings: SchedulerSettings }>;
-  getRunHistory(): Promise<RunHistoryEntry[]>;
+  getPanels(logName: string, lineCount: number): Promise<ServerTabPanels>;
   updateSettings(changes: SchedulerSettings): Promise<SchedulerSettings>;
-  tailLog(logName: string, lineCount: number): Promise<LogTail>;
-  getServices(): Promise<Record<string, InstalledServiceState>>;
   controlService(serviceName: string, action: ServiceAction): Promise<void>;
 };
 
@@ -105,6 +115,60 @@ const isInstalledServiceStatesByName = (
 ): value is Record<string, InstalledServiceState> =>
   isRecord(value) && Object.values(value).every(isInstalledServiceState);
 
+function requireOkReply(reply: unknown): UnknownRecord {
+  if (!isRecord(reply)) throw new HostRejectedError('Host sent a reply that is not an object');
+  if (reply.ok !== true) {
+    throw new HostRejectedError(typeof reply.error === 'string' ? reply.error : 'Host error');
+  }
+  return reply;
+}
+
+function parseServicesReply(reply: UnknownRecord): Record<string, InstalledServiceState> {
+  return requireField(reply, 'servicesByName', isInstalledServiceStatesByName);
+}
+
+function parseStatusReply(reply: UnknownRecord): HostStatus {
+  return {
+    cookies: requireField(reply, 'cookies', isFacebookCookieStatus),
+    settings: requireField(reply, 'settings', isSchedulerSettings),
+  };
+}
+
+function parseRunHistoryReply(reply: UnknownRecord): RunHistoryEntry[] {
+  return requireField(reply, 'searches', isRunHistoryEntries);
+}
+
+function parseLogTailReply(reply: UnknownRecord): LogTail {
+  return {
+    isLogFilePresent: requireField(reply, 'isLogFilePresent', isBoolean),
+    logLines: requireField(reply, 'logLines', isStringArray),
+  };
+}
+
+function settleSubReply<Value>(
+  subReply: unknown,
+  parseReply: (reply: UnknownRecord) => Value
+): PanelResult<Value> {
+  try {
+    return { status: 'fulfilled', value: parseReply(requireOkReply(subReply)) };
+  } catch (error) {
+    return { status: 'rejected', reason: error as Error };
+  }
+}
+
+function rejectEveryPanel(reason: Error): ServerTabPanels {
+  const rejected = { status: 'rejected', reason } as const;
+  return { services: rejected, status: rejected, runHistory: rejected, logTail: rejected };
+}
+
+function requireReplyPerRequest(batchReply: UnknownRecord, requestCount: number): unknown[] {
+  const replies = requireField(batchReply, 'replies', Array.isArray);
+  if (replies.length !== requestCount) {
+    throw new HostRejectedError(`Host sent ${replies.length} replies for ${requestCount} requests`);
+  }
+  return replies;
+}
+
 export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostClient {
   async function requestAsync(message: UnknownRecord): Promise<UnknownRecord> {
     let reply: unknown;
@@ -113,42 +177,38 @@ export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostCli
     } catch (error) {
       throw new HostUnreachableError(describeError(error));
     }
-    if (!isRecord(reply)) throw new HostRejectedError('Host sent a reply that is not an object');
-    if (reply.ok !== true) {
-      throw new HostRejectedError(typeof reply.error === 'string' ? reply.error : 'Host error');
-    }
-    return reply;
+    return requireOkReply(reply);
   }
 
   return {
-    async getStatus() {
-      const reply = await requestAsync({ type: 'getStatus' });
+    async getPanels(logName, lineCount) {
+      const requests = [
+        { type: 'getServices' },
+        { type: 'getStatus' },
+        { type: 'getRunHistory' },
+        { type: 'tailLog', logName, lineCount },
+      ];
+      let subReplies: unknown[];
+      try {
+        const batchReply = await requestAsync({ type: 'batch', requests });
+        subReplies = requireReplyPerRequest(batchReply, requests.length);
+      } catch (error) {
+        return rejectEveryPanel(error as Error);
+      }
+      const [servicesReply, statusReply, runHistoryReply, logTailReply] = subReplies;
       return {
-        cookies: requireField(reply, 'cookies', isFacebookCookieStatus),
-        settings: requireField(reply, 'settings', isSchedulerSettings),
+        services: settleSubReply(servicesReply, parseServicesReply),
+        status: settleSubReply(statusReply, parseStatusReply),
+        runHistory: settleSubReply(runHistoryReply, parseRunHistoryReply),
+        logTail: settleSubReply(logTailReply, parseLogTailReply),
       };
-    },
-    async getRunHistory() {
-      const reply = await requestAsync({ type: 'getRunHistory' });
-      return requireField(reply, 'searches', isRunHistoryEntries);
     },
     async updateSettings(changes) {
       const reply = await requestAsync({ type: 'updateSettings', changes });
       return requireField(reply, 'settings', isSchedulerSettings);
     },
-    async getServices() {
-      const reply = await requestAsync({ type: 'getServices' });
-      return requireField(reply, 'servicesByName', isInstalledServiceStatesByName);
-    },
     async controlService(serviceName, action) {
       await requestAsync({ type: 'controlService', serviceName, action });
-    },
-    async tailLog(logName, lineCount) {
-      const reply = await requestAsync({ type: 'tailLog', logName, lineCount });
-      return {
-        isLogFilePresent: requireField(reply, 'isLogFilePresent', isBoolean),
-        logLines: requireField(reply, 'logLines', isStringArray),
-      };
     },
   };
 }

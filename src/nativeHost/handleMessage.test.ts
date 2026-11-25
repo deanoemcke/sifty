@@ -12,7 +12,11 @@ import {
 import { getStoredFacebookCookiesJson } from '../server/facebookCookies';
 import { getSchedulerSettings, updateSchedulerSettings } from '../server/settings';
 import { makeFakeLaunchd } from './fakeLaunchd';
-import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
+import {
+  handleNativeHostMessageAsync,
+  MAX_BATCH_REQUEST_COUNT,
+  type NativeHostDependencies,
+} from './handleMessage';
 
 function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): NativeHostDependencies {
   const database = new Database(':memory:');
@@ -579,5 +583,113 @@ describe('when the database cannot be opened', () => {
     );
 
     expect(reply).toEqual({ ok: false, error: 'database is locked' });
+  });
+});
+
+describe('batch', () => {
+  it('answers each request in order with the reply it would get on its own', async () => {
+    const dependencies = makeDependencies();
+    const requests = [{ type: 'getStatus' }, { type: 'getRunHistory' }];
+
+    const reply = await handleNativeHostMessageAsync({ type: 'batch', requests }, dependencies);
+
+    expect(reply).toEqual({
+      ok: true,
+      replies: [
+        await handleNativeHostMessageAsync({ type: 'getStatus' }, dependencies),
+        { ok: true, searches: [] },
+      ],
+    });
+  });
+
+  it('keeps one failing request from affecting the others', async () => {
+    const reply = await handleNativeHostMessageAsync(
+      {
+        type: 'batch',
+        requests: [
+          { type: 'getRunHistory' },
+          { type: 'tailLog', logName: 'missing', lineCount: 10 },
+          { type: 'formatDisk' },
+          { type: 'getRunHistory' },
+        ],
+      },
+      makeDependencies()
+    );
+
+    expect(reply).toEqual({
+      ok: true,
+      replies: [
+        { ok: true, searches: [] },
+        { ok: false, error: 'Unknown log: missing' },
+        { ok: false, error: 'Unknown request type: formatDisk' },
+        { ok: true, searches: [] },
+      ],
+    });
+  });
+
+  it('isolates a request whose handler throws', async () => {
+    const { dependencies } = makeServiceDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'batch', requests: [{ type: 'getStatus' }, { type: 'getServices' }] },
+      { ...dependencies, getDatabase: throwDatabaseLocked }
+    );
+
+    expect(reply).toMatchObject({
+      ok: true,
+      replies: [{ ok: false, error: 'database is locked' }, { ok: true }],
+    });
+  });
+
+  it('rejects a batch nested inside a batch without running it', async () => {
+    const reply = await handleNativeHostMessageAsync(
+      {
+        type: 'batch',
+        requests: [{ type: 'batch', requests: [{ type: 'getStatus' }] }, { type: 'getRunHistory' }],
+      },
+      makeDependencies()
+    );
+
+    expect(reply).toEqual({
+      ok: true,
+      replies: [
+        { ok: false, error: expect.stringContaining('cannot contain another batch') },
+        { ok: true, searches: [] },
+      ],
+    });
+  });
+
+  it.each([
+    ['requests missing', undefined],
+    ['requests that is not an array', { type: 'getStatus' }],
+    ['no requests', []],
+    [
+      `more than ${MAX_BATCH_REQUEST_COUNT} requests`,
+      Array.from({ length: MAX_BATCH_REQUEST_COUNT + 1 }, () => ({ type: 'getStatus' })),
+    ],
+  ])('rejects the whole batch for %s', async (_description, requests) => {
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'batch', requests },
+      makeDependencies()
+    );
+
+    expect(reply).toEqual({
+      ok: false,
+      error: `batch requires requests to be an array of 1 to ${MAX_BATCH_REQUEST_COUNT} requests`,
+    });
+  });
+
+  it(`accepts exactly ${MAX_BATCH_REQUEST_COUNT} requests`, async () => {
+    const reply = await handleNativeHostMessageAsync(
+      {
+        type: 'batch',
+        requests: Array.from({ length: MAX_BATCH_REQUEST_COUNT }, () => ({
+          type: 'getRunHistory',
+        })),
+      },
+      makeDependencies()
+    );
+
+    expect(reply).toMatchObject({ ok: true, replies: expect.any(Array) });
   });
 });

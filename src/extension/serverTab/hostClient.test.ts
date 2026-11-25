@@ -16,7 +16,25 @@ import {
 } from '../../server/db';
 import { saveFacebookCookies } from '../../server/facebookCookies';
 import type { ChromeApi } from '../startCookieSync';
-import { createHostClient, HostRejectedError } from './hostClient';
+import {
+  createHostClient,
+  HostRejectedError,
+  HostUnreachableError,
+  type PanelResult,
+  type ServerTabPanels,
+} from './hostClient';
+
+type PanelName = keyof ServerTabPanels;
+
+function rejectionReasonOf(result: PanelResult<unknown>): Error {
+  if (result.status === 'fulfilled') throw new Error('Expected the panel to be rejected');
+  return result.reason;
+}
+
+function fulfilledValueOf<Value>(result: PanelResult<Value>): Value {
+  if (result.status === 'rejected') throw result.reason;
+  return result.value;
+}
 
 const WEBAPP_PLIST = '/plists/webapp.plist';
 const NGROK_PLIST = '/plists/ngrok.plist';
@@ -87,16 +105,30 @@ describe('createHostClient against the real host handler', () => {
     return makeRealHost(logFilePath);
   }
 
-  it('accepts a status reply when no cookies are synced', async () => {
+  it('fetches every panel from the real host in one request', async () => {
     const { client } = makeHost();
 
-    await expect(client.getStatus()).resolves.toEqual({
-      cookies: { isSynced: false },
-      settings: { targetIntervalMinutes: 240, maxSearchesPerTick: 5 },
+    const panels = await client.getPanels('webapp', 10);
+
+    expect(panels.status).toEqual({
+      status: 'fulfilled',
+      value: {
+        cookies: { isSynced: false },
+        settings: { targetIntervalMinutes: 240, maxSearchesPerTick: 5 },
+      },
+    });
+    expect(fulfilledValueOf(panels.services)).toMatchObject({
+      webapp: { isLoaded: true, isRunning: true, isInstalled: true, isIntervalJob: false },
+      ngrok: { isLoaded: false, isEnabled: false, isIntervalJob: true },
+    });
+    expect(panels.runHistory).toEqual({ status: 'fulfilled', value: [] });
+    expect(panels.logTail).toEqual({
+      status: 'fulfilled',
+      value: { isLogFilePresent: true, logLines: ['first', 'second'] },
     });
   });
 
-  it('accepts a status reply for a usable login', async () => {
+  it('accepts a status for a usable login', async () => {
     const { client, database } = makeHost();
     saveFacebookCookies(
       database,
@@ -106,9 +138,13 @@ describe('createHostClient against the real host handler', () => {
       ])
     );
 
-    const status = await client.getStatus();
+    const panels = await client.getPanels('webapp', 10);
 
-    expect(status.cookies).toMatchObject({ isSynced: true, isLoginUsable: true, cookieCount: 2 });
+    expect(fulfilledValueOf(panels.status).cookies).toMatchObject({
+      isSynced: true,
+      isLoginUsable: true,
+      cookieCount: 2,
+    });
   });
 
   it('accepts run history, including a search that has run and one that has not', async () => {
@@ -127,7 +163,7 @@ describe('createHostClient against the real host handler', () => {
     stmtUpdateSavedSearchLastRunAt(database).run(1_699_990_000_000, 'ran');
     stmtUpdateSavedSearchRunStatus(database).run(0, 'scrape:Timed out', null, 'ran');
 
-    const searches = await client.getRunHistory();
+    const searches = fulfilledValueOf((await client.getPanels('webapp', 10)).runHistory);
 
     expect(searches).toHaveLength(2);
     expect(searches.find((search) => search.id === 'ran')).toMatchObject({
@@ -140,7 +176,20 @@ describe('createHostClient against the real host handler', () => {
     });
   });
 
-  it('accepts updated settings, services and a log tail', async () => {
+  it('keeps the other panels when the host cannot read one of them', async () => {
+    const { client } = makeHost();
+
+    const panels = await client.getPanels('formatDisk', 10);
+
+    expect(rejectionReasonOf(panels.logTail)).toEqual(
+      new HostRejectedError('Unknown log: formatDisk')
+    );
+    expect(panels.services.status).toBe('fulfilled');
+    expect(panels.status.status).toBe('fulfilled');
+    expect(panels.runHistory.status).toBe('fulfilled');
+  });
+
+  it('accepts updated settings', async () => {
     const { client } = makeHost();
 
     await expect(
@@ -148,14 +197,6 @@ describe('createHostClient against the real host handler', () => {
     ).resolves.toEqual({
       targetIntervalMinutes: 240,
       maxSearchesPerTick: 7,
-    });
-    await expect(client.getServices()).resolves.toMatchObject({
-      webapp: { isLoaded: true, isRunning: true, isInstalled: true, isIntervalJob: false },
-      ngrok: { isLoaded: false, isEnabled: false, isIntervalJob: true },
-    });
-    await expect(client.tailLog('webapp', 10)).resolves.toEqual({
-      isLogFilePresent: true,
-      logLines: ['first', 'second'],
     });
   });
 });
@@ -185,18 +226,136 @@ const VALID_USABLE_COOKIES = {
   loginExpiryMs: null,
 };
 
-describe('createHostClient rejecting malformed replies', () => {
-  it('rejects a reply that is not an object', async () => {
-    await expect(clientReplying('nope').getStatus()).rejects.toThrow(HostRejectedError);
-    await expect(clientReplying(null).getStatus()).rejects.toThrow(HostRejectedError);
+const VALID_PANEL_REPLIES: Record<PanelName, unknown> = {
+  services: { ok: true, servicesByName: { webapp: VALID_SERVICE } },
+  status: { ok: true, cookies: { isSynced: false }, settings: VALID_SETTINGS },
+  runHistory: { ok: true, searches: [VALID_SEARCH] },
+  logTail: { ok: true, isLogFilePresent: true, logLines: [] },
+};
+
+function getPanelsWithSubReplies(subRepliesByPanelName: Partial<Record<PanelName, unknown>>) {
+  const repliesByPanelName = { ...VALID_PANEL_REPLIES, ...subRepliesByPanelName };
+  return clientReplying({
+    ok: true,
+    replies: [
+      repliesByPanelName.services,
+      repliesByPanelName.status,
+      repliesByPanelName.runHistory,
+      repliesByPanelName.logTail,
+    ],
+  }).getPanels('webapp', 5);
+}
+
+const PANEL_NAMES = Object.keys(VALID_PANEL_REPLIES) as PanelName[];
+
+function expectEveryPanelRejectedWith(panels: ServerTabPanels, expectedError: Error): void {
+  for (const panelName of PANEL_NAMES) {
+    const reason = rejectionReasonOf(panels[panelName]);
+    expect(reason).toBeInstanceOf(expectedError.constructor);
+    expect(reason.message).toBe(expectedError.message);
+  }
+}
+
+describe('createHostClient getPanels', () => {
+  it('sends one batch of the four panel requests', async () => {
+    const sentMessages: unknown[] = [];
+    const client = createHostClient({
+      runtime: {
+        sendNativeMessage: async (_hostName: string, message: unknown) => {
+          sentMessages.push(message);
+          return {
+            ok: true,
+            replies: PANEL_NAMES.map((panelName) => VALID_PANEL_REPLIES[panelName]),
+          };
+        },
+      },
+    } as unknown as Pick<ChromeApi, 'runtime'>);
+
+    const panels = await client.getPanels('scheduler', 200);
+
+    expect(sentMessages).toEqual([
+      {
+        type: 'batch',
+        requests: [
+          { type: 'getServices' },
+          { type: 'getStatus' },
+          { type: 'getRunHistory' },
+          { type: 'tailLog', logName: 'scheduler', lineCount: 200 },
+        ],
+      },
+    ]);
+    expect(panels).toEqual({
+      services: { status: 'fulfilled', value: { webapp: VALID_SERVICE } },
+      status: {
+        status: 'fulfilled',
+        value: { cookies: { isSynced: false }, settings: VALID_SETTINGS },
+      },
+      runHistory: { status: 'fulfilled', value: [VALID_SEARCH] },
+      logTail: { status: 'fulfilled', value: { isLogFilePresent: true, logLines: [] } },
+    });
   });
 
-  it('rejects a host error reply with the host message', async () => {
-    await expect(clientReplying({ ok: false, error: 'locked' }).getStatus()).rejects.toThrow(
-      'locked'
+  it('rejects only the panel whose sub-reply is an error, with the host message', async () => {
+    const panels = await getPanelsWithSubReplies({ status: { ok: false, error: 'locked' } });
+
+    expect(rejectionReasonOf(panels.status)).toEqual(new HostRejectedError('locked'));
+    expect(panels.services.status).toBe('fulfilled');
+    expect(panels.runHistory.status).toBe('fulfilled');
+    expect(panels.logTail.status).toBe('fulfilled');
+  });
+
+  it('rejects only the panel whose sub-reply is malformed', async () => {
+    const panels = await getPanelsWithSubReplies({ runHistory: { ok: true, searches: 'x' } });
+
+    expect(rejectionReasonOf(panels.runHistory)).toEqual(
+      new HostRejectedError('Host reply has no valid "searches"')
+    );
+    expect(panels.services.status).toBe('fulfilled');
+    expect(panels.status.status).toBe('fulfilled');
+    expect(panels.logTail.status).toBe('fulfilled');
+  });
+
+  it('rejects only the panel whose sub-reply is not an object', async () => {
+    const panels = await getPanelsWithSubReplies({ services: null });
+
+    expect(rejectionReasonOf(panels.services)).toBeInstanceOf(HostRejectedError);
+    expect(panels.logTail.status).toBe('fulfilled');
+  });
+
+  it('rejects every panel with the reason when the host cannot be reached', async () => {
+    const client = createHostClient({
+      runtime: {
+        sendNativeMessage: async () => {
+          throw new Error('Specified native messaging host not found.');
+        },
+      },
+    } as unknown as Pick<ChromeApi, 'runtime'>);
+
+    expectEveryPanelRejectedWith(
+      await client.getPanels('webapp', 5),
+      new HostUnreachableError('Specified native messaging host not found.')
     );
   });
 
+  it.each([
+    ['a reply that is not an object', 'nope', 'Host sent a reply that is not an object'],
+    ['a null reply', null, 'Host sent a reply that is not an object'],
+    ['a whole-batch error', { ok: false, error: 'locked' }, 'locked'],
+    ['no replies field', { ok: true }, 'Host reply has no valid "replies"'],
+    [
+      'the wrong number of replies',
+      { ok: true, replies: [VALID_PANEL_REPLIES.services] },
+      'Host sent 1 replies for 4 requests',
+    ],
+  ])('rejects every panel with the reason for %s', async (_description, reply, message) => {
+    expectEveryPanelRejectedWith(
+      await clientReplying(reply).getPanels('webapp', 5),
+      new HostRejectedError(message)
+    );
+  });
+});
+
+describe('createHostClient rejecting malformed sub-replies', () => {
   it.each([
     ['cookies missing', { ok: true, settings: VALID_SETTINGS }, 'cookies'],
     [
@@ -245,9 +404,11 @@ describe('createHostClient rejecting malformed replies', () => {
       },
       'settings',
     ],
-  ])('rejects a status reply with %s', async (_description, reply, fieldName) => {
-    await expect(clientReplying(reply).getStatus()).rejects.toThrow(
-      `Host reply has no valid "${fieldName}"`
+  ])('rejects a status with %s', async (_description, reply, fieldName) => {
+    const panels = await getPanelsWithSubReplies({ status: reply });
+
+    expect(rejectionReasonOf(panels.status)).toEqual(
+      new HostRejectedError(`Host reply has no valid "${fieldName}"`)
     );
   });
 
@@ -258,12 +419,10 @@ describe('createHostClient rejecting malformed replies', () => {
       { ...VALID_USABLE_COOKIES, loginExpiryMs: 5 },
       { isSynced: true, syncedAtMs: 1, isLoginUsable: false, unusableReason: 'no xs' },
     ]) {
-      const status = await clientReplying({
-        ok: true,
-        cookies,
-        settings: VALID_SETTINGS,
-      }).getStatus();
-      expect(status.cookies).toEqual(cookies);
+      const panels = await getPanelsWithSubReplies({
+        status: { ok: true, cookies, settings: VALID_SETTINGS },
+      });
+      expect(fulfilledValueOf(panels.status).cookies).toEqual(cookies);
     }
   });
 
@@ -281,7 +440,9 @@ describe('createHostClient rejecting malformed replies', () => {
     ],
     ['a string nextDueAtMs', { ok: true, searches: [{ ...VALID_SEARCH, nextDueAtMs: '2' }] }],
   ])('rejects run history with %s', async (_description, reply) => {
-    await expect(clientReplying(reply).getRunHistory()).rejects.toThrow(HostRejectedError);
+    const panels = await getPanelsWithSubReplies({ runHistory: reply });
+
+    expect(rejectionReasonOf(panels.runHistory)).toBeInstanceOf(HostRejectedError);
   });
 
   it('accepts run history entries that have never run', async () => {
@@ -292,9 +453,11 @@ describe('createHostClient rejecting malformed replies', () => {
       nextDueAtMs: null,
     };
 
-    await expect(
-      clientReplying({ ok: true, searches: [neverRun] }).getRunHistory()
-    ).resolves.toEqual([neverRun]);
+    const panels = await getPanelsWithSubReplies({
+      runHistory: { ok: true, searches: [neverRun] },
+    });
+
+    expect(panels.runHistory).toEqual({ status: 'fulfilled', value: [neverRun] });
   });
 
   it('rejects updateSettings replies with incomplete settings', async () => {
@@ -311,16 +474,20 @@ describe('createHostClient rejecting malformed replies', () => {
     ],
     ['a service that is not an object', { ok: true, servicesByName: { webapp: 'running' } }],
     ['a non-numeric pid', { ok: true, servicesByName: { webapp: { ...VALID_SERVICE, pid: '1' } } }],
-  ])('rejects getServices with %s', async (_description, reply) => {
-    await expect(clientReplying(reply).getServices()).rejects.toThrow(HostRejectedError);
+  ])('rejects services with %s', async (_description, reply) => {
+    const panels = await getPanelsWithSubReplies({ services: reply });
+
+    expect(rejectionReasonOf(panels.services)).toBeInstanceOf(HostRejectedError);
   });
 
   it.each([
     ['isLogFilePresent missing', { ok: true, logLines: [] }, 'isLogFilePresent'],
     ['logLines not strings', { ok: true, isLogFilePresent: true, logLines: [1] }, 'logLines'],
-  ])('rejects tailLog with %s', async (_description, reply, fieldName) => {
-    await expect(clientReplying(reply).tailLog('webapp', 5)).rejects.toThrow(
-      `Host reply has no valid "${fieldName}"`
+  ])('rejects a log tail with %s', async (_description, reply, fieldName) => {
+    const panels = await getPanelsWithSubReplies({ logTail: reply });
+
+    expect(rejectionReasonOf(panels.logTail)).toEqual(
+      new HostRejectedError(`Host reply has no valid "${fieldName}"`)
     );
   });
 });
