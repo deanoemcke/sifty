@@ -5,15 +5,14 @@ type NoFields = Record<never, never>;
 
 export const MAX_BATCH_REQUEST_COUNT = 8;
 
-// A batch runs its requests concurrently, so it may only hold requests that read state.
-export const BATCHABLE_REQUEST_TYPES = [
+export const READ_ONLY_REQUEST_TYPES = [
   'getStatus',
   'getRunHistory',
   'tailLog',
   'getServices',
 ] as const;
 
-export type BatchableRequestType = (typeof BATCHABLE_REQUEST_TYPES)[number];
+export type ReadOnlyRequestType = (typeof READ_ONLY_REQUEST_TYPES)[number];
 
 export type NativeHostRequestByType = {
   getStatus: NoFields;
@@ -23,7 +22,7 @@ export type NativeHostRequestByType = {
   tailLog: { logName: string; lineCount: number };
   getServices: NoFields;
   controlService: { serviceName: string; action: ServiceAction };
-  batch: { requests: BatchableRequest[] };
+  batch: { requests: ReadOnlyRequest[] };
 };
 
 export type NativeHostRequestType = keyof NativeHostRequestByType;
@@ -32,9 +31,9 @@ type NativeHostRequestOfType<Type extends NativeHostRequestType> = {
   type: Type;
 } & NativeHostRequestByType[Type];
 
-export type BatchableRequest = {
-  [Type in BatchableRequestType]: NativeHostRequestOfType<Type>;
-}[BatchableRequestType];
+export type ReadOnlyRequest = {
+  [Type in ReadOnlyRequestType]: NativeHostRequestOfType<Type>;
+}[ReadOnlyRequestType];
 
 export type NativeHostRequest = {
   [Type in NativeHostRequestType]: NativeHostRequestOfType<Type>;
@@ -59,8 +58,8 @@ export function isNativeHostRequestType(value: unknown): value is NativeHostRequ
   return typeof value === 'string' && Object.hasOwn(IS_REQUEST_TYPE_BY_NAME, value);
 }
 
-export function isBatchableRequestType(value: unknown): value is BatchableRequestType {
-  return (BATCHABLE_REQUEST_TYPES as readonly unknown[]).includes(value);
+export function isReadOnlyRequestType(value: unknown): value is ReadOnlyRequestType {
+  return (READ_ONLY_REQUEST_TYPES as readonly unknown[]).includes(value);
 }
 
 export function buildNativeHostRequest<Type extends NativeHostRequestType>(

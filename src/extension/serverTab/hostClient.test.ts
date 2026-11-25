@@ -9,7 +9,7 @@ import {
   type NativeHostDependencies,
 } from '../../nativeHost/handleMessage';
 import {
-  isBatchableRequestType,
+  isReadOnlyRequestType,
   MAX_BATCH_REQUEST_COUNT,
   NATIVE_HOST_REQUEST_TYPES,
 } from '../../nativeHost/protocol';
@@ -508,7 +508,7 @@ describe('createHostClient requests', () => {
 
     const [batch] = sentMessages as { requests: { type: string }[] }[];
     expect(batch.requests.length).toBeLessThanOrEqual(MAX_BATCH_REQUEST_COUNT);
-    expect(batch.requests.every((request) => isBatchableRequestType(request.type))).toBe(true);
+    expect(batch.requests.every((request) => isReadOnlyRequestType(request.type))).toBe(true);
   });
 
   it('sends only request types the native host protocol defines, inside a batch too', async () => {

@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { initSchema } from '../server/db';
 import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
 import {
-  type BatchableRequest,
   buildNativeHostRequest,
   NATIVE_HOST_REQUEST_TYPES,
+  type ReadOnlyRequest,
 } from './protocol';
 
 function makeDependencies(): NativeHostDependencies {
@@ -79,15 +79,15 @@ describe('native host protocol', () => {
     });
     const nestedBatch = buildNativeHostRequest('batch', { requests: [] });
 
-    const batchableRequests: BatchableRequest[] = [];
+    const readOnlyRequests: ReadOnlyRequest[] = [];
 
     // @ts-expect-error
-    batchableRequests.push(stopRequest);
+    readOnlyRequests.push(stopRequest);
     // @ts-expect-error
-    batchableRequests.push(nestedBatch);
+    readOnlyRequests.push(nestedBatch);
     // @ts-expect-error
-    batchableRequests.push({ type: 'tailLog' });
+    readOnlyRequests.push({ type: 'tailLog' });
 
-    expect(batchableRequests).toHaveLength(3);
+    expect(readOnlyRequests).toHaveLength(3);
   });
 });

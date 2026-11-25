@@ -18,12 +18,12 @@ import {
 import { describeError } from './describeError';
 import { isRecord } from './isRecord';
 import {
-  BATCHABLE_REQUEST_TYPES,
-  isBatchableRequestType,
   isNativeHostRequestType,
+  isReadOnlyRequestType,
   MAX_BATCH_REQUEST_COUNT,
   type NativeHostRequestByType,
   type NativeHostRequestType,
+  READ_ONLY_REQUEST_TYPES,
 } from './protocol';
 import { readLogTail } from './readLogTail';
 import { describeHowToInstallService } from './serviceDefinitions';
@@ -58,9 +58,6 @@ export type RunHistoryEntry = {
   nextDueAtMs: number | null;
 };
 
-// Handlers see every field as optional and unknown because messages come from outside the process
-// and are validated at runtime. This means the compiler does not flag a handler that ignores a newly
-// added field or a changed field type; only renames of fields the handler already reads are caught.
 type UnvalidatedRequest<Type extends NativeHostRequestType> = {
   readonly [Field in keyof NativeHostRequestByType[Type]]?: unknown;
 };
@@ -212,11 +209,11 @@ async function handleBatchedRequestAsync(
   if (
     isRecord(request) &&
     isNativeHostRequestType(request.type) &&
-    !isBatchableRequestType(request.type)
+    !isReadOnlyRequestType(request.type)
   ) {
     return {
       ok: false,
-      error: `A batch cannot contain ${request.type} requests (only ${BATCHABLE_REQUEST_TYPES.join(', ')})`,
+      error: `A batch cannot contain ${request.type} requests (only ${READ_ONLY_REQUEST_TYPES.join(', ')})`,
     };
   }
   return handleNativeHostMessageAsync(request, dependencies);
