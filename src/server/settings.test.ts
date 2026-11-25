@@ -1,10 +1,7 @@
 import type Database from 'better-sqlite3';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  getSchedulerSettings,
-  SCHEDULER_TICK_INTERVAL_MINUTES,
-  updateSchedulerSettings,
-} from './settings';
+import { SCHEDULER_TICK_INTERVAL_MINUTES } from './schedulerSettingDefinitions';
+import { getSchedulerSettings, updateSchedulerSettings } from './settings';
 import { createFreshDatabase } from './testDatabase';
 
 describe('updateSchedulerSettings validation', () => {

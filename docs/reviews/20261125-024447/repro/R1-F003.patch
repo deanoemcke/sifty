@@ -1,0 +1,26 @@
+diff --git a/src/extension/R1-F003.test.ts b/src/extension/R1-F003.test.ts
+new file mode 100644
+index 0000000..fe248d5
+--- /dev/null
++++ b/src/extension/R1-F003.test.ts
+@@ -0,0 +1,20 @@
++import { expect, it } from 'vitest';
++import { controlServiceAsync } from '../nativeHost/controlService';
++import { makeFakeLaunchd } from '../nativeHost/fakeLaunchd';
++import { describeService } from './describeService';
++
++// The scheduler plist: StartInterval 1800, RunAtLoad false. While loaded it is idle between ticks (no PID).
++it('shows a loaded, idle StartInterval scheduler as healthy, not as a warning', () => {
++  const view = describeService('scheduler', { isInstalled: true, isLoaded: true, isRunning: false, isEnabled: true, pid: null });
++  console.log(JSON.stringify(view));
++  expect(view.tone).not.toBe('warning');
++});
++
++it('Start on a loaded idle scheduler does not kick off an immediate run', async () => {
++  const label = 'ai.openclaw.sifty-scheduler';
++  const plistPath = '/x/ai.openclaw.sifty-scheduler.plist';
++  const fake = makeFakeLaunchd({ [label]: { plistPath, isLoaded: true, isEnabled: true, pid: null } });
++  await controlServiceAsync({ action: 'start', definition: { label, plistPath }, userId: 501, runLaunchctlAsync: fake.runLaunchctlAsync });
++  console.log(fake.commands.map((c) => c.join(' ')));
++  expect(fake.commands.some((c) => c[0] === 'kickstart')).toBe(false);
++});

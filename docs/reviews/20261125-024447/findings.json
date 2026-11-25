@@ -1,0 +1,714 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261125-024447",
+  "round": 1,
+  "findings": [
+    {
+      "id": "R1-F001",
+      "title": "Refresh guard silently drops a requested refresh, so the tab shows the wrong log or a stale service state",
+      "claim": "refreshAsync returns immediately while another refresh is in flight, so a log selection or a service action made during a poll triggers no new fetch. The in-flight refresh was issued with the old log name or read launchctl before the action finished, so the tab shows the old log's text under the new log's name, or still shows Running after Stop, until the next 30 s poll.",
+      "severity": "major",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests",
+        "blind",
+        "generic-correctness",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 92
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "jsdom test against real startServerTab with a fake chrome. (1) Holding the poll's tailLog('scheduler') reply, switching the selector to 'webapp' then releasing: selector reads 'webapp' but the log pane shows 'content of scheduler' (refreshAsync returned early on isRefreshing). (2) Clicking Stop during an in-flight poll that already read Running: services section still shows 'Running (pid 1) Restart Stop'. Both fail.",
+        "reference": "repro/R1-F001.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b7e989ea6e64002810cea2d7714f5eb6283adeaf"
+      }
+    },
+    {
+      "id": "R1-F002",
+      "title": "One failing host request blanks the whole tab",
+      "claim": "refreshAsync awaits all four host calls in a single Promise.all and renders nothing if any rejects. A launchctl failure in getServices, or a log read error in tailLog, therefore also hides the cookie status, run history and the settings form, which do not depend on launchctl or the log. isSettingsRendered stays false in that case, so the settings cannot be edited.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "generic-correctness",
+        "blind",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 95
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "getServices replying {ok:false} leaves the cookies section empty and renders no settings form, because refreshAsync's Promise.all rejects before any render.",
+        "reference": "repro/R1-F002.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "c581e6e7e913a0aea08d985d776e78f5280ef5c3"
+      }
+    },
+    {
+      "id": "R1-F003",
+      "title": "A healthy idle scheduler is shown as a warning, and Start on it triggers a run",
+      "claim": "The scheduler is a StartInterval job with RunAtLoad false, so while loaded it is idle between ticks and launchctl list shows no PID. describeService maps that to 'Loaded but not running' (warning, 'Use start to launch it'), so the normal state of a working scheduler looks like a fault. Pressing Start on it then runs startAsync's kickstart branch, which runs a full scrape immediately.",
+      "severity": "major",
+      "classification": "new",
+      "sources": [
+        "generic-correctness",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/extension/describeService.ts",
+        "line": 40
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "describeService('scheduler', loaded, idle, enabled) returns tone 'warning', 'Loaded but not running'. Running controlServiceAsync start against fakeLaunchd on that state issues 'kickstart', which launches the job immediately. Both assertions fail. The plist on this machine confirms StartInterval 1800, RunAtLoad false.",
+        "reference": "repro/R1-F003.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "ed29220c3bbe64d91113daabb58f5de6421fc946"
+      }
+    },
+    {
+      "id": "R1-F004",
+      "title": "The 'not installed' advice for the scheduler cannot be followed",
+      "claim": "describeService and the host's controlService error both tell the user to run `npm run services:install` for any missing plist, but the installer only writes the webapp and ngrok plists and states it never touches the scheduler's. A missing scheduler plist therefore shows advice that does nothing.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/extension/describeService.ts",
+        "line": 27
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "buildInstallablePlistOptions returns only ['webapp','ngrok'], so 'npm run services:install' cannot install 'scheduler', while describeService and handleMessage give that advice for any missing plist. Test requiring every SERVICE_NAMES entry to be installable fails.",
+        "reference": "repro/R1-F004.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "ed29220c3bbe64d91113daabb58f5de6421fc946"
+      }
+    },
+    {
+      "id": "R1-F005",
+      "title": "Every native host start appends several lines to an unbounded log that the tab then offers as a log to read",
+      "claim": "The tab starts four host processes per 30 s refresh. Each appends the nvm 'Now using node' line plus the two getDb stats lines (rerouted to stderr) to /tmp/sifty-native-host.log, which is never rotated or truncated, and the 'native-host' log selector shows only the latest 200 lines of that noise.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "scripts/sifty-native-host.sh",
+        "line": 10
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "sifty-native-host.sh does `exec 2>>$LOG_FILE` and `nvm use >&2`; sifty-native-host.ts replaces console.log with console.error, and db.ts getDb logs '[categories] ...' and '[cache] opened db ...' on every call. Roughly 4 starts x 3 lines x 2880 refreshes a day, per open tab, about 35k lines a day, so real errors scroll out of the 200-line view within minutes. Settled by running the host a few times and counting lines in /tmp/sifty-native-host.log.\nVerifier: Read code, did not run the host (it needs nvm and the real database). sifty-native-host.sh does exec 2>>/tmp/sifty-native-host.log and nvm use >&2; sifty-native-host.ts redirects console.log to stderr; getDb() runs logDbStats on every first call, logging '[categories] N loaded' always and '[cache] opened db' when non-zero. Nothing in src or scripts truncates or rotates the file, and 'native-host' is in LOG_FILE_PATHS_BY_LOG_NAME. Four starts per refresh is confirmed by R1-F017. Counting lines after a few host runs would settle the exact rate."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "mostly a side effect of the per-refresh process cost, which the hidden-tab fix cuts"
+      }
+    },
+    {
+      "id": "R1-F006",
+      "title": "Host replies are cast, not validated, so a reply of the wrong shape renders as 'undefined' or 'NaN' text instead of an error",
+      "claim": "hostClient says replies are checked at the boundary, but only top-level presence and isRecord/Array.isArray are checked; cookies, settings, searches and servicesByName are cast to their types. A reply whose inner shape differs (for example a host that predates isLoginUsable, which the brief lists as a known limit) displays garbage rather than failing visibly.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests",
+        "blind",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 75
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Through the real createHostClient: a getStatus reply without isLoginUsable is accepted and describeCookieStatus renders 'Facebook login cannot be used' with detail 'undefined Last synced 1 minute ago.'. A getRunHistory reply of [{id:'b'}] is accepted and renders 'NaN days ago' / 'Due in NaN days'. Neither is rejected.",
+        "reference": "repro/R1-F006.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b194d0c4f58f58c75ffd7c9261bea12dc9a285e9"
+      }
+    },
+    {
+      "id": "R1-F007",
+      "title": "parseServiceState claims anything unexpected throws, but an unrecognised print-disabled format is read as enabled",
+      "claim": "The doc comment promises the tab never shows a confident wrong answer, yet readEnabledFlag ignores lines it cannot match and defaults to enabled. If launchctl prints a different format, a disabled service is shown as enabled with no error.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/nativeHost/serviceState.ts",
+        "line": 25
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "parseServiceState with printDisabledOutput '\\t\\t\"ai.openclaw.sifty-scheduler\" => true' does not throw and returns isEnabled:true.",
+        "reference": "repro/R1-F007.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b4219eb49c55255bcd2485d88b5fcc0658315cea"
+      }
+    },
+    {
+      "id": "R1-F008",
+      "title": "The 'Facebook login has expired' branch is effectively unreachable and looks like a decision rather than leftover",
+      "claim": "describeCookieStatus has a branch for loginExpiryMs <= nowMs, but the host already drops expired cookies and reports isLoginUsable: false when a login cookie is gone, so the user sees the generic 'cannot be used' text instead; the friendlier branch only shows in the seconds between the host's read and the tab's render.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/extension/describeCookieStatus.ts",
+        "line": 45
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Saved cookies with xs expiring in 30 s, advanced Date.now by 90 s, ran getFacebookCookieStatus then describeCookieStatus: status is isLoginUsable:false ('missing xs'), headline 'Facebook login cannot be used', never 'Facebook login has expired'. The expired branch is not reached end to end.",
+        "reference": "repro/R1-F008.patch"
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "branch is harmless and the generic message is still accurate"
+      }
+    },
+    {
+      "id": "R1-F009",
+      "title": "First-install 'disable' is skipped on a re-run if the first run failed after writing the plist",
+      "claim": "install-services decides isFirstInstall from whether the plist exists, but it writes the plist before running launchctl disable. If disable fails, the script throws with the plist already on disk. On the next run isFirstInstall is false, so the service is never disabled. The documented 'installed but stays off at login' guarantee is lost, and webapp and ngrok (RunAtLoad and KeepAlive) start at the next login.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "generic-correctness",
+        "informed-data-tests"
+      ],
+      "location": {
+        "file": "scripts/install-services.ts",
+        "line": 44
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "Run 1: the plist is absent, so it is written, then runLaunchctlAsync(['disable', ...]) returns a non-zero exit and the script throws. Run 2: fs.existsSync(plistPath) is true, so isFirstInstall is false and disable is not attempted. Disabling before writing the plist, or checking print-disabled instead of file existence, would fix it.\nVerifier: Read scripts/install-services.ts: isFirstInstall = !fs.existsSync(plistPath) is computed, then writeFileAtomically writes the plist, then disable runs and throws on a non-zero exit. After a failed disable the plist exists, so the next run has isFirstInstall false and never disables. The script runs main() on import and writes to the real LaunchAgents directory, so I did not execute it. A test would need fs and runLaunchctl mocked."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b4219eb49c55255bcd2485d88b5fcc0658315cea"
+      }
+    },
+    {
+      "id": "R1-F010",
+      "title": "Cookie sync debounce has no maximum wait, so a constantly changing cookie can postpone syncing indefinitely",
+      "claim": "requestSync clears and restarts the 5 s timer on every Facebook cookie change, with no cap on total delay. If any Facebook cookie changes more often than every 5 s while a Facebook tab is open, no sync runs. The hourly alarm and startup syncs also go through requestSync, so they are postponed too.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "generic-correctness"
+      ],
+      "location": {
+        "file": "src/extension/syncScheduler.ts",
+        "line": 43
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Fake-timer test: requestSync every 4 s for 10 minutes with waitMs 5000 never calls syncAsync. Whether Facebook really changes a cookie that often is not established; the code-level claim holds.",
+        "reference": "repro/R1-F010.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b4219eb49c55255bcd2485d88b5fcc0658315cea"
+      }
+    },
+    {
+      "id": "R1-F011",
+      "title": "The design doc disagrees with the code on transport, message set and what the tab shows",
+      "claim": "docs/sifty-server-extension.md describes a long-lived connection (chrome.runtime.connectNative), a getSettings message, a native-host/ directory, and a read-only display of the launchd StartInterval in the tab. The code uses one sendNativeMessage (one host process) per request, has no getSettings (settings come in getStatus and updateSettings), omits getServices from the message list, keeps the host in src/nativeHost and scripts/, and shows no tick interval.",
+      "severity": "minor",
+      "classification": "docs-code-drift",
+      "sources": [
+        "informed-data-tests",
+        "informed-design"
+      ],
+      "location": {
+        "file": "docs/sifty-server-extension.md",
+        "line": 17
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "Doc line 17 names connectNative; grep of src finds only sendNativeMessage (hostClient.ts, startCookieSync.ts). Doc line 60 lists getSettings; handleNativeHostMessageAsync's switch has getStatus, syncCookies, updateSettings, getRunHistory, tailLog, getServices, controlService. Doc line 48 says the tab shows StartInterval read-only; SCHEDULER_TICK_INTERVAL_MINUTES is a hard-coded 30 used only for the form minimum and the overdue grace, never displayed. The connectNative claim matters most, because the per-refresh cost of four host processes (a known limit) follows from sendNativeMessage.\nVerifier: Grepped docs/sifty-server-extension.md and src. Doc line 17 names chrome.runtime.connectNative; no connectNative anywhere in src or scripts. Line 60 lists getSettings (the handler has no such case) and omits getServices. Line 59 says native-host/ (code is in src/nativeHost and scripts). Line 48 says the tab shows StartInterval read-only; SCHEDULER_TICK_INTERVAL_MINUTES is used only for the settings minimum and the overdue grace."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "6d2b7609e37bbc2e56115283f8a28c6d3b8b72c8"
+      }
+    },
+    {
+      "id": "R1-F012",
+      "title": "The extension bundle test passes if the build produces no chunks",
+      "claim": "The test asserts that chunks containing server markers are empty, but never that any chunk was inspected. If the build output shape changes or yields no chunk entries, the filter runs over an empty array and the guard passes without checking anything.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests"
+      ],
+      "location": {
+        "file": "src/extension/extensionBundle.test.ts",
+        "line": 24
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "buildExtensionChunkCodesAsync returns [] when outputs holds no item with type 'chunk' (for example a Rollup watcher return or a changed lib output), and expect([].filter(...)).toEqual([]) passes for every marker. Adding expect(chunkCodes.length).toBeGreaterThan(0), or asserting the entry names background.js and server.js are present, makes the test fail loudly. The test does pass today (run alone, it passes).\nVerifier: Mutated extensionBundle.test.ts so buildExtensionChunkCodesAsync returns [] (flatMap(() => [])) and ran it: the test still passes (1 passed). The guard therefore passes with no chunks inspected. Not a failing test by nature, since it is a test-quality finding."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b4219eb49c55255bcd2485d88b5fcc0658315cea"
+      }
+    },
+    {
+      "id": "R1-F013",
+      "title": "Service buttons have no in-flight guard, so a double click on Start reports a failure for a service that started",
+      "claim": "Nothing disables a button or serialises controlService calls while one is running. A second Start sent before the first finishes (each host call takes seconds) reads state while the service is still unloaded, then runs `bootstrap` on a service the first call has just loaded. launchctl fails with its 'Input/output error', and the tab shows 'Could not start X' for a service that is running. The host's own comment says that failure message is unhelpful.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 81
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Two controlServiceAsync 'start' calls run together against fakeLaunchd with an unloaded service: one fulfils, the other rejects with 'launchctl bootstrap ... failed (exit 5): Bootstrap failed: 5: Input/output error'. The tab has no button guard (renderServicesSection attaches a plain click listener), so a double click sends two host requests.",
+        "reference": "repro/R1-F013.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b7e989ea6e64002810cea2d7714f5eb6283adeaf"
+      }
+    },
+    {
+      "id": "R1-F014",
+      "title": "Sync and service messages in the tab never expire",
+      "claim": "state.syncMessage is set by 'Sync now' and never cleared, and state.serviceMessage is cleared only by the next successful control action. After a manual sync, 'Cookie sync succeeded: sent 10 Facebook cookies' stays beside a cookie headline that keeps refreshing, and a failed message ('Cookie sync failed ...' or 'Could not start ngrok ...') stays after a later background sync or the service itself has recovered. It carries no timestamp, so it reads as current.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-design"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 74
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "After a manual Sync now fails ('Cookie sync failed, native messaging host unreachable'), the host recovers and five healthy polls run; the .sync-message still shows the failure text.",
+        "reference": "repro/R1-F014.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b7e989ea6e64002810cea2d7714f5eb6283adeaf"
+      }
+    },
+    {
+      "id": "R1-F015",
+      "title": "No test exercises hostClient's reply validation or ties the real host replies to what the tab consumes",
+      "claim": "hostClient.ts has no test of its own. Its HostRejectedError paths for a non-object reply or a missing or invalid field are never run, and startServerTab.test.ts feeds hand-typed reply fixtures typed as unknown, so nothing fails if handleMessage and the client drift apart.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-data-tests"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 51
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Searched the test files for 'no valid', 'not an object' and HostRejectedError and found nothing in the extension tests. Replacing requireField's body with 'return reply[fieldName] as Value' would leave every test green. DEFAULT_REPLIES in startServerTab.test.ts and the real outputs of handleNativeHostMessageAsync in handleMessage.test.ts are two independent hand-written copies of the protocol. Evidence that would settle it: a test that pipes the real handler's replies (in-memory database, fake launchd) through createHostClient, plus one case per rejected shape.\nVerifier: Mutation: replaced requireField's body with 'return reply[fieldName] as Value' in hostClient.ts and ran src/extension and src/nativeHost tests: 20 files, 197 tests all pass. No existing test covers hostClient's rejection paths. Test-gap finding, so no failing test applies."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b194d0c4f58f58c75ffd7c9261bea12dc9a285e9"
+      }
+    },
+    {
+      "id": "R1-F016",
+      "title": "Every host request opens and migrates the database, and one failing request blanks the whole tab",
+      "claim": "scripts/sifty-native-host.ts calls getDb() (open, initSchema, stats) before any request is read, so service control and log reading fail whenever the database cannot be opened, though they do not use it. On the tab side, refreshAsync uses Promise.all over four independent requests, so one failure shows a single error banner and leaves every other panel frozen at stale values (for example 'Running (pid 4242)') with no sign they are stale.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed-design"
+      ],
+      "location": {
+        "file": "scripts/sifty-native-host.ts",
+        "line": 22
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "If sifty.db is locked for over the 5s busy timeout or fails initSchema, main() rejects and the host exits without a framed reply. The extension sees HostUnreachableError ('not installed') and the tab cannot restart the webapp, which is the tool you would use to recover. Settling it: run the host against an unopenable DB path and send getServices. Opening the database lazily, on the first request that needs it, and rendering each panel from its own request (Promise.allSettled) would remove the coupling.\nVerifier: Read scripts/sifty-native-host.ts: 'database: getDb()' is evaluated as an argument before runNativeHostAsync reads any request, and getDb() throws on open or initSchema failure, so main() rejects and the process exits with only a stderr log (no framed reply); service control and log reading never use the database. The tab half (Promise.all blanks the tab) is reproduced under R1-F002. I did not run the host against an unopenable database because DB_PATH is a constant and it would touch the real data directory."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "c581e6e7e913a0aea08d985d776e78f5280ef5c3"
+      }
+    },
+    {
+      "id": "R1-F017",
+      "title": "The Sifty Server tab starts four native host processes on every refresh",
+      "claim": "Each refresh (every 30 seconds, and after every sync, service action or log change) sends four separate requests, getServices, getStatus, getRunHistory and tailLog, and each one starts a fresh host process that loads nvm, transpiles the TypeScript and opens the database. The skipped change is one combined 'snapshot' request, or one long-lived connection for the tab, so a refresh costs one start-up. It was skipped because it changes the request flow and the protocol between the tab and the host, which is a design decision. It touches the host handler, the client, the tab and their tests (several files).",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 94
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Efficiency agent: every sendNativeMessage call starts a new host process via scripts/sifty-native-host.sh, which sources nvm and starts tsx; four run in parallel per refresh and contend for the same SQLite file. Alternatives named: a getSnapshot request type in handleMessage.ts, or chrome.runtime.connectNative with one long-lived host (runNativeHost.ts already loops over framed messages). Skipped: changes the protocol and request flow.\nVerifier: jsdom test counting sendNativeMessage calls for one startServerTab refresh: 4 requests ['getServices','getStatus','getRunHistory','tailLog']. Each sendNativeMessage starts a host process via sifty-native-host.sh. The cost claim is confirmed; whether to batch is a design decision with no failing-test form."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "protocol redesign the author chose not to do; the hidden-tab fix removes most of the cost"
+      }
+    },
+    {
+      "id": "R1-F018",
+      "title": "The tab keeps refreshing every 30 seconds while it is hidden",
+      "claim": "The pinned tab refreshes on a timer even when it is in the background, which is its usual state, so every tick starts the host processes and the launchctl calls for output nobody sees. The skipped change is to skip the timer tick while the page is hidden and refresh once when it becomes visible again. It was skipped because it changes what the tab does when hidden, which is a behaviour decision. It is a few lines in one file plus a test.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 130
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "With document.hidden true, advancing the 30 s timer still sends 4 more host requests (8 total vs 4 at open).",
+        "reference": "repro/R1-F018.patch"
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "b7e989ea6e64002810cea2d7714f5eb6283adeaf"
+      }
+    },
+    {
+      "id": "R1-F019",
+      "title": "Service state checks still run the same launchctl command once per service",
+      "claim": "Reading a service's state runs 'launchctl list' for that service and 'launchctl print-disabled' for the whole user, and the second command prints the same output every time, so three services mean three identical runs. Starting, stopping or restarting a service also reads the state two or three times, and the tab then asks for every service again. This pass already runs the independent calls together, but did not remove the repeats. The skipped change is to run print-disabled once per request, to pass an already-read state into restart, and to stop the control reply repeating a state the tab refetches. It was skipped because it changes the state-reading functions and the control reply (several files).",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/controlService.ts",
+        "line": 30
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "handleNativeHostMessageAsync getServices for three services runs 'launchctl print-disabled gui/501' three times (one per service) against fakeLaunchd; test expecting one run fails. controlServiceAsync start on a loaded idle service also shows two list/print-disabled pairs (R1-F003 output).",
+        "reference": "repro/R1-F019.patch"
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "small cost and touches several state-reading functions"
+      }
+    },
+    {
+      "id": "R1-F020",
+      "title": "Request and reply shapes are written out separately on each side of the host protocol",
+      "claim": "The host handler switches on string message types, the tab's host client repeats the same strings and casts replies to types the host already exports, and the cookie sync code is a second hand-written host client with its own message and reply parsing. Renaming or reshaping a message compiles cleanly on one side only. The control reply also carries a service name and state that the client throws away, and the 'run npm run services:install' advice is written in both the host and the tab. The skipped change is one shared request type, with the reply type keyed by it, used by the handler, the host client and the cookie sync. It was skipped because it reshapes the protocol across the host, the tab and the cookie sync (several files).",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 217
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Altitude agent: handleMessage.ts:217-234, hostClient.ts:78-107 and startCookieSync.ts:48-70 restate the protocol; hostClient's 'as FacebookCookieStatus' and 'as RunHistoryEntry[]' casts discard the exported types; handleMessage.ts:205 replies with serviceName and state that hostClient.controlService discards; describeService.ts:27 and handleMessage.ts:195 carry the same install advice. Change named: a node-free protocol.ts with a NativeHostRequest discriminated union, a handler table typed over it, and syncCookies added to HostClient so startCookieSync uses it. Skipped: large cross-cutting change.\nVerifier: Read code: handleMessage.ts switch on string types (217-234), hostClient.ts repeats the same strings with 'as FacebookCookieStatus', 'as RunHistoryEntry[]' and 'as Record<string, InstalledServiceState>' casts, startCookieSync.ts builds its own syncCookies message and interpretHostReply, handleMessage.ts replies { serviceName, state } for controlService which hostClient.controlService discards, and the services:install advice appears in describeService.ts and handleMessage.ts. Duplication is real."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "large cross-cutting change deliberately left out; reply checks cover the worst effect"
+      }
+    },
+    {
+      "id": "R1-F021",
+      "title": "A service's name, label, title, log and installability are spread over four files",
+      "claim": "A service is described in serviceDefinitions.ts, logFiles.ts, describeService.ts and the handler, with plain string types in between. The title table accepts any string and falls back to the raw name, so a new service silently gets no title, and the tab's bundle imports the log path values just to count the log names, which ships the /tmp paths into the browser. The installer also rebuilds each plist path instead of using the one in the definition. The skipped change is one table keyed by service name that holds the label, title and log name, with the title sent in the services reply and the service and log name types used end to end. It was skipped because it touches the host, installer, tab and tests (several files).",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/serviceDefinitions.ts",
+        "line": 8
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "Test building the extension with vite (write:false) fails: the bundle contains the LOG_FILE_PATHS_BY_LOG_NAME table with '/tmp/sifty-scheduler.log', '/tmp/sifty-webapp.log' and others, imported as a value at startServerTab.ts:5. Other parts confirmed by reading: SERVICE_TITLES is Record<string,string> with '?? serviceName', ServiceName is never imported, install-services.ts rebuilds `${label}.plist`.",
+        "reference": "repro/R1-F021.patch"
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "only three services and nothing is wrong today"
+      }
+    },
+    {
+      "id": "R1-F022",
+      "title": "Reading a log always reads 256 KiB to show 200 lines",
+      "claim": "Every log request reads up to 256 KiB, decodes it and splits the lot, then keeps only the last 200 lines, and the tab asks for it on every refresh. The limit is justified against Chrome's 1 MB reply limit in a comment but is not derived from it. The skipped change is to read a small block from the end and grow it only if there are too few lines, and to derive the cap from the message limit. It was skipped because the read is already bounded, so the saving is small. It is a few lines in one file.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/readLogTail.ts",
+        "line": 20
+      },
+      "evidence": {
+        "kind": "repro-test",
+        "detail": "readLogTail on a 1.7 MB log asked for 200 lines requests 262144 bytes (256 KiB) from fs.readSync; a test expecting under 64 KiB fails. Cost is bounded as the finding says.",
+        "reference": "repro/R1-F022.patch"
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "read is already capped so the saving is small"
+      }
+    },
+    {
+      "id": "R1-F023",
+      "title": "The tab works out when a search is due separately from the scheduler",
+      "claim": "The tab's run history adds the saved interval to the last run time to show when a search is due, while the scheduler does the same conversion for its own due check in three places. If the scheduler's rule for 'due' changes, the tab will not follow. The skipped change is one shared helper next to the interval constants, used by both. It was skipped because it edits the scheduler, which is already merged and outside this branch's diff. It is a few lines in two files.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 125
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Reuse agent: handleMessage.ts:125-126 computes last_run_at + targetIntervalMinutes * 60_000; src/server/scheduler.ts:1005, :1022 and :1090 do the same conversion and cutoff (the SQL cutoff cannot be shared). Proposed computeNextDueAtMs(lastRunAtMs, targetIntervalMinutes) in settings.ts. Skipped: touches code outside the reviewed diff.\nVerifier: handleMessage.ts:125-126 computes last_run_at + targetIntervalMinutes * 60_000; src/server/scheduler.ts:1005 and :1090 do the same minutes-to-ms conversion with savedSettings.targetIntervalMinutes. Two independent copies of the due rule exist, so a rule change in the scheduler would not reach the tab."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "edits the merged scheduler, outside this change"
+      }
+    },
+    {
+      "id": "R1-F024",
+      "title": "The run history request loads every column of every saved search and filters in code",
+      "claim": "The host reads whole saved-search rows, including the URL lists and filter settings, and then drops the searches without alerts in JavaScript. The skipped change is a narrower query that selects only the needed columns and filters in SQL. It was skipped because the table is small, so the saving is negligible. It is a few lines in one file.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 115
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Efficiency agent: handleMessage.ts:115-117 uses stmtListSavedSearches (all columns) and filters in JS. Alternative: a narrow SELECT with WHERE should_alert_on_new_listings = 1. Skipped: low value.\nVerifier: db.ts:302-305 stmtListSavedSearches selects 13 columns including urls, discover_inputs and ai_filter with no WHERE; handleMessage.ts:115-117 filters should_alert_on_new_listings === 1 in JavaScript. Claim holds; impact is negligible as the finding says."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "table is small so the saving is negligible"
+      }
+    },
+    {
+      "id": "R1-F025",
+      "title": "The shell wrappers repeat the node set-up and one hard-codes a log path",
+      "claim": "Three wrapper scripts each load nvm and select the pinned node version with the same lines, and the native host wrapper writes to a hard-coded /tmp log path that the code also names separately. The skipped change is one shared script to source and the log path passed in or covered by a test that checks the two match. It was skipped because shell wrappers cannot be tested here and one of them is outside this branch's diff. It is a few lines across three or four files.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "scripts/sifty-native-host.sh",
+        "line": 15
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Altitude agent: nvm/pinned-node boilerplate at sifty-native-host.sh:15-17, sifty-webapp-service.sh:12-14 and run-and-notify.sh; sifty-native-host.sh:9 hard-codes /tmp/sifty-native-host.log, the same string as logFiles.ts. Proposed scripts/use-pinned-node.sh to source. Skipped: untestable here and partly out of scope.\nVerifier: nvm.sh sourcing and 'nvm use' appear in scripts/sifty-native-host.sh:15-17, scripts/sifty-webapp-service.sh:12-14 and the out-of-repo run-and-notify.sh:36-38. sifty-native-host.sh:9 hard-codes /tmp/sifty-native-host.log, repeated in logFiles.ts:4 with no test tying them together."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "shell wrappers cannot be tested here and one is outside this change"
+      }
+    },
+    {
+      "id": "R1-F026",
+      "title": "The fake launchd used by tests lives under src and could be bundled",
+      "claim": "The test double for launchctl sits in src/nativeHost next to production code, so any build that imports it would include it. The skipped change is to move it beside the tests or into a test-support folder. It was skipped because nothing in a build imports it today. It is a one-file move.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/nativeHost/fakeLaunchd.ts",
+        "line": 28
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Simplification agent: fakeLaunchd.ts is test support under src/; requireState is just statesByLabel[label]. Skipped: no current importer from production code.\nVerifier: fakeLaunchd.ts lives in src/nativeHost; grep finds importers only in controlService.test.ts and handleMessage.test.ts (no production importer). requireState is just statesByLabel[label]. Claim holds; no current bundling risk."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "nothing in production imports it"
+      }
+    },
+    {
+      "id": "R1-F027",
+      "title": "The syncable cookie type repeats seven fields of the browser cookie type",
+      "claim": "The type for a cookie as sent to the host lists seven fields that the browser cookie type already has, plus an expiry field. The skipped change is to derive it from the browser type by picking those fields. It was skipped because the gain is small and the fields are what the host actually receives, so listing them is also a reasonable record of the format. It is a few lines in one file.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "simplify"
+      ],
+      "location": {
+        "file": "src/extension/cookieSync.ts",
+        "line": 19
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Simplification agent: SyncableCookie repeats name, value, domain, path, secure, httpOnly and sameSite of BrowserCookie; a Pick plus an optional expirationDate would do. Skipped: small gain.\nVerifier: cookieSync.ts SyncableCookie lists name, value, domain, path, secure, httpOnly and sameSite exactly as BrowserCookie does, plus optional expirationDate; toSyncableFacebookCookies maps the same fields. Claim holds."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "spelled-out fields document exactly what the host receives"
+      }
+    },
+    {
+      "id": "R1-F028",
+      "title": "setInterval in startServerTab is never cleared and the visibilitychange listener is never removed",
+      "claim": "startServerTab returns no way to stop its poll timer or listeners, so a second call on the same document (or a test that opens the tab repeatedly) stacks timers and listeners on the shared document. The tab page lives for the page lifetime so it is harmless in production, but tests that open several tabs leak polling into each other.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "implementer"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 160
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "setInterval(onPollTick, ...) and document.addEventListener('visibilitychange', ...) are registered with no handle returned; startServerTab resolves to void."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "The tab starts once and lives as long as the page, so this only matters for tests, and no test is failing."
+      }
+    },
+    {
+      "id": "R1-F029",
+      "title": "Panels whose request failed keep stale content with only a single banner as a hint",
+      "claim": "After the Promise.allSettled change, a panel whose request fails keeps its previous render (for example 'Running (pid 4242)') and the only sign is the one shared host-error banner, which names the first failure but not which panels are stale.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "implementer"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 131
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "refreshAsync skips rendering a section when its result is rejected, and renderHostError shows only the first rejection. Marking the affected section (or listing every failure) would make staleness explicit; not done to keep the fix minimal."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "eb85f71b529abb49f33ec635e368c32c6a3925f8"
+      }
+    },
+    {
+      "id": "R1-F030",
+      "title": "A service button click made while any other service action is running is dropped with no feedback",
+      "claim": "controlServiceAsync returns silently when state.isServiceActionRunning is true, and the flag is global rather than per service. Pressing Stop on ngrok while a Start on the webapp is still in its multi-second host call does nothing, the buttons stay enabled, and no message says the click was ignored.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "fix-check"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 104
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "Click Start on webapp (host call held open), then click Stop on ngrok. controlServiceAsync('ngrok','stop') hits `if (state.isServiceActionRunning) return;`: no host request is sent, serviceMessage is unchanged, and the button still looks live. The new test only covers the same button clicked twice, so it does not show that a different service's click is also swallowed. The fix would be to disable the buttons while an action runs, or to key the guard by service name."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "2b043c61fab0294c625fe3da58dd4efa19f37cf2"
+      }
+    },
+    {
+      "id": "R1-F031",
+      "title": "'scheduler is special' is now encoded in three unconnected places",
+      "claim": "describeHowToInstallService compares against the literal 'scheduler', while INTERVAL_JOB_SERVICE_NAMES and the InstallableServiceName type (Exclude<ServiceName, 'scheduler'>) each restate the same fact. The only link is a test over the installer's keys, so adding another non-installable or interval service updates some places and silently misses others.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "fix-check"
+      ],
+      "location": {
+        "file": "src/nativeHost/serviceDefinitions.ts",
+        "line": 1876
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Add a fourth service name that the installer does not write: Exclude<> and buildInstallablePlistOptions stay correct, but describeHowToInstallService still returns 'Run npm run services:install' for it. The test in serviceDefinitions.test.ts would catch that case only because it iterates SERVICE_NAMES. An isInstallable flag on the definition, next to isIntervalJob, would remove the literal."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Nothing is wrong today and an existing test already catches a mismatch for any new service."
+      }
+    }
+  ]
+}

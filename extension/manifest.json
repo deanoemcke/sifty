@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Sifty Server",
+  "version": "0.1.0",
+  "description": "Keeps Sifty's Facebook cookies in sync and shows the scheduler's settings and logs.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwcmUpaQaGFqiwpsNytm1DdDCJ5+8ZDP+UVJn2p8fcg0zhCYafD3cHIvyKZ2soB8eFGI9XiZ1Nj1Cep59MOB85k3J8HbkQAjAFaByRD8nuHV1/6GErdotN0L3qMykfKcR78qn7goSTKJp6YU1u7Fws85tmUEjmg5RTDAx57P5YZdNR3OPrHDG7+e6o0IL/qF2qKKfYiNhXwzv1mvqbGKQI78gcWA1IbY9gnni1+nId+Q7c5n1LSzaE/sIFCQacdkJaQDTMW0QP3usszToMFU7OOzaC3m8D51Hff/eolVx7MfElvZa4ZToVATxEFYA1kz4b4Fnn6vukT762dqq24EatQIDAQAB",
+  "permissions": [
+    "cookies",
+    "nativeMessaging",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://*.facebook.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Sifty Server"
+  }
+}

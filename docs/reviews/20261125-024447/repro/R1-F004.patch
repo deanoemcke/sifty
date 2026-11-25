@@ -1,0 +1,14 @@
+diff --git a/src/nativeHost/R1-F004.test.ts b/src/nativeHost/R1-F004.test.ts
+new file mode 100644
+index 0000000..306189e
+--- /dev/null
++++ b/src/nativeHost/R1-F004.test.ts
+@@ -0,0 +1,8 @@
++import { expect, it } from 'vitest';
++import { SERVICE_NAMES, buildInstallablePlistOptions } from './serviceDefinitions';
++
++// Both describeService and handleMessage tell the user to "run npm run services:install" for any missing plist.
++it('npm run services:install can install every service the "not installed" advice is given for', () => {
++  const installable = Object.keys(buildInstallablePlistOptions('/project', 5173));
++  expect(installable).toEqual(expect.arrayContaining([...SERVICE_NAMES]));
++});
