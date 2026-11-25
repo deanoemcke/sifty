@@ -1,0 +1,31 @@
+diff --git a/src/extension/R1-F006.test.ts b/src/extension/R1-F006.test.ts
+new file mode 100644
+index 0000000..83061af
+--- /dev/null
++++ b/src/extension/R1-F006.test.ts
+@@ -0,0 +1,25 @@
++import { expect, it } from 'vitest';
++import { createHostClient } from './serverTab/hostClient';
++import { describeCookieStatus } from './describeCookieStatus';
++import { describeRunHistory } from './describeRunHistory';
++import type { ChromeApi } from './startCookieSync';
++
++const NOW = Date.parse('2026-11-25T00:00:00Z');
++function clientReplying(reply: unknown) {
++  return createHostClient({ runtime: { sendNativeMessage: async () => reply } } as unknown as Pick<ChromeApi, 'runtime'>);
++}
++
++it('a status reply from a host that predates isLoginUsable is rejected, not rendered', async () => {
++  const client = clientReplying({ ok: true, cookies: { isSynced: true, syncedAtMs: NOW - 60000, cookieCount: 3, loginExpiryMs: null }, settings: {} });
++  const status = await client.getStatus();
++  const view = describeCookieStatus(status.cookies, NOW);
++  console.log(JSON.stringify(view));
++  expect(`${view.headline} ${view.detail}`).not.toContain('undefined');
++});
++
++it('a malformed searches entry is rejected, not rendered as NaN', async () => {
++  const client = clientReplying({ ok: true, searches: [{ id: 'b' }] });
++  const rows = describeRunHistory(await client.getRunHistory(), NOW);
++  console.log(JSON.stringify(rows));
++  expect(JSON.stringify(rows)).not.toContain('NaN');
++});

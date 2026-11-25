@@ -1,0 +1,32 @@
+diff --git a/src/nativeHost/R1-F019.test.ts b/src/nativeHost/R1-F019.test.ts
+new file mode 100644
+index 0000000..722ec78
+--- /dev/null
++++ b/src/nativeHost/R1-F019.test.ts
+@@ -0,0 +1,26 @@
++import { expect, it } from 'vitest';
++import { getServiceStateAsync } from './controlService';
++import { makeFakeLaunchd } from './fakeLaunchd';
++import { handleNativeHostMessageAsync } from './handleMessage';
++import Database from 'better-sqlite3';
++import { initSchema } from '../server/db';
++
++it('getServices runs launchctl print-disabled once for three services', async () => {
++  const names = ['webapp', 'ngrok', 'scheduler'];
++  const states = Object.fromEntries(names.map((n) => [`ai.${n}`, { plistPath: `/x/${n}.plist`, isLoaded: true, isEnabled: true, pid: 1 }]));
++  const fake = makeFakeLaunchd(states);
++  const database = new Database(':memory:');
++  initSchema(database);
++  await handleNativeHostMessageAsync({ type: 'getServices' }, {
++    database,
++    logFilePathsByLogName: {},
++    services: {
++      definitionsByServiceName: Object.fromEntries(names.map((n) => [n, { label: `ai.${n}`, plistPath: `/x/${n}.plist` }])),
++      userId: 501, runLaunchctlAsync: fake.runLaunchctlAsync, doesFileExist: () => true,
++    },
++  });
++  const printDisabledRuns = fake.commands.filter((c) => c[0] === 'print-disabled').length;
++  console.log(fake.commands.map((c) => c.join(' ')));
++  expect(printDisabledRuns).toBe(1);
++  void getServiceStateAsync;
++});

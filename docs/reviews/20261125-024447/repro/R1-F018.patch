@@ -1,0 +1,75 @@
+diff --git a/src/extension/serverTab/R1-F018.test.ts b/src/extension/serverTab/R1-F018.test.ts
+new file mode 100644
+index 0000000..4dc34e2
+--- /dev/null
++++ b/src/extension/serverTab/R1-F018.test.ts
+@@ -0,0 +1,20 @@
++// @vitest-environment jsdom
++import { afterEach, beforeEach, expect, it, vi } from 'vitest';
++import { NOW_MS, makeFakeChrome } from './reproHarness';
++import { startServerTab } from './startServerTab';
++
++beforeEach(() => {
++  vi.useFakeTimers();
++  document.body.innerHTML = '<div id="app"></div>';
++});
++afterEach(() => vi.useRealTimers());
++
++it('does not start host processes on a poll tick while the page is hidden', async () => {
++  const root = document.getElementById('app') as HTMLElement;
++  const { chromeApi, requests } = makeFakeChrome();
++  await startServerTab(root, { chromeApi, nowMs: () => NOW_MS, pollIntervalMs: 30_000 });
++  const requestsAfterOpen = requests.length;
++  Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
++  await vi.advanceTimersByTimeAsync(30_000);
++  expect(requests.length).toBe(requestsAfterOpen);
++});
+diff --git a/src/extension/serverTab/reproHarness.ts b/src/extension/serverTab/reproHarness.ts
+new file mode 100644
+index 0000000..7076830
+--- /dev/null
++++ b/src/extension/serverTab/reproHarness.ts
+@@ -0,0 +1,43 @@
++import { vi } from 'vitest';
++import type { ChromeApi } from '../startCookieSync';
++
++export const NOW_MS = Date.parse('2026-11-25T00:00:00Z');
++type HostRequest = { type: string; [field: string]: unknown };
++
++export const DEFAULT_REPLIES: Record<string, unknown> = {
++  getStatus: {
++    ok: true,
++    cookies: { isSynced: true, isLoginUsable: true, syncedAtMs: NOW_MS - 120_000, cookieCount: 10, loginExpiryMs: NOW_MS + 81 * 86_400_000 },
++    settings: { targetIntervalMinutes: 240, maxSearchesPerTick: 5 },
++  },
++  getRunHistory: { ok: true, searches: [] },
++  tailLog: { ok: true, isLogFilePresent: true, logLines: ['a line'] },
++  getServices: {
++    ok: true,
++    servicesByName: { webapp: { isInstalled: true, isLoaded: true, isRunning: true, isEnabled: true, pid: 4242 } },
++  },
++  controlService: { ok: true, serviceName: 'webapp', state: {} },
++  syncCookies: { ok: true, cookies: {} },
++};
++
++export function makeFakeChrome(replies: Record<string, unknown | ((request: HostRequest) => unknown)> = {}) {
++  const merged = { ...DEFAULT_REPLIES, ...replies };
++  const requests: HostRequest[] = [];
++  const sendNativeMessage = vi.fn(async (_hostName: string, message: unknown) => {
++    const request = message as HostRequest;
++    requests.push(request);
++    const reply = merged[request.type];
++    return typeof reply === 'function' ? reply(request) : reply;
++  });
++  const chromeApi: ChromeApi = {
++    cookies: {
++      getAll: async () => [
++        { name: 'c_user', value: '1', domain: '.facebook.com', path: '/', secure: true, httpOnly: false, sameSite: 'no_restriction', hostOnly: false, session: true, storeId: '0' },
++      ],
++      onChanged: { addListener: () => {} },
++    },
++    runtime: { sendNativeMessage, onStartup: { addListener: () => {} }, onInstalled: { addListener: () => {} } },
++    alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
++  };
++  return { chromeApi, requests };
++}

@@ -1,0 +1,19 @@
+diff --git a/src/nativeHost/R1-F013.test.ts b/src/nativeHost/R1-F013.test.ts
+new file mode 100644
+index 0000000..39331bb
+--- /dev/null
++++ b/src/nativeHost/R1-F013.test.ts
+@@ -0,0 +1,13 @@
++import { expect, it } from 'vitest';
++import { controlServiceAsync } from './controlService';
++import { makeFakeLaunchd } from './fakeLaunchd';
++
++it('two Start requests sent together do not report a failure for a service that started', async () => {
++  const label = 'ai.openclaw.sifty-webapp';
++  const plistPath = '/x/ai.openclaw.sifty-webapp.plist';
++  const fake = makeFakeLaunchd({ [label]: { plistPath, isLoaded: false, isEnabled: false, pid: null } });
++  const start = () => controlServiceAsync({ action: 'start', definition: { label, plistPath }, userId: 501, runLaunchctlAsync: fake.runLaunchctlAsync });
++  const results = await Promise.allSettled([start(), start()]);
++  console.log(results.map((r) => r.status === 'rejected' ? String(r.reason) : 'ok'));
++  expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
++});

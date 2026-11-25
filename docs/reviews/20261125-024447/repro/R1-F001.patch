@@ -1,0 +1,80 @@
+diff --git a/src/extension/serverTab/refreshRace.test.ts b/src/extension/serverTab/refreshRace.test.ts
+new file mode 100644
+index 0000000..b225990
+--- /dev/null
++++ b/src/extension/serverTab/refreshRace.test.ts
+@@ -0,0 +1,74 @@
++// @vitest-environment jsdom
++import { afterEach, beforeEach, expect, it, vi } from 'vitest';
++import { startServerTab } from './startServerTab';
++
++const NOW_MS = Date.parse('2026-11-25T00:00:00Z');
++let root: HTMLElement;
++beforeEach(() => {
++  vi.useFakeTimers();
++  document.body.innerHTML = '<div id="app"></div>';
++  root = document.getElementById('app') as HTMLElement;
++});
++afterEach(() => vi.useRealTimers());
++
++function makeChrome(holdTail: { release?: () => void; hold: boolean }) {
++  const requests: any[] = [];
++  const serviceState = { current: { isInstalled: true, isLoaded: true, isRunning: true, isEnabled: true, pid: 1 } };
++  const sendNativeMessage = vi.fn(async (_h: string, m: any) => {
++    requests.push(m);
++    switch (m.type) {
++      case 'getStatus': return { ok: true, cookies: { isSynced: false }, settings: { targetIntervalMinutes: 240, maxSearchesPerTick: 5 } };
++      case 'getRunHistory': return { ok: true, searches: [] };
++      case 'getServices': { const snapshot = { ...serviceState.current }; return { ok: true, servicesByName: { webapp: snapshot } }; }
++      case 'controlService': {
++        await new Promise((r) => setTimeout(r, 10));
++        serviceState.current = { isInstalled: true, isLoaded: false, isRunning: false, isEnabled: false, pid: null as any };
++        return { ok: true, serviceName: 'webapp', state: {} };
++      }
++      case 'tailLog': {
++        if (holdTail.hold) await new Promise<void>((r) => { holdTail.release = r; });
++        return { ok: true, isLogFilePresent: true, logLines: [`content of ${m.logName}`] };
++      }
++    }
++  });
++  const chromeApi: any = {
++    cookies: { getAll: async () => [], onChanged: { addListener() {} } },
++    runtime: { sendNativeMessage, onStartup: { addListener() {} }, onInstalled: { addListener() {} } },
++    alarms: { create() {}, onAlarm: { addListener() {} } },
++  };
++  return { chromeApi, requests };
++}
++
++it('log selector changed during an in-flight refresh shows the old log under the new name', async () => {
++  const hold = { hold: false } as { release?: () => void; hold: boolean };
++  const { chromeApi, requests } = makeChrome(hold);
++  await startServerTab(root, { chromeApi, nowMs: () => NOW_MS, pollIntervalMs: 30_000 });
++  hold.hold = true;
++  await vi.advanceTimersByTimeAsync(30_000); // poll starts, tailLog(scheduler) held
++  const select = root.querySelector('select') as HTMLSelectElement;
++  select.value = 'webapp';
++  select.dispatchEvent(new Event('change'));
++  await vi.advanceTimersByTimeAsync(0);
++  hold.hold = false;
++  hold.release!();
++  await vi.advanceTimersByTimeAsync(0);
++  const shown = root.querySelector('.log-lines')!.textContent;
++  console.log('selector:', select.value, '| shown:', shown, '| tail requests:', requests.filter((r) => r.type === 'tailLog').map((r) => r.logName));
++  expect(shown).toContain('webapp');
++});
++
++it('stop pressed during an in-flight poll leaves the old service state shown', async () => {
++  const hold = { hold: false } as { release?: () => void; hold: boolean };
++  const { chromeApi } = makeChrome(hold);
++  await startServerTab(root, { chromeApi, nowMs: () => NOW_MS, pollIntervalMs: 30_000 });
++  hold.hold = true;
++  await vi.advanceTimersByTimeAsync(30_000); // poll in flight: getServices already answered "Running", tailLog held
++  (root.querySelector('button[data-action="stop"]') as HTMLButtonElement).click();
++  await vi.advanceTimersByTimeAsync(50); // controlService done; follow-up refresh dropped because poll still in flight
++  hold.hold = false;
++  hold.release!();
++  await vi.advanceTimersByTimeAsync(0);
++  const text = root.querySelector('[data-section="services"]')!.textContent;
++  console.log('services text:', text);
++  expect(text).toContain('Off');
++});

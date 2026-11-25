@@ -1,0 +1,33 @@
+diff --git a/src/extension/R1-F008.test.ts b/src/extension/R1-F008.test.ts
+new file mode 100644
+index 0000000..3ad1dd5
+--- /dev/null
++++ b/src/extension/R1-F008.test.ts
+@@ -0,0 +1,27 @@
++import Database from 'better-sqlite3';
++import { expect, it } from 'vitest';
++import { initSchema } from '../server/db';
++import { getFacebookCookieStatus, saveFacebookCookies } from '../server/facebookCookies';
++import { describeCookieStatus } from './describeCookieStatus';
++
++it('a login cookie that expired a minute ago reaches the friendly "login has expired" headline end to end', () => {
++  const database = new Database(':memory:');
++  initSchema(database);
++  const nowSeconds = Math.floor(Date.now() / 1000);
++  saveFacebookCookies(database, JSON.stringify([
++    { name: 'c_user', value: '1', expirationDate: nowSeconds + 1_000_000 },
++    { name: 'xs', value: '2', expirationDate: nowSeconds + 30 },
++  ]));
++  // Time passes: xs expires. The host re-reads the stored cookies on the next poll.
++  const later = Date.now() + 90_000;
++  const realNow = Date.now;
++  Date.now = () => later;
++  try {
++    const status = getFacebookCookieStatus(database);
++    const view = describeCookieStatus(status, later);
++    console.log(JSON.stringify(status), JSON.stringify(view));
++    expect(view.headline).toBe('Facebook login has expired');
++  } finally {
++    Date.now = realNow;
++  }
++});

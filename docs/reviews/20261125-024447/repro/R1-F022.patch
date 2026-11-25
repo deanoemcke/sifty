@@ -1,0 +1,29 @@
+diff --git a/src/nativeHost/R1-F022.test.ts b/src/nativeHost/R1-F022.test.ts
+new file mode 100644
+index 0000000..f74f063
+--- /dev/null
++++ b/src/nativeHost/R1-F022.test.ts
+@@ -0,0 +1,23 @@
++import fs from 'node:fs';
++import os from 'node:os';
++import path from 'node:path';
++import { expect, it } from 'vitest';
++import { readLogTail } from './readLogTail';
++
++it('reading 200 lines from a large log reads far less than 256 KiB', () => {
++  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tail-')), 'x.log');
++  fs.writeFileSync(file, 'a short log line\n'.repeat(100_000));
++  const readSync = fs.readSync;
++  let bytesRequested = 0;
++  (fs as any).readSync = (fd: number, buffer: Buffer, offset: number, length: number, position: number) => {
++    bytesRequested += length;
++    return readSync(fd, buffer, offset, length, position);
++  };
++  try {
++    expect(readLogTail(file, 200).logLines).toHaveLength(200);
++  } finally {
++    (fs as any).readSync = readSync;
++  }
++  console.log('bytes read', bytesRequested);
++  expect(bytesRequested).toBeLessThan(64 * 1024);
++});

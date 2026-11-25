@@ -1,0 +1,21 @@
+diff --git a/src/extension/R1-F010.test.ts b/src/extension/R1-F010.test.ts
+new file mode 100644
+index 0000000..679b147
+--- /dev/null
++++ b/src/extension/R1-F010.test.ts
+@@ -0,0 +1,15 @@
++import { afterEach, beforeEach, expect, it, vi } from 'vitest';
++import { createCookieSyncScheduler } from './syncScheduler';
++
++beforeEach(() => vi.useFakeTimers());
++afterEach(() => vi.useRealTimers());
++
++it('syncs at least once even if a cookie changes every 4 s for 10 minutes', async () => {
++  const syncAsync = vi.fn().mockResolvedValue(undefined);
++  const scheduler = createCookieSyncScheduler({ waitMs: 5000, syncAsync, onSyncError: vi.fn() });
++  for (let elapsedMs = 0; elapsedMs < 10 * 60_000; elapsedMs += 4000) {
++    scheduler.requestSync();
++    await vi.advanceTimersByTimeAsync(4000);
++  }
++  expect(syncAsync).toHaveBeenCalled();
++});

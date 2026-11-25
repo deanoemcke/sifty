@@ -1,0 +1,620 @@
+{
+  "groups": [
+    {
+      "headline": "The tab can show the wrong log or an old service state",
+      "plainSummary": "If you pick a different log, or press Stop, while the tab is already refreshing, nothing new is fetched. The tab then shows the old log under the new log's name, or still says Running after you pressed Stop, until the next automatic refresh half a minute later.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It makes the tab show wrong information right after you act, and the fix is small."
+      },
+      "ifAccepted": "A refresh that is requested while another is running is remembered and runs straight after the current one finishes.",
+      "ifLeftAlone": "After pressing Stop or changing the log, the tab can show out-of-date information for up to 30 seconds.",
+      "howLikely": "Fairly often. A refresh takes seconds and runs every 30 seconds, and every button press starts another one.",
+      "members": [
+        {
+          "findingId": "R1-F001",
+          "plainSummary": "Shows that a refresh asked for during another refresh is silently thrown away."
+        }
+      ]
+    },
+    {
+      "headline": "One failed request blanks the whole tab",
+      "plainSummary": "If any one of the four things the tab asks the server for fails, nothing is shown at all. The cookie status, run history and settings form disappear and the settings cannot be edited, even though they did not need the failed request. A database problem also stops service control and log reading.",
+      "fixSize": "A few lines in the tab and a few in the host start-up, plus tests.",
+      "whyTogether": "Both change how a refresh copes with one failing request: the tab shows each panel from its own request, and the host opens the database only when a request needs it.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A single launchctl or log error should not hide unrelated panels, or stop you restarting the webapp when the database is the problem."
+      },
+      "ifAccepted": "Each panel is filled in from its own request, and a failure shows only in the panel it affects. The host no longer needs the database to start, so service buttons keep working if the database is locked.",
+      "ifLeftAlone": "One bad log read or service query leaves the tab empty with a single error banner, and a locked database makes the restart buttons useless.",
+      "howLikely": "Occasional. It needs one request to fail, but the tab is the tool you would use to recover from that failure.",
+      "members": [
+        {
+          "findingId": "R1-F002",
+          "plainSummary": "The tab drops every panel when any one of its four requests fails."
+        },
+        {
+          "findingId": "R1-F016",
+          "plainSummary": "The host also fails to start if the database cannot be opened, and the tab leaves stale values showing."
+        }
+      ]
+    },
+    {
+      "headline": "A healthy idle scheduler is shown as a warning, and Start runs a full scrape",
+      "plainSummary": "The scheduler wakes every 30 minutes and sits idle in between. The tab shows that normal state as 'Loaded but not running' in warning colour, and pressing Start on it launches a full scrape straight away.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A working scheduler looks broken, and the suggested button does something the person did not expect."
+      },
+      "ifAccepted": "An idle, loaded scheduler shows as healthy ('waiting for next run') and offers only Stop, so Start can no longer trigger an accidental scrape. Hiding the button is simpler and safer than renaming it.",
+      "ifLeftAlone": "The scheduler looks faulty all the time, and pressing the suggested Start button starts an unscheduled scrape.",
+      "howLikely": "Every time the scheduler is switched on and someone looks at the tab.",
+      "members": [
+        {
+          "findingId": "R1-F003",
+          "plainSummary": "Idle between ticks is the scheduler's normal state, not a fault, and Start on it runs a scrape."
+        }
+      ]
+    },
+    {
+      "headline": "Missing-scheduler advice points at a command that does nothing for it",
+      "plainSummary": "When the scheduler's job file is missing, the tab tells you to run the install command. That command never installs the scheduler, so following the advice changes nothing.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The advice is wrong for one of the three services, and fixing it is small."
+      },
+      "ifAccepted": "The message for the scheduler says its job file is missing and leaves out the install command. The installer is left alone, because the scheduler was deliberately kept out of it.",
+      "ifLeftAlone": "Someone with a missing scheduler job file runs the command, sees no change, and has to work out the real cause.",
+      "howLikely": "Rare. It needs the scheduler's job file to be missing.",
+      "members": [
+        {
+          "findingId": "R1-F004",
+          "plainSummary": "The 'not installed' advice is the same for all three services but only two can be installed."
+        }
+      ]
+    },
+    {
+      "headline": "Bad replies from the server show as 'undefined' or 'NaN' text, and no test would notice",
+      "plainSummary": "If the server sends a reply with an unexpected inner shape, such as an older installed host, the tab shows text like 'undefined' or 'NaN days ago' instead of an error. Nothing tests the checking code that is meant to prevent this.",
+      "fixSize": "A few dozen lines in the client plus a new test file.",
+      "whyTogether": "The checks and their tests are one step: write failing tests for each bad shape first, then tighten the checks until they pass.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "Garbled text is shown as fact, and the checking code has no tests at all, so it could be broken without anyone knowing."
+      },
+      "ifAccepted": "The client checks the inner shape of each reply and shows a clear error when it is wrong. Tests feed it real host replies and each kind of bad reply.",
+      "ifLeftAlone": "A mismatched host shows nonsense such as 'Due in NaN days' with no warning, and the checks can quietly stop working.",
+      "howLikely": "Rare today because the extension and host ship together. It becomes likely after any partial update.",
+      "members": [
+        {
+          "findingId": "R1-F006",
+          "plainSummary": "Inner fields of replies are trusted without checking, so bad shapes display as garbage."
+        },
+        {
+          "findingId": "R1-F015",
+          "plainSummary": "Nothing tests the reply checks or ties real host replies to what the tab expects."
+        }
+      ]
+    },
+    {
+      "headline": "A launchctl output change would silently show a stopped service as enabled",
+      "plainSummary": "If the system tool that lists disabled services ever prints in a different format, a service you turned off would show as enabled, with no error.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The code says it never shows a confident wrong answer, and this case breaks that promise cheaply."
+      },
+      "ifAccepted": "An unrecognised line makes the check fail with a clear error instead of being read as enabled.",
+      "ifLeftAlone": "A format change in macOS would quietly show wrong service states.",
+      "howLikely": "Rare. It needs Apple to change the output format.",
+      "members": [
+        {
+          "findingId": "R1-F007",
+          "plainSummary": "Unrecognised output is read as enabled instead of raising an error."
+        }
+      ]
+    },
+    {
+      "headline": "Re-running the installer after a failure can leave services switched on at login",
+      "plainSummary": "The installer writes the service file before turning the service off at login. If the second step fails, the next run sees the file and skips it. The webapp and ngrok then start at the next login, which the installer promises they will not.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It breaks a stated guarantee and is cheap to fix by switching the service off before writing the file."
+      },
+      "ifAccepted": "The service is switched off first, so a failure leaves nothing behind and a re-run does the job properly.",
+      "ifLeftAlone": "After a half-failed install, the webapp and ngrok start by themselves at next login.",
+      "howLikely": "Rare. It needs the second install step to fail, and it is only run once per machine.",
+      "members": [
+        {
+          "findingId": "R1-F009",
+          "plainSummary": "The 'first install' check depends on a file that is written before the step that can fail."
+        }
+      ]
+    },
+    {
+      "headline": "Cookie sync can be postponed forever if a cookie keeps changing",
+      "plainSummary": "The sync waits for five quiet seconds after every Facebook cookie change. If a cookie changed every few seconds for as long as a Facebook tab was open, no sync would ever run, including the hourly one.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "Fixing it is cheap and a stuck sync would leave the server with a stale login."
+      },
+      "ifAccepted": "The wait gets a ceiling, for example one minute, after which the sync runs anyway.",
+      "ifLeftAlone": "A constantly changing cookie could stop syncing, so scraping would use an old login.",
+      "howLikely": "Unknown. It was not shown that Facebook changes a cookie that often, but nothing in the code prevents it.",
+      "members": [
+        {
+          "findingId": "R1-F010",
+          "plainSummary": "The wait restarts on every change with no cap on the total delay."
+        }
+      ]
+    },
+    {
+      "headline": "Double-clicking a service button reports a failure for a service that started",
+      "plainSummary": "Pressing Start twice quickly sends two requests. The second one fails with a confusing launchctl error, and the tab says 'Could not start' for a service that is actually running.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The tab shows a false failure and the fix is small."
+      },
+      "ifAccepted": "Service buttons are disabled while a request is in flight.",
+      "ifLeftAlone": "Double-clicking Start or Restart shows a false 'Could not start' message.",
+      "howLikely": "Plausible. Each request takes seconds, so a second click is easy.",
+      "members": [
+        {
+          "findingId": "R1-F013",
+          "plainSummary": "Nothing stops a second control request while the first is still running."
+        }
+      ]
+    },
+    {
+      "headline": "Old sync and service messages stay on screen",
+      "plainSummary": "After a manual cookie sync or a service action fails, its message stays beside the status even after the problem has gone. It has no time, so it reads as current.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A stale failure message next to healthy status is misleading and cheap to fix."
+      },
+      "ifAccepted": "The message is cleared on the next successful refresh, so only a current problem stays on screen.",
+      "ifLeftAlone": "A 'Cookie sync failed' or 'Could not start' message can sit there long after things recovered.",
+      "howLikely": "Whenever an action fails once and later recovers.",
+      "members": [
+        {
+          "findingId": "R1-F014",
+          "plainSummary": "The sync and service messages are never cleared by later successful refreshes."
+        }
+      ]
+    },
+    {
+      "headline": "The extension bundle test passes even if it checks nothing",
+      "plainSummary": "The test that stops server database code leaking into the extension passes if the build produces no files to check, so a changed build setup would switch the guard off without anyone noticing.",
+      "fixSize": "One line.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It is a one-line fix that keeps a guard from silently becoming empty."
+      },
+      "ifAccepted": "The test also fails if it had nothing to inspect.",
+      "ifLeftAlone": "The guard could stop working without any failure.",
+      "howLikely": "Rare. It needs a build tool change.",
+      "members": [
+        {
+          "findingId": "R1-F012",
+          "plainSummary": "The test never checks that any built file was examined."
+        }
+      ]
+    },
+    {
+      "headline": "The tab refreshes every 30 seconds while hidden",
+      "plainSummary": "The pinned tab is usually in the background, yet it keeps starting server processes every 30 seconds for output nobody sees.",
+      "fixSize": "A few lines in one file, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "It removes most of the background cost cheaply and makes the bigger redesign unnecessary."
+      },
+      "ifAccepted": "Refreshes are skipped while the tab is hidden, and one refresh runs when it becomes visible again.",
+      "ifLeftAlone": "Four server processes and several launchctl calls run all day for nobody.",
+      "howLikely": "Constantly. Every tick while the tab sits in the background.",
+      "members": [
+        {
+          "findingId": "R1-F018",
+          "plainSummary": "Shows the timer still sends four requests per tick while the page is hidden."
+        }
+      ]
+    },
+    {
+      "headline": "The design document disagrees with the code",
+      "plainSummary": "The document describes a long-lived connection, a settings message and a tick-interval display that do not exist, and leaves out the services request. The code sends one request per host process.",
+      "fixSize": "Edits to one document.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A wrong design document misleads the next person, and the fix is only text."
+      },
+      "ifAccepted": "The document is updated to match the code as written.",
+      "ifLeftAlone": "Readers are told the tab uses a long-lived connection, which explains the wrong picture of its cost.",
+      "howLikely": "Every time someone reads the document.",
+      "members": [
+        {
+          "findingId": "R1-F011",
+          "plainSummary": "The document's transport, message list and tab contents do not match the code."
+        }
+      ]
+    },
+    {
+      "headline": "The host log fills with start-up noise that hides real errors",
+      "plainSummary": "Every host start adds about three lines of routine messages to a log file that is never trimmed. The tab's 'native-host' view shows only the last 200 lines, so real errors scroll out within minutes.",
+      "fixSize": "A few lines in one or two files.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "It is real but mostly a side effect of the four-processes-per-refresh cost, which the hidden-tab fix cuts sharply.",
+        "reopenIf": "The log is needed to diagnose a real host failure and the noise gets in the way, or the file grows large."
+      },
+      "ifAccepted": "The routine start-up lines would be kept out of the log, or the log trimmed when the host starts.",
+      "ifLeftAlone": "The log grows slowly and is noisy, but only matters when someone reads it.",
+      "howLikely": "Steady growth, though much slower once hidden tabs stop refreshing.",
+      "members": [
+        {
+          "findingId": "R1-F005",
+          "plainSummary": "Each host start appends routine lines to a log that is never rotated."
+        }
+      ]
+    },
+    {
+      "headline": "Four server processes per refresh",
+      "plainSummary": "Each refresh starts four separate server processes, each loading Node and opening the database. A single combined request would start one.",
+      "fixSize": "Several files across the host, client and tab.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "It is a protocol redesign the author chose not to do, and the hidden-tab fix removes most of the cost.",
+        "reopenIf": "Having the tab open makes the machine sluggish, or the protocol is reworked for another reason."
+      },
+      "ifAccepted": "A single snapshot request replaces the four, so a refresh costs one start-up.",
+      "ifLeftAlone": "A visible tab still starts four processes every 30 seconds, which is wasteful but works.",
+      "howLikely": "Constant while the tab is visible.",
+      "members": [
+        {
+          "findingId": "R1-F017",
+          "plainSummary": "Each refresh sends four requests, each of which starts its own host process."
+        }
+      ]
+    },
+    {
+      "headline": "Repeated identical launchctl calls",
+      "plainSummary": "The same system command runs once per service in one request, and control actions read the state two or three times. It adds a little time to each refresh.",
+      "fixSize": "Several files.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The cost is small and the change touches several state-reading functions.",
+        "reopenIf": "Refreshes feel slow, or the state-reading code is changed for another reason."
+      },
+      "ifAccepted": "The command runs once per request and the already-read state is reused.",
+      "ifLeftAlone": "A few extra quick commands per refresh.",
+      "howLikely": "Constant but cheap.",
+      "members": [
+        {
+          "findingId": "R1-F019",
+          "plainSummary": "The same command runs once per service, and actions re-read state repeatedly."
+        }
+      ]
+    },
+    {
+      "headline": "Host requests and replies are written out separately on both sides",
+      "plainSummary": "The message names and reply shapes are repeated in the host, the tab's client and the cookie sync code, so a rename can break one side without the build noticing.",
+      "fixSize": "Several files across the host, tab and cookie sync.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "A large cross-cutting change that the author deliberately left out, and the reply checks above cover the worst effect.",
+        "reopenIf": "A new message type is added, or a drift between the two sides causes a real bug."
+      },
+      "ifAccepted": "One shared request type is used by the host, the client and the cookie sync.",
+      "ifLeftAlone": "The two sides must be kept in step by hand.",
+      "howLikely": "Only when someone changes a message.",
+      "members": [
+        {
+          "findingId": "R1-F020",
+          "plainSummary": "The protocol is restated in three places with casts that throw the types away."
+        }
+      ]
+    },
+    {
+      "headline": "A service's details are spread over four files",
+      "plainSummary": "A service's name, title, log and install status live in separate tables, and a new service would silently get no title.",
+      "fixSize": "Several files.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "There are only three services and nothing is wrong today.",
+        "reopenIf": "A fourth service is added."
+      },
+      "ifAccepted": "One table holds each service's label, title and log, and the types are used end to end.",
+      "ifLeftAlone": "Adding a fourth service means editing four places and a missing title goes unnoticed.",
+      "howLikely": "Only when a service is added.",
+      "members": [
+        {
+          "findingId": "R1-F021",
+          "plainSummary": "Service facts are split across files, with loose string types between them."
+        }
+      ]
+    },
+    {
+      "headline": "The tab computes when a search is due separately from the scheduler",
+      "plainSummary": "The tab adds the interval to the last run time itself, and the scheduler does the same sum in three places. If the scheduler's rule changes, the tab's 'due' times would be wrong.",
+      "fixSize": "A few lines in two files, one of them the already-merged scheduler.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "It edits the merged scheduler, which is outside this change.",
+        "reopenIf": "The scheduler's due rule is changed."
+      },
+      "ifAccepted": "One shared helper is used by the scheduler and the tab.",
+      "ifLeftAlone": "The tab's due times could drift from the scheduler's if the rule changes.",
+      "howLikely": "Only when the scheduling rule changes.",
+      "members": [
+        {
+          "findingId": "R1-F023",
+          "plainSummary": "The due-time sum is copied between the tab and the scheduler."
+        }
+      ]
+    },
+    {
+      "headline": "Shell wrappers repeat the Node set-up and a log path",
+      "plainSummary": "Three wrapper scripts load Node the same way and the host wrapper hard-codes a log path also named in code.",
+      "fixSize": "A few lines across three or four files.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "Shell wrappers cannot be tested here and one is outside this change.",
+        "reopenIf": "The Node set-up is changed, or the log path in code and script drift apart."
+      },
+      "ifAccepted": "One shared script sets up Node, and the log path is shared or checked.",
+      "ifLeftAlone": "Changing the Node version or log path means editing several scripts.",
+      "howLikely": "Only when those change.",
+      "members": [
+        {
+          "findingId": "R1-F025",
+          "plainSummary": "The wrappers repeat the same Node set-up lines and a hard-coded log path."
+        }
+      ]
+    },
+    {
+      "headline": "The 'login has expired' message is almost never shown",
+      "plainSummary": "The tab has a friendlier message for an expired login, but the server already reports expired logins as unusable, so people see the generic message instead.",
+      "fixSize": "A few lines in one place.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The branch is harmless, the generic text is still accurate, and removing it is churn.",
+        "reopenIf": "The server stops dropping expired cookies, or the generic message confuses someone."
+      },
+      "ifAccepted": "The unused message would be deleted.",
+      "ifLeftAlone": "People see 'cannot be used' with a reason, which is correct.",
+      "howLikely": "Almost always. It only matters in the seconds between a read and a render.",
+      "members": [
+        {
+          "findingId": "R1-F008",
+          "plainSummary": "The expired-login branch is not reached end to end."
+        }
+      ]
+    },
+    {
+      "headline": "The run history reads every column of every saved search",
+      "plainSummary": "The host loads whole saved-search rows and filters out searches without alerts in code.",
+      "fixSize": "A few lines in one place.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The table is small, so the saving is negligible.",
+        "reopenIf": "The saved-search table grows large."
+      },
+      "ifAccepted": "A narrower query would fetch only the needed columns.",
+      "ifLeftAlone": "A little extra data is read, which no one will notice.",
+      "howLikely": "Constant but negligible.",
+      "members": [
+        {
+          "findingId": "R1-F024",
+          "plainSummary": "All columns are read and filtered in code."
+        }
+      ]
+    },
+    {
+      "headline": "Reading a log always reads 256 KiB",
+      "plainSummary": "Showing 200 log lines always reads and splits up to 256 KiB, whatever the log's size.",
+      "fixSize": "A few lines in one file.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The read is already capped, so the saving is small.",
+        "reopenIf": "Log refreshes are measurably slow."
+      },
+      "ifAccepted": "A small block at the end of the file would be read first and grown only if needed.",
+      "ifLeftAlone": "A quarter of a megabyte is read on each refresh, which is quick.",
+      "howLikely": "Constant but negligible.",
+      "members": [
+        {
+          "findingId": "R1-F022",
+          "plainSummary": "The read size is fixed at 256 KiB instead of sized to the lines needed."
+        }
+      ]
+    },
+    {
+      "headline": "A test stand-in for launchctl sits beside production code",
+      "plainSummary": "The fake launchctl used by tests lives in the source folder, so a build that imported it would include it.",
+      "fixSize": "One file moved.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "Nothing in production imports it, so moving it fixes no current problem.",
+        "reopenIf": "Production code or a build begins importing it."
+      },
+      "ifAccepted": "The fake would move beside the tests.",
+      "ifLeftAlone": "It stays where it is and nothing changes.",
+      "howLikely": "Only if something starts importing it from production code.",
+      "members": [
+        {
+          "findingId": "R1-F026",
+          "plainSummary": "The fake sits under the production source folder."
+        }
+      ]
+    },
+    {
+      "headline": "The cookie type repeats seven fields of the browser's type",
+      "plainSummary": "The type for a cookie sent to the host lists fields the browser's own type already has.",
+      "fixSize": "A few lines in one file.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "Listing them also documents exactly what the host receives, so the gain is small.",
+        "reopenIf": "The browser's cookie type changes and the copy falls out of date."
+      },
+      "ifAccepted": "The type would be derived from the browser's type.",
+      "ifLeftAlone": "The type stays spelled out, which is easy to read.",
+      "howLikely": "Never causes a bug unless the browser type changes.",
+      "members": [
+        {
+          "findingId": "R1-F027",
+          "plainSummary": "The type copies fields instead of picking them."
+        }
+      ]
+    },
+    {
+      "headline": "A panel that fails to load keeps showing old information with no sign which one",
+      "plainSummary": "When one of the tab's data requests fails, that panel keeps its last content, for example 'Running'. The only hint is one error banner that names the first failure only.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The tab is a control panel, so stale 'Running' text that looks current is misleading, and the fix is small."
+      },
+      "ifAccepted": "The error banner lists every request that failed, so a person can see which panels are out of date. This is chosen over marking each panel because it needs no new display for each panel.",
+      "ifLeftAlone": "A person can read an old status as current and only see the banner naming one failure.",
+      "howLikely": "Uncommon. It needs a request to fail while others succeed, and the earlier fix to stop one failure blanking everything made this the visible result.",
+      "members": [
+        {
+          "findingId": "R1-F029",
+          "plainSummary": "Failed panels keep old content and the banner names only the first failure."
+        }
+      ]
+    },
+    {
+      "headline": "Pressing a service button while another action is running does nothing and says nothing",
+      "plainSummary": "While one start, stop or restart is in progress, clicks on any other service button are ignored. The buttons still look usable and no message appears.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A silently ignored click on a control is confusing, and the earlier fix for double clicks caused it."
+      },
+      "ifAccepted": "All service buttons are shown as disabled while an action runs, so no click is swallowed unseen. This is chosen over a separate lock per service because it also covers repeat clicks on the same button.",
+      "ifLeftAlone": "Someone presses Stop on ngrok while the webapp is still starting, nothing happens, and they have to notice and press again.",
+      "howLikely": "Occasional. Each start or stop takes several seconds, and the tab is used by one person.",
+      "members": [
+        {
+          "findingId": "R1-F030",
+          "plainSummary": "Clicks during any running service action are dropped with no feedback."
+        }
+      ]
+    },
+    {
+      "headline": "The tab's refresh timer and listener can never be stopped",
+      "plainSummary": "Opening the server tab code more than once on the same page stacks up timers and listeners. In real use the tab is opened once, so nobody sees it.",
+      "fixSize": "A few lines in one place, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The tab starts once and lives as long as the page, so this only matters for tests, and no test is failing.",
+        "reopenIf": "A test starts to fail or interfere because of leftover timers, or the tab can be opened and closed within one page."
+      },
+      "ifAccepted": "Starting the tab would return a way to stop its timer and listener, and tests would call it when they finish.",
+      "ifLeftAlone": "Nothing changes for users. Tests that open several tabs on one page could pick up extra refreshes from earlier ones.",
+      "howLikely": "Never in real use. Only a test that opens several tabs could notice it.",
+      "members": [
+        {
+          "findingId": "R1-F028",
+          "plainSummary": "The refresh timer and visibility listener have no way to be removed."
+        }
+      ]
+    },
+    {
+      "headline": "The rule that the scheduler cannot be installed is written in three places",
+      "plainSummary": "Three separate bits of code each state that the scheduler is special. Adding a fourth service of that kind could update some and miss others.",
+      "fixSize": "A few lines in one file, plus a test.",
+      "whyTogether": "Stands alone.",
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "Nothing is wrong today and an existing test already catches a mismatch for any new service.",
+        "reopenIf": "A fourth service is added, or the install advice is ever shown wrongly."
+      },
+      "ifAccepted": "Each service would carry a single 'can be installed' flag, and the install advice and the type would both read from it.",
+      "ifLeftAlone": "The code stays as it is. A new service of this kind would be caught by a test rather than by the design.",
+      "howLikely": "Rare. It only matters when a new service is added, and a test would flag it.",
+      "members": [
+        {
+          "findingId": "R1-F031",
+          "plainSummary": "The scheduler exception is repeated in the install advice, the interval list and the type."
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "kind": "conflict",
+      "findingIds": [
+        "R1-F018",
+        "R1-F017"
+      ],
+      "plainSummary": "Skipping refreshes while the tab is hidden removes most of the cost the combined request is meant to cut.",
+      "suggestedResolution": "Accept R1-F018 and defer R1-F017. Reopen R1-F017 only if the visible tab is still too heavy."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F005",
+        "R1-F017"
+      ],
+      "plainSummary": "The log noise grows with the number of host starts, so cutting starts also slows the log growth."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F006",
+        "R1-F020"
+      ],
+      "plainSummary": "R1-F006 checks reply shapes while the tab runs. R1-F020 would make the same shapes shared at build time. Doing R1-F006 first covers the visible bug."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F003",
+        "R1-F004"
+      ],
+      "plainSummary": "Both fix how the tab describes the scheduler, so make the changes in the same place."
+    },
+    {
+      "kind": "related",
+      "findingIds": [
+        "R1-F001",
+        "R1-F013"
+      ],
+      "plainSummary": "Both come from service actions racing with other requests. Disabling buttons does not cover a refresh already running, so both are needed."
+    }
+  ]
+}
