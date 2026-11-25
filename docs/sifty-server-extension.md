@@ -31,7 +31,7 @@ Native messaging means no network port and no token: Chrome only lets the extens
 
 - **Full tab, not popup or side panel.** Logs and per-search history need room. A popup closes on blur. Same extension-page mechanics, so reversible. The toolbar button focuses the tab if open, otherwise opens it pinned.
 - **Cookies are read with `chrome.cookies`, not a content script.** `xs` is `HttpOnly`; page scripts cannot read it. No page access is needed.
-- **Sync runs in the background worker**, debounced a few seconds after the last `onChanged` (Facebook rotates several cookies together). It also runs on browser start and from a "Sync now" button, so a missed update is recovered.
+- **Sync runs in the background worker**, debounced a few seconds after the last `onChanged` (Facebook rotates several cookies together), but never waiting more than a minute from the first change of a burst. It also runs on browser start and from a "Sync now" button, so a missed update is recovered.
 - **Database is the single source of truth** for settings and cookies. The scheduler is a fresh process each tick, so it reads settings at the start of every run: no reload logic.
 - **Cookie values are never shown** in the tab or returned to it. Status only: last synced, count, earliest expiry.
 - **Desktop Chrome on this Mac only.** Phone access to these controls is a non-goal.

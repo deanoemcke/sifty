@@ -12,11 +12,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { installServiceAsync } from '../src/nativeHost/installService';
 import { runLaunchctlAsync } from '../src/nativeHost/runLaunchctl';
 import { getCurrentUserId, getLaunchAgentsDirectory } from '../src/nativeHost/hostEnvironment';
 import { buildInstallablePlistOptions, NGROK_PATH } from '../src/nativeHost/serviceDefinitions';
-import { buildServicePlist } from '../src/nativeHost/servicePlist';
-import { writeFileAtomically } from '../src/nativeHost/writeFileAtomically';
 import { getWorktreePort } from '../vite.config.helpers';
 
 const LAUNCH_AGENTS_DIRECTORY = getLaunchAgentsDirectory();
@@ -40,19 +39,12 @@ async function main(): Promise<void> {
   );
 
   for (const options of Object.values(optionsByServiceName)) {
-    const plistPath = path.join(LAUNCH_AGENTS_DIRECTORY, `${options.label}.plist`);
-    const isFirstInstall = !fs.existsSync(plistPath);
-
-    writeFileAtomically(plistPath, buildServicePlist(options));
-    console.log(`Wrote ${plistPath}`);
-
-    if (isFirstInstall) {
-      const result = await runLaunchctlAsync(['disable', `gui/${userId}/${options.label}`]);
-      if (result.exitCode !== 0) {
-        throw new Error(`launchctl disable ${options.label} failed: ${result.output.trim()}`);
-      }
-      console.log(`Disabled ${options.label} — start it from the Sifty Server tab`);
-    }
+    await installServiceAsync({
+      options,
+      plistDirectory: LAUNCH_AGENTS_DIRECTORY,
+      userId,
+      runLaunchctlAsync,
+    });
   }
 }
 

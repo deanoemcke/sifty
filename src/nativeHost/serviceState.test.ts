@@ -102,6 +102,17 @@ describe('parseServiceState', () => {
     ).toMatchObject({ isEnabled: true });
   });
 
+  it('refuses to guess when the disabled list names the service in a format it does not recognise', () => {
+    expect(() =>
+      parseServiceState({
+        label: 'ai.openclaw.sifty-scheduler',
+        listExitCode: LIST_EXIT_NOT_LOADED,
+        listOutput: 'Could not find service',
+        printDisabledOutput: '\t\t"ai.openclaw.sifty-scheduler" => true',
+      })
+    ).toThrow(/print-disabled.*ai\.openclaw\.sifty-scheduler/);
+  });
+
   it('refuses to guess when launchctl fails for another reason', () => {
     expect(() =>
       parseServiceState({

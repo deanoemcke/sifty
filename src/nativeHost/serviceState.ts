@@ -14,8 +14,13 @@ const PID_PATTERN = /"PID" = (\d+);/;
 function readEnabledFlag(printDisabledOutput: string, label: string): boolean {
   // Lines look like:  "ai.openclaw.sifty-scheduler" => disabled
   for (const line of printDisabledOutput.split('\n')) {
-    const match = /^\s*"([^"]+)" => (enabled|disabled)\s*$/.exec(line);
-    if (match?.[1] === label) return match[2] === 'enabled';
+    const match = /^\s*"([^"]+)" => (.*?)\s*$/.exec(line);
+    if (match?.[1] !== label) continue;
+    if (match[2] === 'enabled') return true;
+    if (match[2] === 'disabled') return false;
+    throw new Error(
+      `launchctl print-disabled lists ${label} as "${match[2]}", expected enabled or disabled`
+    );
   }
   // Not listed means launchd's default, which is enabled.
   return true;

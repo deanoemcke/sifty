@@ -12,7 +12,12 @@ describe('createCookieSyncScheduler', () => {
 
   it('does not sync until the wait has passed', async () => {
     const syncAsync = vi.fn().mockResolvedValue(undefined);
-    const scheduler = createCookieSyncScheduler({ waitMs: 5000, syncAsync, onSyncError: vi.fn() });
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 5000,
+      maxWaitMs: 60_000,
+      syncAsync,
+      onSyncError: vi.fn(),
+    });
 
     scheduler.requestSync();
     await vi.advanceTimersByTimeAsync(4999);
@@ -24,7 +29,12 @@ describe('createCookieSyncScheduler', () => {
 
   it('turns a burst of requests into one sync, measured from the last request', async () => {
     const syncAsync = vi.fn().mockResolvedValue(undefined);
-    const scheduler = createCookieSyncScheduler({ waitMs: 5000, syncAsync, onSyncError: vi.fn() });
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 5000,
+      maxWaitMs: 60_000,
+      syncAsync,
+      onSyncError: vi.fn(),
+    });
 
     scheduler.requestSync();
     await vi.advanceTimersByTimeAsync(3000);
@@ -40,7 +50,12 @@ describe('createCookieSyncScheduler', () => {
 
   it('syncs again for a request made after an earlier sync finished', async () => {
     const syncAsync = vi.fn().mockResolvedValue(undefined);
-    const scheduler = createCookieSyncScheduler({ waitMs: 1000, syncAsync, onSyncError: vi.fn() });
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 1000,
+      maxWaitMs: 60_000,
+      syncAsync,
+      onSyncError: vi.fn(),
+    });
 
     scheduler.requestSync();
     await vi.advanceTimersByTimeAsync(1000);
@@ -56,7 +71,12 @@ describe('createCookieSyncScheduler', () => {
       .mockRejectedValueOnce(new Error('host unavailable'))
       .mockResolvedValue(undefined);
     const onSyncError = vi.fn();
-    const scheduler = createCookieSyncScheduler({ waitMs: 1000, syncAsync, onSyncError });
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 1000,
+      maxWaitMs: 60_000,
+      syncAsync,
+      onSyncError,
+    });
 
     scheduler.requestSync();
     await vi.advanceTimersByTimeAsync(1000);
@@ -81,7 +101,12 @@ describe('createCookieSyncScheduler', () => {
           })
       )
       .mockResolvedValue(undefined);
-    const scheduler = createCookieSyncScheduler({ waitMs: 1000, syncAsync, onSyncError: vi.fn() });
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 1000,
+      maxWaitMs: 60_000,
+      syncAsync,
+      onSyncError: vi.fn(),
+    });
 
     scheduler.requestSync();
     await vi.advanceTimersByTimeAsync(1000);
@@ -107,7 +132,12 @@ describe('createCookieSyncScheduler', () => {
       await new Promise((resolve) => setTimeout(resolve, 3000));
       activeSyncCount--;
     });
-    const scheduler = createCookieSyncScheduler({ waitMs: 1000, syncAsync, onSyncError: vi.fn() });
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 1000,
+      maxWaitMs: 60_000,
+      syncAsync,
+      onSyncError: vi.fn(),
+    });
 
     for (let index = 0; index < 5; index++) {
       scheduler.requestSync();
@@ -116,5 +146,49 @@ describe('createCookieSyncScheduler', () => {
     await vi.advanceTimersByTimeAsync(20_000);
 
     expect(maxActiveSyncCount).toBe(1);
+  });
+
+  it('syncs within the maximum wait even while requests keep arriving', async () => {
+    const syncAsync = vi.fn().mockResolvedValue(undefined);
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 5000,
+      maxWaitMs: 30_000,
+      syncAsync,
+      onSyncError: vi.fn(),
+    });
+
+    for (let elapsedMs = 0; elapsedMs < 28_000; elapsedMs += 4000) {
+      scheduler.requestSync();
+      await vi.advanceTimersByTimeAsync(4000);
+    }
+    expect(syncAsync).not.toHaveBeenCalled();
+    scheduler.requestSync();
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(syncAsync).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(syncAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('measures the maximum wait afresh for the next burst', async () => {
+    const syncAsync = vi.fn().mockResolvedValue(undefined);
+    const scheduler = createCookieSyncScheduler({
+      waitMs: 5000,
+      maxWaitMs: 10_000,
+      syncAsync,
+      onSyncError: vi.fn(),
+    });
+
+    for (let elapsedMs = 0; elapsedMs < 12_000; elapsedMs += 4000) {
+      scheduler.requestSync();
+      await vi.advanceTimersByTimeAsync(4000);
+    }
+    expect(syncAsync).toHaveBeenCalledTimes(1);
+
+    scheduler.requestSync();
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(syncAsync).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(syncAsync).toHaveBeenCalledTimes(2);
   });
 });

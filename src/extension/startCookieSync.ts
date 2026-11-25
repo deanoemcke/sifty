@@ -38,6 +38,8 @@ export type CookieSyncOutcome =
 // How long cookie changes must stop for before syncing. Facebook rotates
 // several cookies at once, so this lets the burst settle.
 export const COOKIE_SYNC_WAIT_MS = 5000;
+// Even if cookies keep changing, sync at least this often.
+export const COOKIE_SYNC_MAX_WAIT_MS = 60_000;
 export const COOKIE_RESYNC_ALARM_NAME = 'sifty-cookie-resync';
 // A missed push (host not installed yet, Chrome closed mid-change) repairs
 // itself on the next resync, so no retry logic is needed.
@@ -87,6 +89,7 @@ export function describeSyncOutcome(outcome: CookieSyncOutcome): string {
 export function startCookieSync(chromeApi: ChromeApi, options: { log: (message: string) => void }) {
   const scheduler = createCookieSyncScheduler({
     waitMs: COOKIE_SYNC_WAIT_MS,
+    maxWaitMs: COOKIE_SYNC_MAX_WAIT_MS,
     syncAsync: async () => {
       options.log(describeSyncOutcome(await syncFacebookCookiesAsync(chromeApi)));
     },
