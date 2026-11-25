@@ -40,10 +40,21 @@ function fulfilledValueOf<Value>(result: PanelResult<Value>): Value {
 const WEBAPP_PLIST = '/plists/webapp.plist';
 const NGROK_PLIST = '/plists/ngrok.plist';
 
-function clientReplying(reply: unknown) {
-  return createHostClient({
-    runtime: { sendNativeMessage: async () => reply },
+function clientRecording(reply: unknown) {
+  const sentMessages: unknown[] = [];
+  const client = createHostClient({
+    runtime: {
+      sendNativeMessage: async (_hostName: string, message: unknown) => {
+        sentMessages.push(message);
+        return reply;
+      },
+    },
   } as unknown as Pick<ChromeApi, 'runtime'>);
+  return { client, sentMessages };
+}
+
+function clientReplying(reply: unknown) {
+  return clientRecording(reply).client;
 }
 
 function makeRealHost(logFilePath: string) {
@@ -234,20 +245,15 @@ const VALID_PANEL_REPLIES: Record<PanelName, unknown> = {
   logTail: { ok: true, isLogFilePresent: true, logLines: [] },
 };
 
+const PANEL_NAMES = Object.keys(VALID_PANEL_REPLIES) as PanelName[];
+
 function getPanelsWithSubReplies(subRepliesByPanelName: Partial<Record<PanelName, unknown>>) {
   const repliesByPanelName = { ...VALID_PANEL_REPLIES, ...subRepliesByPanelName };
   return clientReplying({
     ok: true,
-    replies: [
-      repliesByPanelName.services,
-      repliesByPanelName.status,
-      repliesByPanelName.runHistory,
-      repliesByPanelName.logTail,
-    ],
+    replies: PANEL_NAMES.map((panelName) => repliesByPanelName[panelName]),
   }).getPanels('webapp', 5);
 }
-
-const PANEL_NAMES = Object.keys(VALID_PANEL_REPLIES) as PanelName[];
 
 function expectEveryPanelRejectedWith(panels: ServerTabPanels, expectedError: Error): void {
   for (const panelName of PANEL_NAMES) {
@@ -259,18 +265,10 @@ function expectEveryPanelRejectedWith(panels: ServerTabPanels, expectedError: Er
 
 describe('createHostClient getPanels', () => {
   it('sends one batch of the four panel requests', async () => {
-    const sentMessages: unknown[] = [];
-    const client = createHostClient({
-      runtime: {
-        sendNativeMessage: async (_hostName: string, message: unknown) => {
-          sentMessages.push(message);
-          return {
-            ok: true,
-            replies: PANEL_NAMES.map((panelName) => VALID_PANEL_REPLIES[panelName]),
-          };
-        },
-      },
-    } as unknown as Pick<ChromeApi, 'runtime'>);
+    const { client, sentMessages } = clientRecording({
+      ok: true,
+      replies: PANEL_NAMES.map((panelName) => VALID_PANEL_REPLIES[panelName]),
+    });
 
     const panels = await client.getPanels('scheduler', 200);
 
@@ -500,22 +498,22 @@ function collectRequestTypes(message: unknown): unknown[] {
 
 describe('createHostClient requests', () => {
   it('sends only request types the native host protocol defines, inside a batch too', async () => {
-    const sentMessages: unknown[] = [];
-    const client = createHostClient({
-      runtime: {
-        sendNativeMessage: async (_hostName: string, message: unknown) => {
-          sentMessages.push(message);
-          return { ok: true, settings: VALID_SETTINGS };
-        },
-      },
-    } as unknown as Pick<ChromeApi, 'runtime'>);
+    const { client, sentMessages } = clientRecording({ ok: true, settings: VALID_SETTINGS });
 
     await client.getPanels('webapp', 5);
     await client.updateSettings(VALID_SETTINGS);
     await client.controlService('webapp', 'start');
 
     const sentTypes = sentMessages.flatMap(collectRequestTypes);
-    expect(sentTypes).toHaveLength(7);
+    expect(sentTypes).toEqual([
+      'batch',
+      'getServices',
+      'getStatus',
+      'getRunHistory',
+      'tailLog',
+      'updateSettings',
+      'controlService',
+    ]);
     expect(NATIVE_HOST_REQUEST_TYPES).toEqual(expect.arrayContaining(sentTypes));
   });
 });

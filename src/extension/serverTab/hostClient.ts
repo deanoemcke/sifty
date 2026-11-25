@@ -28,7 +28,7 @@ export class HostRejectedError extends Error {
 
 export type { LogTail };
 
-export type HostStatus = { cookies: FacebookCookieStatus; settings: SchedulerSettings };
+type HostStatus = { cookies: FacebookCookieStatus; settings: SchedulerSettings };
 
 export type PanelResult<Value> =
   | { status: 'fulfilled'; value: Value }

@@ -16,7 +16,7 @@ export type NativeHostRequestByType = {
 
 export type NativeHostRequestType = keyof NativeHostRequestByType;
 
-export type NativeHostRequestOfType<Type extends NativeHostRequestType> = {
+type NativeHostRequestOfType<Type extends NativeHostRequestType> = {
   type: Type;
 } & NativeHostRequestByType[Type];
 
