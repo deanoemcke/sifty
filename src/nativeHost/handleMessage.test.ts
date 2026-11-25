@@ -33,7 +33,10 @@ function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): Nati
   };
 }
 
-const GOOD_COOKIES_JSON = JSON.stringify([{ name: 'c_user', value: '12345' }]);
+const GOOD_COOKIES_JSON = JSON.stringify([
+  { name: 'c_user', value: '12345' },
+  { name: 'xs', value: '67890' },
+]);
 
 describe('getStatus', () => {
   it('reports cookies as not synced and default settings on a fresh database', async () => {
@@ -58,9 +61,15 @@ describe('syncCookies', () => {
 
     expect(reply).toMatchObject({
       ok: true,
-      cookies: { isSynced: true, cookieCount: 1, syncedAtMs: expect.any(Number) },
+      cookies: {
+        isSynced: true,
+        isLoginUsable: true,
+        cookieCount: 2,
+        syncedAtMs: expect.any(Number),
+      },
     });
     expect(JSON.stringify(reply)).not.toContain('12345');
+    expect(JSON.stringify(reply)).not.toContain('67890');
     expect(getStoredFacebookCookiesJson(dependencies.database)).toBe(GOOD_COOKIES_JSON);
   });
 
