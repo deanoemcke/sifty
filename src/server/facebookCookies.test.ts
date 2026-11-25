@@ -179,7 +179,6 @@ describe('getFacebookCookieStatus', () => {
       ])
     );
 
-    // `wd` expires sooner than either login cookie but doesn't end the session.
     expect(getFacebookCookieStatus(database)).toEqual({
       isSynced: true,
       syncedAtMs: Date.parse('2026-11-24T09:00:00Z'),

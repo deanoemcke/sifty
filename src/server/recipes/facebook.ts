@@ -73,7 +73,6 @@ type PlaywrightSameSite = 'Strict' | 'Lax' | 'None';
 
 // Chrome's cookies API (and Cookie-Editor exports) use lowercase values and
 // 'no_restriction' for None; Playwright wants the capitalised attribute names.
-// 'unspecified' or a missing value means the browser default, which is Lax.
 const PLAYWRIGHT_SAME_SITE_BY_BROWSER_VALUE = new Map<string, PlaywrightSameSite>([
   ['no_restriction', 'None'],
   ['none', 'None'],
@@ -486,13 +485,6 @@ async function quickSearchAsync(
 ): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
-  // Each quick search launches its own authenticated headless browser off the
-  // shared Facebook session, and a sold-items discover produces two Facebook
-  // URLs that the frontend fires concurrently. Route the launch through the
-  // per-domain concurrency limiter — the same one deepSearchAsync uses — so
-  // concurrent searches can't stack unbounded logged-in sessions on one cookie
-  // jar. The criteria event is emitted before queueing so the card gets its
-  // filter chips immediately, even while the search waits for a slot.
   await enqueue(searchUrl, () => runQuickSearchAsync(searchUrl, onEvent, isCancelled));
 }
 
@@ -504,9 +496,6 @@ async function runQuickSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
-    // Validate the Facebook cookies before touching the shared browser pool — a missing/
-    // expired/malformed cookie config should fail fast without paying for a
-    // browser acquisition (which may include launching a fresh Chromium).
     const cookies = loadFacebookCookies(getDb());
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;
@@ -982,9 +971,6 @@ async function deepSearchAsync(
   let context: BrowserContext | undefined;
   let releaseCheckout: (() => void) | undefined;
   try {
-    // Validate the Facebook cookies before touching the shared browser pool — a missing/
-    // expired/malformed cookie config should fail fast without paying for a
-    // browser acquisition (which may include launching a fresh Chromium).
     const cookies = loadFacebookCookies(getDb());
     const checkout = await getSharedBrowserAsync('facebook');
     releaseCheckout = checkout.releaseCheckout;

@@ -1,25 +1,8 @@
-// Server-side only — operator-tunable settings stored in sifty.db, read fresh
-// by every scheduler run (the scheduler is a new process each tick, so there
-// is no in-memory copy to keep in sync).
-
 import type Database from 'better-sqlite3';
 import { stmtListSettings, stmtUpsertSetting } from './db';
 
 const MINUTES_PER_WEEK = 7 * 24 * 60;
 
-// The single source of truth for which scheduler settings exist, their
-// defaults and the values they accept. The SchedulerSettings type, the allowed
-// keys, validation and the stored-value read are all derived from it.
-//
-// targetIntervalMinutes: no alert-enabled saved search should go longer than
-// this between runs. That only holds if the external tick interval (launchd's
-// StartInterval in ai.openclaw.sifty-scheduler.plist, currently 1800s/30min)
-// stays well below it — nothing keeps the plist value and this setting in sync.
-//
-// maxSearchesPerTick: caps how many due searches one tick processes, so a large
-// backlog (e.g. many searches added at once) can't turn a tick into an
-// unbounded scraping burst. The rest is processed over later ticks, oldest
-// (most overdue) first, so it self-heals rather than starving anything.
 const SCHEDULER_SETTING_DEFINITIONS = {
   targetIntervalMinutes: { defaultValue: 240, minimum: 1, maximum: MINUTES_PER_WEEK },
   maxSearchesPerTick: { defaultValue: 5, minimum: 1, maximum: 50 },
@@ -54,9 +37,6 @@ function describeAcceptedSchedulerSettingValues(key: keyof SchedulerSettings): s
   return `${key} must be a whole number from ${minimum} to ${maximum}`;
 }
 
-// Changes arrive from outside the process (the extension's native host), so
-// they are validated here rather than trusted: unknown keys, non-integers and
-// out-of-range values throw naming the offending setting.
 function validateSchedulerSettingChanges(
   changes: Record<string, unknown>
 ): Partial<SchedulerSettings> {
@@ -75,10 +55,6 @@ function validateSchedulerSettingChanges(
   return validatedChanges;
 }
 
-// The settings table is read by every scheduler tick, so one bad stored row
-// (hand-edited, or written by an older version) must not stall every run.
-// An unusable value is reported and replaced by that setting's default; the
-// other settings are unaffected.
 export function getSchedulerSettings(database: Database.Database): SchedulerSettings {
   const settings = getDefaultSchedulerSettings();
   for (const row of stmtListSettings(database).all()) {

@@ -155,9 +155,6 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
       },
     };
 
-    // Counts calls to chromium.launch() — i.e. the shared browser pool actually
-    // acquiring/launching a browser. Used to assert that a fail-fast validation
-    // (e.g. missing cookies) short-circuits before any browser is ever touched.
     const launchTracker = {
       count: 0,
       reset() {
@@ -270,9 +267,6 @@ const { getNextPage, resetPageQueue, makeFacebookPage, browserSessionTracker, la
     };
   });
 
-// The recipe reads stored cookies through getDb(); route it to a fresh
-// in-memory database per test so nothing touches data/sifty.db. A plain
-// function, not vi.fn(), so the file-wide vi.resetAllMocks() can't clear it.
 const testDatabaseHolder = vi.hoisted(() => ({ current: undefined as unknown }));
 vi.mock('../db', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db')>();
@@ -1436,8 +1430,6 @@ describe('detectLoginWallAsync', () => {
     expect(await detectLoginWallAsync(page)).toBe(false);
   });
 });
-
-// ── toPlaywrightCookies ───────────────────────────────────────────────────────
 
 describe('toPlaywrightCookies', () => {
   it.each([

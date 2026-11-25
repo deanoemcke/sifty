@@ -1,10 +1,3 @@
-// Server-side only — headless scheduler core, invoked by scripts/scheduler.ts.
-// Each run processes every alert-enabled saved search that is "due" — never
-// run, or last run at or before the saved target interval ago — oldest first,
-// capped at the saved per-tick search limit. For each: its already-known URLs (no
-// discovery, no deep search), applying its AI filter if set, and notifying
-// on any new, non-sold listing it hasn't alerted on before.
-
 import type Database from 'better-sqlite3';
 import type { Listing, ProviderCooldownStore } from '../lib/recipes/base';
 import { getAIConfig } from './ai';
