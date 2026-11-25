@@ -8,7 +8,13 @@ import { parseServiceState, type ServiceState } from './serviceState';
 export type CommandResult = { exitCode: number; output: string };
 export type RunLaunchctl = (args: string[]) => Promise<CommandResult>;
 
-export type ServiceDefinition = { label: string; plistPath: string };
+export type ServiceDefinition = {
+  label: string;
+  plistPath: string;
+  // A StartInterval job: launchd loads it and runs it on a timer, so it sits
+  // idle with no process between ticks. Loaded and idle is its healthy state.
+  isIntervalJob: boolean;
+};
 export const SERVICE_ACTIONS = ['start', 'stop', 'restart'] as const;
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
 
@@ -50,7 +56,7 @@ async function startAsync(context: ServiceContext): Promise<void> {
 
   if (!state.isLoaded) {
     await runCheckedAsync(context, ['bootstrap', `gui/${userId}`, definition.plistPath]);
-  } else if (!state.isRunning) {
+  } else if (!state.isRunning && !definition.isIntervalJob) {
     await runCheckedAsync(context, ['kickstart', `gui/${userId}/${definition.label}`]);
   }
 }

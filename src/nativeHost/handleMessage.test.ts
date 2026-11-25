@@ -359,8 +359,12 @@ function makeServiceDependencies(
   const dependencies = makeDependencies({
     services: {
       definitionsByServiceName: {
-        webapp: { label: 'ai.openclaw.sifty-webapp', plistPath: WEBAPP_PLIST },
-        ngrok: { label: 'ai.openclaw.sifty-ngrok', plistPath: NGROK_PLIST },
+        webapp: {
+          label: 'ai.openclaw.sifty-webapp',
+          plistPath: WEBAPP_PLIST,
+          isIntervalJob: false,
+        },
+        ngrok: { label: 'ai.openclaw.sifty-ngrok', plistPath: NGROK_PLIST, isIntervalJob: false },
       },
       userId: 501,
       runLaunchctlAsync: fake.runLaunchctlAsync,
@@ -379,13 +383,21 @@ describe('getServices', () => {
     expect(reply).toEqual({
       ok: true,
       servicesByName: {
-        webapp: { isLoaded: true, isRunning: true, isEnabled: true, pid: 4242, isInstalled: true },
+        webapp: {
+          isLoaded: true,
+          isRunning: true,
+          isEnabled: true,
+          pid: 4242,
+          isInstalled: true,
+          isIntervalJob: false,
+        },
         ngrok: {
           isLoaded: false,
           isRunning: false,
           isEnabled: false,
           pid: null,
           isInstalled: true,
+          isIntervalJob: false,
         },
       },
     });
@@ -398,6 +410,17 @@ describe('getServices', () => {
 
     expect(reply).toMatchObject({
       servicesByName: { webapp: { isInstalled: true }, ngrok: { isInstalled: false } },
+    });
+  });
+
+  it('tells the extension which services are interval jobs', async () => {
+    const { dependencies } = makeServiceDependencies();
+    dependencies.services.definitionsByServiceName.ngrok.isIntervalJob = true;
+
+    const reply = await handleNativeHostMessageAsync({ type: 'getServices' }, dependencies);
+
+    expect(reply).toMatchObject({
+      servicesByName: { webapp: { isIntervalJob: false }, ngrok: { isIntervalJob: true } },
     });
   });
 
@@ -483,6 +506,24 @@ describe('controlService', () => {
       ok: false,
       error: expect.stringContaining('npm run services:install'),
     });
+    expect(fake.commands).toEqual([]);
+  });
+
+  it('does not advise npm run services:install for the scheduler, which it cannot install', async () => {
+    const { dependencies, fake } = makeServiceDependencies({}, () => false);
+    dependencies.services.definitionsByServiceName.scheduler = {
+      label: 'ai.openclaw.sifty-scheduler',
+      plistPath: '/x/ai.openclaw.sifty-scheduler.plist',
+      isIntervalJob: true,
+    };
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'scheduler', action: 'start' },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({ ok: false });
+    expect(JSON.stringify(reply)).not.toContain('npm run services:install');
     expect(fake.commands).toEqual([]);
   });
 

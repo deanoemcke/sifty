@@ -23,13 +23,18 @@ import {
 import { describeError } from './describeError';
 import { isRecord, type UnknownRecord } from './isRecord';
 import { readLogTail } from './readLogTail';
+import { describeHowToInstallService } from './serviceDefinitions';
 import type { ServiceState } from './serviceState';
 
 const MAX_TAIL_LINE_COUNT = 500;
 
 // A service's launchd state, plus whether its plist has been installed — a
-// service that was never installed looks identical to a stopped one otherwise.
-export type InstalledServiceState = ServiceState & { isInstalled: boolean };
+// service that was never installed looks identical to a stopped one otherwise —
+// and whether it is an interval job, which is healthy while loaded and idle.
+export type InstalledServiceState = ServiceState & {
+  isInstalled: boolean;
+  isIntervalJob: boolean;
+};
 
 export type NativeHostServices = {
   // The only services the extension may control, by the name it uses. The label
@@ -150,6 +155,7 @@ async function getServices(dependencies: NativeHostDependencies): Promise<Native
       const installedState: InstalledServiceState = {
         ...state,
         isInstalled: doesFileExist(definition.plistPath),
+        isIntervalJob: definition.isIntervalJob,
       };
       return [serviceName, installedState] as const;
     })
@@ -186,7 +192,7 @@ async function controlService(
   if (action !== 'stop' && !doesFileExist(definition.plistPath)) {
     return {
       ok: false,
-      error: `Service ${serviceName} is not installed (no ${definition.plistPath}). Run npm run services:install first.`,
+      error: `Service ${serviceName} is not installed (no ${definition.plistPath}). ${describeHowToInstallService(serviceName)}`,
     };
   }
 

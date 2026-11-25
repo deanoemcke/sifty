@@ -100,6 +100,8 @@ The tab's Services section starts, stops and restarts three launchd user service
 
 On and off persist. Start runs `launchctl enable` then `bootstrap`; Stop runs `bootout` then `disable`. A service left on starts at login and is restarted if it crashes; one stopped from the tab stays off after a login. This is how the scheduler is already parked on this machine.
 
+The scheduler is a `StartInterval` job, so while loaded it has no process between ticks. The tab shows that as "Scheduled" (healthy) and offers only Stop; Start on it never kicks off an immediate run. A missing scheduler plist is reported as set up outside this project, since `npm run services:install` cannot create it.
+
 5. `npm run services:install` — writes the webapp and ngrok plists into `~/Library/LaunchAgents`. It never starts anything, and a service installed for the first time is also disabled, so nothing runs until Start is pressed in the tab. Re-running rewrites the plists but leaves each service's on/off state alone.
 6. Stop any ngrok started by hand before starting the ngrok service: a free ngrok account allows one session. The tab only sees launchd's services, not processes started from a terminal.
 7. The webapp service runs the checkout that installed it, on that checkout's port (5173 for the main checkout); ngrok forwards the same port.

@@ -8,6 +8,7 @@ function makeState(overrides: Partial<InstalledServiceState> = {}): InstalledSer
     isLoaded: true,
     isRunning: true,
     isEnabled: true,
+    isIntervalJob: false,
     pid: 4242,
     ...overrides,
   };
@@ -59,6 +60,22 @@ describe('describeService', () => {
       statusText: 'Loaded but not running',
       actions: ['start', 'stop'],
     });
+  });
+
+  it('shows an interval job that is loaded and idle between ticks as healthy, offering only Stop', () => {
+    expect(
+      describeService('scheduler', makeState({ isIntervalJob: true, isRunning: false, pid: null }))
+    ).toMatchObject({ tone: 'ok', statusText: 'Scheduled', actions: ['stop'] });
+  });
+
+  it('says the scheduler plist is set up outside this project when it is not installed', () => {
+    const view = describeService(
+      'scheduler',
+      makeState({ isInstalled: false, isLoaded: false, isRunning: false, pid: null })
+    );
+
+    expect(view.detail).not.toContain('npm run services:install');
+    expect(view.actions).toEqual([]);
   });
 
   it('says how to install a service that is not installed, and offers no buttons', () => {

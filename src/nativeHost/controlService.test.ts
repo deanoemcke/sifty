@@ -9,7 +9,7 @@ import { makeFakeLaunchd } from './fakeLaunchd';
 const LABEL = 'ai.openclaw.sifty-webapp';
 const PLIST_PATH = '/Users/someone/Library/LaunchAgents/ai.openclaw.sifty-webapp.plist';
 const USER_ID = 501;
-const DEFINITION: ServiceDefinition = { label: LABEL, plistPath: PLIST_PATH };
+const DEFINITION: ServiceDefinition = { label: LABEL, plistPath: PLIST_PATH, isIntervalJob: false };
 
 type FakeLaunchdState = { isLoaded: boolean; isEnabled: boolean; pid: number | null };
 
@@ -45,6 +45,19 @@ describe('getServiceStateAsync', () => {
 });
 
 describe('controlServiceAsync — start', () => {
+  it('does not kick off a run of an interval job that is loaded and idle between ticks', async () => {
+    const fake = makeFakeService({ isLoaded: true, isEnabled: true, pid: null });
+
+    await controlServiceAsync({
+      action: 'start',
+      definition: { ...DEFINITION, isIntervalJob: true },
+      userId: USER_ID,
+      runLaunchctlAsync: fake.runLaunchctlAsync,
+    });
+
+    expect(fake.commands.some(([subcommand]) => subcommand === 'kickstart')).toBe(false);
+  });
+
   it('starts a stopped, disabled service and leaves it enabled so it survives a login', async () => {
     const fake = makeFakeService(STOPPED);
 

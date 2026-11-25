@@ -1,5 +1,6 @@
 import type { ServiceAction } from '../nativeHost/controlService';
 import type { InstalledServiceState } from '../nativeHost/handleMessage';
+import { describeHowToInstallService } from '../nativeHost/serviceDefinitions';
 import type { StatusTone } from './describeCookieStatus';
 
 export type ServiceView = {
@@ -24,7 +25,7 @@ export function describeService(serviceName: string, state: InstalledServiceStat
       title,
       tone: 'neutral',
       statusText: 'Not installed',
-      detail: 'Run npm run services:install in the sifty-webapp folder.',
+      detail: describeHowToInstallService(serviceName),
       actions: [],
     };
   }
@@ -35,6 +36,16 @@ export function describeService(serviceName: string, state: InstalledServiceStat
       statusText: `Running (pid ${state.pid})`,
       detail: undefined,
       actions: ['restart', 'stop'],
+    };
+  }
+  // An interval job has no process between ticks; that is it waiting, not failing.
+  if (state.isLoaded && state.isIntervalJob) {
+    return {
+      title,
+      tone: 'ok',
+      statusText: 'Scheduled',
+      detail: 'Waiting for its next run.',
+      actions: ['stop'],
     };
   }
   if (state.isLoaded) {

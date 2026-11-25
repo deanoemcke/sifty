@@ -3,6 +3,7 @@ import { LOG_FILE_PATHS_BY_LOG_NAME } from './logFiles';
 import {
   buildInstallablePlistOptions,
   buildServiceDefinitions,
+  describeHowToInstallService,
   SERVICE_NAMES,
 } from './serviceDefinitions';
 
@@ -24,7 +25,15 @@ describe('buildServiceDefinitions', () => {
     expect(buildServiceDefinitions(LAUNCH_AGENTS_DIRECTORY).scheduler).toEqual({
       label: 'ai.openclaw.sifty-scheduler',
       plistPath: `${LAUNCH_AGENTS_DIRECTORY}/ai.openclaw.sifty-scheduler.plist`,
+      isIntervalJob: true,
     });
+  });
+
+  it('marks only the scheduler as an interval job', () => {
+    const definitions = buildServiceDefinitions(LAUNCH_AGENTS_DIRECTORY);
+
+    expect(definitions.webapp.isIntervalJob).toBe(false);
+    expect(definitions.ngrok.isIntervalJob).toBe(false);
   });
 });
 
@@ -58,5 +67,19 @@ describe('buildInstallablePlistOptions', () => {
       '--log',
       'stdout',
     ]);
+  });
+});
+
+describe('describeHowToInstallService', () => {
+  it('points at npm run services:install only for services it can install', () => {
+    const installableServiceNames = Object.keys(
+      buildInstallablePlistOptions(PROJECT_DIRECTORY, DEV_SERVER_PORT)
+    );
+
+    for (const serviceName of SERVICE_NAMES) {
+      expect(describeHowToInstallService(serviceName).includes('npm run services:install')).toBe(
+        installableServiceNames.includes(serviceName)
+      );
+    }
   });
 });

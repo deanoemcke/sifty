@@ -38,10 +38,25 @@ const DEFAULT_REPLIES: Record<string, unknown> = {
   getServices: {
     ok: true,
     servicesByName: {
-      webapp: { isInstalled: true, isLoaded: true, isRunning: true, isEnabled: true, pid: 4242 },
-      ngrok: { isInstalled: false, isLoaded: false, isRunning: false, isEnabled: true, pid: null },
+      webapp: {
+        isInstalled: true,
+        isIntervalJob: false,
+        isLoaded: true,
+        isRunning: true,
+        isEnabled: true,
+        pid: 4242,
+      },
+      ngrok: {
+        isInstalled: false,
+        isIntervalJob: false,
+        isLoaded: false,
+        isRunning: false,
+        isEnabled: true,
+        pid: null,
+      },
       scheduler: {
         isInstalled: true,
+        isIntervalJob: true,
         isLoaded: false,
         isRunning: false,
         isEnabled: false,
@@ -435,6 +450,7 @@ describe('startServerTab — refreshing while a refresh is already running', () 
           servicesByName: {
             webapp: {
               isInstalled: true,
+              isIntervalJob: false,
               isLoaded: isWebappRunning,
               isRunning: isWebappRunning,
               isEnabled: isWebappRunning,
@@ -560,6 +576,7 @@ describe('startServerTab — services', () => {
           servicesByName: {
             scheduler: {
               isInstalled: true,
+              isIntervalJob: true,
               isLoaded: isSchedulerRunning,
               isRunning: isSchedulerRunning,
               isEnabled: isSchedulerRunning,
