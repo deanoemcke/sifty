@@ -78,6 +78,7 @@ function makeRealHost() {
   const dependencies: NativeHostDependencies = {
     getDatabase: () => database,
     logStreams: { subscribe: () => {}, stopAll: () => {} },
+    logActivity: () => {},
     services: {
       definitionsByServiceName: {
         webapp: {

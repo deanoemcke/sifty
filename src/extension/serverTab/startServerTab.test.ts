@@ -69,11 +69,11 @@ const DEFAULT_REPLIES: Record<string, unknown> = {
 type LogTailContent = { isLogFilePresent: boolean; logLines: string[] };
 
 const DEFAULT_LOG_TAILS_BY_LOG_NAME: Record<string, LogTailContent> = {
-  scheduler: { isLogFilePresent: true, logLines: ['first line', 'second line'] },
+  scheduler: { isLogFilePresent: true, logLines: [] },
   'scheduler-launchd': { isLogFilePresent: true, logLines: [] },
   webapp: { isLogFilePresent: true, logLines: [] },
   ngrok: { isLogFilePresent: true, logLines: [] },
-  'native-host': { isLogFilePresent: true, logLines: [] },
+  'native-host': { isLogFilePresent: true, logLines: ['first line', 'second line'] },
 };
 
 function logTailMessage(logName: string, content: LogTailContent) {
@@ -582,7 +582,7 @@ describe('startServerTab — logs', () => {
     logSelect().dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  it('offers the readable logs and shows the scheduler log first', async () => {
+  it('offers the readable logs and shows the native-host log first', async () => {
     await openTab();
 
     expect([...logSelect().options].map((option) => option.value)).toEqual([
@@ -592,7 +592,7 @@ describe('startServerTab — logs', () => {
       'ngrok',
       'native-host',
     ]);
-    expect(logSelect().value).toBe('scheduler');
+    expect(logSelect().value).toBe('native-host');
     expect(sectionText('logs')).toContain('first line');
     expect(sectionText('logs')).toContain('second line');
   });
@@ -616,7 +616,7 @@ describe('startServerTab — logs', () => {
     const fake = await openTab();
 
     fake.ports[0].pushFromHost(
-      logTailMessage('scheduler', {
+      logTailMessage('native-host', {
         isLogFilePresent: true,
         logLines: ['first line', 'second line', 'third line'],
       })
@@ -662,7 +662,7 @@ describe('startServerTab — logs', () => {
       makeFakeChrome({
         logTails: {
           ...DEFAULT_LOG_TAILS_BY_LOG_NAME,
-          scheduler: { isLogFilePresent: false, logLines: [] },
+          'native-host': { isLogFilePresent: false, logLines: [] },
         },
       })
     );
@@ -675,7 +675,7 @@ describe('startServerTab — logs', () => {
       makeFakeChrome({
         logTails: {
           ...DEFAULT_LOG_TAILS_BY_LOG_NAME,
-          scheduler: { isLogFilePresent: true, logLines: ['<script>boom()</script>'] },
+          'native-host': { isLogFilePresent: true, logLines: ['<script>boom()</script>'] },
         },
       })
     );

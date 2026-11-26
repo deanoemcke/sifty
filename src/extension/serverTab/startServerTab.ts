@@ -17,7 +17,7 @@ export type ServerTabDependencies = {
 };
 
 const LOG_LINES_SHOWN = 200;
-const DEFAULT_LOG_NAME = 'scheduler';
+const DEFAULT_LOG_NAME = 'native-host';
 const MESSAGE_LIFETIME_MS = 60_000;
 
 type TimedMessage = { text: string; shownAtMs: number };

@@ -18,6 +18,7 @@ function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): Nati
   return {
     getDatabase: () => database,
     logStreams: { subscribe: () => {}, stopAll: () => {} },
+    logActivity: () => {},
     services: {
       definitionsByServiceName: {},
       userId: 501,
@@ -506,6 +507,81 @@ describe('controlService', () => {
       ok: false,
       error: expect.stringContaining('Could not enable service'),
     });
+  });
+});
+
+describe('controlService activity log', () => {
+  function makeLoggingDependencies(
+    failures: Record<string, string> = {},
+    doesFileExist: (filePath: string) => boolean = () => true
+  ) {
+    const activityLines: string[] = [];
+    const { dependencies } = makeServiceDependencies(failures, doesFileExist);
+    return {
+      activityLines,
+      dependencies: {
+        ...dependencies,
+        logActivity: (line: string) => {
+          activityLines.push(line);
+        },
+      },
+    };
+  }
+
+  it('records a successful action with the state it left the service in', async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies();
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(activityLines).toEqual([
+      'controlService ngrok start succeeded (loaded=true, running=true)',
+    ]);
+  });
+
+  it("records launchctl's own message when an action fails", async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies({
+      enable: 'Could not enable service',
+    });
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(activityLines).toHaveLength(1);
+    expect(activityLines[0]).toContain('controlService ngrok start failed');
+    expect(activityLines[0]).toContain('Could not enable service');
+  });
+
+  it('records a refusal to start a service that is not installed', async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies({}, () => false);
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(activityLines).toHaveLength(1);
+    expect(activityLines[0]).toContain('controlService ngrok start failed');
+    expect(activityLines[0]).toContain('not installed');
+  });
+
+  it('records nothing for a request that names an unknown service or action', async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies();
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'database', action: 'stop' },
+      dependencies
+    );
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'webapp', action: 'delete' },
+      dependencies
+    );
+
+    expect(activityLines).toEqual([]);
   });
 });
 

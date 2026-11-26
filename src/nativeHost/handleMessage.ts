@@ -46,6 +46,7 @@ export type NativeHostServices = {
 export type NativeHostDependencies = {
   getDatabase: () => Database.Database;
   logStreams: LogStreams;
+  logActivity: (line: string) => void;
   services: NativeHostServices;
 };
 
@@ -187,18 +188,23 @@ async function controlService(
   const definition = definitionsByServiceName[serviceName];
   // Starting an uninstalled service fails with launchd's unhelpful "Input/output error".
   if (action !== 'stop' && !doesFileExist(definition.plistPath)) {
-    return {
-      ok: false,
-      error: `Service ${serviceName} is not installed (no ${definition.plistPath}). ${describeHowToInstallService(serviceName)}`,
-    };
+    const error = `Service ${serviceName} is not installed (no ${definition.plistPath}). ${describeHowToInstallService(serviceName)}`;
+    dependencies.logActivity(`controlService ${serviceName} ${action} failed: ${error}`);
+    return { ok: false, error };
   }
 
-  const state = await controlServiceAsync({
-    action,
-    definition,
-    userId,
-    runLaunchctlAsync,
-  });
+  let state: ServiceState;
+  try {
+    state = await controlServiceAsync({ action, definition, userId, runLaunchctlAsync });
+  } catch (error) {
+    dependencies.logActivity(
+      `controlService ${serviceName} ${action} failed: ${describeError(error)}`
+    );
+    throw error;
+  }
+  dependencies.logActivity(
+    `controlService ${serviceName} ${action} succeeded (loaded=${state.isLoaded}, running=${state.isRunning})`
+  );
   return { ok: true, serviceName, state };
 }
 
