@@ -94,6 +94,11 @@ export async function startServerTab(
     if (logName === state.selectedLogName) logsSection.showLog(logTail);
   }
 
+  function handleLogStreamError(error: Error, logName: string | undefined): void {
+    if (logName !== undefined && logName !== state.selectedLogName) return;
+    logsSection.showMessage(describeError(error));
+  }
+
   function handleLogStreamClosed(error: Error): void {
     state.logStream = undefined;
     logsSection.showMessage(`Live logs stopped: ${describeError(error)}. Retrying shortly.`);
@@ -104,7 +109,7 @@ export async function startServerTab(
     try {
       state.logStream = hostClient.openLogStream(LOG_LINES_SHOWN, {
         onLogTail: handleLogTail,
-        onError: (error) => logsSection.showMessage(describeError(error)),
+        onError: handleLogStreamError,
         onClosed: handleLogStreamClosed,
       });
     } catch (error) {
@@ -231,7 +236,7 @@ export async function startServerTab(
   }
 
   showSelectedLog();
-  openLogStream();
+  if (!document.hidden) openLogStream();
   await refreshAsync();
   setInterval(onPollTick, dependencies.pollIntervalMs);
   document.addEventListener('visibilitychange', onVisibilityChange);

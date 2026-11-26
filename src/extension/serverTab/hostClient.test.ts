@@ -515,10 +515,14 @@ function openLogStream() {
   } as unknown as Pick<ChromeApi, 'runtime'>);
   const logTails: { logName: string; logTail: unknown }[] = [];
   const errors: Error[] = [];
+  const errorLogNames: (string | undefined)[] = [];
   const closures: Error[] = [];
   const stream = client.openLogStream(200, {
     onLogTail: (logName, logTail) => logTails.push({ logName, logTail }),
-    onError: (error) => errors.push(error),
+    onError: (error, logName) => {
+      errors.push(error);
+      errorLogNames.push(logName);
+    },
     onClosed: (error) => closures.push(error),
   });
   return {
@@ -526,6 +530,7 @@ function openLogStream() {
     postedMessages,
     logTails,
     errors,
+    errorLogNames,
     closures,
     isDisconnected: () => isDisconnected,
     pushFromHost: (message: unknown) => {
@@ -569,6 +574,15 @@ describe('createHostClient openLogStream', () => {
 
     expect(errors).toEqual([new HostRejectedError('Could not read the webapp log: EACCES')]);
     expect(closures).toEqual([]);
+  });
+
+  it('says which log a host error is about when the host names one', () => {
+    const { pushFromHost, errorLogNames } = openLogStream();
+
+    pushFromHost({ ok: false, logName: 'webapp', error: 'Could not read the webapp log: EACCES' });
+    pushFromHost({ ok: false, error: 'Native message is too large' });
+
+    expect(errorLogNames).toEqual(['webapp', undefined]);
   });
 
   it.each([

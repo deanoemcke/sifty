@@ -140,7 +140,11 @@ describe('createLogStreams', () => {
     await settleAsync();
 
     expect(environment.sentEvents).toEqual([
-      { ok: false, error: 'Could not read the scheduler log: EACCES: permission denied' },
+      {
+        ok: false,
+        logName: 'scheduler',
+        error: 'Could not read the scheduler log: EACCES: permission denied',
+      },
       { ok: true, event: 'logTail', logName: 'webapp', isLogFilePresent: false, logLines: [] },
     ]);
     environment.sentEvents.length = 0;

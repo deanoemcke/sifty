@@ -42,7 +42,7 @@ export type ServerTabPanels = {
 
 export type LogStreamHandlers = {
   onLogTail(logName: string, logTail: LogTail): void;
-  onError(error: Error): void;
+  onError(error: Error, logName: string | undefined): void;
   onClosed(error: Error): void;
 };
 
@@ -179,7 +179,9 @@ function handleLogStreamMessage(message: unknown, handlers: LogStreamHandlers): 
     handlers.onLogTail(requireField(reply, 'logName', isString), parseLogTailReply(reply));
   } catch (error) {
     if (!(error instanceof HostRejectedError)) throw error;
-    handlers.onError(error);
+    const logName =
+      isRecord(message) && typeof message.logName === 'string' ? message.logName : undefined;
+    handlers.onError(error, logName);
   }
 }
 

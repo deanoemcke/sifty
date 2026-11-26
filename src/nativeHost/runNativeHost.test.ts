@@ -8,7 +8,7 @@ import {
   encodeNativeMessage,
   MAX_INCOMING_MESSAGE_BYTES,
 } from './nativeMessaging';
-import { runNativeHostAsync } from './runNativeHost';
+import { runNativeHostAsync, writeReplyAsync } from './runNativeHost';
 
 function makeDependencies(): NativeHostDependencies {
   const database = new Database(':memory:');
@@ -195,5 +195,25 @@ describe('runNativeHostAsync', () => {
     await runHostWithChunks([oversizedPrefix], dependencies);
 
     expect(stopAllCount).toBe(1);
+  });
+});
+
+describe('writeReplyAsync', () => {
+  it('keeps the log name when a log tail is too large to send, so the page can tell which log failed', async () => {
+    const output = new PassThrough();
+    const outputChunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => outputChunks.push(chunk));
+
+    await writeReplyAsync(output, {
+      ok: true,
+      event: 'logTail',
+      logName: 'webapp',
+      isLogFilePresent: true,
+      logLines: ['x'.repeat(MAX_INCOMING_MESSAGE_BYTES)],
+    });
+
+    expect(createNativeMessageDecoder().push(Buffer.concat(outputChunks))).toEqual([
+      { ok: false, logName: 'webapp', error: expect.stringContaining('too large') },
+    ]);
   });
 });

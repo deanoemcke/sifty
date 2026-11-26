@@ -3,7 +3,7 @@ import type { LogTail } from './readLogTail';
 
 export type LogStreamEvent =
   | { ok: true; event: 'logTail'; logName: string; isLogFilePresent: boolean; logLines: string[] }
-  | { ok: false; error: string };
+  | { ok: false; logName: string; error: string };
 
 export type StopWatching = () => void;
 export type WatchFile = (filePath: string, onChange: () => void) => StopWatching;
@@ -34,7 +34,11 @@ export function createLogStreams(options: LogStreamsOptions): LogStreams {
     try {
       event = { ok: true, event: 'logTail', logName, ...readLogTail(logFilePath, lineCount) };
     } catch (error) {
-      event = { ok: false, error: `Could not read the ${logName} log: ${describeError(error)}` };
+      event = {
+        ok: false,
+        logName,
+        error: `Could not read the ${logName} log: ${describeError(error)}`,
+      };
     }
     sendAsync(event).catch((error) => {
       console.error(`[native-host] log stream stopped: ${describeError(error)}`);

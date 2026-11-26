@@ -1,6 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import { describeError } from './describeError';
 import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
+import { isRecord } from './isRecord';
 import {
   createNativeMessageDecoder,
   encodeNativeMessage,
@@ -21,7 +22,13 @@ export async function writeReplyAsync(output: Writable, reply: unknown): Promise
   try {
     framedReply = encodeNativeMessage(reply);
   } catch (error) {
-    framedReply = encodeNativeMessage({ ok: false, error: describeError(error) });
+    const logName =
+      isRecord(reply) && typeof reply.logName === 'string' ? reply.logName : undefined;
+    framedReply = encodeNativeMessage({
+      ok: false,
+      ...(logName === undefined ? {} : { logName }),
+      error: describeError(error),
+    });
   }
   await writeFramedAsync(output, framedReply);
 }

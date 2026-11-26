@@ -687,11 +687,41 @@ describe('startServerTab — logs', () => {
   it('shows a log the host cannot read in the logs panel, and keeps the other panels', async () => {
     const fake = await openTab();
 
-    fake.ports[0].pushFromHost({ ok: false, error: 'Could not read the scheduler log: EACCES' });
+    fake.ports[0].pushFromHost({
+      ok: false,
+      logName: 'native-host',
+      error: 'Could not read the native-host log: EACCES',
+    });
 
-    expect(sectionText('logs')).toContain('Could not read the scheduler log: EACCES');
+    expect(sectionText('logs')).toContain('Could not read the native-host log: EACCES');
     expect(sectionText('cookies')).toContain('Facebook cookies synced');
     expect(fake.ports[0].isDisconnected).toBe(false);
+  });
+
+  it('does not show a read error for a log that is not the chosen one', async () => {
+    const fake = await openTab();
+
+    fake.ports[0].pushFromHost({
+      ok: false,
+      logName: 'ngrok',
+      error: 'Could not read the ngrok log: EACCES',
+    });
+
+    expect(sectionText('logs')).not.toContain('Could not read the ngrok log');
+    expect(sectionText('logs')).toContain('first line');
+  });
+
+  it('does not open the connection when the page starts hidden, and opens it once shown', async () => {
+    setPageHidden(true);
+    const fake = await openTab();
+
+    expect(fake.connectNative).not.toHaveBeenCalled();
+
+    setPageHidden(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fake.connectNative).toHaveBeenCalledTimes(1);
   });
 
   it('closes the connection while the page is hidden and reopens it when shown again', async () => {
