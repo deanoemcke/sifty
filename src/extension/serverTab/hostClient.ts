@@ -10,7 +10,7 @@ import {
   SCHEDULER_SETTING_DEFINITIONS,
   type SchedulerSettings,
 } from '../../server/schedulerSettingDefinitions';
-import type { ChromeApi } from '../startCookieSync';
+import type { ChromeApi, NativePort } from '../startCookieSync';
 
 export class HostUnreachableError extends Error {
   constructor(reason: string) {
@@ -38,11 +38,19 @@ export type ServerTabPanels = {
   services: PanelResult<Record<string, InstalledServiceState>>;
   status: PanelResult<HostStatus>;
   runHistory: PanelResult<RunHistoryEntry[]>;
-  logTail: PanelResult<LogTail>;
 };
 
+export type LogStreamHandlers = {
+  onLogTail(logName: string, logTail: LogTail): void;
+  onError(error: Error, logName: string | undefined): void;
+  onClosed(error: Error): void;
+};
+
+export type LogStream = { close(): void };
+
 export type HostClient = {
-  getPanels(logName: string, lineCount: number): Promise<ServerTabPanels>;
+  getPanels(): Promise<ServerTabPanels>;
+  openLogStream(lineCount: number, handlers: LogStreamHandlers): LogStream;
   updateSettings(changes: SchedulerSettings): Promise<SchedulerSettings>;
   controlService(serviceName: string, action: ServiceAction): Promise<void>;
 };
@@ -58,6 +66,7 @@ function requireField<Value>(
 }
 
 const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
+const isString = (value: unknown): value is string => typeof value === 'string';
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string');
 
@@ -160,7 +169,20 @@ function settleSubReply<Value>(
 
 function rejectEveryPanel(reason: Error): ServerTabPanels {
   const rejected = { status: 'rejected', reason } as const;
-  return { services: rejected, status: rejected, runHistory: rejected, logTail: rejected };
+  return { services: rejected, status: rejected, runHistory: rejected };
+}
+
+function handleLogStreamMessage(message: unknown, handlers: LogStreamHandlers): void {
+  try {
+    const reply = requireOkReply(message);
+    if (reply.event !== 'logTail') return;
+    handlers.onLogTail(requireField(reply, 'logName', isString), parseLogTailReply(reply));
+  } catch (error) {
+    if (!(error instanceof HostRejectedError)) throw error;
+    const logName =
+      isRecord(message) && typeof message.logName === 'string' ? message.logName : undefined;
+    handlers.onError(error, logName);
+  }
 }
 
 function requireReplyPerRequest(batchReply: UnknownRecord, requestCount: number): unknown[] {
@@ -183,12 +205,11 @@ export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostCli
   }
 
   return {
-    async getPanels(logName, lineCount) {
+    async getPanels() {
       const requests = [
         buildNativeHostRequest('getServices', {}),
         buildNativeHostRequest('getStatus', {}),
         buildNativeHostRequest('getRunHistory', {}),
-        buildNativeHostRequest('tailLog', { logName, lineCount }),
       ];
       let subReplies: unknown[];
       try {
@@ -197,12 +218,36 @@ export function createHostClient(chromeApi: Pick<ChromeApi, 'runtime'>): HostCli
       } catch (error) {
         return rejectEveryPanel(error as Error);
       }
-      const [servicesReply, statusReply, runHistoryReply, logTailReply] = subReplies;
+      const [servicesReply, statusReply, runHistoryReply] = subReplies;
       return {
         services: settleSubReply(servicesReply, parseServicesReply),
         status: settleSubReply(statusReply, parseStatusReply),
         runHistory: settleSubReply(runHistoryReply, parseRunHistoryReply),
-        logTail: settleSubReply(logTailReply, parseLogTailReply),
+      };
+    },
+    openLogStream(lineCount, handlers) {
+      let port: NativePort;
+      try {
+        port = chromeApi.runtime.connectNative(NATIVE_HOST_NAME);
+      } catch (error) {
+        throw new HostUnreachableError(describeError(error));
+      }
+      let isOpen = true;
+      port.onMessage.addListener((message) => {
+        if (isOpen) handleLogStreamMessage(message, handlers);
+      });
+      port.onDisconnect.addListener(() => {
+        if (!isOpen) return;
+        isOpen = false;
+        handlers.onClosed(new HostUnreachableError('Lost the connection to the native host'));
+      });
+      port.postMessage(buildNativeHostRequest('subscribeLogs', { lineCount }));
+      return {
+        close() {
+          if (!isOpen) return;
+          isOpen = false;
+          port.disconnect();
+        },
       };
     },
     async updateSettings(changes) {

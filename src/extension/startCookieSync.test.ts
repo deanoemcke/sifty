@@ -44,6 +44,9 @@ function makeFakeChrome(options: {
     },
     runtime: {
       sendNativeMessage,
+      connectNative: () => {
+        throw new Error('Cookie sync never opens a persistent connection');
+      },
       onStartup: { addListener: (listener) => listenersByEvent.startup.push(listener) },
       onInstalled: { addListener: (listener) => listenersByEvent.installed.push(listener) },
     },

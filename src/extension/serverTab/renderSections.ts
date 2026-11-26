@@ -51,8 +51,10 @@ export function renderCookiesSection(
 
   container.replaceChildren(
     createElement('h2', { text: 'Facebook cookies' }),
-    ...renderCookieView(describeCookieStatus(status, nowMs)),
-    syncButton,
+    createElement('div', { className: 'cookies-summary' }, [
+      createElement('div', {}, renderCookieView(describeCookieStatus(status, nowMs))),
+      syncButton,
+    ]),
     ...(actions.syncMessage
       ? [createElement('p', { text: actions.syncMessage, className: 'detail sync-message' })]
       : [])

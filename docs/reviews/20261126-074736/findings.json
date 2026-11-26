@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261126-074736",
+  "round": 1,
+  "findings": [
+    {
+      "id": "R1-F001",
+      "title": "A log read error is shown over whichever log is selected and never cleared",
+      "claim": "Read failures (and the oversize fallback) are pushed as { ok:false, error } with no logName; the page writes the message into the single logs pane regardless of the selected log, replacing its lines until that file next changes.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "informed"
+      ],
+      "location": {
+        "file": "src/nativeHost/logStreams.ts",
+        "line": 36
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "Make the ngrok log unreadable while scheduler is selected; the error event replaces the scheduler tail, and state.logTailsByLogName is not re-rendered.\nVerifier: Merged blind and informed findings; confirmed by reading sendLogTail and startServerTab onError handler (showMessage with no log check). Checked by reading the code at d8a5dc5."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "7d088af47185175a0517857642c2646cd6a728a6"
+      },
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "Cheap to fix by adding logName to the error event and ignoring it for unselected logs, and it makes the pane show wrong content."
+      }
+    },
+    {
+      "id": "R1-F002",
+      "title": "Documented order of the subscribe reply and first log pushes is the reverse of what the host does",
+      "claim": "docs/sifty-server-extension.md says the host replies isSubscribed then pushes tails, but subscribe() writes five logTail events synchronously before runNativeHostAsync writes the reply.",
+      "severity": "minor",
+      "classification": "docs-code-drift",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/nativeHost/handleMessage.ts",
+        "line": 147
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "subscribe -> sendLogTail -> writeReplyAsync reaches output.write synchronously; the reply is written only after handleNativeHostMessageAsync returns.\nVerifier: Current client ignores the reply so nothing breaks. Checked by reading the code at d8a5dc5."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "7d088af47185175a0517857642c2646cd6a728a6"
+      },
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "Fixing the one doc sentence is trivial and the docs are currently wrong."
+      }
+    },
+    {
+      "id": "R1-F003",
+      "title": "Reversing physical lines turns multi-line entries such as stack traces upside down",
+      "claim": "showLog reverses lines, not entries, so continuation lines of a stack trace appear above its first line.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/renderLogsSection.ts",
+        "line": 37
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "['Error: boom','  at a','  at b'] renders as '  at b\\n  at a\\nError: boom'.\nVerifier: Newest-first is the stated intent of the branch; this is a trade-off of that choice, not a defect in it. Checked by reading the code at d8a5dc5."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Newest-first by line is the intended behaviour and entry grouping would need log format knowledge"
+      },
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "Newest-first by line is the intended behaviour and entry grouping would need log format knowledge.",
+        "reopenIf": "Stack traces in the logs become common enough to be hard to read."
+      }
+    },
+    {
+      "id": "R1-F004",
+      "title": "Log stream opens at start-up even when the tab starts hidden",
+      "claim": "startServerTab calls openLogStream() unconditionally, so a tab loaded in the background holds a host process and five 250 ms pollers until first shown and hidden again, contrary to the docs.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind",
+        "informed"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 234
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Line 234 is a bare openLogStream() with no document.hidden check, unlike onPollTick.\nVerifier: Merged the start-hidden halves of two findings. Checked by reading the code at d8a5dc5."
+      },
+      "status": "fixed",
+      "resolution": {
+        "commit": "7d088af47185175a0517857642c2646cd6a728a6"
+      },
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "A one-line document.hidden guard removes wasted CPU and a stray host process."
+      }
+    },
+    {
+      "id": "R1-F005",
+      "title": "Chrome's disconnect reason is discarded",
+      "claim": "onDisconnect always reports 'Lost the connection to the native host' and never reads chrome.runtime.lastError, so host-not-found, forbidden and host-exited are indistinguishable and Chrome logs an unchecked-lastError warning.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 237
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "The listener takes no arguments and builds a constant HostUnreachableError.\nVerifier: Code confirmed; the lastError warning is plausible Chrome behaviour but not checked live. Checked by reading the code at d8a5dc5."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Real diagnostic loss but only affects error messages and is separable from this feature"
+      },
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "Real diagnostic loss but only affects error messages and is separable from this feature.",
+        "reopenIf": "Users report confusing 'Live logs stopped' messages that hide the actual cause."
+      }
+    },
+    {
+      "id": "R1-F006",
+      "title": "Unknown stream events are dropped silently",
+      "claim": "handleLogStreamMessage returns without comment for any ok message whose event is not 'logTail', so a protocol change disappears with no signal.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/hostClient.ts",
+        "line": 178
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "The subscribeLogs acknowledgement { ok:true, isSubscribed:true } has no event field and arrives on the same port, so ignoring non-logTail messages is required.\nVerifier: Raised as a no-silent-failures concern; the code path is deliberate. Checked by reading the code at d8a5dc5."
+      },
+      "status": "rejected",
+      "resolution": {
+        "note": "The subscribe acknowledgement legitimately has no event, so ignoring it is correct and the host and client ship together"
+      },
+      "recommendation": {
+        "disposition": "reject",
+        "reason": "The subscribe acknowledgement legitimately has no event, so ignoring it is correct and the host and client ship together.",
+        "reopenIf": "A new push event type is added to the host."
+      }
+    },
+    {
+      "id": "R1-F007",
+      "title": "A dropped stream leaves stale tails that render as live when another log is chosen",
+      "claim": "handleLogStreamClosed keeps logTailsByLogName, so after a drop choosing another log renders its old tail with no stopped notice until the 30 s reconnect.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed"
+      ],
+      "location": {
+        "file": "src/extension/serverTab/startServerTab.ts",
+        "line": 97
+      },
+      "evidence": {
+        "kind": "concrete-input",
+        "detail": "showSelectedLog renders state.logTailsByLogName[selected] without checking state.logStream.\nVerifier: Confirmed by reading showSelectedLog and handleLogStreamClosed; window is at most 30 s. Checked by reading the code at d8a5dc5."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "Real but short-lived and the data is only seconds stale"
+      },
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "Real but short-lived and the data is only seconds stale.",
+        "reopenIf": "Users act on stale log lines after a drop."
+      }
+    }
+  ]
+}

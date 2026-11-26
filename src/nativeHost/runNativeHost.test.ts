@@ -8,14 +8,15 @@ import {
   encodeNativeMessage,
   MAX_INCOMING_MESSAGE_BYTES,
 } from './nativeMessaging';
-import { runNativeHostAsync } from './runNativeHost';
+import { runNativeHostAsync, writeReplyAsync } from './runNativeHost';
 
 function makeDependencies(): NativeHostDependencies {
   const database = new Database(':memory:');
   initSchema(database);
   return {
     getDatabase: () => database,
-    logFilePathsByLogName: {},
+    logStreams: { subscribe: () => {}, stopAll: () => {} },
+    logActivity: () => {},
     services: {
       definitionsByServiceName: {},
       userId: 501,
@@ -157,6 +158,62 @@ describe('runNativeHostAsync', () => {
     expect(replies).toEqual([
       { ok: true, searches: expect.any(Array) },
       { ok: false, error: expect.stringContaining('too large') },
+    ]);
+  });
+
+  it('stops the log streams when the input closes', async () => {
+    let stopAllCount = 0;
+    const dependencies: NativeHostDependencies = {
+      ...makeDependencies(),
+      logStreams: {
+        subscribe: () => {},
+        stopAll: () => {
+          stopAllCount += 1;
+        },
+      },
+    };
+
+    await runHostWithChunks([encodeNativeMessage({ type: 'getStatus' })], dependencies);
+
+    expect(stopAllCount).toBe(1);
+  });
+
+  it('stops the log streams when the host gives up on a malformed message', async () => {
+    let stopAllCount = 0;
+    const dependencies: NativeHostDependencies = {
+      ...makeDependencies(),
+      logStreams: {
+        subscribe: () => {},
+        stopAll: () => {
+          stopAllCount += 1;
+        },
+      },
+    };
+    const oversizedPrefix = Buffer.alloc(4);
+    oversizedPrefix.writeUInt32LE(MAX_INCOMING_MESSAGE_BYTES + 1, 0);
+
+    await runHostWithChunks([oversizedPrefix], dependencies);
+
+    expect(stopAllCount).toBe(1);
+  });
+});
+
+describe('writeReplyAsync', () => {
+  it('keeps the log name when a log tail is too large to send, so the page can tell which log failed', async () => {
+    const output = new PassThrough();
+    const outputChunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => outputChunks.push(chunk));
+
+    await writeReplyAsync(output, {
+      ok: true,
+      event: 'logTail',
+      logName: 'webapp',
+      isLogFilePresent: true,
+      logLines: ['x'.repeat(MAX_INCOMING_MESSAGE_BYTES)],
+    });
+
+    expect(createNativeMessageDecoder().push(Buffer.concat(outputChunks))).toEqual([
+      { ok: false, logName: 'webapp', error: expect.stringContaining('too large') },
     ]);
   });
 });

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261126-074736",
+  "round": 1,
+  "branch": "feat/show-the-newest-log-lines-at-the-top",
+  "baseRef": "origin/main",
+  "baseSha": "18e2489ae8873e140033d9e3d1793c091276530f",
+  "headSha": "d8a5dc5a5baf5a42beca10daea81db78b75f0b84",
+  "headPrNumber": 75,
+  "stackPrNumbers": [
+    75
+  ],
+  "isDeepRequested": false,
+  "mode": "quick",
+  "reviewers": [
+    {
+      "id": "blind",
+      "status": "complete"
+    },
+    {
+      "id": "informed",
+      "status": "complete"
+    }
+  ],
+  "phase": "done"
+}

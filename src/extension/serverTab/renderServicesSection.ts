@@ -36,10 +36,10 @@ export function renderServicesSection(
         text: view.statusText,
         className: `service-status tone-${view.tone}`,
       }),
+      createElement('span', { className: 'service-actions' }, buttons),
       ...(view.detail
         ? [createElement('span', { text: view.detail, className: 'detail service-detail' })]
         : []),
-      createElement('span', { className: 'service-actions' }, buttons),
     ]);
     row.dataset.service = serviceName;
     return row;

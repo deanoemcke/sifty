@@ -17,6 +17,7 @@ import {
 } from './controlService';
 import { describeError } from './describeError';
 import { isRecord } from './isRecord';
+import type { LogStreams } from './logStreams';
 import {
   isNativeHostRequestType,
   isReadOnlyRequestType,
@@ -25,11 +26,10 @@ import {
   type NativeHostRequestType,
   READ_ONLY_REQUEST_TYPES,
 } from './protocol';
-import { readLogTail } from './readLogTail';
 import { describeHowToInstallService } from './serviceDefinitions';
 import type { ServiceState } from './serviceState';
 
-const MAX_TAIL_LINE_COUNT = 500;
+const MAX_LOG_LINE_COUNT = 500;
 
 export type InstalledServiceState = ServiceState & {
   isInstalled: boolean;
@@ -45,7 +45,8 @@ export type NativeHostServices = {
 
 export type NativeHostDependencies = {
   getDatabase: () => Database.Database;
-  logFilePathsByLogName: Record<string, string>;
+  logStreams: LogStreams;
+  logActivity: (line: string) => void;
   services: NativeHostServices;
 };
 
@@ -69,6 +70,7 @@ export type NativeHostReply =
   | { ok: true; settings: SchedulerSettings }
   | { ok: true; searches: RunHistoryEntry[] }
   | { ok: true; isLogFilePresent: boolean; logLines: string[] }
+  | { ok: true; isSubscribed: true }
   | { ok: true; servicesByName: Record<string, InstalledServiceState> }
   | { ok: true; serviceName: string; state: ServiceState }
   | { ok: true; replies: NativeHostReply[] };
@@ -122,28 +124,27 @@ function getRunHistory(dependencies: NativeHostDependencies): NativeHostReply {
   return { ok: true, searches };
 }
 
-function tailLog(
-  message: UnvalidatedRequest<'tailLog'>,
+function isValidLineCount(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_LOG_LINE_COUNT
+  );
+}
+
+function subscribeLogs(
+  message: UnvalidatedRequest<'subscribeLogs'>,
   dependencies: NativeHostDependencies
 ): NativeHostReply {
-  const { logName, lineCount } = message;
-  if (typeof logName !== 'string' || !Object.hasOwn(dependencies.logFilePathsByLogName, logName)) {
-    return { ok: false, error: `Unknown log: ${String(logName)}` };
-  }
-  if (
-    typeof lineCount !== 'number' ||
-    !Number.isInteger(lineCount) ||
-    lineCount < 1 ||
-    lineCount > MAX_TAIL_LINE_COUNT
-  ) {
+  if (!isValidLineCount(message.lineCount)) {
     return {
       ok: false,
-      error: `tailLog requires lineCount to be a whole number from 1 to ${MAX_TAIL_LINE_COUNT}`,
+      error: `subscribeLogs requires lineCount to be a whole number from 1 to ${MAX_LOG_LINE_COUNT}`,
     };
   }
-
-  const logTail = readLogTail(dependencies.logFilePathsByLogName[logName], lineCount);
-  return { ok: true, ...logTail };
+  dependencies.logStreams.subscribe(message.lineCount);
+  return { ok: true, isSubscribed: true };
 }
 
 async function getServices(dependencies: NativeHostDependencies): Promise<NativeHostReply> {
@@ -187,18 +188,23 @@ async function controlService(
   const definition = definitionsByServiceName[serviceName];
   // Starting an uninstalled service fails with launchd's unhelpful "Input/output error".
   if (action !== 'stop' && !doesFileExist(definition.plistPath)) {
-    return {
-      ok: false,
-      error: `Service ${serviceName} is not installed (no ${definition.plistPath}). ${describeHowToInstallService(serviceName)}`,
-    };
+    const error = `Service ${serviceName} is not installed (no ${definition.plistPath}). ${describeHowToInstallService(serviceName)}`;
+    dependencies.logActivity(`controlService ${serviceName} ${action} failed: ${error}`);
+    return { ok: false, error };
   }
 
-  const state = await controlServiceAsync({
-    action,
-    definition,
-    userId,
-    runLaunchctlAsync,
-  });
+  let state: ServiceState;
+  try {
+    state = await controlServiceAsync({ action, definition, userId, runLaunchctlAsync });
+  } catch (error) {
+    dependencies.logActivity(
+      `controlService ${serviceName} ${action} failed: ${describeError(error)}`
+    );
+    throw error;
+  }
+  dependencies.logActivity(
+    `controlService ${serviceName} ${action} succeeded (loaded=${state.isLoaded}, running=${state.isRunning})`
+  );
   return { ok: true, serviceName, state };
 }
 
@@ -263,12 +269,12 @@ export async function handleNativeHostMessageAsync(
         return updateSettings(message, dependencies);
       case 'getRunHistory':
         return getRunHistory(dependencies);
-      case 'tailLog':
-        return tailLog(message, dependencies);
       case 'getServices':
         return await getServices(dependencies);
       case 'controlService':
         return await controlService(message, dependencies);
+      case 'subscribeLogs':
+        return subscribeLogs(message, dependencies);
       case 'batch':
         return await batchAsync(message, dependencies);
       default: {

@@ -3,6 +3,7 @@ import type { LogTail } from './hostClient';
 
 export type LogsSection = {
   showLog(logTail: LogTail): void;
+  showMessage(message: string): void;
 };
 
 export function renderLogsSection(
@@ -18,22 +19,23 @@ export function renderLogsSection(
     select.append(option);
   }
   select.value = selectedLogName;
+  select.setAttribute('aria-label', 'Log');
   select.addEventListener('change', () => onSelectLog(select.value));
 
   const lines = createElement('pre', { className: 'log-lines' });
   container.replaceChildren(
     createElement('h2', { text: 'Logs' }),
-    createElement('label', { className: 'field' }, [
-      createElement('span', { text: 'Log', className: 'field-label' }),
-      select,
-    ]),
+    createElement('div', { className: 'field' }, [select]),
     lines
   );
 
   return {
+    showMessage(message) {
+      lines.textContent = message;
+    },
     showLog(logTail) {
       lines.textContent = logTail.isLogFilePresent
-        ? logTail.logLines.join('\n')
+        ? [...logTail.logLines].reverse().join('\n')
         : 'No log file yet.';
     },
   };

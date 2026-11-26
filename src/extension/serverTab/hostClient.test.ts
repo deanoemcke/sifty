@@ -1,8 +1,5 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { makeFakeLaunchd } from '../../nativeHost/fakeLaunchd';
 import {
   handleNativeHostMessageAsync,
@@ -61,7 +58,7 @@ function clientReplying(reply: unknown) {
   return clientRecording(reply).client;
 }
 
-function makeRealHost(logFilePath: string) {
+function makeRealHost() {
   const database = new Database(':memory:');
   initSchema(database);
   const fake = makeFakeLaunchd({
@@ -80,7 +77,8 @@ function makeRealHost(logFilePath: string) {
   });
   const dependencies: NativeHostDependencies = {
     getDatabase: () => database,
-    logFilePathsByLogName: { webapp: logFilePath },
+    logStreams: { subscribe: () => {}, stopAll: () => {} },
+    logActivity: () => {},
     services: {
       definitionsByServiceName: {
         webapp: {
@@ -105,26 +103,10 @@ function makeRealHost(logFilePath: string) {
 }
 
 describe('createHostClient against the real host handler', () => {
-  const temporaryDirectories: string[] = [];
-
-  afterEach(() => {
-    for (const directory of temporaryDirectories.splice(0)) {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  function makeHost() {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'host-client-'));
-    temporaryDirectories.push(directory);
-    const logFilePath = path.join(directory, 'webapp.log');
-    fs.writeFileSync(logFilePath, 'first\nsecond\n');
-    return makeRealHost(logFilePath);
-  }
-
   it('fetches every panel from the real host in one request', async () => {
-    const { client } = makeHost();
+    const { client } = makeRealHost();
 
-    const panels = await client.getPanels('webapp', 10);
+    const panels = await client.getPanels();
 
     expect(panels.status).toEqual({
       status: 'fulfilled',
@@ -138,14 +120,10 @@ describe('createHostClient against the real host handler', () => {
       ngrok: { isLoaded: false, isEnabled: false, isIntervalJob: true },
     });
     expect(panels.runHistory).toEqual({ status: 'fulfilled', value: [] });
-    expect(panels.logTail).toEqual({
-      status: 'fulfilled',
-      value: { isLogFilePresent: true, logLines: ['first', 'second'] },
-    });
   });
 
   it('accepts a status for a usable login', async () => {
-    const { client, database } = makeHost();
+    const { client, database } = makeRealHost();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -154,7 +132,7 @@ describe('createHostClient against the real host handler', () => {
       ])
     );
 
-    const panels = await client.getPanels('webapp', 10);
+    const panels = await client.getPanels();
 
     expect(fulfilledValueOf(panels.status).cookies).toMatchObject({
       isSynced: true,
@@ -164,7 +142,7 @@ describe('createHostClient against the real host handler', () => {
   });
 
   it('accepts run history, including a search that has run and one that has not', async () => {
-    const { client, database } = makeHost();
+    const { client, database } = makeRealHost();
     for (const id of ['ran', 'never']) {
       stmtInsertSavedSearch(database).run(
         id,
@@ -179,7 +157,7 @@ describe('createHostClient against the real host handler', () => {
     stmtUpdateSavedSearchLastRunAt(database).run(1_699_990_000_000, 'ran');
     stmtUpdateSavedSearchRunStatus(database).run(0, 'scrape:Timed out', null, 'ran');
 
-    const searches = fulfilledValueOf((await client.getPanels('webapp', 10)).runHistory);
+    const searches = fulfilledValueOf((await client.getPanels()).runHistory);
 
     expect(searches).toHaveLength(2);
     expect(searches.find((search) => search.id === 'ran')).toMatchObject({
@@ -192,21 +170,8 @@ describe('createHostClient against the real host handler', () => {
     });
   });
 
-  it('keeps the other panels when the host cannot read one of them', async () => {
-    const { client } = makeHost();
-
-    const panels = await client.getPanels('formatDisk', 10);
-
-    expect(rejectionReasonOf(panels.logTail)).toEqual(
-      new HostRejectedError('Unknown log: formatDisk')
-    );
-    expect(panels.services.status).toBe('fulfilled');
-    expect(panels.status.status).toBe('fulfilled');
-    expect(panels.runHistory.status).toBe('fulfilled');
-  });
-
   it('accepts updated settings', async () => {
-    const { client } = makeHost();
+    const { client } = makeRealHost();
 
     await expect(
       client.updateSettings({ targetIntervalMinutes: 240, maxSearchesPerTick: 7 })
@@ -246,7 +211,6 @@ const VALID_PANEL_REPLIES: Record<PanelName, unknown> = {
   services: { ok: true, servicesByName: { webapp: VALID_SERVICE } },
   status: { ok: true, cookies: { isSynced: false }, settings: VALID_SETTINGS },
   runHistory: { ok: true, searches: [VALID_SEARCH] },
-  logTail: { ok: true, isLogFilePresent: true, logLines: [] },
 };
 
 const PANEL_NAMES = Object.keys(VALID_PANEL_REPLIES) as PanelName[];
@@ -256,7 +220,7 @@ function getPanelsWithSubReplies(subRepliesByPanelName: Partial<Record<PanelName
   return clientReplying({
     ok: true,
     replies: PANEL_NAMES.map((panelName) => repliesByPanelName[panelName]),
-  }).getPanels('webapp', 5);
+  }).getPanels();
 }
 
 function expectEveryPanelRejectedWith(panels: ServerTabPanels, expectedError: Error): void {
@@ -268,23 +232,18 @@ function expectEveryPanelRejectedWith(panels: ServerTabPanels, expectedError: Er
 }
 
 describe('createHostClient getPanels', () => {
-  it('sends one batch of the four panel requests', async () => {
+  it('sends one batch of the three panel requests', async () => {
     const { client, sentMessages } = clientRecording({
       ok: true,
       replies: PANEL_NAMES.map((panelName) => VALID_PANEL_REPLIES[panelName]),
     });
 
-    const panels = await client.getPanels('scheduler', 200);
+    const panels = await client.getPanels();
 
     expect(sentMessages).toEqual([
       {
         type: 'batch',
-        requests: [
-          { type: 'getServices' },
-          { type: 'getStatus' },
-          { type: 'getRunHistory' },
-          { type: 'tailLog', logName: 'scheduler', lineCount: 200 },
-        ],
+        requests: [{ type: 'getServices' }, { type: 'getStatus' }, { type: 'getRunHistory' }],
       },
     ]);
     expect(panels).toEqual({
@@ -294,7 +253,6 @@ describe('createHostClient getPanels', () => {
         value: { cookies: { isSynced: false }, settings: VALID_SETTINGS },
       },
       runHistory: { status: 'fulfilled', value: [VALID_SEARCH] },
-      logTail: { status: 'fulfilled', value: { isLogFilePresent: true, logLines: [] } },
     });
   });
 
@@ -304,7 +262,6 @@ describe('createHostClient getPanels', () => {
     expect(rejectionReasonOf(panels.status)).toEqual(new HostRejectedError('locked'));
     expect(panels.services.status).toBe('fulfilled');
     expect(panels.runHistory.status).toBe('fulfilled');
-    expect(panels.logTail.status).toBe('fulfilled');
   });
 
   it('rejects only the panel whose sub-reply is malformed', async () => {
@@ -315,14 +272,12 @@ describe('createHostClient getPanels', () => {
     );
     expect(panels.services.status).toBe('fulfilled');
     expect(panels.status.status).toBe('fulfilled');
-    expect(panels.logTail.status).toBe('fulfilled');
   });
 
   it('rejects only the panel whose sub-reply is not an object', async () => {
     const panels = await getPanelsWithSubReplies({ services: null });
 
     expect(rejectionReasonOf(panels.services)).toBeInstanceOf(HostRejectedError);
-    expect(panels.logTail.status).toBe('fulfilled');
   });
 
   it('rejects every panel with the reason when the host cannot be reached', async () => {
@@ -335,7 +290,7 @@ describe('createHostClient getPanels', () => {
     } as unknown as Pick<ChromeApi, 'runtime'>);
 
     expectEveryPanelRejectedWith(
-      await client.getPanels('webapp', 5),
+      await client.getPanels(),
       new HostUnreachableError('Specified native messaging host not found.')
     );
   });
@@ -348,11 +303,11 @@ describe('createHostClient getPanels', () => {
     [
       'the wrong number of replies',
       { ok: true, replies: [VALID_PANEL_REPLIES.services] },
-      'Host sent 1 replies for 4 requests',
+      'Host sent 1 replies for 3 requests',
     ],
   ])('rejects every panel with the reason for %s', async (_description, reply, message) => {
     expectEveryPanelRejectedWith(
-      await clientReplying(reply).getPanels('webapp', 5),
+      await clientReplying(reply).getPanels(),
       new HostRejectedError(message)
     );
   });
@@ -482,17 +437,6 @@ describe('createHostClient rejecting malformed sub-replies', () => {
 
     expect(rejectionReasonOf(panels.services)).toBeInstanceOf(HostRejectedError);
   });
-
-  it.each([
-    ['isLogFilePresent missing', { ok: true, logLines: [] }, 'isLogFilePresent'],
-    ['logLines not strings', { ok: true, isLogFilePresent: true, logLines: [1] }, 'logLines'],
-  ])('rejects a log tail with %s', async (_description, reply, fieldName) => {
-    const panels = await getPanelsWithSubReplies({ logTail: reply });
-
-    expect(rejectionReasonOf(panels.logTail)).toEqual(
-      new HostRejectedError(`Host reply has no valid "${fieldName}"`)
-    );
-  });
 });
 
 function collectRequestTypes(message: unknown): unknown[] {
@@ -504,7 +448,7 @@ describe('createHostClient requests', () => {
   it('keeps the panels batch within the size and request types the host accepts', async () => {
     const { client, sentMessages } = clientRecording({ ok: true, replies: [] });
 
-    await client.getPanels('webapp', 5);
+    await client.getPanels();
 
     const [batch] = sentMessages as { requests: { type: string }[] }[];
     expect(batch.requests.length).toBeLessThanOrEqual(MAX_BATCH_REQUEST_COUNT);
@@ -514,7 +458,7 @@ describe('createHostClient requests', () => {
   it('sends only request types the native host protocol defines, inside a batch too', async () => {
     const { client, sentMessages } = clientRecording({ ok: true, settings: VALID_SETTINGS });
 
-    await client.getPanels('webapp', 5);
+    await client.getPanels();
     await client.updateSettings(VALID_SETTINGS);
     await client.controlService('webapp', 'start');
 
@@ -524,7 +468,6 @@ describe('createHostClient requests', () => {
       'getServices',
       'getStatus',
       'getRunHistory',
-      'tailLog',
       'updateSettings',
       'controlService',
     ]);
@@ -545,12 +488,145 @@ describe('a bug while reading one sub-reply', () => {
         },
         { ok: false, error: 'x' },
         { ok: false, error: 'x' },
-        { ok: false, error: 'x' },
       ],
     };
 
-    await expect(clientReplying(buggyReply).getPanels('webapp', 10)).rejects.toBeInstanceOf(
-      TypeError
-    );
+    await expect(clientReplying(buggyReply).getPanels()).rejects.toBeInstanceOf(TypeError);
+  });
+});
+
+function openLogStream() {
+  const messageListeners: ((message: unknown) => void)[] = [];
+  const disconnectListeners: (() => void)[] = [];
+  const postedMessages: unknown[] = [];
+  let isDisconnected = false;
+  const port = {
+    postMessage: (message: unknown) => postedMessages.push(message),
+    onMessage: {
+      addListener: (listener: (message: unknown) => void) => messageListeners.push(listener),
+    },
+    onDisconnect: { addListener: (listener: () => void) => disconnectListeners.push(listener) },
+    disconnect: () => {
+      isDisconnected = true;
+    },
+  };
+  const client = createHostClient({
+    runtime: { connectNative: () => port },
+  } as unknown as Pick<ChromeApi, 'runtime'>);
+  const logTails: { logName: string; logTail: unknown }[] = [];
+  const errors: Error[] = [];
+  const errorLogNames: (string | undefined)[] = [];
+  const closures: Error[] = [];
+  const stream = client.openLogStream(200, {
+    onLogTail: (logName, logTail) => logTails.push({ logName, logTail }),
+    onError: (error, logName) => {
+      errors.push(error);
+      errorLogNames.push(logName);
+    },
+    onClosed: (error) => closures.push(error),
+  });
+  return {
+    stream,
+    postedMessages,
+    logTails,
+    errors,
+    errorLogNames,
+    closures,
+    isDisconnected: () => isDisconnected,
+    pushFromHost: (message: unknown) => {
+      for (const listener of messageListeners) listener(message);
+    },
+    closeFromHost: () => {
+      for (const listener of disconnectListeners) listener();
+    },
+  };
+}
+
+describe('createHostClient openLogStream', () => {
+  it('asks the host to stream the given number of lines of every log', () => {
+    const { postedMessages } = openLogStream();
+
+    expect(postedMessages).toEqual([{ type: 'subscribeLogs', lineCount: 200 }]);
+  });
+
+  it('passes on each log tail and ignores the subscription acknowledgement', () => {
+    const { pushFromHost, logTails, errors } = openLogStream();
+
+    pushFromHost({ ok: true, isSubscribed: true });
+    pushFromHost({
+      ok: true,
+      event: 'logTail',
+      logName: 'webapp',
+      isLogFilePresent: true,
+      logLines: ['one', 'two'],
+    });
+
+    expect(logTails).toEqual([
+      { logName: 'webapp', logTail: { isLogFilePresent: true, logLines: ['one', 'two'] } },
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('reports a host error as an error and keeps the stream open', () => {
+    const { pushFromHost, errors, closures } = openLogStream();
+
+    pushFromHost({ ok: false, error: 'Could not read the webapp log: EACCES' });
+
+    expect(errors).toEqual([new HostRejectedError('Could not read the webapp log: EACCES')]);
+    expect(closures).toEqual([]);
+  });
+
+  it('says which log a host error is about when the host names one', () => {
+    const { pushFromHost, errorLogNames } = openLogStream();
+
+    pushFromHost({ ok: false, logName: 'webapp', error: 'Could not read the webapp log: EACCES' });
+    pushFromHost({ ok: false, error: 'Native message is too large' });
+
+    expect(errorLogNames).toEqual(['webapp', undefined]);
+  });
+
+  it.each([
+    ['isLogFilePresent missing', { logName: 'webapp', logLines: [] }, 'isLogFilePresent'],
+    [
+      'logLines not strings',
+      { logName: 'webapp', isLogFilePresent: true, logLines: [1] },
+      'logLines',
+    ],
+    ['logName missing', { isLogFilePresent: true, logLines: [] }, 'logName'],
+  ])('reports a log tail with %s as an error', (_description, fields, fieldName) => {
+    const { pushFromHost, logTails, errors } = openLogStream();
+
+    pushFromHost({ ok: true, event: 'logTail', ...fields });
+
+    expect(logTails).toEqual([]);
+    expect(errors).toEqual([new HostRejectedError(`Host reply has no valid "${fieldName}"`)]);
+  });
+
+  it('reports the connection closing without being asked as the host being unreachable', () => {
+    const { closeFromHost, closures } = openLogStream();
+
+    closeFromHost();
+
+    expect(closures).toHaveLength(1);
+    expect(closures[0]).toBeInstanceOf(HostUnreachableError);
+  });
+
+  it('disconnects when closed, and then reports nothing further', () => {
+    const { stream, isDisconnected, pushFromHost, closeFromHost, logTails, closures } =
+      openLogStream();
+
+    stream.close();
+    pushFromHost({
+      ok: true,
+      event: 'logTail',
+      logName: 'webapp',
+      isLogFilePresent: true,
+      logLines: [],
+    });
+    closeFromHost();
+
+    expect(isDisconnected()).toBe(true);
+    expect(logTails).toEqual([]);
+    expect(closures).toEqual([]);
   });
 });

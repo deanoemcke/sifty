@@ -5,12 +5,7 @@ type NoFields = Record<never, never>;
 
 export const MAX_BATCH_REQUEST_COUNT = 8;
 
-export const READ_ONLY_REQUEST_TYPES = [
-  'getStatus',
-  'getRunHistory',
-  'tailLog',
-  'getServices',
-] as const;
+export const READ_ONLY_REQUEST_TYPES = ['getStatus', 'getRunHistory', 'getServices'] as const;
 
 export type ReadOnlyRequestType = (typeof READ_ONLY_REQUEST_TYPES)[number];
 
@@ -19,9 +14,9 @@ export type NativeHostRequestByType = {
   syncCookies: { cookiesJson: string };
   updateSettings: { changes: Partial<SchedulerSettings> };
   getRunHistory: NoFields;
-  tailLog: { logName: string; lineCount: number };
   getServices: NoFields;
   controlService: { serviceName: string; action: ServiceAction };
+  subscribeLogs: { lineCount: number };
   batch: { requests: ReadOnlyRequest[] };
 };
 
@@ -44,9 +39,9 @@ const IS_REQUEST_TYPE_BY_NAME = {
   syncCookies: true,
   updateSettings: true,
   getRunHistory: true,
-  tailLog: true,
   getServices: true,
   controlService: true,
+  subscribeLogs: true,
   batch: true,
 } as const satisfies Record<NativeHostRequestType, true>;
 

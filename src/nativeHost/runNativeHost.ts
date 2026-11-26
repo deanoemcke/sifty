@@ -1,9 +1,11 @@
 import type { Readable, Writable } from 'node:stream';
 import { describeError } from './describeError';
 import { handleNativeHostMessageAsync, type NativeHostDependencies } from './handleMessage';
+import { isRecord } from './isRecord';
 import {
   createNativeMessageDecoder,
   encodeNativeMessage,
+  type NativeMessageDecoder,
   NativeMessageFramingError,
 } from './nativeMessaging';
 
@@ -15,12 +17,18 @@ function writeFramedAsync(output: Writable, framedMessage: Buffer): Promise<void
   });
 }
 
-async function writeReplyAsync(output: Writable, reply: unknown): Promise<void> {
+export async function writeReplyAsync(output: Writable, reply: unknown): Promise<void> {
   let framedReply: Buffer;
   try {
     framedReply = encodeNativeMessage(reply);
   } catch (error) {
-    framedReply = encodeNativeMessage({ ok: false, error: describeError(error) });
+    const logName =
+      isRecord(reply) && typeof reply.logName === 'string' ? reply.logName : undefined;
+    framedReply = encodeNativeMessage({
+      ok: false,
+      ...(logName === undefined ? {} : { logName }),
+      error: describeError(error),
+    });
   }
   await writeFramedAsync(output, framedReply);
 }
@@ -31,7 +39,19 @@ export async function runNativeHostAsync(
   dependencies: NativeHostDependencies
 ): Promise<NativeHostOutcome> {
   const decoder = createNativeMessageDecoder();
+  try {
+    return await answerMessagesAsync(input, output, dependencies, decoder);
+  } finally {
+    dependencies.logStreams.stopAll();
+  }
+}
 
+async function answerMessagesAsync(
+  input: Readable,
+  output: Writable,
+  dependencies: NativeHostDependencies,
+  decoder: NativeMessageDecoder
+): Promise<NativeHostOutcome> {
   for await (const chunk of input) {
     let messages: unknown[];
     let framingError: NativeMessageFramingError | undefined;

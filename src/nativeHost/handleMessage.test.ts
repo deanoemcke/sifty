@@ -1,8 +1,5 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   initSchema,
   stmtInsertSavedSearch,
@@ -20,7 +17,8 @@ function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): Nati
   initSchema(database);
   return {
     getDatabase: () => database,
-    logFilePathsByLogName: {},
+    logStreams: { subscribe: () => {}, stopAll: () => {} },
+    logActivity: () => {},
     services: {
       definitionsByServiceName: {},
       userId: 501,
@@ -241,98 +239,6 @@ describe('getRunHistory', () => {
   });
 });
 
-describe('tailLog', () => {
-  const temporaryDirectories: string[] = [];
-
-  afterEach(() => {
-    for (const directory of temporaryDirectories.splice(0)) {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  function makeLogDependencies(logContents: string | undefined): NativeHostDependencies {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sifty-native-host-test-'));
-    temporaryDirectories.push(directory);
-    const logPath = path.join(directory, 'scheduler.log');
-    if (logContents !== undefined) fs.writeFileSync(logPath, logContents);
-    return makeDependencies({ logFilePathsByLogName: { scheduler: logPath } });
-  }
-
-  it('returns the last requested lines of a known log, oldest first', async () => {
-    const dependencies = makeLogDependencies('one\ntwo\nthree\nfour\n');
-
-    const reply = await handleNativeHostMessageAsync(
-      { type: 'tailLog', logName: 'scheduler', lineCount: 2 },
-      dependencies
-    );
-
-    expect(reply).toEqual({ ok: true, isLogFilePresent: true, logLines: ['three', 'four'] });
-  });
-
-  it('returns every line when the log has fewer than requested', async () => {
-    const dependencies = makeLogDependencies('one\ntwo\n');
-
-    const reply = await handleNativeHostMessageAsync(
-      { type: 'tailLog', logName: 'scheduler', lineCount: 50 },
-      dependencies
-    );
-
-    expect(reply).toMatchObject({ logLines: ['one', 'two'] });
-  });
-
-  it('reports a log file that does not exist yet as absent, not as an error', async () => {
-    const dependencies = makeLogDependencies(undefined);
-
-    const reply = await handleNativeHostMessageAsync(
-      { type: 'tailLog', logName: 'scheduler', lineCount: 10 },
-      dependencies
-    );
-
-    expect(reply).toEqual({ ok: true, isLogFilePresent: false, logLines: [] });
-  });
-
-  it('reads only the end of a very large log and never returns a partial first line', async () => {
-    const numberedLines = Array.from({ length: 60_000 }, (_, index) => `line ${index}`);
-    const dependencies = makeLogDependencies(`${numberedLines.join('\n')}\n`);
-
-    const reply = await handleNativeHostMessageAsync(
-      { type: 'tailLog', logName: 'scheduler', lineCount: 500 },
-      dependencies
-    );
-
-    expect(reply).toMatchObject({ ok: true, isLogFilePresent: true });
-    const { logLines } = reply as { logLines: string[] };
-    expect(logLines).toHaveLength(500);
-    expect(logLines.at(-1)).toBe('line 59999');
-    expect(logLines.at(0)).toBe('line 59500');
-  });
-
-  it('rejects a log name that is not configured, without touching the filesystem', async () => {
-    const reply = await handleNativeHostMessageAsync(
-      { type: 'tailLog', logName: '../../etc/passwd', lineCount: 10 },
-      makeLogDependencies('secret\n')
-    );
-
-    expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('Unknown log') });
-  });
-
-  it.each([
-    ['zero', 0],
-    ['negative', -3],
-    ['fractional', 2.5],
-    ['more than 500', 501],
-    ['a string', '10'],
-    ['missing', undefined],
-  ])('rejects a lineCount that is %s', async (_description, lineCount) => {
-    const reply = await handleNativeHostMessageAsync(
-      { type: 'tailLog', logName: 'scheduler', lineCount },
-      makeLogDependencies('one\n')
-    );
-
-    expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('lineCount') });
-  });
-});
-
 const WEBAPP_PLIST = '/agents/webapp.plist';
 const NGROK_PLIST = '/agents/ngrok.plist';
 
@@ -374,6 +280,67 @@ function makeServiceDependencies(
   });
   return { dependencies, fake };
 }
+
+describe('subscribeLogs', () => {
+  function makeSubscribableDependencies() {
+    const subscribedLineCounts: number[] = [];
+    const dependencies = makeDependencies({
+      logStreams: {
+        subscribe: (lineCount) => {
+          subscribedLineCounts.push(lineCount);
+        },
+        stopAll: () => {},
+      },
+    });
+    return { dependencies, subscribedLineCounts };
+  }
+
+  it('starts the log streams with the requested line count', async () => {
+    const { dependencies, subscribedLineCounts } = makeSubscribableDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'subscribeLogs', lineCount: 200 },
+      dependencies
+    );
+
+    expect(reply).toEqual({ ok: true, isSubscribed: true });
+    expect(subscribedLineCounts).toEqual([200]);
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -3],
+    ['fractional', 2.5],
+    ['more than 500', 501],
+    ['a string', '10'],
+    ['missing', undefined],
+  ])('rejects a lineCount that is %s without subscribing', async (_description, lineCount) => {
+    const { dependencies, subscribedLineCounts } = makeSubscribableDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'subscribeLogs', lineCount },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('lineCount') });
+    expect(subscribedLineCounts).toEqual([]);
+  });
+
+  it('is refused inside a batch, which runs only read-only requests', async () => {
+    const { dependencies, subscribedLineCounts } = makeSubscribableDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'batch', requests: [{ type: 'subscribeLogs', lineCount: 200 }] },
+      dependencies
+    );
+
+    expect(reply).toEqual({
+      ok: true,
+      replies: [{ ok: false, error: expect.stringContaining('cannot contain subscribeLogs') }],
+    });
+    expect(subscribedLineCounts).toEqual([]);
+  });
+});
 
 describe('getServices', () => {
   it('reports the state of every configured service by name', async () => {
@@ -543,6 +510,81 @@ describe('controlService', () => {
   });
 });
 
+describe('controlService activity log', () => {
+  function makeLoggingDependencies(
+    failures: Record<string, string> = {},
+    doesFileExist: (filePath: string) => boolean = () => true
+  ) {
+    const activityLines: string[] = [];
+    const { dependencies } = makeServiceDependencies(failures, doesFileExist);
+    return {
+      activityLines,
+      dependencies: {
+        ...dependencies,
+        logActivity: (line: string) => {
+          activityLines.push(line);
+        },
+      },
+    };
+  }
+
+  it('records a successful action with the state it left the service in', async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies();
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(activityLines).toEqual([
+      'controlService ngrok start succeeded (loaded=true, running=true)',
+    ]);
+  });
+
+  it("records launchctl's own message when an action fails", async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies({
+      enable: 'Could not enable service',
+    });
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(activityLines).toHaveLength(1);
+    expect(activityLines[0]).toContain('controlService ngrok start failed');
+    expect(activityLines[0]).toContain('Could not enable service');
+  });
+
+  it('records a refusal to start a service that is not installed', async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies({}, () => false);
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'ngrok', action: 'start' },
+      dependencies
+    );
+
+    expect(activityLines).toHaveLength(1);
+    expect(activityLines[0]).toContain('controlService ngrok start failed');
+    expect(activityLines[0]).toContain('not installed');
+  });
+
+  it('records nothing for a request that names an unknown service or action', async () => {
+    const { dependencies, activityLines } = makeLoggingDependencies();
+
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'database', action: 'stop' },
+      dependencies
+    );
+    await handleNativeHostMessageAsync(
+      { type: 'controlService', serviceName: 'webapp', action: 'delete' },
+      dependencies
+    );
+
+    expect(activityLines).toEqual([]);
+  });
+});
+
 describe('malformed requests', () => {
   it.each([
     ['null', null],
@@ -605,7 +647,7 @@ describe('batch', () => {
         type: 'batch',
         requests: [
           { type: 'getRunHistory' },
-          { type: 'tailLog', logName: 'missing', lineCount: 10 },
+          { type: 'subscribeLogs', lineCount: 200 },
           { type: 'formatDisk' },
           { type: 'getRunHistory' },
         ],
@@ -617,7 +659,7 @@ describe('batch', () => {
       ok: true,
       replies: [
         { ok: true, searches: [] },
-        { ok: false, error: 'Unknown log: missing' },
+        { ok: false, error: expect.stringContaining('cannot contain subscribeLogs') },
         { ok: false, error: 'Unknown request type: formatDisk' },
         { ok: true, searches: [] },
       ],
