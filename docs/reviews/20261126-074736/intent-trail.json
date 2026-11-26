@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "sessionId": "31991ccd-020b-406f-a5e2-8498dbbeea44",
+      "timestamp": "2026-11-26T07:43:05.285Z",
+      "branch": "feat/show-the-newest-log-lines-at-the-top",
+      "userText": "/branch-review",
+      "precedingAssistantText": "The PR is open at https://github.com/deanoemcke/sifty/pull/75.\n\n- **Branch:** `feat/show-the-newest-log-lines-at-the-top`, newly created from `origin/main`.\n- **Why a new branch:** the old branch's PR (#74) was already merged, so I replayed only the seven commits made after it.\n- **Contents:** the PR is ready for review, not a draft.\n- **Checks:** all 1,832 tests, `tsc` and Biome passed on the new branch before the push.\n- **Old branch:** `fix/facebook-numeric-location-ids` is untouched."
+    },
+    {
+      "sessionId": "31991ccd-020b-406f-a5e2-8498dbbeea44",
+      "timestamp": "2026-11-26T07:47:30.378Z",
+      "branch": "feat/show-the-newest-log-lines-at-the-top",
+      "userText": "quick",
+      "precedingAssistantText": "Branch: feat/show-the-newest-log-lines-at-the-top\nAgainst origin/main: 7 ahead, 0 behind.\n\nPR #75: feat: live log streaming and tidier layout on the extension options page\nStatus: open, ready for review, review: none\n\nNo lighter review suggested: 22 files, 1439 lines changed. Say \"quick\" or \"inline\" to use one anyway.\n\nBefore I start, one question. The defaults are:\n- **Scope:** the current branch.\n- **Mode:** a full review with four reviewers, because the diff is 22 files and 1,439 lines.\n- **`--deep`:** off. It adds a second correctness reader.\n- **`/simplify` pre-pass:** on. It runs in this session and commits any cleanups before the reviewers start.\n\nThe PR is already open, so there is nothing to push or open.\n\nReply \"go\" to accept these, or say \"deep\", \"quick\", \"inline\" or \"no simplify\" to change them."
+    }
+  ]
+}
