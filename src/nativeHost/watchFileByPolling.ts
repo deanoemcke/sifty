@@ -1,9 +1,6 @@
 import fs from 'node:fs';
 import type { WatchFile } from './logStreams';
 
-// Stat polling rather than fs.watch: it works for a file that does not exist yet and
-// survives the file being replaced, which log rotation and launchd can both do.
-// The baseline is taken synchronously so a write straight after watching starts is never missed.
 export const LOG_POLL_INTERVAL_MS = 250;
 
 function readFileSignature(filePath: string): string {
