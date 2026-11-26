@@ -89,8 +89,8 @@ describe('installNameShim', () => {
 });
 
 const TEST_REGIONS = [
-  { name: 'Auckland', tradeMeRegionId: 2, facebookLocation: 'auckland' },
-  { name: 'Wellington', tradeMeRegionId: 12, facebookLocation: 'wellington' },
+  { name: 'Auckland', tradeMeRegionId: 2, facebookLocationId: '101883149853721' },
+  { name: 'Wellington', tradeMeRegionId: 12, facebookLocationId: '114912541853133' },
 ];
 
 // This mock is load-bearing for buildDiscoverUrlsAsync tests below, which rely on
@@ -615,7 +615,7 @@ describe('buildFacebookUrl', () => {
       condition: 'used',
       regions: TEST_REGIONS,
     });
-    expect(url).toContain('/marketplace/auckland/search');
+    expect(url).toContain('/marketplace/101883149853721/search');
   });
 
   it('omits location segment when pickup but regionValue is undefined', () => {
@@ -629,7 +629,7 @@ describe('buildFacebookUrl', () => {
       regions: TEST_REGIONS,
     });
     expect(url).toContain('/marketplace/search');
-    expect(url).not.toContain('/marketplace/auckland/');
+    expect(url).not.toContain('/marketplace/101883149853721/');
   });
 
   it('omits location segment when fulfillment is "any" even with regionValue', () => {
@@ -642,7 +642,7 @@ describe('buildFacebookUrl', () => {
       condition: 'used',
       regions: TEST_REGIONS,
     });
-    expect(url).not.toContain('/marketplace/auckland/');
+    expect(url).not.toContain('/marketplace/101883149853721/');
   });
 
   it('omits location segment when regionValue does not match any region', () => {
@@ -721,7 +721,7 @@ describe('buildFacebookUrl', () => {
       condition: 'used',
       regions: TEST_REGIONS,
     });
-    expect(url).not.toContain('/marketplace/auckland/');
+    expect(url).not.toContain('/marketplace/101883149853721/');
     expect(url).toContain('/marketplace/search');
   });
 
@@ -914,7 +914,7 @@ describe('buildDiscoverUrlsAsync', () => {
       regionValue: '2',
       getAiConfig: () => MOCK_AI_CONFIG,
     });
-    expect(result.urls[0]).toContain('/marketplace/auckland/search');
+    expect(result.urls[0]).toContain('/marketplace/101883149853721/search');
   });
 
   it('returns an empty warnings array', async () => {
@@ -986,7 +986,7 @@ describe('buildDiscoverUrlsAsync', () => {
     });
     expect(result.urls[1]).not.toContain('maxPrice');
     expect(result.urls[1]).not.toContain('deliveryMethod');
-    expect(result.urls[1]).not.toContain('/marketplace/auckland/');
+    expect(result.urls[1]).not.toContain('/marketplace/101883149853721/');
   });
 
   it('the first URL is unaffected by includeSoldItems', async () => {
@@ -1000,7 +1000,7 @@ describe('buildDiscoverUrlsAsync', () => {
       getAiConfig: () => MOCK_AI_CONFIG,
     });
     expect(result.urls[0]).toContain('maxPrice=500');
-    expect(result.urls[0]).toContain('/marketplace/auckland/search');
+    expect(result.urls[0]).toContain('/marketplace/101883149853721/search');
   });
 
   it('the base URL restricts to used-condition items by default', async () => {

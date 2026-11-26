@@ -1082,7 +1082,7 @@ export function buildFacebookUrl({
   let fbLocationSegment = '';
   if (pickupOnly) {
     const region = regions.find((r) => String(r.tradeMeRegionId) === regionValue);
-    if (region?.facebookLocation) fbLocationSegment = `${region.facebookLocation}/`;
+    if (region?.facebookLocationId) fbLocationSegment = `${region.facebookLocationId}/`;
   }
   return `https://www.facebook.com/marketplace/${fbLocationSegment}search?${fbParams.toString()}`;
 }
