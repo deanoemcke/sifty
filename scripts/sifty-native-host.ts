@@ -21,7 +21,6 @@ async function main(): Promise<number> {
 
   const outcome = await runNativeHostAsync(process.stdin, process.stdout, {
     getDatabase: getDb,
-    logFilePathsByLogName: LOG_FILE_PATHS_BY_LOG_NAME,
     logStreams: createLogStreams({
       logFilePathsByLogName: LOG_FILE_PATHS_BY_LOG_NAME,
       watchFile: createPollingFileWatcher(LOG_POLL_INTERVAL_MS),

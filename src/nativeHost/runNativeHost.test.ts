@@ -15,7 +15,6 @@ function makeDependencies(): NativeHostDependencies {
   initSchema(database);
   return {
     getDatabase: () => database,
-    logFilePathsByLogName: {},
     logStreams: { subscribe: () => {}, stopAll: () => {} },
     services: {
       definitionsByServiceName: {},

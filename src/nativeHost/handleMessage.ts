@@ -26,11 +26,10 @@ import {
   type NativeHostRequestType,
   READ_ONLY_REQUEST_TYPES,
 } from './protocol';
-import { readLogTail } from './readLogTail';
 import { describeHowToInstallService } from './serviceDefinitions';
 import type { ServiceState } from './serviceState';
 
-const MAX_TAIL_LINE_COUNT = 500;
+const MAX_LOG_LINE_COUNT = 500;
 
 export type InstalledServiceState = ServiceState & {
   isInstalled: boolean;
@@ -46,7 +45,6 @@ export type NativeHostServices = {
 
 export type NativeHostDependencies = {
   getDatabase: () => Database.Database;
-  logFilePathsByLogName: Record<string, string>;
   logStreams: LogStreams;
   services: NativeHostServices;
 };
@@ -130,12 +128,8 @@ function isValidLineCount(value: unknown): value is number {
     typeof value === 'number' &&
     Number.isInteger(value) &&
     value >= 1 &&
-    value <= MAX_TAIL_LINE_COUNT
+    value <= MAX_LOG_LINE_COUNT
   );
-}
-
-function describeInvalidLineCount(requestType: NativeHostRequestType): string {
-  return `${requestType} requires lineCount to be a whole number from 1 to ${MAX_TAIL_LINE_COUNT}`;
 }
 
 function subscribeLogs(
@@ -143,26 +137,13 @@ function subscribeLogs(
   dependencies: NativeHostDependencies
 ): NativeHostReply {
   if (!isValidLineCount(message.lineCount)) {
-    return { ok: false, error: describeInvalidLineCount('subscribeLogs') };
+    return {
+      ok: false,
+      error: `subscribeLogs requires lineCount to be a whole number from 1 to ${MAX_LOG_LINE_COUNT}`,
+    };
   }
   dependencies.logStreams.subscribe(message.lineCount);
   return { ok: true, isSubscribed: true };
-}
-
-function tailLog(
-  message: UnvalidatedRequest<'tailLog'>,
-  dependencies: NativeHostDependencies
-): NativeHostReply {
-  const { logName, lineCount } = message;
-  if (typeof logName !== 'string' || !Object.hasOwn(dependencies.logFilePathsByLogName, logName)) {
-    return { ok: false, error: `Unknown log: ${String(logName)}` };
-  }
-  if (!isValidLineCount(lineCount)) {
-    return { ok: false, error: describeInvalidLineCount('tailLog') };
-  }
-
-  const logTail = readLogTail(dependencies.logFilePathsByLogName[logName], lineCount);
-  return { ok: true, ...logTail };
 }
 
 async function getServices(dependencies: NativeHostDependencies): Promise<NativeHostReply> {
@@ -282,8 +263,6 @@ export async function handleNativeHostMessageAsync(
         return updateSettings(message, dependencies);
       case 'getRunHistory':
         return getRunHistory(dependencies);
-      case 'tailLog':
-        return tailLog(message, dependencies);
       case 'getServices':
         return await getServices(dependencies);
       case 'controlService':

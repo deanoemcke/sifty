@@ -1,8 +1,5 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { makeFakeLaunchd } from '../../nativeHost/fakeLaunchd';
 import {
   handleNativeHostMessageAsync,
@@ -61,7 +58,7 @@ function clientReplying(reply: unknown) {
   return clientRecording(reply).client;
 }
 
-function makeRealHost(logFilePath: string) {
+function makeRealHost() {
   const database = new Database(':memory:');
   initSchema(database);
   const fake = makeFakeLaunchd({
@@ -80,7 +77,6 @@ function makeRealHost(logFilePath: string) {
   });
   const dependencies: NativeHostDependencies = {
     getDatabase: () => database,
-    logFilePathsByLogName: { webapp: logFilePath },
     logStreams: { subscribe: () => {}, stopAll: () => {} },
     services: {
       definitionsByServiceName: {
@@ -106,24 +102,8 @@ function makeRealHost(logFilePath: string) {
 }
 
 describe('createHostClient against the real host handler', () => {
-  const temporaryDirectories: string[] = [];
-
-  afterEach(() => {
-    for (const directory of temporaryDirectories.splice(0)) {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  function makeHost() {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'host-client-'));
-    temporaryDirectories.push(directory);
-    const logFilePath = path.join(directory, 'webapp.log');
-    fs.writeFileSync(logFilePath, 'first\nsecond\n');
-    return makeRealHost(logFilePath);
-  }
-
   it('fetches every panel from the real host in one request', async () => {
-    const { client } = makeHost();
+    const { client } = makeRealHost();
 
     const panels = await client.getPanels();
 
@@ -142,7 +122,7 @@ describe('createHostClient against the real host handler', () => {
   });
 
   it('accepts a status for a usable login', async () => {
-    const { client, database } = makeHost();
+    const { client, database } = makeRealHost();
     saveFacebookCookies(
       database,
       JSON.stringify([
@@ -161,7 +141,7 @@ describe('createHostClient against the real host handler', () => {
   });
 
   it('accepts run history, including a search that has run and one that has not', async () => {
-    const { client, database } = makeHost();
+    const { client, database } = makeRealHost();
     for (const id of ['ran', 'never']) {
       stmtInsertSavedSearch(database).run(
         id,
@@ -190,7 +170,7 @@ describe('createHostClient against the real host handler', () => {
   });
 
   it('accepts updated settings', async () => {
-    const { client } = makeHost();
+    const { client } = makeRealHost();
 
     await expect(
       client.updateSettings({ targetIntervalMinutes: 240, maxSearchesPerTick: 7 })

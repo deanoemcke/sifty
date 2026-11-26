@@ -13,7 +13,6 @@ function makeDependencies(): NativeHostDependencies {
   initSchema(database);
   return {
     getDatabase: () => database,
-    logFilePathsByLogName: {},
     logStreams: { subscribe: () => {}, stopAll: () => {} },
     services: {
       definitionsByServiceName: {},
@@ -59,9 +58,8 @@ describe('native host protocol', () => {
   });
 
   it('builds a request carrying its type and fields', () => {
-    expect(buildNativeHostRequest('tailLog', { logName: 'webapp', lineCount: 20 })).toEqual({
-      type: 'tailLog',
-      logName: 'webapp',
+    expect(buildNativeHostRequest('subscribeLogs', { lineCount: 20 })).toEqual({
+      type: 'subscribeLogs',
       lineCount: 20,
     });
   });
@@ -87,7 +85,7 @@ describe('native host protocol', () => {
     // @ts-expect-error
     readOnlyRequests.push(nestedBatch);
     // @ts-expect-error
-    readOnlyRequests.push({ type: 'tailLog' });
+    readOnlyRequests.push({ type: 'subscribeLogs', lineCount: 200 });
 
     expect(readOnlyRequests).toHaveLength(3);
   });
