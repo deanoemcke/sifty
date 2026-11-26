@@ -4,7 +4,7 @@ import type { InstalledServiceState } from '../../nativeHost/handleMessage';
 import { LOG_FILE_PATHS_BY_LOG_NAME } from '../../nativeHost/logFiles';
 import { type ChromeApi, describeSyncOutcome, syncFacebookCookiesAsync } from '../startCookieSync';
 import { createElement } from './dom';
-import { createHostClient } from './hostClient';
+import { createHostClient, type LogStream, type LogTail } from './hostClient';
 import { renderLogsSection } from './renderLogsSection';
 import { renderCookiesSection, renderHostError, renderRunsSection } from './renderSections';
 import { renderServicesSection } from './renderServicesSection';
@@ -30,6 +30,8 @@ type ServerTabState = {
   isRefreshing: boolean;
   isRefreshQueued: boolean;
   isServiceActionRunning: boolean;
+  logTailsByLogName: Record<string, LogTail>;
+  logStream: LogStream | undefined;
   servicesByName: Record<string, InstalledServiceState> | undefined;
 };
 
@@ -51,6 +53,8 @@ export async function startServerTab(
     isRefreshing: false,
     isRefreshQueued: false,
     isServiceActionRunning: false,
+    logTailsByLogName: {},
+    logStream: undefined,
     servicesByName: undefined,
   };
 
@@ -75,9 +79,43 @@ export async function startServerTab(
     state.selectedLogName,
     (logName) => {
       state.selectedLogName = logName;
-      void refreshAsync();
+      showSelectedLog();
     }
   );
+
+  function showSelectedLog(): void {
+    const logTail = state.logTailsByLogName[state.selectedLogName];
+    if (logTail) logsSection.showLog(logTail);
+    else logsSection.showMessage('Waiting for the log…');
+  }
+
+  function handleLogTail(logName: string, logTail: LogTail): void {
+    state.logTailsByLogName[logName] = logTail;
+    if (logName === state.selectedLogName) logsSection.showLog(logTail);
+  }
+
+  function handleLogStreamClosed(error: Error): void {
+    state.logStream = undefined;
+    logsSection.showMessage(`Live logs stopped: ${describeError(error)}. Retrying shortly.`);
+  }
+
+  function openLogStream(): void {
+    if (state.logStream) return;
+    try {
+      state.logStream = hostClient.openLogStream(LOG_LINES_SHOWN, {
+        onLogTail: handleLogTail,
+        onError: (error) => logsSection.showMessage(describeError(error)),
+        onClosed: handleLogStreamClosed,
+      });
+    } catch (error) {
+      logsSection.showMessage(`Live logs unavailable: ${describeError(error)}`);
+    }
+  }
+
+  function closeLogStream(): void {
+    state.logStream?.close();
+    state.logStream = undefined;
+  }
 
   async function syncNowAsync(): Promise<void> {
     let text: string;
@@ -133,15 +171,11 @@ export async function startServerTab(
       if (state.serviceMessage && isMessageExpired(state.serviceMessage, currentMs)) {
         state.serviceMessage = undefined;
       }
-      const { services, status, runHistory, logTail } = await hostClient.getPanels(
-        state.selectedLogName,
-        LOG_LINES_SHOWN
-      );
+      const { services, status, runHistory } = await hostClient.getPanels();
       const panelResults = [
         { panelName: 'Services', result: services },
         { panelName: 'Cookies and settings', result: status },
         { panelName: 'Last runs', result: runHistory },
-        { panelName: 'Logs', result: logTail },
       ];
       const failedPanelNames = panelResults
         .filter(({ result }) => result.status === 'rejected')
@@ -174,9 +208,6 @@ export async function startServerTab(
       if (runHistory.status === 'fulfilled') {
         renderRunsSection(runsContainer, runHistory.value, nowMs());
       }
-      if (logTail.status === 'fulfilled') {
-        logsSection.showLog(logTail.value);
-      }
     } catch (error) {
       renderHostError(hostErrorContainer, [error as Error], []);
     } finally {
@@ -185,14 +216,22 @@ export async function startServerTab(
     if (state.isRefreshQueued) await refreshAsync();
   }
 
+  function refreshVisiblePage(): void {
+    void refreshAsync();
+    openLogStream();
+  }
+
   function onPollTick(): void {
-    if (!document.hidden) void refreshAsync();
+    if (!document.hidden) refreshVisiblePage();
   }
 
   function onVisibilityChange(): void {
-    if (!document.hidden) void refreshAsync();
+    if (document.hidden) closeLogStream();
+    else refreshVisiblePage();
   }
 
+  showSelectedLog();
+  openLogStream();
   await refreshAsync();
   setInterval(onPollTick, dependencies.pollIntervalMs);
   document.addEventListener('visibilitychange', onVisibilityChange);

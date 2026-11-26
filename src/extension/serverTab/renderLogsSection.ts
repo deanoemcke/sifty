@@ -3,6 +3,7 @@ import type { LogTail } from './hostClient';
 
 export type LogsSection = {
   showLog(logTail: LogTail): void;
+  showMessage(message: string): void;
 };
 
 export function renderLogsSection(
@@ -31,6 +32,9 @@ export function renderLogsSection(
   );
 
   return {
+    showMessage(message) {
+      lines.textContent = message;
+    },
     showLog(logTail) {
       lines.textContent = logTail.isLogFilePresent
         ? [...logTail.logLines].reverse().join('\n')

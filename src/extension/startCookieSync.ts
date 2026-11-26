@@ -9,6 +9,13 @@ import {
 } from './cookieSync';
 import { createCookieSyncScheduler } from './syncScheduler';
 
+export type NativePort = {
+  postMessage(message: NativeHostRequest): void;
+  onMessage: { addListener(listener: (message: unknown) => void): void };
+  onDisconnect: { addListener(listener: () => void): void };
+  disconnect(): void;
+};
+
 export type ChromeApi = {
   cookies: {
     getAll(details: { domain: string }): Promise<BrowserCookie[]>;
@@ -16,6 +23,7 @@ export type ChromeApi = {
   };
   runtime: {
     sendNativeMessage(hostName: string, message: NativeHostRequest): Promise<unknown>;
+    connectNative(hostName: string): NativePort;
     onStartup: { addListener(listener: () => void): void };
     onInstalled: { addListener(listener: () => void): void };
   };

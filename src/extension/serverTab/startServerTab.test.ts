@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NATIVE_HOST_NAME } from '../../nativeHost/hostName';
 import type { BrowserCookie } from '../cookieSync';
 import type { ChromeApi } from '../startCookieSync';
 import { startServerTab } from './startServerTab';
@@ -34,7 +35,6 @@ const DEFAULT_REPLIES: Record<string, unknown> = {
       },
     ],
   },
-  tailLog: { ok: true, isLogFilePresent: true, logLines: ['first line', 'second line'] },
   getServices: {
     ok: true,
     servicesByName: {
@@ -66,15 +66,65 @@ const DEFAULT_REPLIES: Record<string, unknown> = {
   },
 };
 
+type LogTailContent = { isLogFilePresent: boolean; logLines: string[] };
+
+const DEFAULT_LOG_TAILS_BY_LOG_NAME: Record<string, LogTailContent> = {
+  scheduler: { isLogFilePresent: true, logLines: ['first line', 'second line'] },
+  'scheduler-launchd': { isLogFilePresent: true, logLines: [] },
+  webapp: { isLogFilePresent: true, logLines: [] },
+  ngrok: { isLogFilePresent: true, logLines: [] },
+  'native-host': { isLogFilePresent: true, logLines: [] },
+};
+
+function logTailMessage(logName: string, content: LogTailContent) {
+  return { ok: true, event: 'logTail', logName, ...content };
+}
+
+function makeFakePort(logTailsByLogName: Record<string, LogTailContent>) {
+  const messageListeners: ((message: unknown) => void)[] = [];
+  const disconnectListeners: (() => void)[] = [];
+  const port = {
+    postedMessages: [] as unknown[],
+    isDisconnected: false,
+    postMessage(message: unknown) {
+      port.postedMessages.push(message);
+      if ((message as HostRequest).type !== 'subscribeLogs') return;
+      port.pushFromHost({ ok: true, isSubscribed: true });
+      for (const [logName, content] of Object.entries(logTailsByLogName)) {
+        port.pushFromHost(logTailMessage(logName, content));
+      }
+    },
+    onMessage: {
+      addListener: (listener: (message: unknown) => void) => messageListeners.push(listener),
+    },
+    onDisconnect: { addListener: (listener: () => void) => disconnectListeners.push(listener) },
+    disconnect() {
+      port.isDisconnected = true;
+    },
+    pushFromHost(message: unknown) {
+      for (const listener of messageListeners) listener(message);
+    },
+    closeFromHost() {
+      port.isDisconnected = true;
+      for (const listener of disconnectListeners) listener();
+    },
+  };
+  return port;
+}
+
+type FakePort = ReturnType<typeof makeFakePort>;
+
 function makeFakeChrome(
   options: {
     replies?: Record<string, unknown | ((request: HostRequest) => unknown)>;
+    logTails?: Record<string, LogTailContent>;
     hostUnreachableError?: Error;
     browserCookies?: BrowserCookie[];
   } = {}
 ) {
   const replies = { ...DEFAULT_REPLIES, ...options.replies };
   const requests: HostRequest[] = [];
+  const ports: FakePort[] = [];
   async function answerRequestAsync(request: HostRequest): Promise<unknown> {
     requests.push(request);
     const reply = replies[request.type];
@@ -87,6 +137,12 @@ function makeFakeChrome(
     const subRequests = request.requests as HostRequest[];
     return { ok: true, replies: await Promise.all(subRequests.map(answerRequestAsync)) };
   });
+  const connectNative = vi.fn((_hostName: string) => {
+    const port = makeFakePort(options.logTails ?? DEFAULT_LOG_TAILS_BY_LOG_NAME);
+    ports.push(port);
+    if (options.hostUnreachableError) queueMicrotask(() => port.closeFromHost());
+    return port;
+  });
 
   const chromeApi: ChromeApi = {
     cookies: {
@@ -95,12 +151,13 @@ function makeFakeChrome(
     },
     runtime: {
       sendNativeMessage,
+      connectNative,
       onStartup: { addListener: () => {} },
       onInstalled: { addListener: () => {} },
     },
     alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
   };
-  return { chromeApi, requests, sendNativeMessage };
+  return { chromeApi, requests, sendNativeMessage, connectNative, ports };
 }
 
 let root: HTMLElement;
@@ -240,31 +297,21 @@ describe('startServerTab — loading', () => {
     expect(settingsInput('targetIntervalMinutes').value).toBe('240');
   });
 
-  it('shows the panels that load when only the log read fails', async () => {
-    await openTab(
-      makeFakeChrome({ replies: { tailLog: { ok: false, error: 'cannot read log' } } })
-    );
-
-    expect(sectionText('host-error')).toContain('cannot read log');
-    expect(sectionText('services')).toContain('webapp');
-    expect(sectionText('cookies')).toContain('Facebook cookies synced');
-  });
-
   it('reports every failed request and names the panels that were not updated', async () => {
     await openTab(
       makeFakeChrome({
         replies: {
           getServices: { ok: false, error: 'launchctl print-disabled failed (exit 1)' },
-          tailLog: { ok: false, error: 'cannot read log' },
+          getRunHistory: { ok: false, error: 'cannot read run history' },
         },
       })
     );
 
     const banner = sectionText('host-error');
     expect(banner).toContain('launchctl print-disabled failed');
-    expect(banner).toContain('cannot read log');
-    expect(banner).toContain('Not updated: Services, Logs');
-    expect(banner).not.toContain('Last runs');
+    expect(banner).toContain('cannot read run history');
+    expect(banner).toContain('Not updated: Services, Last runs');
+    expect(banner).not.toContain('Cookies and settings');
   });
 
   it('names a panel as not updated when a later refresh fails and its old content stays', async () => {
@@ -484,41 +531,13 @@ describe('startServerTab — refreshing', () => {
 });
 
 describe('startServerTab — refreshing while a refresh is already running', () => {
-  it('fetches again with the newly chosen log instead of showing the old log under the new name', async () => {
-    const heldTail = holdReply<unknown>();
-    let shouldHoldTail = false;
-    const fake = makeFakeChrome({
-      replies: {
-        tailLog: (request: HostRequest) =>
-          shouldHoldTail
-            ? heldTail.reply
-            : { ok: true, isLogFilePresent: true, logLines: [`content of ${request.logName}`] },
-      },
-    });
-    await openTab(fake);
-    shouldHoldTail = true;
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    const select = root.querySelector<HTMLSelectElement>('[data-section="logs"] select');
-    if (!select) throw new Error('No log selector');
-    shouldHoldTail = false;
-    select.value = 'webapp';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-    heldTail.release({ ok: true, isLogFilePresent: true, logLines: ['content of scheduler'] });
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(sectionText('logs')).toContain('content of webapp');
-    expect(sectionText('logs')).not.toContain('content of scheduler');
-  });
-
   it('shows the state after a service action even when a poll was already in flight', async () => {
     let isWebappRunning = true;
     const heldTail = holdReply<unknown>();
     let shouldHoldTail = false;
     const fake = makeFakeChrome({
       replies: {
-        tailLog: () =>
-          shouldHoldTail ? heldTail.reply : { ok: true, isLogFilePresent: true, logLines: [] },
+        getRunHistory: () => (shouldHoldTail ? heldTail.reply : DEFAULT_REPLIES.getRunHistory),
         getServices: () => ({
           ok: true,
           servicesByName: {
@@ -544,7 +563,7 @@ describe('startServerTab — refreshing while a refresh is already running', () 
 
     await click('[data-service="webapp"] button[data-action="stop"]');
     shouldHoldTail = false;
-    heldTail.release({ ok: true, isLogFilePresent: true, logLines: [] });
+    heldTail.release(DEFAULT_REPLIES.getRunHistory);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(serviceRow('webapp').textContent).toContain('Off');
@@ -558,8 +577,13 @@ describe('startServerTab — logs', () => {
     return select;
   }
 
-  it('offers the readable logs and shows the last 200 lines of the scheduler log first', async () => {
-    const fake = await openTab();
+  function chooseLog(logName: string): void {
+    logSelect().value = logName;
+    logSelect().dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  it('offers the readable logs and shows the scheduler log first', async () => {
+    await openTab();
 
     expect([...logSelect().options].map((option) => option.value)).toEqual([
       'scheduler',
@@ -569,9 +593,16 @@ describe('startServerTab — logs', () => {
       'native-host',
     ]);
     expect(logSelect().value).toBe('scheduler');
-    expect(fake.requests).toContainEqual({ type: 'tailLog', logName: 'scheduler', lineCount: 200 });
     expect(sectionText('logs')).toContain('first line');
     expect(sectionText('logs')).toContain('second line');
+  });
+
+  it('opens one connection to the host and subscribes to the last 200 lines of every log', async () => {
+    const fake = await openTab();
+
+    expect(fake.connectNative).toHaveBeenCalledTimes(1);
+    expect(fake.connectNative).toHaveBeenCalledWith(NATIVE_HOST_NAME);
+    expect(fake.ports[0].postedMessages).toEqual([{ type: 'subscribeLogs', lineCount: 200 }]);
   });
 
   it('shows the newest log line at the top', async () => {
@@ -581,23 +612,59 @@ describe('startServerTab — logs', () => {
     expect(logText.indexOf('second line')).toBeLessThan(logText.indexOf('first line'));
   });
 
-  it('loads another log when it is chosen', async () => {
+  it('shows new lines as soon as the host pushes them, without waiting for a poll', async () => {
     const fake = await openTab();
 
-    logSelect().value = 'native-host';
-    logSelect().dispatchEvent(new Event('change', { bubbles: true }));
-    await vi.advanceTimersByTimeAsync(0);
+    fake.ports[0].pushFromHost(
+      logTailMessage('scheduler', {
+        isLogFilePresent: true,
+        logLines: ['first line', 'second line', 'third line'],
+      })
+    );
 
-    expect(fake.requests).toContainEqual({
-      type: 'tailLog',
-      logName: 'native-host',
-      lineCount: 200,
-    });
+    const logText = sectionText('logs');
+    expect(logText.indexOf('third line')).toBeLessThan(logText.indexOf('second line'));
+  });
+
+  it('shows a chosen log from what the host already sent, with no further host request', async () => {
+    const fake = await openTab(
+      makeFakeChrome({
+        logTails: {
+          ...DEFAULT_LOG_TAILS_BY_LOG_NAME,
+          webapp: { isLogFilePresent: true, logLines: ['webapp started'] },
+        },
+      })
+    );
+    const requestCountAfterOpen = fake.sendNativeMessage.mock.calls.length;
+
+    chooseLog('webapp');
+
+    expect(sectionText('logs')).toContain('webapp started');
+    expect(sectionText('logs')).not.toContain('first line');
+    expect(fake.sendNativeMessage.mock.calls).toHaveLength(requestCountAfterOpen);
+    expect(fake.connectNative).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show an update for a log that is not the chosen one', async () => {
+    const fake = await openTab();
+
+    fake.ports[0].pushFromHost(
+      logTailMessage('webapp', { isLogFilePresent: true, logLines: ['webapp noise'] })
+    );
+
+    expect(sectionText('logs')).not.toContain('webapp noise');
+    chooseLog('webapp');
+    expect(sectionText('logs')).toContain('webapp noise');
   });
 
   it('says so when the log file does not exist yet', async () => {
     await openTab(
-      makeFakeChrome({ replies: { tailLog: { ok: true, isLogFilePresent: false, logLines: [] } } })
+      makeFakeChrome({
+        logTails: {
+          ...DEFAULT_LOG_TAILS_BY_LOG_NAME,
+          scheduler: { isLogFilePresent: false, logLines: [] },
+        },
+      })
     );
 
     expect(sectionText('logs')).toContain('No log file yet');
@@ -606,14 +673,68 @@ describe('startServerTab — logs', () => {
   it('shows log lines as text, never as markup', async () => {
     await openTab(
       makeFakeChrome({
-        replies: {
-          tailLog: { ok: true, isLogFilePresent: true, logLines: ['<script>boom()</script>'] },
+        logTails: {
+          ...DEFAULT_LOG_TAILS_BY_LOG_NAME,
+          scheduler: { isLogFilePresent: true, logLines: ['<script>boom()</script>'] },
         },
       })
     );
 
     expect(root.querySelector('[data-section="logs"] script')).toBeNull();
     expect(sectionText('logs')).toContain('<script>boom()</script>');
+  });
+
+  it('shows a log the host cannot read in the logs panel, and keeps the other panels', async () => {
+    const fake = await openTab();
+
+    fake.ports[0].pushFromHost({ ok: false, error: 'Could not read the scheduler log: EACCES' });
+
+    expect(sectionText('logs')).toContain('Could not read the scheduler log: EACCES');
+    expect(sectionText('cookies')).toContain('Facebook cookies synced');
+    expect(fake.ports[0].isDisconnected).toBe(false);
+  });
+
+  it('closes the connection while the page is hidden and reopens it when shown again', async () => {
+    const fake = await openTab();
+
+    setPageHidden(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(fake.ports[0].isDisconnected).toBe(true);
+
+    setPageHidden(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fake.connectNative).toHaveBeenCalledTimes(2);
+    expect(fake.ports[1].postedMessages).toEqual([{ type: 'subscribeLogs', lineCount: 200 }]);
+  });
+
+  it('does not open a second connection on a poll while one is open', async () => {
+    const fake = await openTab();
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    expect(fake.connectNative).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the live log stopped when the host drops the connection, and reconnects on the next poll', async () => {
+    const fake = await openTab();
+
+    fake.ports[0].closeFromHost();
+    expect(sectionText('logs')).toContain('Lost the connection to the native host');
+    expect(fake.connectNative).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(fake.connectNative).toHaveBeenCalledTimes(2);
+    expect(sectionText('logs')).toContain('first line');
+  });
+
+  it('says the live log is unavailable when the host cannot be reached at all', async () => {
+    await openTab(makeFakeChrome({ hostUnreachableError: new Error('Native host not found') }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sectionText('logs')).toContain('Lost the connection to the native host');
   });
 });
 
