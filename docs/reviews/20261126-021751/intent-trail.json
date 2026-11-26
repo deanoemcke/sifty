@@ -1,0 +1,39 @@
+{
+  "entries": [
+    {
+      "sessionId": "9d06edfa-b02e-48d2-8033-6de0d29d8883",
+      "timestamp": "2026-11-26T02:09:30.159Z",
+      "branch": "fix/facebook-numeric-location-ids",
+      "userText": "/prep-for-pr",
+      "precedingAssistantText": "ace/<id>/search`). I took them from the typeahead data behind Marketplace's \"Change location\" dialog.\n- **Changes:** [regions.json](assets/regions.json) now stores `facebookLocationId` instead of `facebookLocation`, and [regions.ts](src/server/services/regions.ts) and [facebook.ts:1085](src/server/recipes/facebook.ts#L1085) follow. Facebook spells Whanganui \"Wanganui\", which only matters if you refresh the IDs.\n- **Test:** the new [regions.test.ts](src/server/services/regions.test.ts) fails if any region lacks a numeric, distinct ID. The existing URL tests now use IDs too.\n\n`★ Insight ─────────────────────────────────────`\n- A bad slug failed silently, so pickup searches returned Wellington listings under another region's name. The new test checks the format of the IDs, but not that Facebook still accepts them.\n- To catch Facebook changing this again, the scraper could compare the location shown on the page with the region requested and raise an error on a mismatch. That's a separate change, and I haven't done it.\n`─────────────────────────────────────────────────`\n\n- **Login alert:** your account now has a \"new login from a device or location you don't usually use\" notification from the headless runs. It's harmless, but expect it.\n- **Account settings:** I never clicked Apply in the location dialog, so your saved Facebook location is unchanged.\n- **Cookies:** I deleted the scratch copies of your cookies after each probe run.\n- **Push:** shall I push the branch and open a PR?"
+    },
+    {
+      "sessionId": "9d06edfa-b02e-48d2-8033-6de0d29d8883",
+      "timestamp": "2026-11-26T02:10:03.228Z",
+      "branch": "fix/facebook-numeric-location-ids",
+      "userText": "/branch-review",
+      "precedingAssistantText": "I pushed the branch and opened the PR, ready for review against `main`.\n\n- **Branch:** `fix/facebook-numeric-location-ids`, the existing branch (no new branch needed). It was fresh and held one commit, `939d32c`.\n- **PR:** https://github.com/deanoemcke/sifty/pull/74"
+    },
+    {
+      "sessionId": "9d06edfa-b02e-48d2-8033-6de0d29d8883",
+      "timestamp": "2026-11-26T02:13:52.389Z",
+      "branch": "fix/facebook-numeric-location-ids",
+      "userText": "Why would I be getting \"new login from a device or location you don't usually use\" notifications? I don't see that when searching in the browser which is on the same device.",
+      "precedingAssistantText": "Branch: fix/facebook-numeric-location-ids\nAgainst origin/main: 1 ahead, 0 behind.\n\nPR #74: fix: use Facebook numeric location IDs instead of city slugs in marketplace URLs\nStatus: open, ready for review, review: none\n\nSuggested: --quick (5 files, 76 lines changed). Say \"full\" to use the full review instead.\n\nI'd go with the suggested `--quick` review: two independent reviewers, one triage pass, and no `/clear` stops. It's a small change, but its main risk is Facebook's live behaviour, which a reviewer can't check, so a full review wouldn't add much.\n\nThe PR already exists, so there's nothing to open. Defaults are quick mode, `/simplify` pre-pass off, `--deep` not offered.\n\nDo you want to go with those? Say \"go\" to accept them, or \"full\" for the full review."
+    },
+    {
+      "sessionId": "9d06edfa-b02e-48d2-8033-6de0d29d8883",
+      "timestamp": "2026-11-26T02:15:31.502Z",
+      "branch": "fix/facebook-numeric-location-ids",
+      "userText": "Yes. Do it",
+      "precedingAssistantText": "y there.\n\nThe likelier cause is the scraper's normal operation (the scheduler or quick searches) rather than my probes:\n\n- **Different browser fingerprint:** your Chrome cookies are synced to the server via the extension and replayed in headless Playwright Chromium ([createFbContext](src/server/recipes/facebook.ts#L107-L111)). The session is valid, but Facebook sees a browser it hasn't seen with your account: a different user agent and headless fingerprint. Your real browser on the same device looks familiar, so you don't get the alert there.\n- **Possibly a different network:** if the scraper runs on a server or on another connection, the IP also differs. I haven't checked where it runs.\n- **Repeated logins:** if Facebook periodically invalidates the synced session, each re-sync and replay can raise a fresh alert.\n\n`★ Insight ─────────────────────────────────────`\n- Facebook ties trust to the cookie plus the device and browser fingerprint, not just the IP. The same machine can still look like a new device.\n- This is mostly cosmetic, but repeated unrecognised-login alerts can sometimes trigger a checkpoint or session invalidation. That would show up as the scraper's login-wall error.\n`─────────────────────────────────────────────────`\n\nTo confirm which side causes it, I can compare timestamps with the scheduler's run times. I could also do one live Playwright run and see whether a new alert appears afterwards. That's another live Facebook run, so I'll only do it if you say so."
+    },
+    {
+      "sessionId": "9d06edfa-b02e-48d2-8033-6de0d29d8883",
+      "timestamp": "2026-11-26T02:17:44.654Z",
+      "branch": "fix/facebook-numeric-location-ids",
+      "userText": "Go",
+      "precedingAssistantText": "kies, showed the same two alerts (15:16:03 and 15:16:34).\n- **Loading isn't the trigger:** the scheduler loads Facebook about every 30 minutes, 92 loads in the current log. If every headless load raised an alert, you'd have hundreds, not two in six days.\n\n`★ Insight ─────────────────────────────────────`\n- Facebook raises these alerts on a change of device trust: a new session, a new device cookie or a new IP. A steady stream of identical requests from the same cookies doesn't set it off.\n- The two alerts are three days apart, so they look tied to occasional events such as your Chrome session being refreshed or re-logged-in, and the extension then syncing those new cookies to the scraper.\n`─────────────────────────────────────────────────`\n\n**What I can't tell you:**\n- **Timing:** the logs have no timestamps, so I can't match the two alerts to a specific event.\n- **Delay:** Facebook sometimes raises alerts hours late, so something I ran today could still show up later.\n- **Cause:** I haven't proven the scraper causes the two earlier alerts, only that routine loads don't.\n\nTo close this out, check the alert times in Facebook under Settings → Security → Where you're logged in. If one lists a \"Chrome on Mac\" session at the alert time, it's the headless browser. Or tell me if you re-logged-in or changed cookies around 22 and 25 Nov, and I'll check that against the sync timing.\n\nI deleted the scratch cookie copy again. The `/branch-review` is still waiting for your \"go\" or \"full\"."
+    }
+  ]
+}

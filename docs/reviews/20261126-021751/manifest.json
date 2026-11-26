@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261126-021751",
+  "round": 1,
+  "branch": "fix/facebook-numeric-location-ids",
+  "baseRef": "origin/main",
+  "baseSha": "f07b1d2690fb169454b8b21b43a013325c559332",
+  "headSha": "939d32c786f33f2a3fbd88b8e46017c86b54efdb",
+  "headPrNumber": 74,
+  "stackPrNumbers": [
+    74
+  ],
+  "isDeepRequested": false,
+  "mode": "quick",
+  "reviewers": [
+    {
+      "id": "blind",
+      "status": "complete"
+    },
+    {
+      "id": "informed",
+      "status": "complete"
+    }
+  ],
+  "phase": "done"
+}
