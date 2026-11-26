@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "20261126-021751",
+  "round": 1,
+  "findings": [
+    {
+      "id": "R1-F001",
+      "title": "Facebook location IDs have no recorded provenance and cannot be checked",
+      "claim": "Eighteen opaque numeric IDs replace readable slugs, and the only test checks they are 10+ digits and unique. A wrong or swapped ID would pass and silently search the wrong city.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "assets/regions.json",
+        "line": 2
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "Swapping two IDs passes both regions.test.ts assertions. The session summary says all 18 were verified live, but that is not recorded in the repo.\nVerifier: Test only asserts format and uniqueness (regions.test.ts); a swapped ID would pass. Real but inherent to external IDs."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "IDs were verified live and a repo test cannot check Facebook behaviour; a provenance comment is a nice-to-have"
+      },
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The IDs were verified live per the session summary and a repo test cannot check Facebook's behaviour; a provenance comment is nice to have but not needed to land the fix.",
+        "reopenIf": "A region is found searching the wrong city, or IDs are changed without a recorded source."
+      }
+    },
+    {
+      "id": "R1-F002",
+      "title": "Missing facebookLocationId silently falls back to the default location",
+      "claim": "RegionEntry keeps the field optional and buildFacebookUrl omits the location segment when absent, so a region without an ID yields /marketplace/search with no error.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "blind"
+      ],
+      "location": {
+        "file": "src/server/recipes/facebook.ts",
+        "line": 1085
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "facebook.ts:1083-1085 only adds the segment when region?.facebookLocationId is truthy; RegionEntry declares it optional (regions.ts:7).\nVerifier: Confirmed facebook.ts:1083-1085 and regions.ts:7: absent ID silently omits the segment. Guarded for shipped data by regions.test.ts; optionality pre-existing."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "shipped data is guarded by regions.test.ts and the optional field was already optional before this change"
+      },
+      "recommendation": {
+        "disposition": "defer",
+        "reason": "The shipped data is guarded by regions.test.ts and the optionality is pre-existing; making the field required is a small follow-up tidy.",
+        "reopenIf": "Regions become user-editable or loaded from a source the test does not cover."
+      }
+    },
+    {
+      "id": "R1-F003",
+      "title": "Already-saved Facebook pickup searches keep their old slug URLs and stay broken",
+      "claim": "buildFacebookUrl only runs at discovery time; saved searches store their URLs and the scraper navigates to them unchanged, so existing pickup searches with a dead slug keep returning the default location.",
+      "severity": "minor",
+      "classification": "new",
+      "sources": [
+        "informed"
+      ],
+      "location": {
+        "file": "src/server/recipes/facebook.ts",
+        "line": 517
+      },
+      "evidence": {
+        "kind": "reasoning",
+        "detail": "facebook.ts:488,517 goto the stored searchUrl; scheduler.ts:396 parses row.urls from saved_searches; neither the diff nor db.ts initSchema rewrites stored URLs.\nVerifier: Confirmed goto on stored searchUrl (facebook.ts:488,517), URLs come from saved_searches.urls, and no rewrite exists in db.ts or the diff. Existence of affected rows not checked."
+      },
+      "status": "deferred",
+      "resolution": {
+        "note": "no saved search is affected today: all 18 stored location segments are wellington, which is the account default; revisit if a non-Wellington pickup search is saved before this lands"
+      },
+      "recommendation": {
+        "disposition": "accept",
+        "reason": "The code path is confirmed and leaving stored slug URLs means the original silent wrong-location bug persists for existing saved searches."
+      }
+    }
+  ]
+}

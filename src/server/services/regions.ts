@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export type RegionEntry = { name: string; tradeMeRegionId: number; facebookLocation?: string };
+export type RegionEntry = { name: string; tradeMeRegionId: number; facebookLocationId?: string };
 
 let _regions: RegionEntry[] | null = null;
 
