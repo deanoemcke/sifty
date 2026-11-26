@@ -33,7 +33,7 @@ export function renderLogsSection(
   return {
     showLog(logTail) {
       lines.textContent = logTail.isLogFilePresent
-        ? logTail.logLines.join('\n')
+        ? [...logTail.logLines].reverse().join('\n')
         : 'No log file yet.';
     },
   };

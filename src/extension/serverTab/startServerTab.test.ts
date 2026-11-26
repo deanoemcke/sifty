@@ -574,6 +574,13 @@ describe('startServerTab — logs', () => {
     expect(sectionText('logs')).toContain('second line');
   });
 
+  it('shows the newest log line at the top', async () => {
+    await openTab();
+
+    const logText = sectionText('logs');
+    expect(logText.indexOf('second line')).toBeLessThan(logText.indexOf('first line'));
+  });
+
   it('loads another log when it is chosen', async () => {
     const fake = await openTab();
 
