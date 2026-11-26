@@ -97,6 +97,17 @@ p {
   color: var(--muted);
 }
 
+.cookies-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cookies-summary button {
+  margin-top: 0;
+}
+
 button {
   margin-top: 8px;
   padding: 6px 14px;

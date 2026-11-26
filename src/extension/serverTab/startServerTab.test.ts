@@ -870,3 +870,61 @@ describe('startServerTab — services', () => {
     expect(sectionText('services')).not.toContain('Input/output error');
   });
 });
+
+describe('startServerTab — layout', () => {
+  function isBefore(first: Element, second: Element): boolean {
+    return Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }
+
+  it('keeps a service status and its buttons on the first line, with the detail below them', async () => {
+    await openTab(
+      makeFakeChrome({
+        replies: {
+          getServices: {
+            ok: true,
+            servicesByName: {
+              scheduler: {
+                isInstalled: true,
+                isIntervalJob: true,
+                isLoaded: true,
+                isRunning: false,
+                isEnabled: true,
+                pid: null,
+              },
+            },
+          },
+        },
+      })
+    );
+
+    const row = serviceRow('scheduler');
+    const status = row.querySelector('.service-status');
+    const actions = row.querySelector('.service-actions');
+    const detail = row.querySelector('.service-detail');
+    if (!status || !actions || !detail) throw new Error('Scheduler row is missing a part');
+    expect(isBefore(status, actions)).toBe(true);
+    expect(isBefore(actions, detail)).toBe(true);
+  });
+
+  it('puts the Sync now button beside the cookie status rather than below it', async () => {
+    await openTab();
+
+    const button = root.querySelector('[data-section="cookies"] button');
+    expect(button?.previousElementSibling?.textContent).toContain('Facebook cookies synced');
+  });
+
+  it('shows the logs above the last runs', async () => {
+    await openTab();
+
+    const sectionNames = [...root.children].map((child) => child.getAttribute('data-section'));
+    expect(sectionNames).toEqual(['host-error', 'services', 'cookies', 'settings', 'logs', 'runs']);
+  });
+
+  it('labels the log chooser for screen readers without repeating the Logs heading', async () => {
+    await openTab();
+
+    const select = root.querySelector('[data-section="logs"] select');
+    expect(select?.getAttribute('aria-label')).toBe('Log');
+    expect(root.querySelector('[data-section="logs"] .field-label')).toBeNull();
+  });
+});

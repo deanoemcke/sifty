@@ -19,15 +19,13 @@ export function renderLogsSection(
     select.append(option);
   }
   select.value = selectedLogName;
+  select.setAttribute('aria-label', 'Log');
   select.addEventListener('change', () => onSelectLog(select.value));
 
   const lines = createElement('pre', { className: 'log-lines' });
   container.replaceChildren(
     createElement('h2', { text: 'Logs' }),
-    createElement('label', { className: 'field' }, [
-      createElement('span', { text: 'Log', className: 'field-label' }),
-      select,
-    ]),
+    createElement('div', { className: 'field' }, [select]),
     lines
   );
 

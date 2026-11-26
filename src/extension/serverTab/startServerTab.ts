@@ -69,8 +69,8 @@ export async function startServerTab(
     servicesContainer,
     cookiesContainer,
     settingsContainer,
-    runsContainer,
-    logsContainer
+    logsContainer,
+    runsContainer
   );
 
   const logsSection = renderLogsSection(
