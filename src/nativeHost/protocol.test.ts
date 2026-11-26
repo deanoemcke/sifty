@@ -14,6 +14,7 @@ function makeDependencies(): NativeHostDependencies {
   return {
     getDatabase: () => database,
     logFilePathsByLogName: {},
+    logStreams: { subscribe: () => {}, stopAll: () => {} },
     services: {
       definitionsByServiceName: {},
       userId: 501,

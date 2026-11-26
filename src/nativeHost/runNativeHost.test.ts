@@ -16,6 +16,7 @@ function makeDependencies(): NativeHostDependencies {
   return {
     getDatabase: () => database,
     logFilePathsByLogName: {},
+    logStreams: { subscribe: () => {}, stopAll: () => {} },
     services: {
       definitionsByServiceName: {},
       userId: 501,
@@ -158,5 +159,41 @@ describe('runNativeHostAsync', () => {
       { ok: true, searches: expect.any(Array) },
       { ok: false, error: expect.stringContaining('too large') },
     ]);
+  });
+
+  it('stops the log streams when the input closes', async () => {
+    let stopAllCount = 0;
+    const dependencies: NativeHostDependencies = {
+      ...makeDependencies(),
+      logStreams: {
+        subscribe: () => {},
+        stopAll: () => {
+          stopAllCount += 1;
+        },
+      },
+    };
+
+    await runHostWithChunks([encodeNativeMessage({ type: 'getStatus' })], dependencies);
+
+    expect(stopAllCount).toBe(1);
+  });
+
+  it('stops the log streams when the host gives up on a malformed message', async () => {
+    let stopAllCount = 0;
+    const dependencies: NativeHostDependencies = {
+      ...makeDependencies(),
+      logStreams: {
+        subscribe: () => {},
+        stopAll: () => {
+          stopAllCount += 1;
+        },
+      },
+    };
+    const oversizedPrefix = Buffer.alloc(4);
+    oversizedPrefix.writeUInt32LE(MAX_INCOMING_MESSAGE_BYTES + 1, 0);
+
+    await runHostWithChunks([oversizedPrefix], dependencies);
+
+    expect(stopAllCount).toBe(1);
   });
 });

@@ -17,6 +17,7 @@ import {
 } from './controlService';
 import { describeError } from './describeError';
 import { isRecord } from './isRecord';
+import type { LogStreams } from './logStreams';
 import {
   isNativeHostRequestType,
   isReadOnlyRequestType,
@@ -46,6 +47,7 @@ export type NativeHostServices = {
 export type NativeHostDependencies = {
   getDatabase: () => Database.Database;
   logFilePathsByLogName: Record<string, string>;
+  logStreams: LogStreams;
   services: NativeHostServices;
 };
 
@@ -69,6 +71,7 @@ export type NativeHostReply =
   | { ok: true; settings: SchedulerSettings }
   | { ok: true; searches: RunHistoryEntry[] }
   | { ok: true; isLogFilePresent: boolean; logLines: string[] }
+  | { ok: true; isSubscribed: true }
   | { ok: true; servicesByName: Record<string, InstalledServiceState> }
   | { ok: true; serviceName: string; state: ServiceState }
   | { ok: true; replies: NativeHostReply[] };
@@ -122,6 +125,30 @@ function getRunHistory(dependencies: NativeHostDependencies): NativeHostReply {
   return { ok: true, searches };
 }
 
+function isValidLineCount(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_TAIL_LINE_COUNT
+  );
+}
+
+function describeInvalidLineCount(requestType: NativeHostRequestType): string {
+  return `${requestType} requires lineCount to be a whole number from 1 to ${MAX_TAIL_LINE_COUNT}`;
+}
+
+function subscribeLogs(
+  message: UnvalidatedRequest<'subscribeLogs'>,
+  dependencies: NativeHostDependencies
+): NativeHostReply {
+  if (!isValidLineCount(message.lineCount)) {
+    return { ok: false, error: describeInvalidLineCount('subscribeLogs') };
+  }
+  dependencies.logStreams.subscribe(message.lineCount);
+  return { ok: true, isSubscribed: true };
+}
+
 function tailLog(
   message: UnvalidatedRequest<'tailLog'>,
   dependencies: NativeHostDependencies
@@ -130,16 +157,8 @@ function tailLog(
   if (typeof logName !== 'string' || !Object.hasOwn(dependencies.logFilePathsByLogName, logName)) {
     return { ok: false, error: `Unknown log: ${String(logName)}` };
   }
-  if (
-    typeof lineCount !== 'number' ||
-    !Number.isInteger(lineCount) ||
-    lineCount < 1 ||
-    lineCount > MAX_TAIL_LINE_COUNT
-  ) {
-    return {
-      ok: false,
-      error: `tailLog requires lineCount to be a whole number from 1 to ${MAX_TAIL_LINE_COUNT}`,
-    };
+  if (!isValidLineCount(lineCount)) {
+    return { ok: false, error: describeInvalidLineCount('tailLog') };
   }
 
   const logTail = readLogTail(dependencies.logFilePathsByLogName[logName], lineCount);
@@ -269,6 +288,8 @@ export async function handleNativeHostMessageAsync(
         return await getServices(dependencies);
       case 'controlService':
         return await controlService(message, dependencies);
+      case 'subscribeLogs':
+        return subscribeLogs(message, dependencies);
       case 'batch':
         return await batchAsync(message, dependencies);
       default: {

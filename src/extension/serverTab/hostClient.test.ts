@@ -81,6 +81,7 @@ function makeRealHost(logFilePath: string) {
   const dependencies: NativeHostDependencies = {
     getDatabase: () => database,
     logFilePathsByLogName: { webapp: logFilePath },
+    logStreams: { subscribe: () => {}, stopAll: () => {} },
     services: {
       definitionsByServiceName: {
         webapp: {

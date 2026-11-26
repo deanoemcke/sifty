@@ -4,6 +4,7 @@ import { handleNativeHostMessageAsync, type NativeHostDependencies } from './han
 import {
   createNativeMessageDecoder,
   encodeNativeMessage,
+  type NativeMessageDecoder,
   NativeMessageFramingError,
 } from './nativeMessaging';
 
@@ -15,7 +16,7 @@ function writeFramedAsync(output: Writable, framedMessage: Buffer): Promise<void
   });
 }
 
-async function writeReplyAsync(output: Writable, reply: unknown): Promise<void> {
+export async function writeReplyAsync(output: Writable, reply: unknown): Promise<void> {
   let framedReply: Buffer;
   try {
     framedReply = encodeNativeMessage(reply);
@@ -31,7 +32,19 @@ export async function runNativeHostAsync(
   dependencies: NativeHostDependencies
 ): Promise<NativeHostOutcome> {
   const decoder = createNativeMessageDecoder();
+  try {
+    return await answerMessagesAsync(input, output, dependencies, decoder);
+  } finally {
+    dependencies.logStreams.stopAll();
+  }
+}
 
+async function answerMessagesAsync(
+  input: Readable,
+  output: Writable,
+  dependencies: NativeHostDependencies,
+  decoder: NativeMessageDecoder
+): Promise<NativeHostOutcome> {
   for await (const chunk of input) {
     let messages: unknown[];
     let framingError: NativeMessageFramingError | undefined;

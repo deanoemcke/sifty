@@ -22,6 +22,7 @@ export type NativeHostRequestByType = {
   tailLog: { logName: string; lineCount: number };
   getServices: NoFields;
   controlService: { serviceName: string; action: ServiceAction };
+  subscribeLogs: { lineCount: number };
   batch: { requests: ReadOnlyRequest[] };
 };
 
@@ -47,6 +48,7 @@ const IS_REQUEST_TYPE_BY_NAME = {
   tailLog: true,
   getServices: true,
   controlService: true,
+  subscribeLogs: true,
   batch: true,
 } as const satisfies Record<NativeHostRequestType, true>;
 

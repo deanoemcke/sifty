@@ -21,6 +21,7 @@ function makeDependencies(overrides: Partial<NativeHostDependencies> = {}): Nati
   return {
     getDatabase: () => database,
     logFilePathsByLogName: {},
+    logStreams: { subscribe: () => {}, stopAll: () => {} },
     services: {
       definitionsByServiceName: {},
       userId: 501,
@@ -374,6 +375,67 @@ function makeServiceDependencies(
   });
   return { dependencies, fake };
 }
+
+describe('subscribeLogs', () => {
+  function makeSubscribableDependencies() {
+    const subscribedLineCounts: number[] = [];
+    const dependencies = makeDependencies({
+      logStreams: {
+        subscribe: (lineCount) => {
+          subscribedLineCounts.push(lineCount);
+        },
+        stopAll: () => {},
+      },
+    });
+    return { dependencies, subscribedLineCounts };
+  }
+
+  it('starts the log streams with the requested line count', async () => {
+    const { dependencies, subscribedLineCounts } = makeSubscribableDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'subscribeLogs', lineCount: 200 },
+      dependencies
+    );
+
+    expect(reply).toEqual({ ok: true, isSubscribed: true });
+    expect(subscribedLineCounts).toEqual([200]);
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -3],
+    ['fractional', 2.5],
+    ['more than 500', 501],
+    ['a string', '10'],
+    ['missing', undefined],
+  ])('rejects a lineCount that is %s without subscribing', async (_description, lineCount) => {
+    const { dependencies, subscribedLineCounts } = makeSubscribableDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'subscribeLogs', lineCount },
+      dependencies
+    );
+
+    expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('lineCount') });
+    expect(subscribedLineCounts).toEqual([]);
+  });
+
+  it('is refused inside a batch, which runs only read-only requests', async () => {
+    const { dependencies, subscribedLineCounts } = makeSubscribableDependencies();
+
+    const reply = await handleNativeHostMessageAsync(
+      { type: 'batch', requests: [{ type: 'subscribeLogs', lineCount: 200 }] },
+      dependencies
+    );
+
+    expect(reply).toEqual({
+      ok: true,
+      replies: [{ ok: false, error: expect.stringContaining('cannot contain subscribeLogs') }],
+    });
+    expect(subscribedLineCounts).toEqual([]);
+  });
+});
 
 describe('getServices', () => {
   it('reports the state of every configured service by name', async () => {
